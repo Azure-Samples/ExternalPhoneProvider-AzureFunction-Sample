@@ -100,14 +100,20 @@ are all non-secret configuration; only the key/token **value** lives in Key Vaul
 | `SINCH_SENDER_ID` → `EPP_PROVIDER_ACCOUNT_NAME` | sender, app setting (default `Verify`) |
 | `SINCH_VOICE_ENDPOINT` | Sinch Voice API host, app setting (optional; default `https://calling.api.sinch.com`) |
 
-**Soprano**
+**Soprano** — posts to `{endpoint}/messages/omnimsg`, one endpoint for every channel: `messageTypes`
+selects `sms` or `voice`, Soprano renders the TTS itself, and the sender comes from the account
+provisioning rather than the request.
+
 | Setting | Purpose |
 |---------|---------|
 | Key Vault secret `soprano-api-key` | API key (sent as the `X-MEMS-API-Key` header) |
 | Key Vault secret `soprano-api-id` | API ID (sent as the `X-MEMS-API-ID` header) |
 | `EPP_PROVIDER_ENDPOINT` | **required** — your MEMS API base `https://<your-mems-domain>/cgpapi` (per-customer; no default) |
-| `EPP_PROVIDER_ACCOUNT_NAME` | the provisioned source/sender endpoint id — Soprano requires a provisioned sender, so a **numeric** value is sent as `endpoints:[{type,id}]`; a non-numeric one falls back to a free-text `source` |
-| `SOPRANO_SOURCE_TYPE` | provisioned source endpoint type, app setting (optional; default `1`) |
+| `SOPRANO_SHUTTER_MODE` | `true` sends `shutterMode` so Soprano processes the request but delivers nothing, app setting (optional; default `false`) |
+
+> Soprano also accepts an **Entra ID v2.0** client-credentials Bearer token (audience = Soprano's app
+> registration id) in place of the `X-MEMS-*` headers; the adapter sends `Authorization: Bearer` when the
+> credential resolves in `oauth2` mode.
 
 > `EPP_PROVIDER_ENDPOINT` is the provider base URL for the one active provider (e.g. a sandbox host).
 

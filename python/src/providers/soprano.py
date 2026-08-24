@@ -1,5 +1,6 @@
-"""Soprano Connect (MEMS): POST {base}/messages/{sms|voice}.
-Auth: X-MEMS-API-ID + X-MEMS-API-Key."""
+"""Soprano Connect (MEMS): POST {base}/messages/omnimsg.
+One endpoint for every channel - `messageTypes` picks it and Soprano does the TTS for voice.
+Auth: an Entra ID v2.0 Bearer JWT (audience = Soprano's app id), or X-MEMS-API-ID + X-MEMS-API-Key."""
 import json
 
 
@@ -19,7 +20,6 @@ class SopranoProvider:
     }
 
     def build_request(self, channel, endpoint, dispatch, credential, env):
-        message_type = "voice" if channel == "voice" else "sms"
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if credential["mode"] == "oauth2":
             headers["Authorization"] = f"Bearer {credential['token']}"
@@ -27,34 +27,16 @@ class SopranoProvider:
             headers["X-MEMS-API-ID"] = credential.get("identity") or ""
             headers["X-MEMS-API-Key"] = credential.get("secret") or ""
 
-        client_reference = dispatch.correlation_id or dispatch.message_id
-        body = {"messageType": message_type, "destination": dispatch.destination, "clientReference": client_reference}
+        body = {
+            "text": dispatch.message,
+            "destination": str(dispatch.destination or "").lstrip("+"),  # E.164 without the leading +
+            "messageTypes": ["voice" if channel == "voice" else "sms"],
+            "correlationId": dispatch.correlation_id or dispatch.message_id,
+            # Soprano processes the request but delivers nothing - connectivity/credential testing.
+            "shutterMode": str(env.get("SOPRANO_SHUTTER_MODE") or "").lower() == "true",
+        }
 
-        # Sender: a provisioned source endpoint is what Soprano accepts; free-text source is a fallback.
-        # Soprano wants a provisioned source endpoint (endpoints:[{type,id}]), which is numeric. A
-        # non-numeric account name is sent as a free-text source instead.
-        account = env.get("EPP_PROVIDER_ACCOUNT_NAME")
-        if account and str(account).isdigit():
-            source_type = int(env.get("SOPRANO_SOURCE_TYPE") or 1)
-            body["endpoints"] = [{"type": source_type, "id": int(account)}]
-        elif account:
-            body["source"] = account
-
-        if message_type == "voice":
-            locale = dispatch.locale or ""
-            voice_language = env.get("SOPRANO_VOICE_LANGUAGE") or (locale if "-" in locale else "en-US")
-            body["voice"] = {"text2voice": {
-                "beforePasswordText": dispatch.message or "",
-                "password": "",
-                "afterPasswordText": "",
-                "language": voice_language,
-                "gender": int(env.get("SOPRANO_VOICE_GENDER") or 1),
-                "loop": 1,
-            }}
-        else:
-            body["text"] = dispatch.message
-
-        return {"url": f"{endpoint}/messages/{message_type}", "method": "POST", "headers": headers, "body": json.dumps(body)}
+        return {"url": f"{endpoint}/messages/omnimsg", "method": "POST", "headers": headers, "body": json.dumps(body)}
 
     def parse_response(self, http_status, ok, json_body):
         payload = json_body[0] if isinstance(json_body, list) and json_body else json_body

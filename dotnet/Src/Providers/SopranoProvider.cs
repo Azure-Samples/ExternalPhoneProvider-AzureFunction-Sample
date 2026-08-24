@@ -2,7 +2,9 @@ using System.Text.Json;
 
 namespace Epp.Otp.Providers;
 
-// Soprano Connect (MEMS): POST {base}/messages/{sms|voice}. Auth: X-MEMS-API-ID + X-MEMS-API-Key.
+// Soprano Connect (MEMS): POST {base}/messages/omnimsg. One endpoint for every channel —
+// `messageTypes` picks it and Soprano does the TTS for voice.
+// Auth: an Entra ID v2.0 Bearer JWT (audience = Soprano's app id), or X-MEMS-API-ID + X-MEMS-API-Key.
 public sealed class SopranoProvider : IProviderAdapter
 {
     public ProviderManifest Manifest { get; } = new(
@@ -24,51 +26,21 @@ public sealed class SopranoProvider : IProviderAdapter
 
     public ProviderHttpRequest BuildRequest(string channel, string endpoint, DispatchRequest dispatch, ProviderCredential credential, IEnv env)
     {
-        var messageType = channel == "voice" ? "voice" : "sms";
         var headers = new Dictionary<string, string> { ["Content-Type"] = "application/json", ["Accept"] = "application/json" };
         if (credential.Mode == "oauth2") headers["Authorization"] = $"Bearer {credential.Token}";
         else { headers["X-MEMS-API-ID"] = credential.Identity ?? string.Empty; headers["X-MEMS-API-Key"] = credential.Secret ?? string.Empty; }
 
-        // Soprano wants a provisioned source endpoint (endpoints:[{type,id}]), which is numeric. A
-        // non-numeric account name is sent as a free-text source instead.
-        object endpoints_or_source()
+        var body = new
         {
-            var account = env.Get("EPP_PROVIDER_ACCOUNT_NAME");
-            if (!string.IsNullOrEmpty(account) && int.TryParse(account, out var sourceId))
-                return new { endpoints = new[] { new { type = int.TryParse(env.Get("SOPRANO_SOURCE_TYPE"), out var parsedSourceType) ? parsedSourceType : 1, id = sourceId } } };
-            return new { source = account };
-        }
+            text = dispatch.Message,
+            destination = dispatch.Destination.TrimStart('+'), // E.164 without the leading +
+            messageTypes = new[] { channel == "voice" ? "voice" : "sms" },
+            correlationId = dispatch.CorrelationId ?? dispatch.MessageId,
+            // Soprano processes the request but delivers nothing — connectivity/credential testing.
+            shutterMode = string.Equals(env.Get("SOPRANO_SHUTTER_MODE"), "true", StringComparison.OrdinalIgnoreCase),
+        };
 
-        var clientRef = dispatch.CorrelationId ?? dispatch.MessageId;
-        object body;
-        if (messageType == "voice")
-        {
-            var voiceLanguage = env.Get("SOPRANO_VOICE_LANGUAGE") ?? ((dispatch.Locale?.Contains('-') ?? false) ? dispatch.Locale! : "en-US");
-            body = Merge(endpoints_or_source(), new
-            {
-                messageType,
-                destination = dispatch.Destination,
-                clientReference = clientRef,
-                voice = new
-                {
-                    text2voice = new
-                    {
-                        beforePasswordText = dispatch.Message ?? string.Empty,
-                        password = string.Empty,
-                        afterPasswordText = string.Empty,
-                        language = voiceLanguage,
-                        gender = int.TryParse(env.Get("SOPRANO_VOICE_GENDER"), out var parsedGender) ? parsedGender : 1,
-                        loop = 1,
-                    },
-                },
-            });
-        }
-        else
-        {
-            body = Merge(endpoints_or_source(), new { messageType, destination = dispatch.Destination, text = dispatch.Message, clientReference = clientRef });
-        }
-
-        return new ProviderHttpRequest($"{endpoint}/messages/{messageType}", "POST", headers, JsonSerializer.Serialize(body));
+        return new ProviderHttpRequest($"{endpoint}/messages/omnimsg", "POST", headers, JsonSerializer.Serialize(body));
     }
 
     public ParsedResponse ParseResponse(int httpStatus, bool ok, JsonElement json)
@@ -87,14 +59,5 @@ public sealed class SopranoProvider : IProviderAdapter
         }
         status ??= ok ? "SUBMITTED" : null;
         return new ParsedResponse(ok, httpStatus, id, status, null, desc);
-    }
-
-    // Shallow-merge two anonymous objects into a dictionary for JSON serialization.
-    private static Dictionary<string, object?> Merge(object first, object second)
-    {
-        var merged = new Dictionary<string, object?>();
-        foreach (var property in first.GetType().GetProperties()) merged[property.Name] = property.GetValue(first);
-        foreach (var property in second.GetType().GetProperties()) merged[property.Name] = property.GetValue(second);
-        return merged;
     }
 }
