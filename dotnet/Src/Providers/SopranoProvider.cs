@@ -18,6 +18,8 @@ public sealed class SopranoProvider : IProviderAdapter
             ["SENT"] = Outcome.Continue,
             ["DELIVERED"] = Outcome.Continue,
             ["QUEUED"] = Outcome.Continue,
+            // Accepted (HTTP 201) but stopped by an account/destination filter — nothing was delivered.
+            ["FILTERED"] = Outcome.Fail,
             ["FAILED"] = Outcome.Fail,
             ["REJECTED"] = Outcome.Fail,
             ["BLOCKED"] = Outcome.Block,
