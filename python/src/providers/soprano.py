@@ -15,6 +15,8 @@ class SopranoProvider:
         "response_mapping": {
             "ENROUTE": "Continue", "ACCEPTED": "Continue", "SUBMITTED": "Continue",
             "SENT": "Continue", "DELIVERED": "Continue", "QUEUED": "Continue",
+            # FILTERED: accepted (HTTP 201) but stopped by an account/destination filter - nothing delivered.
+            "FILTERED": "Fail",
             "FAILED": "Fail", "REJECTED": "Fail", "BLOCKED": "Block", "default": "Fail",
         },
     }

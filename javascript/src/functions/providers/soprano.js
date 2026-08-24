@@ -22,6 +22,8 @@ const manifest = {
         SENT: 'Continue',
         DELIVERED: 'Continue',
         QUEUED: 'Continue',
+        // Accepted (HTTP 201) but stopped by an account/destination filter — nothing was delivered.
+        FILTERED: 'Fail',
         FAILED: 'Fail',
         REJECTED: 'Fail',
         BLOCKED: 'Block',
