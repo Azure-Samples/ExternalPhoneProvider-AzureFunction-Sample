@@ -35,7 +35,7 @@ public sealed class SopranoProvider : IProviderAdapter
         var body = new
         {
             text = dispatch.Message,
-            destination = dispatch.Destination.TrimStart('+'), // E.164 without the leading +
+            destination = (dispatch.Destination ?? string.Empty).TrimStart('+'), // E.164 without the leading +
             messageTypes = new[] { channel == "voice" ? "voice" : "sms" },
             correlationId = dispatch.CorrelationId ?? dispatch.MessageId,
             // Soprano processes the request but delivers nothing — connectivity/credential testing.

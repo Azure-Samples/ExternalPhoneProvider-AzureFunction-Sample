@@ -68,6 +68,24 @@ for (const prov of ['infobip', 'telesign', 'sinch', 'soprano']) {
     }
 }
 
+// The omnimsg payload is the contract with Soprano: one endpoint, channel chosen by messageTypes.
+for (const channel of ['sms', 'voice']) {
+    test(`soprano/${channel}: posts the omnimsg payload`, async () => {
+        resp = { ok: true, status: 201, body: { id: 400004307033, destination: '15551234567', status: 'ENROUTE' } };
+        const r = await dispatchOtp(
+            disp({ channel, destination: '+15551234567' }),
+            { requestProvider: 'soprano', context: ctx, requestId: 'r' },
+        );
+
+        assert.equal(r.httpStatus, 200);
+        assert.ok(sent.url.endsWith('/messages/omnimsg'), `unexpected url ${sent.url}`);
+        const body = JSON.parse(sent.opts.body);
+        assert.deepEqual(body.messageTypes, [channel]);
+        assert.equal(body.destination, '15551234567', 'E.164 must lose the leading +');
+        assert.ok(body.text.includes('918273'), 'the passcode rides in text for both channels');
+    });
+}
+
 // Outcome + HTTP mapping is pure, so it is asserted directly here instead of once per case through
 // the whole dispatch pipeline (mirrors the .NET and Python contract tests).
 test('outcome mapping and HTTP status', () => {

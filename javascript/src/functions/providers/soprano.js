@@ -42,7 +42,7 @@ function buildRequest({ channel, endpoint, dispatch, credential, env }) {
 
     const body = {
         text: dispatch.message,
-        destination: String(dispatch.destination || '').replace(/^\+/, ''), // E.164 without the leading +
+        destination: String(dispatch.destination || '').replace(/^\++/, ''), // E.164 without the leading +
         messageTypes: [channel === 'voice' ? 'voice' : 'sms'],
         correlationId: dispatch.correlationId || dispatch.messageId,
         // Soprano processes the request but delivers nothing — connectivity/credential testing.
