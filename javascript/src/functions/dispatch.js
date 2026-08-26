@@ -13,6 +13,7 @@ const { ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { readConfig } = require('./config');
 
+const ENVELOPE_TYPE = 'microsoft.mfa.otpDeliver.v1';
 // CyotChannel: 1=Sms, 2=Voice. CyotDeliveryMode: 1=Live, 2=Evaluation (do NOT deliver).
 const CHANNEL_BY_CODE = Object.freeze({ 1: 'sms', 2: 'voice' });
 const CHANNEL_BY_NAME = Object.freeze({ sms: 1, voice: 2 });
@@ -36,6 +37,10 @@ function parseEnvelope(payload) {
         return { error: 'invalid envelope' };
     }
     const { type, tenantId, correlationId, channel, mode, ttlSeconds, encryptedDeliveryContext } = payload;
+    // A version we don't know may reuse these field names with different meanings.
+    if (type !== ENVELOPE_TYPE) {
+        return { error: `unsupported type '${type}'` };
+    }
     if (typeof encryptedDeliveryContext !== 'string' || !encryptedDeliveryContext) {
         return { error: 'encryptedDeliveryContext is required' };
     }

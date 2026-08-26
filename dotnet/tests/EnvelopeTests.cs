@@ -20,15 +20,24 @@ public class EnvelopeTests
     [Fact]
     public void MissingEncryptedContext_IsError()
     {
-        var (envelope, error) = EnvelopeParser.Parse(Payload("{\"channel\":1,\"mode\":1}"));
+        var (envelope, error) = EnvelopeParser.Parse(Payload("{\"type\":\"microsoft.mfa.otpDeliver.v1\",\"channel\":1,\"mode\":1}"));
         Assert.Null(envelope);
         Assert.Contains("encryptedDeliveryContext", error);
     }
 
     [Fact]
+    public void UnrecognisedType_IsError()
+    {
+        var (envelope, error) = EnvelopeParser.Parse(Payload(
+            "{\"type\":\"microsoft.mfa.otpDeliver.v2\",\"channel\":1,\"mode\":1,\"encryptedDeliveryContext\":\"x\"}"));
+        Assert.Null(envelope);
+        Assert.Contains("type", error);
+    }
+
+    [Fact]
     public void UnsupportedChannel_IsError()
     {
-        var (envelope, error) = EnvelopeParser.Parse(Payload("{\"channel\":9,\"mode\":1,\"encryptedDeliveryContext\":\"x\"}"));
+        var (envelope, error) = EnvelopeParser.Parse(Payload("{\"type\":\"microsoft.mfa.otpDeliver.v1\",\"channel\":9,\"mode\":1,\"encryptedDeliveryContext\":\"x\"}"));
         Assert.Null(envelope);
         Assert.Contains("channel", error);
     }
@@ -36,7 +45,7 @@ public class EnvelopeTests
     [Fact]
     public void UnsupportedMode_IsError()
     {
-        var (envelope, error) = EnvelopeParser.Parse(Payload("{\"channel\":1,\"mode\":5,\"encryptedDeliveryContext\":\"x\"}"));
+        var (envelope, error) = EnvelopeParser.Parse(Payload("{\"type\":\"microsoft.mfa.otpDeliver.v1\",\"channel\":1,\"mode\":5,\"encryptedDeliveryContext\":\"x\"}"));
         Assert.Null(envelope);
         Assert.Contains("mode", error);
     }

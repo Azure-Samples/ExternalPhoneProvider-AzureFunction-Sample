@@ -109,10 +109,12 @@ def send_otp(req: func.HttpRequest) -> func.HttpResponse:
 
         correlation_id = envelope["correlation_id"] or header_correlation_id or request_id
 
-        # Surfaced rather than swallowed: the passcode expires before it can be used.
+        # Refused, not warned: an expired passcode can no longer authenticate.
         ttl_seconds = envelope["ttl_seconds"]
         if isinstance(ttl_seconds, (int, float)) and not isinstance(ttl_seconds, bool) and ttl_seconds <= 0:
-            logging.warning("%s ttlSeconds is %s; the passcode has expired.", TAG, ttl_seconds)
+            logging.error("%s ttlSeconds is %s; the passcode has expired. Not delivering.", TAG, ttl_seconds)
+            return _json(400, {"error": "bad_request", "reason": "passcode has expired",
+                               "correlationId": correlation_id, "requestId": request_id})
 
         try:
             header, delivery = decrypt_delivery_context(envelope["encrypted_delivery_context"], _key_provider)

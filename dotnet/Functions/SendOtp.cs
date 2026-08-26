@@ -123,9 +123,12 @@ public sealed class SendOtp
 
             correlationId = envelope.CorrelationId ?? headerCorrelationId ?? requestId;
 
-            // Surfaced rather than swallowed: the passcode expires before it can be used.
+            // Refused, not warned: an expired passcode can no longer authenticate.
             if (envelope.TtlSeconds is <= 0)
-                _log.LogWarning("{Tag} ttlSeconds is {Ttl}; the passcode has expired.", Tag, envelope.TtlSeconds);
+            {
+                _log.LogError("{Tag} ttlSeconds is {Ttl}; the passcode has expired. Not delivering.", Tag, envelope.TtlSeconds);
+                return new BadRequestObjectResult(new { error = "bad_request", reason = "passcode has expired", correlationId, requestId });
+            }
 
             JweResult decrypted;
             try

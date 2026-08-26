@@ -32,15 +32,15 @@ JWE; the cleartext envelope carries routing/scheduling only.
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `type` | ✅ | envelope contract version, e.g. `microsoft.mfa.otpDeliver.v1` |
+| `type` | ✅ | envelope contract version, `microsoft.mfa.otpDeliver.v1`; anything else → `400` (a version we don't know may reuse these field names with different meanings) |
 | `tenantId` | | opaque routing guid (says nothing about the tenant) |
 | `correlationId` | | sign-in correlation; stitches SAS ↔ provider traces |
 | `channel` | ✅ | `CyotChannel` int: `1`=Sms, `2`=Voice (`0`=Undefined); the string forms `sms`/`voice` are also accepted |
 | `mode` | ✅ | `CyotDeliveryMode` int: `1`=Live, `2`=Evaluation (rehearsal — do **NOT** deliver); the string forms `live`/`evaluation` are also accepted |
-| `ttlSeconds` | | passcode validity remaining; `<= 0` is **logged as a warning** — the delivery still proceeds |
+| `ttlSeconds` | | passcode validity remaining, computed per request; `<= 0` → `400`, **nothing is delivered** — an expired passcode cannot authenticate |
 | `encryptedDeliveryContext` | ✅ | JWE compact serialization (see below) |
 
-`channel` not in `{1,2}`/`{sms,voice}` → `400`. `mode` not in `{1,2}`/`{live,evaluation}` → `400`. Missing/empty `encryptedDeliveryContext` → `400`.
+`type` other than `microsoft.mfa.otpDeliver.v1` → `400`. `channel` not in `{1,2}`/`{sms,voice}` → `400`. `mode` not in `{1,2}`/`{live,evaluation}` → `400`. Missing/empty `encryptedDeliveryContext` → `400`. `ttlSeconds <= 0` → `400`.
 
 ### `encryptedDeliveryContext` (JWE)
 
@@ -118,7 +118,7 @@ Set by provisioning. **Identical names across all languages.**
 |-----|---------|
 | `EPP_PROVIDER_NAME` | active provider id (`infobip` \| `telesign` \| `sinch` \| `soprano`) |
 | `EPP_PROVIDER_ENDPOINT` | provider base URL (one provider is active per deployment) |
-| `EPP_PROVIDER_ACCOUNT_NAME` | sender / source id presented to the provider |
+| `EPP_PROVIDER_ACCOUNT_NAME` | sender / source id presented to the provider (unused by Soprano, whose omnimsg endpoint takes the sender from the account provisioning) |
 | `EPP_PROVIDER_TIMEOUT_MS` | outbound call timeout (default 1500) |
 | `EPP_DECRYPTION_KEY_PEM` | RSA private key for JWE decryption — PEM, or **base64 over the PEM** as the setup script writes it. A **Key Vault reference** in Azure |
 | `EPP_ENCRYPTION_KEY_ID` | expected JOSE `kid`; a mismatch is logged, not fatal |
@@ -163,8 +163,9 @@ Every implementation ships tests covering at least:
 3. Provider HTTP 200 with an **unknown** status still `Fail`s (fail-closed).
 4. Missing provider credential → 502; missing endpoint config → 502.
 5. Timeout → 504; network error → 502.
-6. Envelope validation: `400` on invalid JSON, unsupported `channel`, unsupported `mode`, missing
-   `encryptedDeliveryContext`, decryption failure, and an incomplete delivery context.
+6. Envelope validation: `400` on invalid JSON, an unrecognised `type`, unsupported `channel`,
+   unsupported `mode`, missing `encryptedDeliveryContext`, `ttlSeconds <= 0`, decryption failure,
+   and an incomplete delivery context.
 7. JWE round-trip: a context encrypted with RSA-OAEP-256 + A256GCM decrypts to the expected
    `nonce` / `phoneNumber` / `message`, and the response echoes the `nonce`.
 8. `Evaluation` mode → 200 + nonce echo, nothing sent.

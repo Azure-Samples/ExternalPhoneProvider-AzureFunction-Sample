@@ -88,9 +88,15 @@ test('SendOtp: invalid JSON body -> 400', async () => {
 });
 
 test('SendOtp: missing encryptedDeliveryContext -> 400', async () => {
-    const r = await handlers.SendOtp(makeReq({ type: 'v1', channel: 1, mode: 1 }), ctx);
+    const r = await handlers.SendOtp(makeReq({ type: 'microsoft.mfa.otpDeliver.v1', channel: 1, mode: 1 }), ctx);
     assert.equal(r.status, 400);
     assert.match(r.jsonBody.reason, /encryptedDeliveryContext/);
+});
+
+test('SendOtp: unrecognised envelope type -> 400', async () => {
+    const r = await handlers.SendOtp(makeReq(await makeEnvelope({ type: 'microsoft.mfa.otpDeliver.v2' })), ctx);
+    assert.equal(r.status, 400);
+    assert.match(r.jsonBody.reason, /type/);
 });
 
 test('SendOtp: unsupported channel -> 400', async () => {
@@ -117,13 +123,15 @@ test('SendOtp: incomplete context (no phoneNumber) -> 400', async () => {
     assert.match(r.jsonBody.reason, /incomplete/);
 });
 
-test('SendOtp: Live with ttlSeconds <= 0 still delivers, but warns', async () => {
+test('SendOtp: Live with ttlSeconds <= 0 is refused and nothing is sent', async () => {
     const lines = [];
-    const warnCtx = { log: (m) => lines.push(String(m)), warn: (m) => lines.push(String(m)), error: () => {} };
-    const r = await handlers.SendOtp(makeReq(await makeEnvelope({ ttlSeconds: 0 })), warnCtx);
+    const expiredCtx = { log: (m) => lines.push(String(m)), warn: (m) => lines.push(String(m)), error: (m) => lines.push(String(m)) };
+    sent = undefined;
+    const r = await handlers.SendOtp(makeReq(await makeEnvelope({ ttlSeconds: 0 })), expiredCtx);
     await whenDelivered();
-    assert.equal(r.status, 200);
-    assert.ok(lines.some((l) => /has expired/.test(l)), 'expected an expiry warning');
+    assert.equal(r.status, 400);
+    assert.match(r.jsonBody.reason, /expired/);
+    assert.equal(sent, undefined, 'an expired passcode must not reach the provider');
 });
 
 test('SendOtp: valid Live envelope -> 200 accepted, nonce echoed, sent over https', async () => {
