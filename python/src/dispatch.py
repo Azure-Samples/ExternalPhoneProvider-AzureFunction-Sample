@@ -12,6 +12,7 @@ from jwcrypto import jwk
 
 DEFAULT_TIMEOUT_MS = 1500
 DEFAULT_CHANNELS = ["sms", "voice"]
+ENVELOPE_TYPE = "microsoft.mfa.otpDeliver.v1"
 
 # Outcomes (mirrors the other languages).
 CONTINUE = "Continue"
@@ -106,6 +107,9 @@ def parse_envelope(payload):
     """Returns (envelope, None) or (None, error)."""
     if not isinstance(payload, dict):
         return None, "invalid envelope"
+    # A version we don't know may reuse these field names with different meanings.
+    if payload.get("type") != ENVELOPE_TYPE:
+        return None, f"unsupported type '{payload.get('type')}'"
     encrypted = payload.get("encryptedDeliveryContext")
     if not isinstance(encrypted, str) or not encrypted:
         return None, "encryptedDeliveryContext is required"

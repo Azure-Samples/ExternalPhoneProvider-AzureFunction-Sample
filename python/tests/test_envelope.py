@@ -30,19 +30,31 @@ def _sample_context():
 
 
 def test_missing_encrypted_context_is_error():
-    envelope, error = parse_envelope({"channel": 1, "mode": 1})
+    envelope, error = parse_envelope({"type": "microsoft.mfa.otpDeliver.v1", "channel": 1, "mode": 1})
     assert envelope is None
     assert "encryptedDeliveryContext" in error
 
 
+def test_unrecognised_type_is_error():
+    envelope, error = parse_envelope({
+        "type": "microsoft.mfa.otpDeliver.v2", "channel": 1, "mode": 1, "encryptedDeliveryContext": "x",
+    })
+    assert envelope is None
+    assert "type" in error
+
+
 def test_unsupported_channel_is_error():
-    envelope, error = parse_envelope({"channel": 9, "mode": 1, "encryptedDeliveryContext": "x"})
+    envelope, error = parse_envelope({
+        "type": "microsoft.mfa.otpDeliver.v1", "channel": 9, "mode": 1, "encryptedDeliveryContext": "x",
+    })
     assert envelope is None
     assert "channel" in error
 
 
 def test_unsupported_mode_is_error():
-    envelope, error = parse_envelope({"channel": 1, "mode": 5, "encryptedDeliveryContext": "x"})
+    envelope, error = parse_envelope({
+        "type": "microsoft.mfa.otpDeliver.v1", "channel": 1, "mode": 5, "encryptedDeliveryContext": "x",
+    })
     assert envelope is None
     assert "mode" in error
 
@@ -70,6 +82,7 @@ def test_jwe_round_trips_to_delivery_context():
 
 def test_context_to_dispatch_maps_fields():
     envelope, _ = parse_envelope({
+        "type": "microsoft.mfa.otpDeliver.v1",
         "correlationId": "corr-1", "channel": 2, "mode": 1, "encryptedDeliveryContext": "x",
     })
     dispatch = context_to_dispatch(_sample_context(), envelope, "msg-1")
@@ -82,7 +95,9 @@ def test_context_to_dispatch_maps_fields():
 
 
 def test_sms_message_is_left_intact():
-    envelope, _ = parse_envelope({"channel": 1, "mode": 1, "encryptedDeliveryContext": "x"})
+    envelope, _ = parse_envelope({
+        "type": "microsoft.mfa.otpDeliver.v1", "channel": 1, "mode": 1, "encryptedDeliveryContext": "x",
+    })
     dispatch = context_to_dispatch(_sample_context(), envelope, "msg-1")
     assert dispatch.message == "Your code is 123456"
 

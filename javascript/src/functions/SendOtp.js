@@ -117,9 +117,10 @@ app.http('SendOtp', {
 
             const correlationId = envelope.correlationId || headerCorrelationId || requestId;
 
-            // Surfaced rather than swallowed: the passcode expires before it can be used.
-            if (envelope.ttlSeconds !== undefined && envelope.ttlSeconds <= 0) {
-                warn(`ttlSeconds is ${envelope.ttlSeconds}; the passcode has expired.`);
+            // Refused, not warned: an expired passcode can no longer authenticate.
+            if (typeof envelope.ttlSeconds === 'number' && envelope.ttlSeconds <= 0) {
+                error(`ttlSeconds is ${envelope.ttlSeconds}; the passcode has expired. Not delivering.`);
+                return { status: 400, jsonBody: { error: 'bad_request', reason: 'passcode has expired', correlationId, requestId } };
             }
 
             let header;

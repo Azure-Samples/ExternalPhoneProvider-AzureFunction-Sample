@@ -22,6 +22,7 @@ public static class EnvelopeParser
 {
     public const int ModeLive = 1;
     public const int ModeEvaluation = 2;
+    public const string EnvelopeType = "microsoft.mfa.otpDeliver.v1";
 
     private static readonly Dictionary<int, string> ChannelByCode = new() { [1] = "sms", [2] = "voice" };
     private static readonly Dictionary<string, int> ChannelByName = new(StringComparer.OrdinalIgnoreCase) { ["sms"] = 1, ["voice"] = 2 };
@@ -54,6 +55,11 @@ public static class EnvelopeParser
             return name is not null && ModeByName.TryGetValue(name, out var mapped) ? mapped : null;
         }
 
+        // A version we don't know may reuse these field names with different meanings.
+        var type = String("type");
+        if (type != EnvelopeType)
+            return (null, $"unsupported type '{type}'");
+
         var encrypted = String("encryptedDeliveryContext");
         if (string.IsNullOrEmpty(encrypted))
             return (null, "encryptedDeliveryContext is required");
@@ -66,7 +72,7 @@ public static class EnvelopeParser
         if (mode is null)
             return (null, "unsupported mode");
 
-        return (new Envelope(String("type"), String("tenantId"), String("correlationId"),
+        return (new Envelope(type, String("tenantId"), String("correlationId"),
             channel.Value, mode.Value, Int("ttlSeconds"), encrypted), null);
     }
 }
