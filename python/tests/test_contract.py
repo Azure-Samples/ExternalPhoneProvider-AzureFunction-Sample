@@ -1,4 +1,6 @@
 """Conformance tests for the pure contract logic (see /docs/CONTRACT.md §6)."""
+import json
+
 from src.dispatch import (
     BLOCK,
     CONTINUE,
@@ -57,6 +59,20 @@ def test_telesign_basic_auth_and_voice_mapping():
     assert request["headers"]["Authorization"].startswith("Basic ")
     assert request["url"].endswith("/v1/messaging")
     assert resolve_outcome(TelesignProvider.manifest, {"success": True, "provider_status_code": "100"}) == CONTINUE
+
+
+def test_soprano_posts_the_omnimsg_payload():
+    for channel in ("sms", "voice"):
+        request = SopranoProvider().build_request(
+            channel, "https://qa.example.com/cgpapi",
+            _dispatch(channel=channel, message="code 918273"),
+            {"mode": "apiKey", "secret": "k", "identity": "id"}, {},
+        )
+        body = json.loads(request["body"])
+        assert request["url"].endswith("/messages/omnimsg")
+        assert body["messageTypes"] == [channel]
+        assert body["destination"] == "15551234567"
+        assert "918273" in body["text"]
 
 
 def test_registry_resolves_by_id():

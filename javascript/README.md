@@ -109,7 +109,10 @@ provisioning rather than the request.
 | Key Vault secret `soprano-api-key` | API key (sent as the `X-MEMS-API-Key` header) |
 | Key Vault secret `soprano-api-id` | API ID (sent as the `X-MEMS-API-ID` header) |
 | `EPP_PROVIDER_ENDPOINT` | **required** — your MEMS API base `https://<your-mems-domain>/cgpapi` (per-customer; no default) |
-| `SOPRANO_SHUTTER_MODE` | `true` sends `shutterMode` so Soprano processes the request but delivers nothing, app setting (optional; default `false`) |
+| `SOPRANO_SHUTTER_MODE` | **diagnostics only** — `true` sends `shutterMode`, so Soprano accepts the request and delivers nothing while every layer still reports success. SAS sees a 2xx with a matching nonce and will **not** fall back, so the user gets no passcode at all. Never enable in production |
+
+> Soprano voice ignores `locale`: omnimsg takes no language field, so the account's default TTS voice
+> is used regardless of the caller's locale.
 
 > Soprano also accepts an **Entra ID v2.0** client-credentials Bearer token (audience = Soprano's app
 > registration id) in place of the `X-MEMS-*` headers; the adapter sends `Authorization: Bearer` when the

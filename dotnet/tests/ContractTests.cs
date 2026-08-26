@@ -76,6 +76,21 @@ public class ContractTests
         Assert.Equal(Outcome.Continue, OutcomeMapper.ResolveOutcome(m, new ParsedResponse(true, 200, ProviderStatusCode: "100")));
     }
 
+    [Theory]
+    [InlineData("sms")]
+    [InlineData("voice")]
+    public void SopranoPostsTheOmnimsgPayload(string channel)
+    {
+        var req = new SopranoProvider().BuildRequest(channel, "https://qa.example.com/cgpapi",
+            Disp(channel, "code 918273"), new ProviderCredential("apiKey", Secret: "k", Identity: "id"), new FakeEnv());
+
+        Assert.EndsWith("/messages/omnimsg", req.Url);
+        using var body = JsonDocument.Parse(req.Body);
+        Assert.Equal(channel, body.RootElement.GetProperty("messageTypes")[0].GetString());
+        Assert.Equal("15551234567", body.RootElement.GetProperty("destination").GetString());
+        Assert.Contains("918273", body.RootElement.GetProperty("text").GetString());
+    }
+
     [Fact]
     public void ProviderRegistryResolvesById()
     {
