@@ -12,6 +12,7 @@ builder.ConfigureFunctionsWebApplication();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<IEnv, ProcessEnv>();
 builder.Services.AddSingleton<ISecretResolver, SecretResolver>();
+builder.Services.AddSingleton<IProviderTokenAcquirer, ProviderTokenAcquirer>();
 builder.Services.AddSingleton<TokenValidator>();
 builder.Services.AddSingleton<IJweKeyProvider, EnvJweKeyProvider>();
 builder.Services.AddSingleton<JweDecryptor>();

@@ -4,9 +4,15 @@ import base64
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 
 import requests
+from azure.identity import (
+    ClientAssertionCredential,
+    ClientSecretCredential,
+    ManagedIdentityCredential,
+)
 from jwcrypto import jwe as jwe_module
 from jwcrypto import jwk
 
@@ -207,11 +213,59 @@ def context_to_dispatch(context, envelope, message_id):
     )
 
 
+# oauth2 provider auth: mint our own app-only Entra JWT (client-credentials) for the provider API and
+# send it as a Bearer token. Issuer is our app; audience is the provider's app (the scope). Never the
+# caller's inbound token. Cached until shortly before expiry.
+OAUTH_TOKEN_EXPIRY_SKEW_SECONDS = 5 * 60
+_provider_token_cache = {}
+
+
+def _build_oauth_credential(env, secrets, tenant_id, client_id):
+    """Managed-identity federation (selected by EPP_PROVIDER_MI_CLIENT_ID) keeps the cross-tenant call
+    secretless; otherwise use a client secret from Key Vault (or an env var for local runs)."""
+    mi_client_id = env.get("EPP_PROVIDER_MI_CLIENT_ID")
+    if mi_client_id:
+        managed_identity = ManagedIdentityCredential(client_id=mi_client_id)
+        audience = env.get("EPP_PROVIDER_TOKEN_EXCHANGE_AUDIENCE") or "api://AzureADTokenExchange"
+        exchange_scope = audience if audience.endswith("/.default") else f"{audience}/.default"
+        return ClientAssertionCredential(
+            tenant_id,
+            client_id,
+            lambda: managed_identity.get_token(exchange_scope).token,
+        )
+    secret = env.get("EPP_PROVIDER_CLIENT_SECRET") or (
+        secrets.resolve(env.get("EPP_PROVIDER_CLIENT_SECRET_NAME")) if env.get("EPP_PROVIDER_CLIENT_SECRET_NAME") else ""
+    )
+    if not secret:
+        raise ValueError(
+            "oauth2 requires EPP_PROVIDER_MI_CLIENT_ID (managed identity) or EPP_PROVIDER_CLIENT_SECRET_NAME"
+        )
+    return ClientSecretCredential(tenant_id, client_id, secret)
+
+
+def acquire_provider_token(env, secrets, credential_factory=_build_oauth_credential):
+    tenant_id = env.get("EPP_PROVIDER_TENANT_ID")
+    client_id = env.get("EPP_PROVIDER_CLIENT_ID")
+    scope = env.get("EPP_PROVIDER_SCOPE")
+    if not (tenant_id and client_id and scope):
+        raise ValueError("oauth2 requires EPP_PROVIDER_TENANT_ID, EPP_PROVIDER_CLIENT_ID and EPP_PROVIDER_SCOPE")
+    cache_key = f"{tenant_id}|{client_id}|{scope}"
+    cached = _provider_token_cache.get(cache_key)
+    if cached and cached[1] - OAUTH_TOKEN_EXPIRY_SKEW_SECONDS > time.time():
+        return cached[0]
+    credential = credential_factory(env, secrets, tenant_id, client_id)
+    access = credential.get_token(scope)
+    _provider_token_cache[cache_key] = (access.token, access.expires_on)
+    return access.token
+
+
 class DispatchEngine:
-    def __init__(self, registry, secrets, env=None):
+    def __init__(self, registry, secrets, env=None, token_acquirer=None):
         self.registry = registry
         self.secrets = secrets
         self.env = env if env is not None else os.environ
+        # A test seam; production mints the token from Entra.
+        self._token_acquirer = token_acquirer
 
     def dispatch(self, dispatch, request_provider, shutter, request_id, log):
         adapter = self.registry.resolve(request_provider)
@@ -303,8 +357,10 @@ class DispatchEngine:
         }
 
     def _resolve_credential(self, auth):
-        if auth.get("mode") == "oauth2":
-            return {"mode": "oauth2", "token": None}  # not wired -> fails closed
+        mode = (self.env.get("EPP_PROVIDER_AUTH_MODE") or auth.get("mode") or "apiKey").lower()
+        if mode == "oauth2":
+            acquire = self._token_acquirer or (lambda: acquire_provider_token(self.env, self.secrets))
+            return {"mode": "oauth2", "token": acquire()}
         secret = self.secrets.resolve(auth.get("key_vault_secret_name"))
         identity = self.secrets.resolve(auth.get("identity_key_vault_secret_name")) if auth.get("identity_key_vault_secret_name") else ""
         return {"mode": "apiKey", "secret": secret, "identity": identity}

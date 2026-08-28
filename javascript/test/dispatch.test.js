@@ -196,6 +196,18 @@ test('oauth2 mode uses a Bearer token and fails closed without one', async () =>
     }
 });
 
+test('EPP_PROVIDER_AUTH_MODE=oauth2 forces a minted JWT over the apiKey manifest default', async () => {
+    process.env.EPP_PROVIDER_AUTH_MODE = 'oauth2';
+    try {
+        // soprano's manifest default is apiKey, but the app-setting override wins.
+        await dispatchOtp(disp(), { requestProvider: 'soprano', context: ctx, requestId: 'r', acquireProviderToken: async () => 'JWT' });
+        assert.equal(sent.opts.headers.Authorization, 'Bearer JWT');
+        assert.equal(sent.opts.headers['X-MEMS-API-Key'], undefined, 'api-key headers must not be sent in oauth2 mode');
+    } finally {
+        delete process.env.EPP_PROVIDER_AUTH_MODE;
+    }
+});
+
 test('apiKey provider that needs an identity fails closed when the identity secret is missing (502)', async () => {
     const manifest = getProvider('telesign').manifest;
     const saved = JSON.parse(JSON.stringify(manifest.auth));

@@ -50,10 +50,10 @@ _DEFAULT_ENV = {
 }
 
 
-def make_engine(secret_values=None, env=None):
+def make_engine(secret_values=None, env=None, token_acquirer=None):
     registry = ProviderRegistry([InfobipProvider(), TelesignProvider(), SopranoProvider(), SinchProvider()])
     secrets = FakeSecrets(_DEFAULT_SECRETS if secret_values is None else secret_values)
-    return DispatchEngine(registry, secrets, _DEFAULT_ENV if env is None else env)
+    return DispatchEngine(registry, secrets, _DEFAULT_ENV if env is None else env, token_acquirer=token_acquirer)
 
 
 def dispatch_request(**overrides):
@@ -70,6 +70,7 @@ def _mock_send(monkeypatch, response=None, raise_error=None, capture=None):
         if capture is not None:
             capture["url"] = url
             capture["data"] = data
+            capture["headers"] = headers
         if raise_error is not None:
             raise raise_error
         return response
@@ -127,3 +128,56 @@ def test_network_error_maps_to_502(monkeypatch):
     _mock_send(monkeypatch, raise_error=dispatch_module.requests.exceptions.ConnectionError())
     status, _ = make_engine().dispatch(dispatch_request(), "infobip", False, "r", CapturingLog())
     assert status == 502
+
+
+def test_oauth_mode_sends_minted_bearer(monkeypatch):
+    capture = {}
+    _mock_send(monkeypatch, response=FakeResponse(201, {"status": "ENROUTE"}), capture=capture)
+    # EPP_PROVIDER_AUTH_MODE forces oauth2 over soprano's apiKey manifest default.
+    env = {"EPP_PROVIDER_ENDPOINT": "https://api.soprano.com", "EPP_PROVIDER_AUTH_MODE": "oauth2"}
+    engine = make_engine(env=env, token_acquirer=lambda: "JWT")
+    status, body = engine.dispatch(dispatch_request(), "soprano", False, "r", CapturingLog())
+
+    assert status == 200 and body["status"] == "accepted"
+    assert capture["headers"]["Authorization"] == "Bearer JWT"
+    assert "X-MEMS-API-Key" not in capture["headers"]  # api-key headers must not be sent in oauth2 mode
+
+
+def test_oauth_mode_fails_closed_without_token(monkeypatch):
+    _mock_send(monkeypatch, raise_error=AssertionError("should not send without a token"))
+
+    def raising_acquirer():
+        raise ValueError("oauth2 requires EPP_PROVIDER_TENANT_ID, EPP_PROVIDER_CLIENT_ID and EPP_PROVIDER_SCOPE")
+
+    env = {"EPP_PROVIDER_ENDPOINT": "https://api.soprano.com", "EPP_PROVIDER_AUTH_MODE": "oauth2"}
+    engine = make_engine(env=env, token_acquirer=raising_acquirer)
+    status, body = engine.dispatch(dispatch_request(), "soprano", False, "r", CapturingLog())
+    assert status == 502 and body["reason"] == "provider credential unavailable"
+
+
+def test_acquire_provider_token_caches_and_uses_client_secret(monkeypatch):
+    calls = {"n": 0}
+
+    class FakeAccessToken:
+        def __init__(self, token, expires_on):
+            self.token = token
+            self.expires_on = expires_on
+
+    class FakeCredential:
+        def get_token(self, scope):
+            calls["n"] += 1
+            assert scope == "api://resource/.default"
+            return FakeAccessToken("MINTED", 9999999999)  # far-future expiry
+
+    dispatch_module._provider_token_cache.clear()
+    env = {
+        "EPP_PROVIDER_TENANT_ID": "tenant", "EPP_PROVIDER_CLIENT_ID": "client",
+        "EPP_PROVIDER_SCOPE": "api://resource/.default", "EPP_PROVIDER_CLIENT_SECRET": "s",
+    }
+    factory = lambda env, secrets, tenant, client: FakeCredential()
+
+    first = dispatch_module.acquire_provider_token(env, FakeSecrets({}), credential_factory=factory)
+    second = dispatch_module.acquire_provider_token(env, FakeSecrets({}), credential_factory=factory)
+    assert first == "MINTED" and second == "MINTED"
+    assert calls["n"] == 1  # cached on the second call
+    dispatch_module._provider_token_cache.clear()

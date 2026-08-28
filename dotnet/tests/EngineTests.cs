@@ -42,6 +42,15 @@ public class EngineTests
         public HttpClient CreateClient(string name) => new(_handler);
     }
 
+    private sealed class FakeTokenAcquirer : IProviderTokenAcquirer
+    {
+        private readonly string? _token;
+        private readonly Exception? _throw;
+        public FakeTokenAcquirer(string? token = null, Exception? throwOnAcquire = null) { _token = token; _throw = throwOnAcquire; }
+        public Task<string> AcquireAsync(CancellationToken cancellationToken = default) =>
+            _throw != null ? throw _throw : Task.FromResult(_token!);
+    }
+
     private sealed class CapturingLogger : ILogger
     {
         public readonly List<string> Lines = new();
@@ -64,11 +73,12 @@ public class EngineTests
     };
 
     private static DispatchEngine Engine(HttpResponseMessage? response = null, Exception? throwOnSend = null,
-        IReadOnlyDictionary<string, string>? secrets = null, FakeEnv? env = null, StubHandler? handler = null)
+        IReadOnlyDictionary<string, string>? secrets = null, FakeEnv? env = null, StubHandler? handler = null,
+        IProviderTokenAcquirer? tokenAcquirer = null)
     {
         var registry = new ProviderRegistry(new IProviderAdapter[] { new InfobipProvider(), new TelesignProvider(), new SopranoProvider(), new SinchProvider() });
         var stub = handler ?? new StubHandler(_ => throwOnSend != null ? throw throwOnSend : response!);
-        return new DispatchEngine(registry, new FakeSecretResolver(secrets ?? DefaultSecrets), new FakeHttpClientFactory(stub), env ?? DefaultEnv());
+        return new DispatchEngine(registry, new FakeSecretResolver(secrets ?? DefaultSecrets), new FakeHttpClientFactory(stub), env ?? DefaultEnv(), tokenAcquirer);
     }
 
     private static DispatchRequest Disp(string channel = "sms", string? message = "Your code is 918273") =>
@@ -141,6 +151,31 @@ public class EngineTests
     public async Task NetworkError_502()
     {
         var result = await Engine(throwOnSend: new HttpRequestException("dns")).DispatchAsync(Disp(), "infobip", false, "r", new CapturingLogger());
+        Assert.Equal(502, result.HttpStatus);
+    }
+
+    [Fact]
+    public async Task OAuthMode_SendsMintedBearer()
+    {
+        var handler = new StubHandler(_ => Json(HttpStatusCode.Created, "{\"status\":\"ENROUTE\"}"));
+        // EPP_PROVIDER_AUTH_MODE forces oauth2 over soprano's apiKey manifest default.
+        var env = new FakeEnv { ["EPP_PROVIDER_ENDPOINT"] = "https://api.soprano.com", ["EPP_PROVIDER_AUTH_MODE"] = "oauth2" };
+        var result = await Engine(handler: handler, env: env, tokenAcquirer: new FakeTokenAcquirer(token: "JWT"))
+            .DispatchAsync(Disp(), "soprano", false, "r", new CapturingLogger());
+
+        Assert.Equal(200, result.HttpStatus);
+        Assert.Contains("918273", handler.LastBody);
+    }
+
+    [Fact]
+    public async Task OAuthMode_FailsClosed_WhenTokenUnavailable()
+    {
+        var handler = new StubHandler(_ => throw new Exception("should not send without a token"));
+        var env = new FakeEnv { ["EPP_PROVIDER_ENDPOINT"] = "https://api.soprano.com", ["EPP_PROVIDER_AUTH_MODE"] = "oauth2" };
+        var acquirer = new FakeTokenAcquirer(throwOnAcquire: new InvalidOperationException("oauth2 config missing"));
+        var result = await Engine(handler: handler, env: env, tokenAcquirer: acquirer)
+            .DispatchAsync(Disp(), "soprano", false, "r", new CapturingLogger());
+
         Assert.Equal(502, result.HttpStatus);
     }
 }

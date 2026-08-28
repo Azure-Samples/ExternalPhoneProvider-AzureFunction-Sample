@@ -169,13 +169,15 @@ public sealed class DispatchEngine
     private readonly ISecretResolver _secrets;
     private readonly IHttpClientFactory _httpFactory;
     private readonly IEnv _env;
+    private readonly IProviderTokenAcquirer _tokenAcquirer;
 
-    public DispatchEngine(ProviderRegistry registry, ISecretResolver secrets, IHttpClientFactory httpFactory, IEnv? env = null)
+    public DispatchEngine(ProviderRegistry registry, ISecretResolver secrets, IHttpClientFactory httpFactory, IEnv? env = null, IProviderTokenAcquirer? tokenAcquirer = null)
     {
         _registry = registry;
         _secrets = secrets;
         _httpFactory = httpFactory;
         _env = env ?? new ProcessEnv();
+        _tokenAcquirer = tokenAcquirer ?? new ProviderTokenAcquirer(_env, _secrets);
     }
 
     public async Task<DispatchResult> DispatchAsync(DispatchRequest dispatch, string? requestProvider, bool shutter, string requestId, ILogger log)
@@ -263,7 +265,13 @@ public sealed class DispatchEngine
 
     private async Task<ProviderCredential> ResolveCredentialAsync(AuthConfig auth)
     {
-        if (auth.Mode == "oauth2") return new ProviderCredential("oauth2", Token: null); // not wired -> fails closed
+        var mode = _env.Get("EPP_PROVIDER_AUTH_MODE");
+        if (string.IsNullOrEmpty(mode)) mode = auth.Mode;
+        if (string.Equals(mode, "oauth2", StringComparison.OrdinalIgnoreCase))
+        {
+            var token = await _tokenAcquirer.AcquireAsync();
+            return new ProviderCredential("oauth2", Token: token);
+        }
         var secret = await _secrets.ResolveAsync(auth.KeyVaultSecretName);
         var identity = string.IsNullOrEmpty(auth.IdentityKeyVaultSecretName) ? string.Empty : await _secrets.ResolveAsync(auth.IdentityKeyVaultSecretName);
         return new ProviderCredential("apiKey", Secret: secret, Identity: identity);

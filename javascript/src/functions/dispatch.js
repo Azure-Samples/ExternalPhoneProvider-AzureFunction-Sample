@@ -9,7 +9,7 @@
 
 const crypto = require('crypto');
 const { compactDecrypt } = require('jose');
-const { ManagedIdentityCredential } = require('@azure/identity');
+const { ManagedIdentityCredential, ClientSecretCredential, ClientAssertionCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { readConfig } = require('./config');
 
@@ -221,10 +221,76 @@ async function resolveSecretValue(keyVaultSecretName) {
     return secretValue;
 }
 
+// oauth2 provider auth: we mint our own app-only Entra JWT (client-credentials) for the provider's
+// API and send it as a Bearer token. Issuer is our app; audience is the provider's app (the scope).
+// This is never the caller's inbound token.
+const OAUTH_TOKEN_EXPIRY_SKEW_MILLISECONDS = 5 * 60 * 1000;
+const DEFAULT_TOKEN_EXCHANGE_AUDIENCE = 'api://AzureADTokenExchange';
+let cachedProviderToken = null; // { value, expiresAt, cacheKey }
+
+// The manifest default can be forced to oauth2 for a deployment via EPP_PROVIDER_AUTH_MODE.
+function oauthModeEnabled(authConfiguration) {
+    const mode = (process.env.EPP_PROVIDER_AUTH_MODE || authConfiguration.mode || 'apiKey').toLowerCase();
+    return mode === 'oauth2';
+}
+
+// A managed-identity federated credential (workload identity federation) keeps the cross-tenant call
+// secretless; presence of EPP_PROVIDER_MI_CLIENT_ID selects it. Returns null to fall back to a secret.
+function buildFederatedCredential(tenantId, clientId) {
+    const managedIdentityClientId = process.env.EPP_PROVIDER_MI_CLIENT_ID;
+    if (!managedIdentityClientId) {
+        return null;
+    }
+    const managedIdentity = new ManagedIdentityCredential(managedIdentityClientId);
+    const audience = process.env.EPP_PROVIDER_TOKEN_EXCHANGE_AUDIENCE || DEFAULT_TOKEN_EXCHANGE_AUDIENCE;
+    const exchangeScope = audience.endsWith('/.default') ? audience : `${audience}/.default`;
+    return new ClientAssertionCredential(tenantId, clientId, async () => {
+        const assertion = await managedIdentity.getToken(exchangeScope);
+        return assertion.token;
+    });
+}
+
+async function acquireProviderTokenFromEntra() {
+    const tenantId = process.env.EPP_PROVIDER_TENANT_ID;
+    const clientId = process.env.EPP_PROVIDER_CLIENT_ID;
+    const scope = process.env.EPP_PROVIDER_SCOPE;
+    if (!tenantId || !clientId || !scope) {
+        throw new Error('oauth2 requires EPP_PROVIDER_TENANT_ID, EPP_PROVIDER_CLIENT_ID and EPP_PROVIDER_SCOPE');
+    }
+    const cacheKey = `${tenantId}|${clientId}|${scope}`;
+    if (cachedProviderToken
+        && cachedProviderToken.cacheKey === cacheKey
+        && cachedProviderToken.expiresAt - OAUTH_TOKEN_EXPIRY_SKEW_MILLISECONDS > Date.now()) {
+        return cachedProviderToken.value;
+    }
+
+    let credential = buildFederatedCredential(tenantId, clientId);
+    if (!credential) {
+        const clientSecret = process.env.EPP_PROVIDER_CLIENT_SECRET
+            || (process.env.EPP_PROVIDER_CLIENT_SECRET_NAME ? await resolveSecretValue(process.env.EPP_PROVIDER_CLIENT_SECRET_NAME) : '');
+        if (!clientSecret) {
+            throw new Error('oauth2 requires EPP_PROVIDER_MI_CLIENT_ID (managed identity) or EPP_PROVIDER_CLIENT_SECRET_NAME');
+        }
+        credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+    }
+
+    const accessToken = await credential.getToken(scope);
+    if (!accessToken || !accessToken.token) {
+        throw new Error('oauth2 token acquisition returned no token');
+    }
+    cachedProviderToken = {
+        value: accessToken.token,
+        expiresAt: accessToken.expiresOnTimestamp || (Date.now() + 55 * 60 * 1000),
+        cacheKey,
+    };
+    return cachedProviderToken.value;
+}
+
 async function resolveProviderCredential(authConfiguration = {}, acquireProviderToken) {
-    if ((authConfiguration.mode || 'apiKey') === 'oauth2') {
-        // oauth2 is not wired end-to-end yet: with no injected acquireProviderToken it fails closed.
-        const bearerToken = typeof acquireProviderToken === 'function' ? await acquireProviderToken() : null;
+    if (oauthModeEnabled(authConfiguration)) {
+        // acquireProviderToken is a test seam; production mints the token from Entra.
+        const acquire = typeof acquireProviderToken === 'function' ? acquireProviderToken : acquireProviderTokenFromEntra;
+        const bearerToken = await acquire();
         return { mode: 'oauth2', token: bearerToken };
     }
 
