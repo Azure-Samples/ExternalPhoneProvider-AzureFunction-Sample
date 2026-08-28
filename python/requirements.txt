@@ -1,0 +1,9 @@
+# Bounded ranges (not exact pins): local/CI resolve against public PyPI, but Azure Functions'
+# remote-build mirror is frozen ~early-2025 and can't resolve newer releases. These ranges resolve
+# on both. Widen the upper bounds once the Azure build mirror catches up.
+azure-functions>=1.21,<1.26
+azure-identity>=1.16,<2
+azure-keyvault-secrets>=4.8,<5
+requests>=2.31,<3
+PyJWT[crypto]>=2.8,<3
+jwcrypto>=1.5,<2

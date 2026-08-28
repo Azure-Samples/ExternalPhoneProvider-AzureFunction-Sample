@@ -1,0 +1,16 @@
+{
+  "name": "epp-otp-sample",
+  "version": "1.0.0",
+  "description": "External Phone Provider delivery endpoint - send OTP via Infobip, Telesign, Sinch, or Soprano",
+  "main": "src/functions/*.js",
+  "scripts": {
+    "start": "func start",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.0.0",
+    "@azure/identity": "^4.13.1",
+    "@azure/keyvault-secrets": "^4.11.2",
+    "jose": "^5.9.6"
+  }
+}

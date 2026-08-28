@@ -1,0 +1,27 @@
+{
+  "_comment": "Reference app settings for any implementation. Copy the Values into your local.settings.json (set FUNCTIONS_WORKER_RUNTIME to 'node', 'dotnet-isolated', or 'python') or into the Function App's environment variables. Keys are the same across languages — see CONTRACT.md §4. Provider API keys are NOT here; they live in Key Vault. EPP_DECRYPTION_KEY_PEM is a Key Vault reference in Azure.",
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "node | dotnet-isolated | python",
+
+    "EPP_DECRYPTION_KEY_PEM": "<RSA private key: PEM, or base64 over the PEM as the setup script writes it; in Azure a Key Vault reference>",
+    "EPP_ENCRYPTION_KEY_ID": "<expected JOSE kid>",
+
+    "_comment_auth": "Enable Easy Auth on the Function App (unauthenticatedClientAction=Return401, allowedApplications pinned to EPP_EXPECTED_CLIENT_ID) AND set EPP_REQUIRE_AUTH=true in any real deployment. false is for local func start only.",
+    "EPP_REQUIRE_AUTH": "false",
+    "EPP_EXPECTED_AUDIENCE": "api://<your-endpoint-host>/<appId>",
+    "EPP_EXPECTED_CLIENT_ID": "25ec60fa-f18d-41a4-b398-50044c90ce13",
+    "EPP_EXPECTED_ISSUER": "https://sts.windows.net/<your-tenant-id>/",
+    "EPP_TENANT_ID": "<your Entra tenant id>",
+
+    "EPP_PROVIDER_NAME": "<infobip | telesign | sinch | soprano>",
+    "EPP_PROVIDER_ENDPOINT": "https://<provider-base-url>",
+    "EPP_PROVIDER_ACCOUNT_NAME": "<your sender / source id>",
+    "EPP_PROVIDER_TIMEOUT_MS": "1500",
+
+    "_comment_log_plaintext": "DIAGNOSTICS ONLY. true writes the phone number and passcode to the log. Never enable in production.",
+    "EPP_LOG_PLAINTEXT": "false",
+
+    "KEY_VAULT_URL": "https://<your-key-vault>.vault.azure.net/"
+  }
+}
