@@ -37,7 +37,7 @@ JWE; the cleartext envelope carries routing/scheduling only.
 | `correlationId` | | sign-in correlation; stitches SAS ↔ provider traces |
 | `channel` | ✅ | `CyotChannel` int: `1`=Sms, `2`=Voice (`0`=Undefined); the string forms `sms`/`voice` are also accepted |
 | `mode` | ✅ | `CyotDeliveryMode` int: `1`=Live, `2`=Evaluation (rehearsal — do **NOT** deliver); the string forms `live`/`evaluation` are also accepted |
-| `ttlSeconds` | | passcode validity remaining, computed per request; `<= 0` → `400`, **nothing is delivered** — an expired passcode cannot authenticate |
+| `ttlSeconds` | | optional; when present must be a positive JSON integer (null, booleans, strings and fractions are rejected); `<= 0` → `400`, **nothing is delivered** |
 | `encryptedDeliveryContext` | ✅ | JWE compact serialization (see below) |
 
 `type` other than `microsoft.mfa.otpDeliver.v1` → `400`. `channel` not in `{1,2}`/`{sms,voice}` → `400`. `mode` not in `{1,2}`/`{live,evaluation}` → `400`. Missing/empty `encryptedDeliveryContext` → `400`. `ttlSeconds <= 0` → `400`.
@@ -117,9 +117,9 @@ Set by provisioning. **Identical names across all languages.**
 | Key | Purpose |
 |-----|---------|
 | `EPP_PROVIDER_NAME` | active provider id (`infobip` \| `telesign` \| `sinch` \| `soprano`) |
-| `EPP_PROVIDER_ENDPOINT` | provider base URL (one provider is active per deployment) |
+| `EPP_PROVIDER_ENDPOINT` | absolute HTTPS provider base URL (one provider is active per deployment) |
 | `EPP_PROVIDER_ACCOUNT_NAME` | sender / source id presented to the provider (unused by Soprano, whose omnimsg endpoint takes the sender from the account provisioning) |
-| `EPP_PROVIDER_TIMEOUT_MS` | outbound call timeout (default 1500) |
+| `EPP_PROVIDER_TIMEOUT_MS` | outbound call timeout (default 1500, capped at 2500); not an end-to-end invocation deadline |
 | `EPP_DECRYPTION_KEY_PEM` | RSA private key for JWE decryption — PEM, or **base64 over the PEM** as the setup script writes it. A **Key Vault reference** in Azure |
 | `EPP_ENCRYPTION_KEY_ID` | expected JOSE `kid`; a mismatch is logged, not fatal |
 | `EPP_REQUIRE_AUTH` | `true` → validate the Entra token in-process. **Recommended `true` in every deployment**; Easy Auth is the primary gate, this is the backstop |
@@ -148,9 +148,18 @@ User* role). Never in code or config.
   passcode. It defaults to false and **must not be enabled in production**.
 - **Auth** — **Easy Auth must be ON** (`unauthenticatedClientAction=Return401`, `allowedApplications`
   pinned to Microsoft's app); the trigger is `authLevel: anonymous`, so it is the primary gate.
-  `EPP_EXPECTED_CLIENT_ID` mismatches return `403`. Deployments should **also** set
+  `EPP_EXPECTED_CLIENT_ID` mismatches return `403`. Azure deployments **must also** set
   `EPP_REQUIRE_AUTH=true` to validate the Entra JWT in-process (audience = `EPP_EXPECTED_AUDIENCE`,
   issuer tenant = `EPP_TENANT_ID`, RS256, JWKS). No-op pass-through when false (local dev).
+- **Synchronous acceptance** — await the provider response before replying to SAS. Only a mapped
+  `Continue` outcome returns `200` with the nonce; provider rejection, auth failure, network failure,
+  or timeout returns non-2xx so SAS can fall back to native delivery.
+  An unsuccessful provider HTTP response must not become `Continue` because its body contains
+  a success-looking status. Provider acceptance is not proof of final handset delivery.
+- **Timeout limitations** — inbound authentication, decryption, Key Vault and OAuth acquisition
+  are outside the outbound HTTP timeout. Python `requests` uses connect/read inactivity timeouts,
+  not a hard total elapsed deadline. A 2500 ms cap alone does not guarantee a 3.2-second response.
+  A timed-out POST may already have been accepted by a provider; do not blindly retry it.
 
 ---
 

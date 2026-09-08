@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Epp.Otp;
 
-// HTTP trigger: POST /api/SendOtp — the SAS → External Phone Provider delivery endpoint. Validates the
+// HTTP trigger: POST /api/SendOtp, the SAS to External Phone Provider delivery endpoint. Validates the
 // caller, parses the cleartext routing envelope, decrypts the JWE delivery context, dispatches to the
 // provider, and echoes the nonce to prove decryption. Every line is tagged [EPP] so one filter pulls a
 // whole delivery.
@@ -123,13 +123,6 @@ public sealed class SendOtp
 
             correlationId = envelope.CorrelationId ?? headerCorrelationId ?? requestId;
 
-            // Refused, not warned: an expired passcode can no longer authenticate.
-            if (envelope.TtlSeconds is <= 0)
-            {
-                _log.LogError("{Tag} ttlSeconds is {Ttl}; the passcode has expired. Not delivering.", Tag, envelope.TtlSeconds);
-                return new BadRequestObjectResult(new { error = "bad_request", reason = "passcode has expired", correlationId, requestId });
-            }
-
             JweResult decrypted;
             try
             {
@@ -151,7 +144,7 @@ public sealed class SendOtp
 
             if (logPlaintext)
             {
-                // DIAGNOSTICS ONLY — writes the phone number and passcode to the log.
+                // DIAGNOSTICS ONLY: writes the phone number and passcode to the log.
                 Log("phoneNumber", context.PhoneNumber);
                 Log("extension", context.Extension ?? "(none)");
                 Log("locale", context.Locale);
@@ -180,21 +173,12 @@ public sealed class SendOtp
                 CorrelationId: correlationId,
                 Locale: context.Locale);
 
-            // Microsoft allows 3.2 s for the whole call, so the provider is called after the response.
-            var deliveryCorrelationId = correlationId;
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var result = await _engine.DispatchAsync(dispatch, null, evaluation, requestId, _log);
-                    _log.LogInformation("{Tag} provider result   : httpStatus={Status} correlationId={CorrelationId}",
-                        Tag, result.HttpStatus, deliveryCorrelationId);
-                }
-                catch (Exception ex)
-                {
-                    _log.LogError("{Tag} provider delivery failed: {Error}", Tag, ex.Message);
-                }
-            });
+            var providerResult = await _engine.DispatchAsync(dispatch, null, evaluation, requestId, _log);
+            _log.LogInformation("{Tag} provider result   : httpStatus={Status} correlationId={CorrelationId}",
+                Tag, providerResult.HttpStatus, correlationId);
+
+            if (providerResult.HttpStatus != 200)
+                return new ObjectResult(providerResult.Body) { StatusCode = providerResult.HttpStatus };
 
             // Echoing the nonce is the whole contract: a 2xx without it is treated as a failed delivery
             // and Microsoft re-sends over its own telephony, so the user gets the code twice.
@@ -209,7 +193,7 @@ public sealed class SendOtp
             // Verbose on purpose: this endpoint exists to diagnose onboarding.
             _log.LogError("{Tag} FAILED after {Elapsed} ms: {Error}", Tag, (DateTimeOffset.UtcNow - started).TotalMilliseconds, ex.Message);
             _log.LogInformation("{Tag} ======== failed ========", Tag);
-            return new ObjectResult(new { error = "delivery_failed", detail = ex.Message, correlationId }) { StatusCode = 500 };
+            return new ObjectResult(new { error = "delivery_failed", correlationId }) { StatusCode = 500 };
         }
     }
 }

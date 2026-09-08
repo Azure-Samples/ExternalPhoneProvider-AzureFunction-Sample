@@ -17,6 +17,7 @@
     "EPP_PROVIDER_NAME": "<infobip | telesign | sinch | soprano>",
     "EPP_PROVIDER_ENDPOINT": "https://<provider-base-url>",
     "EPP_PROVIDER_ACCOUNT_NAME": "<your sender / source id>",
+    "_comment_provider_timeout": "Outbound provider timeout in milliseconds (default 1500, cap 2500). Not an end-to-end deadline; Key Vault/OAuth are outside it and Python uses connect/read inactivity timeouts. See CONTRACT.md.",
     "EPP_PROVIDER_TIMEOUT_MS": "1500",
 
     "_comment_provider_oauth": "Set EPP_PROVIDER_AUTH_MODE=oauth2 to send the provider an app-only Entra JWT we mint (client-credentials) instead of an API key. Issuer is our app (EPP_PROVIDER_CLIENT_ID), authority is the provider's tenant (EPP_PROVIDER_TENANT_ID), audience is the provider's app via EPP_PROVIDER_SCOPE. Set EPP_PROVIDER_MI_CLIENT_ID for secretless workload-identity federation (a user-assigned managed identity federated on our app), OR provide the client secret as a Key Vault secret name (EPP_PROVIDER_CLIENT_SECRET_NAME).",

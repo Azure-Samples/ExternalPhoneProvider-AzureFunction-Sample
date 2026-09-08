@@ -62,6 +62,30 @@ public class EnvelopeTests
         Assert.Equal("voice", EnvelopeParser.ChannelName(envelope.Channel));
     }
 
+    [Theory]
+    [InlineData("\"0\"")]
+    [InlineData("\"-1\"")]
+    [InlineData("0.5")]
+    [InlineData("true")]
+    public void MalformedTtl_IsError(string ttlJson)
+    {
+        var (envelope, error) = EnvelopeParser.Parse(Payload(
+            $"{{\"type\":\"microsoft.mfa.otpDeliver.v1\",\"channel\":1,\"mode\":1,\"ttlSeconds\":{ttlJson},\"encryptedDeliveryContext\":\"x\"}}"));
+        Assert.Null(envelope);
+        Assert.Contains("positive integer", error);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void ExpiredTtl_IsError(int ttlSeconds)
+    {
+        var (envelope, error) = EnvelopeParser.Parse(Payload(
+            $"{{\"type\":\"microsoft.mfa.otpDeliver.v1\",\"channel\":1,\"mode\":1,\"ttlSeconds\":{ttlSeconds},\"encryptedDeliveryContext\":\"x\"}}"));
+        Assert.Null(envelope);
+        Assert.Contains("expired", error);
+    }
+
     [Fact]
     public void Jwe_RoundTrips_ToDeliveryContext()
     {

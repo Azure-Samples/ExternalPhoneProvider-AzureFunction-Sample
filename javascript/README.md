@@ -60,7 +60,7 @@ Key Vault and can be rotated there without a redeploy.
 | `EPP_PROVIDER_NAME` | your chosen provider: `infobip` \| `telesign` \| `sinch` \| `soprano` |
 | `EPP_PROVIDER_ENDPOINT` | provider base URL (one provider is active per deployment) |
 | `EPP_PROVIDER_ACCOUNT_NAME` | sender / source id presented to the provider |
-| `EPP_PROVIDER_TIMEOUT_MS` | outbound provider-call timeout in ms (default `1500`) |
+| `EPP_PROVIDER_TIMEOUT_MS` | outbound provider-call timeout in ms (default `1500`, capped at `2500`) |
 | `EPP_DECRYPTION_KEY_PEM` | RSA private key PEM for JWE decryption — a **Key Vault reference** in Azure |
 | `EPP_ENCRYPTION_KEY_ID` | expected JOSE `kid`; a mismatch is logged, not fatal |
 | `EPP_EXPECTED_CLIENT_ID` | caller `appid`/`azp` to admit; Easy Auth returns `403`, in-process validation returns `401` |

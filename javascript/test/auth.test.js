@@ -12,12 +12,21 @@ afterEach(() => {
     delete process.env.EPP_EXPECTED_AUDIENCE;
     delete process.env.EPP_TENANT_ID;
     delete process.env.EPP_EXPECTED_CLIENT_ID;
+    delete process.env.WEBSITE_INSTANCE_ID;
+    delete process.env.WEBSITE_HOSTNAME;
 });
 
 test('skips validation when REQUIRE_AUTH is not true', async () => {
     const r = await validateToken(reqWith(), ctx, 'r');
     assert.equal(r.ok, true);
     assert.equal(r.skipped, true);
+});
+
+test('fails closed in Azure when EPP_REQUIRE_AUTH is not true', async () => {
+    process.env.WEBSITE_INSTANCE_ID = 'instance';
+    const r = await validateToken(reqWith(), ctx, 'r');
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /EPP_REQUIRE_AUTH/);
 });
 
 test('fails when EPP_REQUIRE_AUTH=true but audience/tenant are missing', async () => {

@@ -4,8 +4,12 @@
 
 'use strict';
 
-// Delivery pipeline: parse the cleartext SAS envelope, decrypt the JWE that carries the PII, then
-// dispatch to the configured provider. Fail-closed — only a Continue outcome is "accepted".
+// Delivery pipeline for the External Phone Provider sample.
+//
+// Given a request from Microsoft Entra's SAS service, this module parses the cleartext routing
+// envelope, decrypts the JWE that carries the phone number and the rendered passcode message, then
+// hands off to the configured SMS/voice provider adapter (Infobip, Telesign, Sinch, or Soprano).
+// It is fail-closed: only a provider "Continue" outcome returns success; every other case fails.
 
 const crypto = require('crypto');
 const { compactDecrypt } = require('jose');
@@ -14,30 +18,29 @@ const { SecretClient } = require('@azure/keyvault-secrets');
 const { readConfig } = require('./config');
 
 const ENVELOPE_TYPE = 'microsoft.mfa.otpDeliver.v1';
-// CyotChannel: 1=Sms, 2=Voice. CyotDeliveryMode: 1=Live, 2=Evaluation (do NOT deliver).
+// Channel: 1=sms, 2=voice. Mode: 1=live (deliver), 2=evaluation (do not deliver).
 const CHANNEL_BY_CODE = Object.freeze({ 1: 'sms', 2: 'voice' });
 const CHANNEL_BY_NAME = Object.freeze({ sms: 1, voice: 2 });
 const MODE = Object.freeze({ LIVE: 1, EVALUATION: 2 });
 const MODE_BY_NAME = Object.freeze({ live: 1, evaluation: 2 });
+const MAX_PROVIDER_TIMEOUT_MILLISECONDS = 2500;
 
-// channel/mode accept the int enum (1/2) or the string form ("sms"/"voice", "live"/"evaluation").
 function normalizeChannel(channel) {
-    if (CHANNEL_BY_CODE[channel]) return Number(channel);
-    if (typeof channel === 'string' && CHANNEL_BY_NAME[channel.toLowerCase()]) return CHANNEL_BY_NAME[channel.toLowerCase()];
+    if (channel === 1 || channel === 2) return channel;
+    if (typeof channel === 'string' && Object.hasOwn(CHANNEL_BY_NAME, channel.toLowerCase())) return CHANNEL_BY_NAME[channel.toLowerCase()];
     return null;
 }
 function normalizeMode(mode) {
     if (mode === MODE.LIVE || mode === MODE.EVALUATION) return mode;
-    if (typeof mode === 'string' && MODE_BY_NAME[mode.toLowerCase()]) return MODE_BY_NAME[mode.toLowerCase()];
+    if (typeof mode === 'string' && Object.hasOwn(MODE_BY_NAME, mode.toLowerCase())) return MODE_BY_NAME[mode.toLowerCase()];
     return null;
 }
 
 function parseEnvelope(payload) {
-    if (!payload || typeof payload !== 'object') {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         return { error: 'invalid envelope' };
     }
     const { type, tenantId, correlationId, channel, mode, ttlSeconds, encryptedDeliveryContext } = payload;
-    // A version we don't know may reuse these field names with different meanings.
     if (type !== ENVELOPE_TYPE) {
         return { error: `unsupported type '${type}'` };
     }
@@ -52,11 +55,32 @@ function parseEnvelope(payload) {
     if (!modeCode) {
         return { error: `unsupported mode '${mode}'` };
     }
+    if (ttlSeconds !== undefined && !Number.isInteger(ttlSeconds)) {
+        return { error: 'ttlSeconds must be a positive integer' };
+    }
+    if (ttlSeconds !== undefined && ttlSeconds <= 0) {
+        return { error: 'passcode has expired' };
+    }
     return { envelope: { type, tenantId, correlationId, channel: channelCode, mode: modeCode, ttlSeconds, encryptedDeliveryContext } };
 }
 
+function normalizeProviderTimeoutMilliseconds(value) {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0
+        ? Math.min(parsed, MAX_PROVIDER_TIMEOUT_MILLISECONDS)
+        : DEFAULTS.ENDPOINT_TIMEOUT_MILLISECONDS;
+}
 
-// Reject oversized or structurally invalid JWEs before decoding or allocating buffers.
+function isValidProviderEndpoint(value) {
+    try {
+        return new URL(value).protocol === 'https:';
+    } catch {
+        return false;
+    }
+}
+
+
+// Reject oversized or malformed input before allocating buffers to decode it.
 const MAX_JWE_LENGTH = 16384;
 
 function assertWellFormedJwe(compactJwe) {
@@ -77,12 +101,12 @@ function readProtectedHeader(compactJwe) {
     return JSON.parse(Buffer.from(protectedSegment, 'base64url').toString('utf8'));
 }
 
-// Imported once: a per-delivery RSA import would sit inside the response budget.
+// Cache the imported key: re-importing RSA on every delivery would eat the response budget.
 let cachedKey;
 let cachedKeyPem;
 
-// The setup script stores the key as base64 over the PEM so its newlines survive being carried as an
-// app setting, so accept either form.
+// The key may arrive as a PEM or as base64 over the PEM (the setup script uses base64 so newlines
+// survive being stored as an app setting); accept either form.
 function normalizePem(value) {
     const text = String(value || '');
     if (text.includes('-----BEGIN')) return text;
@@ -101,13 +125,11 @@ function loadPrivateKey(pem) {
     return cachedKey;
 }
 
-// Decrypts the JWE compact serialization. Returns the protected header (for kid/alg logging) alongside
-// the CyotDeliveryContext.
+// Pin alg/enc so a tampered header cannot downgrade the encryption.
 async function decryptDeliveryContext(compactJwe, config = readConfig()) {
     assertWellFormedJwe(compactJwe);
     const header = readProtectedHeader(compactJwe);
     const privateKey = loadPrivateKey(config.decryptionKeyPem);
-    // Pin alg/enc so a tampered header can't downgrade the crypto.
     const { plaintext } = await compactDecrypt(compactJwe, privateKey, {
         keyManagementAlgorithms: ['RSA-OAEP-256'],
         contentEncryptionAlgorithms: ['A256GCM'],
@@ -115,12 +137,11 @@ async function decryptDeliveryContext(compactJwe, config = readConfig()) {
     return { header, context: JSON.parse(Buffer.from(plaintext).toString('utf8')) };
 }
 
-// Left alone, TTS reads 641895 as "six hundred forty-one thousand...", which no user can type.
+// Space out the passcode digits so text-to-speech reads "6 4 1 8 9 5" rather than "641,895".
 function spacePasscodeForVoice(message) {
     return String(message || '').replace(/\b\d{4,8}\b/, (digits) => digits.split('').join(' '));
 }
 
-// The message is pre-rendered and already contains the passcode, so there is no separate code field.
 function contextToDispatch(context, envelope, messageId) {
     const channel = CHANNEL_BY_CODE[envelope.channel];
     return {
@@ -164,9 +185,10 @@ const DEFAULTS = Object.freeze({
     CHANNELS: ['sms', 'voice'],
 });
 
-const SECRET_CACHE_TIME_TO_LIVE_MILLISECONDS = 5 * 60 * 1000; // rotated secrets picked up within this window
+// Rotated secrets are picked up within this window.
+const SECRET_CACHE_TIME_TO_LIVE_MILLISECONDS = 5 * 60 * 1000;
 
-// Onboarding a provider is a new file plus one line here — static, so a broken provider fails at load.
+// Add a provider by writing an adapter module and listing it here; a broken adapter fails at load.
 const providerRegistry = new Map(
     [
         require('./providers/infobip'),
@@ -183,16 +205,15 @@ function getProvider(providerId) {
     return providerId ? providerRegistry.get(String(providerId).toLowerCase()) || null : null;
 }
 
-// One provider is active per deployment; the argument is a test override.
 function resolveProvider(requestProvider) {
     return getProvider(requestProvider || process.env.EPP_PROVIDER_NAME);
 }
 
-// The manifest carries only the secret's name; the value is read just-in-time and never logged.
+// Secrets are resolved from Key Vault by name, cached briefly, and never logged.
 let keyVaultSecretClient = null;
 const secretCache = new Map();
 
-// The identity needs the Key Vault Secrets User role on the vault.
+// The function's managed identity needs the Key Vault Secrets User role on the vault.
 function getKeyVaultSecretClient() {
     if (!keyVaultSecretClient) {
         const credential = process.env.AZURE_CLIENT_ID
@@ -221,21 +242,19 @@ async function resolveSecretValue(keyVaultSecretName) {
     return secretValue;
 }
 
-// oauth2 provider auth: we mint our own app-only Entra JWT (client-credentials) for the provider's
-// API and send it as a Bearer token. Issuer is our app; audience is the provider's app (the scope).
-// This is never the caller's inbound token.
+// Provider auth in oauth2 mode: mint our own app-only Entra JWT (client-credentials) for the
+// provider's API and send it as a Bearer token, never the caller's inbound token. Issuer is our app,
+// audience is the provider's app (the scope).
 const OAUTH_TOKEN_EXPIRY_SKEW_MILLISECONDS = 5 * 60 * 1000;
 const DEFAULT_TOKEN_EXCHANGE_AUDIENCE = 'api://AzureADTokenExchange';
-let cachedProviderToken = null; // { value, expiresAt, cacheKey }
+let cachedProviderToken = null;
 
-// The manifest default can be forced to oauth2 for a deployment via EPP_PROVIDER_AUTH_MODE.
 function oauthModeEnabled(authConfiguration) {
     const mode = (process.env.EPP_PROVIDER_AUTH_MODE || authConfiguration.mode || 'apiKey').toLowerCase();
     return mode === 'oauth2';
 }
 
-// A managed-identity federated credential (workload identity federation) keeps the cross-tenant call
-// secretless; presence of EPP_PROVIDER_MI_CLIENT_ID selects it. Returns null to fall back to a secret.
+// EPP_PROVIDER_MI_CLIENT_ID selects secretless workload-identity federation; else fall back to a secret.
 function buildFederatedCredential(tenantId, clientId) {
     const managedIdentityClientId = process.env.EPP_PROVIDER_MI_CLIENT_ID;
     if (!managedIdentityClientId) {
@@ -286,11 +305,9 @@ async function acquireProviderTokenFromEntra() {
     return cachedProviderToken.value;
 }
 
-async function resolveProviderCredential(authConfiguration = {}, acquireProviderToken) {
+async function resolveProviderCredential(authConfiguration = {}) {
     if (oauthModeEnabled(authConfiguration)) {
-        // acquireProviderToken is a test seam; production mints the token from Entra.
-        const acquire = typeof acquireProviderToken === 'function' ? acquireProviderToken : acquireProviderTokenFromEntra;
-        const bearerToken = await acquire();
+        const bearerToken = await acquireProviderTokenFromEntra();
         return { mode: 'oauth2', token: bearerToken };
     }
 
@@ -303,12 +320,14 @@ async function resolveProviderCredential(authConfiguration = {}, acquireProvider
     return { mode: 'apiKey', secret, identity };
 }
 
-// A recognized status wins; an unknown status is fail-closed; only a status-less response trusts HTTP.
+// An HTTP failure must never become acceptance based on a success-looking body.
 function resolveOutcome(manifest, parsedResponse) {
     const responseMapping = manifest.responseMapping || {};
     const providerStatusKey = parsedResponse.providerStatusName || parsedResponse.providerStatusCode;
     if (providerStatusKey) {
-        return responseMapping[providerStatusKey] || responseMapping.default || OUTCOME.FAIL;
+        const outcome = Object.hasOwn(responseMapping, providerStatusKey)
+            ? responseMapping[providerStatusKey] : (responseMapping.default || OUTCOME.FAIL);
+        return outcome === OUTCOME.CONTINUE && !parsedResponse.success ? OUTCOME.FAIL : outcome;
     }
     return parsedResponse.success ? OUTCOME.CONTINUE : (responseMapping.default || OUTCOME.FAIL);
 }
@@ -341,12 +360,14 @@ async function fetchWithTimeout(providerRequest, timeoutMilliseconds) {
     }, timeoutMilliseconds);
 
     try {
-        return await fetch(providerRequest.url, {
+        const response = await fetch(providerRequest.url, {
             method: providerRequest.method || 'POST',
             headers: providerRequest.headers,
             body: providerRequest.body,
             signal: abortController.signal,
         });
+        const responseText = await response.text();
+        return { response, responseText };
     } catch (error) {
         throw new Error(timedOut ? `endpoint timeout after ${timeoutMilliseconds}ms` : error.message);
     } finally {
@@ -372,10 +393,17 @@ async function sendViaProvider(providerEntry, dispatch, options) {
         return { httpStatus: HTTP_STATUS.BAD_REQUEST, body: errorBody(providerId, `channel '${channel}' not supported`, requestId) };
     }
 
-    // Fail closed (502) if the credential is missing — this is our credential, not the caller's token.
+    if (shutter) {
+        writeLog(`[SHUTTER] requestId=${requestId} provider=${providerId} channel=${channel} processed but NOT sending`);
+        return {
+            httpStatus: HTTP_STATUS.OK,
+            body: { status: RESPONSE_STATUS.ACCEPTED, shutterProcessed: true, provider: providerId, channel, correlationId: dispatch.correlationId, messageId: dispatch.messageId, requestId },
+        };
+    }
+
     let credential = null;
     try {
-        credential = await resolveProviderCredential(manifest.auth, options.acquireProviderToken);
+        credential = await resolveProviderCredential(manifest.auth);
     } catch (error) {
         writeLog(`[DISPATCH_ERROR] requestId=${requestId} provider=${providerId} channel=${channel} credential error=${error.message}`);
     }
@@ -390,9 +418,9 @@ async function sendViaProvider(providerEntry, dispatch, options) {
     }
 
     const endpointBaseUrl = process.env.EPP_PROVIDER_ENDPOINT;
-    if (!endpointBaseUrl) {
+    if (!isValidProviderEndpoint(endpointBaseUrl)) {
         writeLog(`[DISPATCH_ERROR] requestId=${requestId} provider=${providerId} channel=${channel} endpoint not configured`);
-        return { httpStatus: HTTP_STATUS.BAD_GATEWAY, body: failBody(providerId, channel, 'provider endpoint not configured', dispatch, requestId) };
+        return { httpStatus: HTTP_STATUS.BAD_GATEWAY, body: failBody(providerId, channel, 'provider endpoint must be an absolute HTTPS URL', dispatch, requestId) };
     }
 
     const providerRequest = adapter.buildRequest({
@@ -402,34 +430,30 @@ async function sendViaProvider(providerEntry, dispatch, options) {
         credential,
         env: process.env,
     });
+    if (!isValidProviderEndpoint(providerRequest.url)) {
+        writeLog(`[DISPATCH_ERROR] requestId=${requestId} provider=${providerId} channel=${channel} request URL is not HTTPS`);
+        return { httpStatus: HTTP_STATUS.BAD_GATEWAY, body: failBody(providerId, channel, 'provider request URL must be absolute HTTPS', dispatch, requestId) };
+    }
 
     writeLog(`[DISPATCH] requestId=${requestId} provider=${providerId} channel=${channel} correlationId=${dispatch.correlationId} shutter=${!!shutter}`);
 
-    if (shutter) {
-        writeLog(`[SHUTTER] requestId=${requestId} provider=${providerId} channel=${channel} processed but NOT sending`);
-        return {
-            httpStatus: HTTP_STATUS.OK,
-            body: { status: RESPONSE_STATUS.ACCEPTED, shutterProcessed: true, provider: providerId, channel, correlationId: dispatch.correlationId, messageId: dispatch.messageId, requestId },
-        };
-    }
-
-    const timeoutMilliseconds = Number(process.env.EPP_PROVIDER_TIMEOUT_MS) || DEFAULTS.ENDPOINT_TIMEOUT_MILLISECONDS;
-    let providerResponse;
+    const timeoutMilliseconds = normalizeProviderTimeoutMilliseconds(process.env.EPP_PROVIDER_TIMEOUT_MS);
+    let providerResult;
     try {
-        providerResponse = await fetchWithTimeout(providerRequest, timeoutMilliseconds);
+        providerResult = await fetchWithTimeout(providerRequest, timeoutMilliseconds);
     } catch (error) {
         const isTimeout = typeof error.message === 'string' && error.message.startsWith('endpoint timeout');
         const httpStatus = isTimeout ? HTTP_STATUS.GATEWAY_TIMEOUT : HTTP_STATUS.BAD_GATEWAY;
         writeLog(`[${isTimeout ? 'DISPATCH_TIMEOUT' : 'DISPATCH_ERROR'}] requestId=${requestId} provider=${providerId} channel=${channel} reason=${error.message}`);
-        return { httpStatus, body: failBody(providerId, channel, error.message, dispatch, requestId) };
+        const reason = isTimeout ? `endpoint timeout after ${timeoutMilliseconds}ms` : 'provider request failed';
+        return { httpStatus, body: failBody(providerId, channel, reason, dispatch, requestId) };
     }
 
-    const responseText = await providerResponse.text();
+    const { response: providerResponse, responseText } = providerResult;
     let responseJson;
     try {
         responseJson = JSON.parse(responseText);
     } catch {
-        // Keep a non-JSON body raw so the adapter's parseResponse still runs.
         responseJson = { raw: responseText };
     }
 
@@ -484,4 +508,6 @@ module.exports = {
     getProvider,
     resolveOutcome,
     outcomeToHttpStatus,
+    isValidProviderEndpoint,
+    normalizeProviderTimeoutMilliseconds,
 };

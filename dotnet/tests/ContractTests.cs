@@ -27,10 +27,23 @@ public class ContractTests
         Assert.Equal(allowed, TokenValidator.IsExpectedCaller(callerAppId, expected));
 
     [Fact]
-    public void TokenValidationIsSkippedUnlessRequireAuthIsTrue()
+    public async Task TokenValidationIsSkippedUnlessRequireAuthIsTrue()
     {
         var env = new FakeEnv { ["EPP_REQUIRE_AUTH"] = "false" };
-        Assert.True(new TokenValidator(env).ValidateAsync("Bearer whatever").Result.Ok);
+        Assert.True((await new TokenValidator(env).ValidateAsync("Bearer whatever")).Ok);
+    }
+
+    [Fact]
+    public async Task TokenValidationFailsClosedInAzureUnlessRequireAuthIsTrue()
+    {
+        var env = new FakeEnv
+        {
+            ["EPP_REQUIRE_AUTH"] = "false",
+            ["WEBSITE_INSTANCE_ID"] = "instance",
+        };
+        var result = await new TokenValidator(env).ValidateAsync(null);
+        Assert.False(result.Ok);
+        Assert.Contains("EPP_REQUIRE_AUTH", result.Reason);
     }
 
     [Fact]

@@ -10,7 +10,8 @@ public static class OutcomeMapper
         var key = parsed.ProviderStatusName ?? parsed.ProviderStatusCode;
         if (!string.IsNullOrEmpty(key))
         {
-            if (manifest.ResponseMapping.TryGetValue(key, out var mapped)) return mapped;
+            if (manifest.ResponseMapping.TryGetValue(key, out var mapped))
+                return mapped == Outcome.Continue && !parsed.Success ? Outcome.Fail : mapped;
             return manifest.ResponseMapping.TryGetValue("default", out var defaultOutcome) ? defaultOutcome : Outcome.Fail;
         }
         if (parsed.Success) return Outcome.Continue;

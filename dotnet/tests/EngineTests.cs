@@ -87,6 +87,16 @@ public class EngineTests
     private static HttpResponseMessage Json(HttpStatusCode status, string body) =>
         new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
+    [Theory]
+    [InlineData(null, 1500)]
+    [InlineData("invalid", 1500)]
+    [InlineData("0", 1500)]
+    [InlineData("-1", 1500)]
+    [InlineData("2000", 2000)]
+    [InlineData("999999", 2500)]
+    public void ProviderTimeout_IsDefaultedAndCapped(string? value, int expected) =>
+        Assert.Equal(expected, DispatchEngine.NormalizeProviderTimeoutMs(value));
+
     [Fact]
     public async Task UnknownProvider_400()
     {
@@ -108,11 +118,39 @@ public class EngineTests
         Assert.Equal(502, result.HttpStatus);
     }
 
+    [Theory]
+    [InlineData("http://api.example.com")]
+    [InlineData("not-a-url")]
+    public async Task InsecureOrMalformedEndpoint_502(string endpoint)
+    {
+        var env = new FakeEnv { ["EPP_PROVIDER_ENDPOINT"] = endpoint };
+        var result = await Engine(Json(HttpStatusCode.OK, "{}"), env: env)
+            .DispatchAsync(Disp(), "infobip", false, "r", new CapturingLogger());
+        Assert.Equal(502, result.HttpStatus);
+    }
+
+    [Fact]
+    public async Task AlternateProviderRequestUrl_MustAlsoBeHttps()
+    {
+        var handler = new StubHandler(_ => throw new Exception("insecure URL must not be called"));
+        var env = new FakeEnv
+        {
+            ["EPP_PROVIDER_ENDPOINT"] = "https://sms.api.sinch.com",
+            ["SINCH_VOICE_ENDPOINT"] = "http://localhost:8080",
+        };
+        var result = await Engine(handler: handler, env: env,
+            secrets: new Dictionary<string, string> { ["sinch-api-token"] = "st" })
+            .DispatchAsync(Disp(channel: "voice"), "sinch", false, "r", new CapturingLogger());
+        Assert.Equal(502, result.HttpStatus);
+        Assert.Null(handler.LastBody);
+    }
+
     [Fact]
     public async Task Shutter_DoesNotSend_200()
     {
         var handler = new StubHandler(_ => throw new Exception("should not send"));
-        var result = await Engine(handler: handler).DispatchAsync(Disp(), "infobip", true, "r", new CapturingLogger());
+        var result = await Engine(handler: handler, secrets: new Dictionary<string, string>(), env: new FakeEnv())
+            .DispatchAsync(Disp(), "infobip", true, "r", new CapturingLogger());
         Assert.Equal(200, result.HttpStatus);
         Assert.Null(handler.LastBody);
     }
@@ -152,6 +190,9 @@ public class EngineTests
     {
         var result = await Engine(throwOnSend: new HttpRequestException("dns")).DispatchAsync(Disp(), "infobip", false, "r", new CapturingLogger());
         Assert.Equal(502, result.HttpStatus);
+        var body = System.Text.Json.JsonSerializer.Serialize(result.Body);
+        Assert.Contains("provider request failed", body);
+        Assert.DoesNotContain("dns", body);
     }
 
     [Fact]

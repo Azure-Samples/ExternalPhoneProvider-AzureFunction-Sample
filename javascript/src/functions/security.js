@@ -27,7 +27,12 @@ function isExpectedCaller(payload, expectedClientId) {
 }
 
 async function validateToken(request, context, requestId) {
-    if (String(process.env.EPP_REQUIRE_AUTH || 'false').toLowerCase() !== 'true') {
+    const requireAuth = String(process.env.EPP_REQUIRE_AUTH || 'false').toLowerCase() === 'true';
+    const runningInAzure = !!(process.env.WEBSITE_INSTANCE_ID || process.env.WEBSITE_HOSTNAME);
+    if (!requireAuth && runningInAzure) {
+        return { ok: false, reason: 'EPP_REQUIRE_AUTH must be true in Azure' };
+    }
+    if (!requireAuth) {
         return { ok: true, skipped: true };
     }
 

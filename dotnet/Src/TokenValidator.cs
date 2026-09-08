@@ -6,7 +6,7 @@ using System.IdentityModel.Tokens.Jwt;
 namespace Epp.Otp;
 
 // Validates the Entra JWT when EPP_REQUIRE_AUTH=true (aud/issuer/JWKS, RS256). No-op pass-through
-// otherwise — Easy Auth is the primary gate; this is the backstop.
+// otherwise. Easy Auth is the primary gate; this is the backstop.
 public sealed class TokenValidator
 {
     private readonly JwtSecurityTokenHandler _handler = new();
@@ -24,7 +24,12 @@ public sealed class TokenValidator
 
     public async Task<Result> ValidateAsync(string? authorizationHeader)
     {
-        if (!string.Equals(_env.Get("EPP_REQUIRE_AUTH"), "true", StringComparison.OrdinalIgnoreCase))
+        var requireAuth = string.Equals(_env.Get("EPP_REQUIRE_AUTH"), "true", StringComparison.OrdinalIgnoreCase);
+        var runningInAzure = !string.IsNullOrEmpty(_env.Get("WEBSITE_INSTANCE_ID"))
+            || !string.IsNullOrEmpty(_env.Get("WEBSITE_HOSTNAME"));
+        if (!requireAuth && runningInAzure)
+            return new Result(false, "EPP_REQUIRE_AUTH must be true in Azure");
+        if (!requireAuth)
             return new Result(true);
 
         var audience = _env.Get("EPP_EXPECTED_AUDIENCE");

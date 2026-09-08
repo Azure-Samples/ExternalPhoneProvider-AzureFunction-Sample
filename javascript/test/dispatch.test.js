@@ -21,8 +21,16 @@ const providerSecrets = {
 };
 const { SecretClient } = require('@azure/keyvault-secrets');
 mock.method(SecretClient.prototype, 'getSecret', async (name) => ({ value: providerSecrets[name] }));
+const { ClientSecretCredential } = require('@azure/identity');
 
-const { dispatchOtp, getProvider, resolveOutcome, outcomeToHttpStatus } = require('../src/functions/dispatch');
+const {
+    dispatchOtp,
+    getProvider,
+    isValidProviderEndpoint,
+    normalizeProviderTimeoutMilliseconds,
+    outcomeToHttpStatus,
+    resolveOutcome,
+} = require('../src/functions/dispatch');
 
 let resp;
 let sent;
@@ -108,6 +116,38 @@ test('outcome mapping and HTTP status', () => {
     assert.equal(outcomeToHttpStatus('Fail', 500), 502);
 });
 
+test('provider timeout is defaulted and capped within the caller budget', () => {
+    assert.equal(normalizeProviderTimeoutMilliseconds(undefined), 1500);
+    assert.equal(normalizeProviderTimeoutMilliseconds('invalid'), 1500);
+    assert.equal(normalizeProviderTimeoutMilliseconds('0'), 1500);
+    assert.equal(normalizeProviderTimeoutMilliseconds('-1'), 1500);
+    assert.equal(normalizeProviderTimeoutMilliseconds('2000'), 2000);
+    assert.equal(normalizeProviderTimeoutMilliseconds('999999'), 2500);
+});
+
+test('provider endpoint must be absolute HTTPS', () => {
+    assert.equal(isValidProviderEndpoint('https://api.example.com'), true);
+    assert.equal(isValidProviderEndpoint('http://api.example.com'), false);
+    assert.equal(isValidProviderEndpoint('not-a-url'), false);
+});
+
+test('alternate provider request URL must also be HTTPS', async () => {
+    const originalVoiceEndpoint = process.env.SINCH_VOICE_ENDPOINT;
+    process.env.SINCH_VOICE_ENDPOINT = 'http://localhost:8080';
+    sent = undefined;
+    try {
+        const r = await dispatchOtp(disp({ channel: 'voice' }), {
+            requestProvider: 'sinch', context: ctx, requestId: 'r',
+        });
+        assert.equal(r.httpStatus, 502);
+        assert.match(r.body.reason, /HTTPS/);
+        assert.equal(sent, undefined);
+    } finally {
+        if (originalVoiceEndpoint === undefined) delete process.env.SINCH_VOICE_ENDPOINT;
+        else process.env.SINCH_VOICE_ENDPOINT = originalVoiceEndpoint;
+    }
+});
+
 test('endpoint timeout maps to 504', async () => {
     resp = 'TIMEOUT';
     const r = await dispatchOtp(disp(), { requestProvider: 'infobip', context: ctx, requestId: 'r' });
@@ -115,11 +155,35 @@ test('endpoint timeout maps to 504', async () => {
     assert.equal(r.body.outcome, 'Fail');
 });
 
+test('endpoint timeout includes response body reading', async () => {
+    const originalFetch = global.fetch;
+    const originalTimeout = process.env.EPP_PROVIDER_TIMEOUT_MS;
+    process.env.EPP_PROVIDER_TIMEOUT_MS = '10';
+    global.fetch = async (url, opts) => ({
+        ok: true,
+        status: 200,
+        text: () => new Promise((resolve, reject) => {
+            opts.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        }),
+    });
+    try {
+        const r = await dispatchOtp(disp(), { requestProvider: 'infobip', context: ctx, requestId: 'r' });
+        assert.equal(r.httpStatus, 504);
+        assert.match(r.body.reason, /timeout/);
+    } finally {
+        global.fetch = originalFetch;
+        if (originalTimeout === undefined) delete process.env.EPP_PROVIDER_TIMEOUT_MS;
+        else process.env.EPP_PROVIDER_TIMEOUT_MS = originalTimeout;
+    }
+});
+
 test('network error (non-timeout) maps to 502', async () => {
     resp = 'THROW';
     const r = await dispatchOtp(disp(), { requestProvider: 'infobip', context: ctx, requestId: 'r' });
     assert.equal(r.httpStatus, 502);
     assert.equal(r.body.outcome, 'Fail');
+    assert.equal(r.body.reason, 'provider request failed');
+    assert.ok(!JSON.stringify(r.body).includes('neterr'));
 });
 
 test('unknown provider status fails closed even on HTTP 200 (§15)', async () => {
@@ -165,7 +229,12 @@ test('apiKey mode fails closed when the secret is missing (502)', async () => {
 test('shutter returns 200 without sending', async () => {
     let calls = 0;
     const orig = global.fetch;
+    const savedEndpoint = process.env.EPP_PROVIDER_ENDPOINT;
     global.fetch = async (...a) => { calls++; return orig(...a); };
+    delete process.env.EPP_PROVIDER_ENDPOINT;
+    const manifest = getProvider('infobip').manifest;
+    const savedAuth = manifest.auth;
+    manifest.auth = { mode: 'apiKey', keyVaultSecretName: '__missing_secret__' };
     try {
         const r = await dispatchOtp(disp(), { requestProvider: 'infobip', shutter: true, context: ctx, requestId: 'r' });
         assert.equal(r.httpStatus, 200);
@@ -173,6 +242,8 @@ test('shutter returns 200 without sending', async () => {
         assert.equal(calls, 0);
     } finally {
         global.fetch = orig;
+        manifest.auth = savedAuth;
+        process.env.EPP_PROVIDER_ENDPOINT = savedEndpoint;
     }
 });
 
@@ -181,30 +252,51 @@ test('unknown provider is rejected (400)', async () => {
     assert.equal(r.httpStatus, 400);
 });
 
-test('oauth2 mode uses a Bearer token and fails closed without one', async () => {
+test('oauth2 mode uses a minted Bearer token and fails closed without one', async (t) => {
     const manifest = getProvider('sinch').manifest;
     const saved = JSON.parse(JSON.stringify(manifest.auth));
     manifest.auth.mode = 'oauth2';
+    process.env.EPP_PROVIDER_TENANT_ID = 'tenant-a';
+    process.env.EPP_PROVIDER_CLIENT_ID = 'client-a';
+    process.env.EPP_PROVIDER_SCOPE = 'api://provider-a/.default';
+    process.env.EPP_PROVIDER_CLIENT_SECRET = 'secret';
+    t.mock.method(ClientSecretCredential.prototype, 'getToken', async () => ({ token: 'TKN', expiresOnTimestamp: Date.now() + 3600000 }));
     try {
-        await dispatchOtp(disp(), { requestProvider: 'sinch', context: ctx, requestId: 'r', acquireProviderToken: async () => 'TKN' });
+        await dispatchOtp(disp(), { requestProvider: 'sinch', context: ctx, requestId: 'r' });
         assert.equal(sent.opts.headers.Authorization, 'Bearer TKN');
 
+        delete process.env.EPP_PROVIDER_TENANT_ID;
+        delete process.env.EPP_PROVIDER_CLIENT_ID;
+        delete process.env.EPP_PROVIDER_SCOPE;
+        delete process.env.EPP_PROVIDER_CLIENT_SECRET;
         const noToken = await dispatchOtp(disp(), { requestProvider: 'sinch', context: ctx, requestId: 'r' });
-        assert.equal(noToken.httpStatus, 502); // credential unavailable → 502, not 401
+        assert.equal(noToken.httpStatus, 502);
     } finally {
         manifest.auth = saved;
+        delete process.env.EPP_PROVIDER_TENANT_ID;
+        delete process.env.EPP_PROVIDER_CLIENT_ID;
+        delete process.env.EPP_PROVIDER_SCOPE;
+        delete process.env.EPP_PROVIDER_CLIENT_SECRET;
     }
 });
 
-test('EPP_PROVIDER_AUTH_MODE=oauth2 forces a minted JWT over the apiKey manifest default', async () => {
+test('EPP_PROVIDER_AUTH_MODE=oauth2 forces a minted JWT over the apiKey manifest default', async (t) => {
     process.env.EPP_PROVIDER_AUTH_MODE = 'oauth2';
+    process.env.EPP_PROVIDER_TENANT_ID = 'tenant-b';
+    process.env.EPP_PROVIDER_CLIENT_ID = 'client-b';
+    process.env.EPP_PROVIDER_SCOPE = 'api://provider-b/.default';
+    process.env.EPP_PROVIDER_CLIENT_SECRET = 'secret';
+    t.mock.method(ClientSecretCredential.prototype, 'getToken', async () => ({ token: 'JWT', expiresOnTimestamp: Date.now() + 3600000 }));
     try {
-        // soprano's manifest default is apiKey, but the app-setting override wins.
-        await dispatchOtp(disp(), { requestProvider: 'soprano', context: ctx, requestId: 'r', acquireProviderToken: async () => 'JWT' });
+        await dispatchOtp(disp(), { requestProvider: 'soprano', context: ctx, requestId: 'r' });
         assert.equal(sent.opts.headers.Authorization, 'Bearer JWT');
         assert.equal(sent.opts.headers['X-MEMS-API-Key'], undefined, 'api-key headers must not be sent in oauth2 mode');
     } finally {
         delete process.env.EPP_PROVIDER_AUTH_MODE;
+        delete process.env.EPP_PROVIDER_TENANT_ID;
+        delete process.env.EPP_PROVIDER_CLIENT_ID;
+        delete process.env.EPP_PROVIDER_SCOPE;
+        delete process.env.EPP_PROVIDER_CLIENT_SECRET;
     }
 });
 

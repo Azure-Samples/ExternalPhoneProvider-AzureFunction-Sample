@@ -3,9 +3,9 @@ using Azure.Identity;
 
 namespace Epp.Otp;
 
-// oauth2 provider auth: mint our own app-only Entra JWT (client-credentials) for the provider's API
-// and send it as a Bearer token. Issuer is our app; audience is the provider's app (the scope). Never
-// the caller's inbound token. Injectable so tests don't reach Entra.
+// Provider auth in oauth2 mode: mint our own app-only Entra JWT (client-credentials) for the
+// provider's API and send it as a Bearer token, never the caller's inbound token. Issuer is our app,
+// audience is the provider's app (the scope). Injectable so tests do not reach Entra.
 public interface IProviderTokenAcquirer
 {
     Task<string> AcquireAsync(CancellationToken cancellationToken = default);

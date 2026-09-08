@@ -1,5 +1,5 @@
 """Validates the Entra JWT when EPP_REQUIRE_AUTH=true (aud/issuer/JWKS, RS256).
-No-op pass-through otherwise — Easy Auth is the primary gate; this is the backstop."""
+No-op pass-through otherwise. Easy Auth is the primary gate; this is the backstop."""
 import os
 
 import jwt
@@ -18,7 +18,11 @@ def _jwks_client(tenant_id):
 
 def validate_token(authorization_header):
     """Returns (ok, reason, caller_object_id)."""
-    if (os.environ.get("EPP_REQUIRE_AUTH") or "").lower() != "true":
+    require_auth = (os.environ.get("EPP_REQUIRE_AUTH") or "").lower() == "true"
+    running_in_azure = bool(os.environ.get("WEBSITE_INSTANCE_ID") or os.environ.get("WEBSITE_HOSTNAME"))
+    if not require_auth and running_in_azure:
+        return False, "EPP_REQUIRE_AUTH must be true in Azure", None
+    if not require_auth:
         return True, None, None
 
     audience = os.environ.get("EPP_EXPECTED_AUDIENCE")

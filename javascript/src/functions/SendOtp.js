@@ -4,7 +4,7 @@
 
 'use strict';
 
-// POST /api/SendOtp — the SAS → External Phone Provider delivery endpoint. Validates the caller, parses
+// POST /api/SendOtp, the SAS to External Phone Provider delivery endpoint. Validates the caller, parses
 // the cleartext routing envelope, decrypts the JWE delivery context, dispatches to the provider, and
 // echoes the nonce to prove decryption. Every line is tagged [EPP] so one filter pulls a whole delivery.
 
@@ -36,22 +36,6 @@ function readCallerAppId(request) {
 }
 
 const pad = (label) => label.padEnd(18, ' ');
-
-// The handler deliberately does not await the provider, so tests need a handle on the send it started.
-let pendingDelivery = Promise.resolve();
-const whenDelivered = () => pendingDelivery;
-
-// Microsoft allows 3.2 s for the whole call, so the provider is called after the response.
-function deliverInBackground(dispatch, evaluation, context, requestId) {
-    pendingDelivery = dispatchOtp(dispatch, { shutter: evaluation, context, requestId })
-        .then(({ httpStatus, body }) => {
-            context.log(`${TAG} provider result   : httpStatus=${httpStatus} outcome=${body.outcome || 'n/a'} providerStatus=${body.providerStatus || 'n/a'} providerMessageId=${body.providerMessageId || 'n/a'}`);
-        })
-        .catch((deliveryError) => {
-            (context.error || context.log).call(context, `${TAG} provider delivery failed: ${deliveryError.message}`);
-        });
-    return pendingDelivery;
-}
 
 app.http('SendOtp', {
     methods: ['POST'],
@@ -117,12 +101,6 @@ app.http('SendOtp', {
 
             const correlationId = envelope.correlationId || headerCorrelationId || requestId;
 
-            // Refused, not warned: an expired passcode can no longer authenticate.
-            if (typeof envelope.ttlSeconds === 'number' && envelope.ttlSeconds <= 0) {
-                error(`ttlSeconds is ${envelope.ttlSeconds}; the passcode has expired. Not delivering.`);
-                return { status: 400, jsonBody: { error: 'bad_request', reason: 'passcode has expired', correlationId, requestId } };
-            }
-
             let header;
             let delivery;
             try {
@@ -140,7 +118,7 @@ app.http('SendOtp', {
             log('nonce', delivery.nonce);
 
             if (config.logPlaintext) {
-                // DIAGNOSTICS ONLY — writes the phone number and passcode to the log.
+                // DIAGNOSTICS ONLY: writes the phone number and passcode to the log.
                 log('phoneNumber', delivery.phoneNumber);
                 log('extension', delivery.extension || '(none)');
                 log('locale', delivery.locale);
@@ -158,7 +136,16 @@ app.http('SendOtp', {
             const evaluation = envelope.mode === MODE.EVALUATION;
             const dispatch = contextToDispatch(delivery, envelope, clientRequestId);
 
-            deliverInBackground(dispatch, evaluation, context, requestId);
+            const providerResult = await dispatchOtp(dispatch, {
+                shutter: evaluation,
+                context,
+                requestId,
+            });
+            context.log(`${TAG} provider result   : httpStatus=${providerResult.httpStatus} outcome=${providerResult.body.outcome || 'n/a'} providerStatus=${providerResult.body.providerStatus || 'n/a'} providerMessageId=${providerResult.body.providerMessageId || 'n/a'}`);
+
+            if (providerResult.httpStatus !== 200) {
+                return { status: providerResult.httpStatus, jsonBody: providerResult.body };
+            }
 
             // Echoing the nonce is the whole contract: a 2xx without it is treated as a failed delivery
             // and Microsoft re-sends over its own telephony, so the user gets the code twice.
@@ -180,12 +167,9 @@ app.http('SendOtp', {
                 status: 500,
                 jsonBody: {
                     error: 'delivery_failed',
-                    detail: unhandled.message,
                     correlationId: envelope && envelope.correlationId,
                 },
             };
         }
     },
 });
-
-module.exports = { whenDelivered };

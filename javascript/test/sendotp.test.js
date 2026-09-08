@@ -1,9 +1,8 @@
 'use strict';
 
-// Tests for the SendOtp HTTP handler — the SAS → EPP envelope: validation, JWE decryption round-trip,
-// the happy path (nonce echo), Evaluation mode, and auth rejection. Handlers are captured by stubbing
-// @azure/functions; the JWE is encrypted here with a throwaway RSA key that the handler decrypts via
-// EPP_DECRYPTION_KEY_PEM.
+// Tests for the SendOtp HTTP handler: envelope validation, JWE decryption round-trip, the happy path
+// (nonce echo), Evaluation mode, and auth rejection. Handlers are captured by stubbing @azure/functions;
+// the JWE is encrypted here with a throwaway RSA key that the handler decrypts via EPP_DECRYPTION_KEY_PEM.
 
 const { test, mock } = require('node:test');
 const assert = require('node:assert');
@@ -32,9 +31,6 @@ Module._load = function (request, parent, isMain) {
 };
 require('../src/functions/SendOtp');
 Module._load = originalLoad;
-
-// The handler answers before the provider call finishes, so tests await the send it kicked off.
-const { whenDelivered } = require('../src/functions/SendOtp');
 
 const ctx = { log() {} };
 
@@ -128,16 +124,24 @@ test('SendOtp: Live with ttlSeconds <= 0 is refused and nothing is sent', async 
     const expiredCtx = { log: (m) => lines.push(String(m)), warn: (m) => lines.push(String(m)), error: (m) => lines.push(String(m)) };
     sent = undefined;
     const r = await handlers.SendOtp(makeReq(await makeEnvelope({ ttlSeconds: 0 })), expiredCtx);
-    await whenDelivered();
     assert.equal(r.status, 400);
     assert.match(r.jsonBody.reason, /expired/);
     assert.equal(sent, undefined, 'an expired passcode must not reach the provider');
 });
 
+for (const ttlSeconds of ['0', '-1', 0.5, true]) {
+    test(`SendOtp: malformed ttlSeconds ${JSON.stringify(ttlSeconds)} is refused`, async () => {
+        sent = undefined;
+        const r = await handlers.SendOtp(makeReq(await makeEnvelope({ ttlSeconds })), ctx);
+        assert.equal(r.status, 400);
+        assert.match(r.jsonBody.reason, /positive integer/);
+        assert.equal(sent, undefined);
+    });
+}
+
 test('SendOtp: valid Live envelope -> 200 accepted, nonce echoed, sent over https', async () => {
     sent = undefined;
     const r = await handlers.SendOtp(makeReq(await makeEnvelope()), ctx);
-    await whenDelivered();
     assert.equal(r.status, 200);
     assert.equal(r.jsonBody.providerStatus, 'accepted');
     assert.equal(r.jsonBody.nonce, 'nonce-abc');
@@ -151,10 +155,26 @@ test('SendOtp: Evaluation mode -> 200 nonce echoed, nothing sent', async () => {
     global.fetch = async (...a) => { calls++; return original(...a); };
     try {
         const r = await handlers.SendOtp(makeReq(await makeEnvelope({ mode: 2 })), ctx);
-        await whenDelivered();
         assert.equal(r.status, 200);
         assert.equal(r.jsonBody.nonce, 'nonce-abc');
         assert.equal(calls, 0);
+    } finally {
+        global.fetch = original;
+    }
+});
+
+test('SendOtp: provider authentication failure is returned for SAS fallback', async () => {
+    const original = global.fetch;
+    global.fetch = async () => ({
+        ok: false,
+        status: 401,
+        text: async () => JSON.stringify({ status: { groupName: 'REJECTED' } }),
+    });
+    try {
+        const r = await handlers.SendOtp(makeReq(await makeEnvelope()), ctx);
+        assert.equal(r.status, 401);
+        assert.equal(r.jsonBody.status, 'failed');
+        assert.equal(r.jsonBody.outcome, 'Fail');
     } finally {
         global.fetch = original;
     }

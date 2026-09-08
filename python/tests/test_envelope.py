@@ -1,6 +1,7 @@
 """Envelope validation + JWE decryption round-trip (see docs/CONTRACT.md §1, §6)."""
 import json
 
+import pytest
 from jwcrypto import jwe, jwk
 
 from src.dispatch import (
@@ -67,6 +68,26 @@ def test_valid_envelope_parses():
     assert error is None
     assert envelope["channel"] == 2
     assert envelope["mode"] == 1
+
+
+@pytest.mark.parametrize("ttl_seconds", ["0", "-1", 0.5, True])
+def test_malformed_ttl_is_rejected(ttl_seconds):
+    envelope, error = parse_envelope({
+        "type": "microsoft.mfa.otpDeliver.v1", "channel": 1, "mode": 1,
+        "ttlSeconds": ttl_seconds, "encryptedDeliveryContext": "x",
+    })
+    assert envelope is None
+    assert "positive integer" in error
+
+
+@pytest.mark.parametrize("ttl_seconds", [0, -1])
+def test_expired_ttl_is_rejected(ttl_seconds):
+    envelope, error = parse_envelope({
+        "type": "microsoft.mfa.otpDeliver.v1", "channel": 1, "mode": 1,
+        "ttlSeconds": ttl_seconds, "encryptedDeliveryContext": "x",
+    })
+    assert envelope is None
+    assert "expired" in error
 
 
 def test_jwe_round_trips_to_delivery_context():

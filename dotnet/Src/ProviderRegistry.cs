@@ -1,6 +1,6 @@
 namespace Epp.Otp;
 
-// One provider is active per deployment; requestProvider is a test override.
+// One provider is active per deployment; requestProvider overrides EPP_PROVIDER_NAME when set.
 public sealed class ProviderRegistry
 {
     private readonly IReadOnlyDictionary<string, IProviderAdapter> _byId;

@@ -6,8 +6,12 @@ using Microsoft.Extensions.Logging;
 
 namespace Epp.Otp;
 
-// Delivery pipeline: parse the cleartext SAS envelope, decrypt the JWE that carries the PII, then
-// dispatch to the configured provider. Fail-closed — only a Continue outcome is "accepted".
+// Delivery pipeline for the External Phone Provider sample.
+//
+// Given a request from Microsoft Entra's SAS service, this file parses the cleartext routing envelope,
+// decrypts the JWE that carries the phone number and the rendered passcode message, then hands off to
+// the configured SMS/voice provider adapter (Infobip, Telesign, Sinch, or Soprano). It is fail-closed:
+// only a provider "Continue" outcome returns success; every other case fails.
 
 public sealed record Envelope(
     string? Type,
@@ -55,7 +59,6 @@ public static class EnvelopeParser
             return name is not null && ModeByName.TryGetValue(name, out var mapped) ? mapped : null;
         }
 
-        // A version we don't know may reuse these field names with different meanings.
         var type = String("type");
         if (type != EnvelopeType)
             return (null, $"unsupported type '{type}'");
@@ -72,8 +75,19 @@ public static class EnvelopeParser
         if (mode is null)
             return (null, "unsupported mode");
 
+        int? ttlSeconds = null;
+        if (payload.TryGetProperty("ttlSeconds", out var ttlElement))
+        {
+            if (ttlElement.ValueKind != JsonValueKind.Number
+                || !ttlElement.TryGetInt32(out var ttlValue))
+                return (null, "ttlSeconds must be a positive integer");
+            if (ttlValue <= 0)
+                return (null, "passcode has expired");
+            ttlSeconds = ttlValue;
+        }
+
         return (new Envelope(type, String("tenantId"), String("correlationId"),
-            channel.Value, mode.Value, Int("ttlSeconds"), encrypted), null);
+            channel.Value, mode.Value, ttlSeconds, encrypted), null);
     }
 }
 
@@ -111,7 +125,7 @@ public sealed class JweDecryptor
         var alg = headers.TryGetValue("alg", out var algValue) ? algValue?.ToString() : null;
         var enc = headers.TryGetValue("enc", out var encValue) ? encValue?.ToString() : null;
         var rsa = _keys.GetPrivateKey(kid);
-        // Pin alg/enc so a tampered header can't downgrade the crypto.
+        // Pin alg/enc so a tampered header cannot downgrade the encryption.
         var plaintext = Jose.JWT.Decrypt(compactJwe, rsa, Jose.JweAlgorithm.RSA_OAEP_256, Jose.JweEncryption.A256GCM);
         var context = JsonSerializer.Deserialize<DeliveryContext>(plaintext) ?? new DeliveryContext();
         return new JweResult(kid, alg, enc, context);
@@ -130,7 +144,7 @@ public sealed class JweDecryptor
     }
 }
 
-// Imported once: a per-delivery RSA import would sit inside the response budget.
+// Cache the imported key: re-importing RSA on every delivery would eat the response budget.
 public sealed class EnvJweKeyProvider : IJweKeyProvider
 {
     private readonly IEnv _env;
@@ -154,8 +168,8 @@ public sealed class EnvJweKeyProvider : IJweKeyProvider
         return rsa;
     }
 
-    // The setup script stores the key as base64 over the PEM so its newlines survive being carried as
-    // an app setting, so accept either form.
+    // The key may arrive as a PEM or as base64 over the PEM (the setup script uses base64 so newlines
+    // survive being stored as an app setting); accept either form.
     private static string NormalizePem(string value) =>
         value.Contains("-----BEGIN", StringComparison.Ordinal)
             ? value
@@ -165,6 +179,7 @@ public sealed class EnvJweKeyProvider : IJweKeyProvider
 public sealed class DispatchEngine
 {
     private const int DefaultTimeoutMs = 1500;
+    private const int MaxProviderTimeoutMs = 2500;
     private readonly ProviderRegistry _registry;
     private readonly ISecretResolver _secrets;
     private readonly IHttpClientFactory _httpFactory;
@@ -196,7 +211,9 @@ public sealed class DispatchEngine
         if (!OutcomeMapper.DefaultChannels.Contains(channel))
             return new DispatchResult(400, new { status = "error", provider = providerId, reason = $"channel '{channel}' not supported", requestId });
 
-        // Credential (fail closed 502 if missing) — this is our credential, not the caller's token.
+        if (shutter)
+            return new DispatchResult(200, new { status = "accepted", shutterProcessed = true, provider = providerId, channel, correlationId = dispatch.CorrelationId, messageId = dispatch.MessageId, requestId });
+
         ProviderCredential? credential = null;
         try { credential = await ResolveCredentialAsync(manifest.Auth); }
         catch (Exception ex) { log.LogError("[DISPATCH_ERROR] requestId={RequestId} provider={Provider} credential error={Error}", requestId, providerId, ex.Message); }
@@ -209,22 +226,22 @@ public sealed class DispatchEngine
         if (credentialUnavailable)
             return new DispatchResult(502, FailBody(providerId, channel, "provider credential unavailable", dispatch, requestId));
 
-        var endpoint = ResolveEndpoint(manifest, _env);
-        if (string.IsNullOrEmpty(endpoint))
-            return new DispatchResult(502, FailBody(providerId, channel, "provider endpoint not configured", dispatch, requestId));
+        var endpoint = _env.Get("EPP_PROVIDER_ENDPOINT");
+        if (!IsValidProviderEndpoint(endpoint))
+            return new DispatchResult(502, FailBody(providerId, channel, "provider endpoint must be an absolute HTTPS URL", dispatch, requestId));
 
-        var req = adapter.BuildRequest(channel, endpoint, dispatch, credential!, _env);
+        var req = adapter.BuildRequest(channel, endpoint!, dispatch, credential!, _env);
+        if (!IsValidProviderEndpoint(req.Url))
+            return new DispatchResult(502, FailBody(providerId, channel, "provider request URL must be absolute HTTPS", dispatch, requestId));
         log.LogInformation("[DISPATCH] requestId={RequestId} provider={Provider} channel={Channel} shutter={Shutter}", requestId, providerId, channel, shutter);
 
-        if (shutter)
-            return new DispatchResult(200, new { status = "accepted", shutterProcessed = true, provider = providerId, channel, correlationId = dispatch.CorrelationId, messageId = dispatch.MessageId, requestId });
-
-        var timeoutMs = int.TryParse(_env.Get("EPP_PROVIDER_TIMEOUT_MS"), out var parsedTimeout) ? parsedTimeout : DefaultTimeoutMs;
-        HttpResponseMessage resp;
+        var timeoutMs = NormalizeProviderTimeoutMs(_env.Get("EPP_PROVIDER_TIMEOUT_MS"));
+        int providerStatusCode;
+        bool providerRequestSucceeded;
         string body;
         try
         {
-            (resp, body) = await SendAsync(req, timeoutMs);
+            (providerStatusCode, providerRequestSucceeded, body) = await SendAsync(req, timeoutMs);
         }
         catch (OperationCanceledException)
         {
@@ -234,14 +251,14 @@ public sealed class DispatchEngine
         catch (Exception ex)
         {
             log.LogError("[DISPATCH_ERROR] requestId={RequestId} provider={Provider} reason={Reason}", requestId, providerId, ex.Message);
-            return new DispatchResult(502, FailBody(providerId, channel, ex.Message, dispatch, requestId));
+            return new DispatchResult(502, FailBody(providerId, channel, "provider request failed", dispatch, requestId));
         }
 
         JsonElement json;
         try { using var responseDocument = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body); json = responseDocument.RootElement.Clone(); }
         catch { using var emptyDocument = JsonDocument.Parse("{}"); json = emptyDocument.RootElement.Clone(); }
 
-        var parsed = adapter.ParseResponse((int)resp.StatusCode, resp.IsSuccessStatusCode, json);
+        var parsed = adapter.ParseResponse(providerStatusCode, providerRequestSucceeded, json);
         var outcome = OutcomeMapper.ResolveOutcome(manifest, parsed);
         var httpStatus = OutcomeMapper.ToHttpStatus(outcome, parsed.ProviderHttpStatus);
 
@@ -277,11 +294,17 @@ public sealed class DispatchEngine
         return new ProviderCredential("apiKey", Secret: secret, Identity: identity);
     }
 
-    // Base URL from app settings: one provider is active per deployment, so the endpoint is a single
-    // EPP_PROVIDER_ENDPOINT rather than a per-provider key.
-    private static string? ResolveEndpoint(ProviderManifest manifest, IEnv env) => env.Get("EPP_PROVIDER_ENDPOINT");
+    private static bool IsValidProviderEndpoint(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri)
+        && uri.Scheme == Uri.UriSchemeHttps
+        && !string.IsNullOrEmpty(uri.Host);
 
-    private async Task<(HttpResponseMessage, string)> SendAsync(ProviderHttpRequest req, int timeoutMs)
+    internal static int NormalizeProviderTimeoutMs(string? value) =>
+        int.TryParse(value, out var parsed) && parsed > 0
+            ? Math.Min(parsed, MaxProviderTimeoutMs)
+            : DefaultTimeoutMs;
+
+    private async Task<(int StatusCode, bool IsSuccessStatusCode, string Body)> SendAsync(ProviderHttpRequest req, int timeoutMs)
     {
         using var cts = new CancellationTokenSource(timeoutMs);
         var client = _httpFactory.CreateClient();
@@ -294,9 +317,9 @@ public sealed class DispatchEngine
             if (k.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) continue;
             if (!message.Headers.TryAddWithoutValidation(k, v)) message.Content.Headers.TryAddWithoutValidation(k, v);
         }
-        var resp = await client.SendAsync(message, cts.Token);
+        using var resp = await client.SendAsync(message, cts.Token);
         var body = await resp.Content.ReadAsStringAsync(cts.Token);
-        return (resp, body);
+        return ((int)resp.StatusCode, resp.IsSuccessStatusCode, body);
     }
 
     private static object FailBody(string provider, string channel, string reason, DispatchRequest d, string requestId) =>

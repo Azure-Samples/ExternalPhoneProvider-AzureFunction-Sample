@@ -40,20 +40,9 @@ class _FakeResponse:
         return self._body
 
 
-class _InlineThread:
-    """Runs the background delivery inline so assertions don't race the worker thread."""
-
-    def __init__(self, target=None, name=None, daemon=None):
-        self._target = target
-
-    def start(self):
-        self._target()
-
-
 @pytest.fixture(autouse=True)
 def _wire(monkeypatch):
     monkeypatch.setattr(function_app._engine, "secrets", _FakeSecrets())
-    monkeypatch.setattr(function_app.threading, "Thread", _InlineThread)
 
 
 def _request(body):
@@ -122,3 +111,17 @@ def test_evaluation_mode_does_not_send(monkeypatch):
 
     assert response.status_code == 200
     assert json.loads(response.get_body())["nonce"] == "nonce-abc"
+
+
+def test_provider_authentication_failure_is_returned_for_sas_fallback(monkeypatch):
+    def fake_request(method, url, headers=None, data=None, timeout=None):
+        return _FakeResponse(401, {"status": {"groupName": "REJECTED"}})
+
+    monkeypatch.setattr(dispatch_module.requests, "request", fake_request)
+
+    response = _HANDLER(_request(_envelope()))
+    body = json.loads(response.get_body())
+
+    assert response.status_code == 401
+    assert body["status"] == "failed"
+    assert body["outcome"] == "Fail"

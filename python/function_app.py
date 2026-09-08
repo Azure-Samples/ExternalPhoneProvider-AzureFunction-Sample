@@ -1,4 +1,4 @@
-"""POST /api/SendOtp — the SAS → External Phone Provider delivery endpoint. Validates the caller, parses
+"""POST /api/SendOtp, the SAS to External Phone Provider delivery endpoint. Validates the caller, parses
 the cleartext routing envelope, decrypts the JWE delivery context, dispatches to the provider, and
 echoes the nonce to prove decryption. Every line is tagged [EPP] so one filter pulls a whole delivery.
 """
@@ -6,7 +6,6 @@ import base64
 import json
 import logging
 import os
-import threading
 import time
 import uuid
 
@@ -109,13 +108,6 @@ def send_otp(req: func.HttpRequest) -> func.HttpResponse:
 
         correlation_id = envelope["correlation_id"] or header_correlation_id or request_id
 
-        # Refused, not warned: an expired passcode can no longer authenticate.
-        ttl_seconds = envelope["ttl_seconds"]
-        if isinstance(ttl_seconds, (int, float)) and not isinstance(ttl_seconds, bool) and ttl_seconds <= 0:
-            logging.error("%s ttlSeconds is %s; the passcode has expired. Not delivering.", TAG, ttl_seconds)
-            return _json(400, {"error": "bad_request", "reason": "passcode has expired",
-                               "correlationId": correlation_id, "requestId": request_id})
-
         try:
             header, delivery = decrypt_delivery_context(envelope["encrypted_delivery_context"], _key_provider)
         except Exception as err:
@@ -130,7 +122,7 @@ def send_otp(req: func.HttpRequest) -> func.HttpResponse:
         _log("nonce", delivery.get("nonce"))
 
         if log_plaintext:
-            # DIAGNOSTICS ONLY — writes the phone number and passcode to the log.
+            # DIAGNOSTICS ONLY: writes the phone number and passcode to the log.
             _log("phoneNumber", delivery.get("phoneNumber"))
             _log("extension", delivery.get("extension") or "(none)")
             _log("locale", delivery.get("locale"))
@@ -147,19 +139,14 @@ def send_otp(req: func.HttpRequest) -> func.HttpResponse:
         evaluation = envelope["mode"] == MODE_EVALUATION
         dispatch = context_to_dispatch(delivery, envelope, client_request_id)
 
-        # Microsoft allows 3.2 s for the whole call, so the provider is called after the response.
-        def _deliver():
-            try:
-                status, body = _engine.dispatch(dispatch, None, evaluation, request_id, logging)
-                logging.info(
-                    "%s provider result   : httpStatus=%s outcome=%s providerStatus=%s providerMessageId=%s correlationId=%s",
-                    TAG, status, body.get("outcome") or "n/a", body.get("providerStatus") or "n/a",
-                    body.get("providerMessageId") or "n/a", correlation_id)
-            except Exception as delivery_error:
-                logging.error("%s provider delivery failed: %s", TAG, delivery_error)
+        status, provider_body = _engine.dispatch(dispatch, None, evaluation, request_id, logging)
+        logging.info(
+            "%s provider result   : httpStatus=%s outcome=%s providerStatus=%s providerMessageId=%s correlationId=%s",
+            TAG, status, provider_body.get("outcome") or "n/a", provider_body.get("providerStatus") or "n/a",
+            provider_body.get("providerMessageId") or "n/a", correlation_id)
 
-        # daemon so a stalled provider call cannot hold up worker shutdown.
-        threading.Thread(target=_deliver, name="epp-delivery", daemon=True).start()
+        if status != 200:
+            return _json(status, provider_body)
 
         # Echoing the nonce is the whole contract: a 2xx without it is treated as a failed delivery and
         # Microsoft re-sends over its own telephony, so the user gets the code twice.
@@ -175,4 +162,4 @@ def send_otp(req: func.HttpRequest) -> func.HttpResponse:
         # Verbose on purpose: this endpoint exists to diagnose onboarding.
         logging.error("%s FAILED after %.0f ms: %s", TAG, (time.time() - started) * 1000, error)
         logging.info("%s ======== failed ========", TAG)
-        return _json(500, {"error": "delivery_failed", "detail": str(error), "correlationId": correlation_id})
+        return _json(500, {"error": "delivery_failed", "correlationId": correlation_id})
