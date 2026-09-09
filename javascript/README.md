@@ -25,7 +25,7 @@ provider (**Infobip**, **Telesign**, **Sinch**, or **Soprano**).
 4. **Publish:**
 
 ```bash
-cd src
+cd javascript
 npm install
 func azure functionapp publish <your-function-app-name>
 ```
@@ -62,14 +62,30 @@ Key Vault and can be rotated there without a redeploy.
 | `EPP_PROVIDER_ACCOUNT_NAME` | sender / source id presented to the provider |
 | `EPP_PROVIDER_TIMEOUT_MS` | outbound provider-call timeout in ms (default `1500`, capped at `2500`) |
 | `EPP_DECRYPTION_KEY_PEM` | RSA private key PEM for JWE decryption — a **Key Vault reference** in Azure |
-| `EPP_ENCRYPTION_KEY_ID` | expected JOSE `kid`; a mismatch is logged, not fatal |
+| `EPP_ENCRYPTION_KEY_ID` | legacy advisory setting; ignored. The configured PEM decrypts the JWE; `kid` is never logged |
 | `EPP_EXPECTED_CLIENT_ID` | caller `appid`/`azp` to admit; Easy Auth returns `403`, in-process validation returns `401` |
 | `EPP_REQUIRE_AUTH` | **set `true` in any real deployment** — validates the token in-process as a backstop to Easy Auth |
 | `EPP_EXPECTED_AUDIENCE` | token `aud` (this endpoint's app registration appId) — required when `EPP_REQUIRE_AUTH=true` |
 | `EPP_TENANT_ID` | customer tenant id for issuer/JWKS — required when `EPP_REQUIRE_AUTH=true` |
 | `EPP_EXPECTED_ISSUER` | optional; pins a single issuer instead of accepting both v1 and v2 |
-| `EPP_LOG_PLAINTEXT` | **diagnostics only** — `true` writes the phone number and passcode to the log. Never enable in production |
+| `EPP_LOG_PLAINTEXT` | obsolete and ignored, including when `true`; plaintext logging is never enabled |
 | `KEY_VAULT_URL` | Key Vault URI (provider API keys) |
+
+### Privacy and observability
+
+Each invocation emits one `[EPP]` summary with a generated `requestId`, log-safe `correlationId`,
+numeric `httpStatus` / `elapsedMs`, boolean `nonceEcho` / `evaluation`, and fixed `reason` / `outcome`.
+Separate `[DISPATCH]` traces contain only a log-safe request ID. Canonical hyphenated GUIDs remain
+visible; other IDs use a labeled hash. Wire IDs are not rewritten.
+
+Phone numbers, OTPs, nonce values, tokens, keys, caller metadata, provider status text and raw bodies
+are never logged, including in diagnostics. Exceptions and SDK objects are not logged. Application
+logs cannot prevent separately enabled platform, SDK or proxy body capture; keep that disabled too.
+
+See [../docs/CONTRACT.md](../docs/CONTRACT.md) for the wire contract. Correlation and attempt IDs are
+preserved for dispatch, including header fallback. Only success echoes the actual
+nonce. Provider failures keep their HTTP status and return only
+`{ error: 'provider_delivery_failed', correlationId, requestId }`, never the provider's body.
 
 ### Per-provider settings (set only for the provider you chose)
 

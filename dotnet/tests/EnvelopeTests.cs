@@ -5,16 +5,17 @@ using Xunit;
 
 namespace Epp.Otp.Tests;
 
-// Envelope validation + JWE decryption round-trip (see docs/CONTRACT.md §1, §6).
 public class EnvelopeTests
 {
-    private static JsonElement Payload(string json) => JsonDocument.Parse(json).RootElement;
-
-    private sealed class FakeKeyProvider : IJweKeyProvider
+    private static JsonElement Payload(string json)
     {
-        private readonly RSA _rsa;
-        public FakeKeyProvider(RSA rsa) => _rsa = rsa;
-        public RSA GetPrivateKey(string? kid) => _rsa;
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.Clone();
+    }
+
+    internal sealed class FakeKeyProvider(RSA rsa, Exception? failure = null) : IJweKeyProvider
+    {
+        public RSA GetPrivateKey(string? kid) => failure is not null ? throw failure : rsa;
     }
 
     [Fact]
@@ -25,48 +26,43 @@ public class EnvelopeTests
         Assert.Contains("encryptedDeliveryContext", error);
     }
 
-    [Fact]
-    public void UnrecognisedType_IsError()
+    [Theory]
+    [InlineData("type", "\"phone=+15551234567 code=918273 token=private\"")]
+    [InlineData("channel", "9")]
+    [InlineData("mode", "true")]
+    public void InvalidRouting_IsRejectedWithoutEchoingInput(string field, string value)
     {
+        var payload = new Dictionary<string, object?>
+        {
+            ["type"] = EnvelopeParser.EnvelopeType, ["channel"] = 1, ["mode"] = 1,
+            ["encryptedDeliveryContext"] = "x",
+        };
+        payload[field] = Payload(value);
+        var (envelope, error) = EnvelopeParser.Parse(JsonSerializer.SerializeToElement(payload));
+        Assert.Null(envelope);
+        Assert.Equal($"unsupported {field}", error);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ValidEnvelope_ParsesWithOptionalTtl(bool includeTtl)
+    {
+        var ttl = includeTtl ? ",\"ttlSeconds\":60" : "";
         var (envelope, error) = EnvelopeParser.Parse(Payload(
-            "{\"type\":\"microsoft.mfa.otpDeliver.v2\",\"channel\":1,\"mode\":1,\"encryptedDeliveryContext\":\"x\"}"));
-        Assert.Null(envelope);
-        Assert.Contains("type", error);
-    }
-
-    [Fact]
-    public void UnsupportedChannel_IsError()
-    {
-        var (envelope, error) = EnvelopeParser.Parse(Payload("{\"type\":\"microsoft.mfa.otpDeliver.v1\",\"channel\":9,\"mode\":1,\"encryptedDeliveryContext\":\"x\"}"));
-        Assert.Null(envelope);
-        Assert.Contains("channel", error);
-    }
-
-    [Fact]
-    public void UnsupportedMode_IsError()
-    {
-        var (envelope, error) = EnvelopeParser.Parse(Payload("{\"type\":\"microsoft.mfa.otpDeliver.v1\",\"channel\":1,\"mode\":5,\"encryptedDeliveryContext\":\"x\"}"));
-        Assert.Null(envelope);
-        Assert.Contains("mode", error);
-    }
-
-    [Fact]
-    public void ValidEnvelope_Parses()
-    {
-        var (envelope, error) = EnvelopeParser.Parse(Payload(
-            "{\"type\":\"microsoft.mfa.otpDeliver.v1\",\"tenantId\":\"t\",\"correlationId\":\"c\",\"channel\":2,\"mode\":1,\"ttlSeconds\":60,\"encryptedDeliveryContext\":\"x\"}"));
+            $"{{\"type\":\"microsoft.mfa.otpDeliver.v1\",\"tenantId\":\"t\",\"correlationId\":\"c\",\"channel\":2,\"mode\":1,\"encryptedDeliveryContext\":\"x\"{ttl}}}"));
         Assert.Null(error);
         Assert.NotNull(envelope);
-        Assert.Equal(2, envelope!.Channel);
+        Assert.Equal(2, envelope.Channel);
         Assert.Equal(1, envelope.Mode);
+        Assert.Equal(includeTtl ? (int?)60 : null, envelope.TtlSeconds);
         Assert.Equal("voice", EnvelopeParser.ChannelName(envelope.Channel));
     }
 
     [Theory]
     [InlineData("\"0\"")]
-    [InlineData("\"-1\"")]
     [InlineData("0.5")]
-    [InlineData("true")]
+    [InlineData("null")]
     public void MalformedTtl_IsError(string ttlJson)
     {
         var (envelope, error) = EnvelopeParser.Parse(Payload(
@@ -75,13 +71,11 @@ public class EnvelopeTests
         Assert.Contains("positive integer", error);
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(-1)]
-    public void ExpiredTtl_IsError(int ttlSeconds)
+    [Fact]
+    public void ExpiredTtl_IsError()
     {
         var (envelope, error) = EnvelopeParser.Parse(Payload(
-            $"{{\"type\":\"microsoft.mfa.otpDeliver.v1\",\"channel\":1,\"mode\":1,\"ttlSeconds\":{ttlSeconds},\"encryptedDeliveryContext\":\"x\"}}"));
+            "{\"type\":\"microsoft.mfa.otpDeliver.v1\",\"channel\":1,\"mode\":1,\"ttlSeconds\":0,\"encryptedDeliveryContext\":\"x\"}"));
         Assert.Null(envelope);
         Assert.Contains("expired", error);
     }

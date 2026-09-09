@@ -4,9 +4,7 @@
 
 'use strict';
 
-// POST /api/SendOtp, the SAS to External Phone Provider delivery endpoint. Validates the caller, parses
-// the cleartext routing envelope, decrypts the JWE delivery context, dispatches to the provider, and
-// echoes the nonce to prove decryption. Every line is tagged [EPP] so one filter pulls a whole delivery.
+// POST /api/SendOtp: authenticate, decrypt, dispatch, then echo the nonce on acceptance only.
 
 const { app } = require('@azure/functions');
 const crypto = require('crypto');
@@ -17,12 +15,11 @@ const {
     decryptDeliveryContext,
     contextToDispatch,
     MODE,
+    safeTraceId,
 } = require('./dispatch');
-const { readConfig, missingSettings } = require('./config');
+const { readConfig } = require('./config');
 
-const TAG = '[EPP]';
-
-// Easy Auth has already validated the token by the time this runs; this records which identity arrived.
+// Easy Auth is the primary gate; enforce its caller allowlist here as well.
 function readCallerAppId(request) {
     const encoded = request.headers.get('x-ms-client-principal');
     if (!encoded) return undefined;
@@ -35,141 +32,81 @@ function readCallerAppId(request) {
     }
 }
 
-const pad = (label) => label.padEnd(18, ' ');
-
 app.http('SendOtp', {
     methods: ['POST'],
     authLevel: 'anonymous', // Easy Auth is the gate; EPP_REQUIRE_AUTH adds in-process token validation.
     handler: async (request, context) => {
         const started = Date.now();
-        const config = readConfig();
-        const log = (label, value) => context.log(`${TAG} ${pad(label)}: ${value}`);
-        const warn = (message) => (context.warn || context.log).call(context, `${TAG} ${message}`);
-        const error = (message) => (context.error || context.log).call(context, `${TAG} ${message}`);
-
         const requestId = crypto.randomUUID();
-        const clientRequestId = request.headers.get('x-ms-client-request-id') || requestId;
-        const headerCorrelationId = request.headers.get('x-ms-correlation-id') || null;
-
-        context.log(`${TAG} ======== delivery received ========`);
-        log('invocation', context.invocationId || requestId);
-
-        let envelope;
+        let correlationId = requestId;
+        let evaluation = false;
+        const reply = (status, jsonBody, reason, outcome = status === 200 ? 'Continue' : 'Fail') => {
+            context.log('[EPP]', {
+                requestId, correlationId: safeTraceId(correlationId), httpStatus: status,
+                elapsedMs: Date.now() - started, nonceEcho: status === 200 && !!jsonBody.nonce,
+                evaluation, reason, outcome,
+            });
+            return { status, jsonBody };
+        };
         try {
-            // Logged, not thrown: a missing provider setting still lets this prove decryption works.
-            const absent = missingSettings(config);
-            if (absent.length > 0) {
-                warn(`settings not set: ${absent.join(', ')}`);
-            }
-
+            const config = readConfig();
+            correlationId = request.headers.get('x-ms-correlation-id') || requestId;
+            const clientRequestId = request.headers.get('x-ms-client-request-id') || requestId;
             const callerAppId = readCallerAppId(request);
-            log('caller appid', callerAppId || 'none (Easy Auth off, or called directly)');
-
             if (callerAppId && config.expectedClientId && callerAppId !== config.expectedClientId) {
-                error(`caller ${callerAppId} is not ${config.expectedClientId}. ` +
-                    'Easy Auth allowedApplications is not doing its job.');
-                return { status: 403, jsonBody: { error: 'unexpected_caller' } };
+                return reply(403, { error: 'unexpected_caller' }, 'unexpected_caller');
             }
 
-            const tokenValidation = await validateToken(request, context, requestId);
+            const tokenValidation = await validateToken(request);
             if (!tokenValidation.ok) {
-                error(`token rejected: ${tokenValidation.reason}`);
-                return { status: 401, jsonBody: { error: 'unauthorized', reason: tokenValidation.reason, requestId } };
+                return reply(401, { error: 'unauthorized', reason: tokenValidation.reason, requestId }, 'unauthorized');
             }
 
             let payload;
             try {
                 payload = JSON.parse(await request.text());
-            } catch (parseError) {
-                error(`body is not JSON: ${parseError.message}`);
-                return { status: 400, jsonBody: { error: 'bad_request', reason: 'invalid JSON body', requestId } };
+            } catch {
+                return reply(400, { error: 'bad_request', reason: 'invalid JSON body', requestId }, 'invalid_json');
             }
 
             const parsed = parseEnvelope(payload);
             if (parsed.error) {
-                error(`envelope rejected: ${parsed.error}`);
-                return { status: 400, jsonBody: { error: 'bad_request', reason: parsed.error, requestId } };
+                return reply(400, { error: 'bad_request', reason: parsed.error, requestId }, 'invalid_envelope');
             }
-            envelope = parsed.envelope;
+            const envelope = parsed.envelope;
+            correlationId = envelope.correlationId || correlationId;
+            evaluation = envelope.mode === MODE.EVALUATION;
 
-            log('type', envelope.type);
-            log('tenantId', envelope.tenantId);
-            log('correlationId', envelope.correlationId);
-            log('channel', envelope.channel);
-            log('mode', envelope.mode);
-            log('ttlSeconds', envelope.ttlSeconds);
-
-            const correlationId = envelope.correlationId || headerCorrelationId || requestId;
-
-            let header;
             let delivery;
             try {
-                ({ header, context: delivery } = await decryptDeliveryContext(
+                ({ context: delivery } = await decryptDeliveryContext(
                     envelope.encryptedDeliveryContext, config));
-            } catch (decryptError) {
-                error(`decryption failed: ${decryptError.message}`);
-                return { status: 400, jsonBody: { error: 'decryption_failed', correlationId, requestId } };
-            }
-
-            const kidMatches = !config.expectedKeyId || header.kid === config.expectedKeyId;
-            log('kid', `${header.kid}${kidMatches ? '' : ' (DOES NOT match EPP_ENCRYPTION_KEY_ID)'}`);
-            log('alg / enc', `${header.alg} / ${header.enc}`);
-            log('decrypted', 'OK');
-            log('nonce', delivery.nonce);
-
-            if (config.logPlaintext) {
-                // DIAGNOSTICS ONLY: writes the phone number and passcode to the log.
-                log('phoneNumber', delivery.phoneNumber);
-                log('extension', delivery.extension || '(none)');
-                log('locale', delivery.locale);
-                log('message', delivery.message);
-                log('riskContext', delivery.riskContext ? JSON.stringify(delivery.riskContext) : '(none)');
-            } else {
-                context.log(`${TAG} plaintext suppressed (EPP_LOG_PLAINTEXT=false)`);
+            } catch {
+                return reply(400, { error: 'decryption_failed', correlationId, requestId }, 'decryption_failed');
             }
 
             if (!delivery.nonce || !delivery.phoneNumber || !delivery.message) {
-                error('delivery context is incomplete (nonce/phoneNumber/message)');
-                return { status: 400, jsonBody: { error: 'bad_request', reason: 'incomplete delivery context', correlationId, requestId } };
+                return reply(400, { error: 'bad_request', reason: 'incomplete delivery context', correlationId, requestId }, 'incomplete_context');
             }
 
-            const evaluation = envelope.mode === MODE.EVALUATION;
-            const dispatch = contextToDispatch(delivery, envelope, clientRequestId);
+            const dispatch = contextToDispatch(delivery, { ...envelope, correlationId }, clientRequestId);
 
             const providerResult = await dispatchOtp(dispatch, {
                 shutter: evaluation,
                 context,
                 requestId,
             });
-            context.log(`${TAG} provider result   : httpStatus=${providerResult.httpStatus} outcome=${providerResult.body.outcome || 'n/a'} providerStatus=${providerResult.body.providerStatus || 'n/a'} providerMessageId=${providerResult.body.providerMessageId || 'n/a'}`);
-
             if (providerResult.httpStatus !== 200) {
-                return { status: providerResult.httpStatus, jsonBody: providerResult.body };
+                return reply(providerResult.httpStatus,
+                    { error: 'provider_delivery_failed', correlationId, requestId }, 'provider_delivery_failed',
+                    providerResult.httpStatus === 403 ? 'Block' : providerResult.httpStatus === 409 ? 'StepUp' : 'Fail');
             }
 
-            // Echoing the nonce is the whole contract: a 2xx without it is treated as a failed delivery
-            // and Microsoft re-sends over its own telephony, so the user gets the code twice.
-            const body = { nonce: delivery.nonce, correlationId, providerStatus: 'accepted' };
-
-            log('responding', `200, nonce echoed, ${Date.now() - started} ms`);
-            context.log(`${TAG} ======== done ========`);
-
-            return { status: 200, jsonBody: body };
-        } catch (unhandled) {
-            // Verbose on purpose: this endpoint exists to diagnose onboarding.
-            error(`FAILED after ${Date.now() - started} ms: ${unhandled.message}`);
-            if (unhandled.cause) {
-                error(`caused by: ${unhandled.cause.message || unhandled.cause}`);
-            }
-            context.log(`${TAG} ======== failed ========`);
-
-            return {
-                status: 500,
-                jsonBody: {
-                    error: 'delivery_failed',
-                    correlationId: envelope && envelope.correlationId,
-                },
-            };
+            // SAS treats a 2xx without the matching nonce as failure and falls back to native delivery.
+            return reply(200, { nonce: delivery.nonce, correlationId, providerStatus: 'accepted' },
+                evaluation ? 'evaluation' : 'accepted');
+        } catch {
+            return reply(500, { error: 'delivery_failed', correlationId, requestId }, 'delivery_failed');
         }
     },
 });

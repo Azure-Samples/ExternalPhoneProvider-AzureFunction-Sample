@@ -8,6 +8,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.52.0" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore" Version="2.1.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
@@ -16,13 +19,13 @@
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.3.0" />
     <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.3.0" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
     <PackageReference Include="jose-jwt" Version="5.1.0" />
   </ItemGroup>
 
-  <!-- Compile the engine/provider source directly (no dependency on the Functions worker host). -->
+  <!-- Exercise the real handler and pipeline without starting the Functions host. -->
   <ItemGroup>
     <Compile Include="..\Src\**\*.cs" />
+    <Compile Include="..\Functions\SendOtp.cs" />
   </ItemGroup>
 
 </Project>

@@ -4,9 +4,7 @@
 
 'use strict';
 
-// Soprano Connect (MEMS): POST {base}/messages/omnimsg, base https://<mems_domain>/cgpapi.
-// One endpoint for every channel — `messageTypes` picks it and Soprano does the TTS for voice.
-// Auth: an Entra ID v2.0 Bearer JWT (audience = Soprano's app id), or X-MEMS-API-ID + X-MEMS-API-Key.
+// Omnimsg handles SMS and voice; authentication can use API ID/key or a provider JWT.
 
 const manifest = {
     id: 'soprano',
@@ -40,9 +38,12 @@ function buildRequest({ channel, endpoint, dispatch, credential, env }) {
         headers['X-MEMS-API-Key'] = credential.secret;
     }
 
+    let destination = String(dispatch.destination || '');
+    while (destination.startsWith('+')) destination = destination.slice(1);
+
     const body = {
         text: dispatch.message,
-        destination: String(dispatch.destination || '').replace(/^\++/, ''), // E.164 without the leading +
+        destination,
         messageTypes: [channel === 'voice' ? 'voice' : 'sms'],
         correlationId: dispatch.correlationId || dispatch.messageId,
         // Soprano processes the request but delivers nothing — connectivity/credential testing.

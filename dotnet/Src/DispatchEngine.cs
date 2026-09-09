@@ -6,13 +6,6 @@ using Microsoft.Extensions.Logging;
 
 namespace Epp.Otp;
 
-// Delivery pipeline for the External Phone Provider sample.
-//
-// Given a request from Microsoft Entra's SAS service, this file parses the cleartext routing envelope,
-// decrypts the JWE that carries the phone number and the rendered passcode message, then hands off to
-// the configured SMS/voice provider adapter (Infobip, Telesign, Sinch, or Soprano). It is fail-closed:
-// only a provider "Continue" outcome returns success; every other case fails.
-
 public sealed record Envelope(
     string? Type,
     string? TenantId,
@@ -61,7 +54,7 @@ public static class EnvelopeParser
 
         var type = String("type");
         if (type != EnvelopeType)
-            return (null, $"unsupported type '{type}'");
+            return (null, "unsupported type");
 
         var encrypted = String("encryptedDeliveryContext");
         if (string.IsNullOrEmpty(encrypted))
@@ -104,7 +97,6 @@ public sealed class DeliveryContext
 
 public sealed record JweResult(string? Kid, string? Alg, string? Enc, DeliveryContext Context);
 
-// Injectable so tests use a local key.
 public interface IJweKeyProvider
 {
     RSA GetPrivateKey(string? kid);
@@ -197,26 +189,36 @@ public sealed class DispatchEngine
 
     public async Task<DispatchResult> DispatchAsync(DispatchRequest dispatch, string? requestProvider, bool shutter, string requestId, ILogger log)
     {
+        var traceRequestId = SafeTraceId(requestId);
+        var traceCorrelationId = SafeTraceId(dispatch.CorrelationId);
+        var traceProvider = SafeProvider(requestProvider);
+        var traceChannel = SafeChannel(dispatch.Channel ?? "sms");
+
+        DispatchResult Complete(int status, object body, Outcome outcome = Outcome.Fail)
+        {
+            log.LogInformation("[DISPATCH_RESULT] requestId={RequestId} correlationId={CorrelationId} provider={Provider} channel={Channel} outcome={Outcome} httpStatus={HttpStatus} shutterProcessed={ShutterProcessed}",
+                traceRequestId, traceCorrelationId, traceProvider, traceChannel, outcome, status, shutter && status == 200);
+            return new DispatchResult(status, body);
+        }
+
         var adapter = _registry.Resolve(requestProvider);
         if (adapter is null)
-        {
-            log.LogWarning("[DISPATCH_ERROR] requestId={RequestId} unknown provider={Provider}", requestId, requestProvider ?? "n/a");
-            return new DispatchResult(400, new { status = "error", reason = "unknown provider", requestId });
-        }
+            return Complete(400, new { status = "error", reason = "unknown provider", requestId });
 
         var manifest = adapter.Manifest;
         var providerId = manifest.Id;
+        traceProvider = SafeProvider(providerId);
         var channel = (dispatch.Channel ?? "sms").ToLowerInvariant();
 
         if (!OutcomeMapper.DefaultChannels.Contains(channel))
-            return new DispatchResult(400, new { status = "error", provider = providerId, reason = $"channel '{channel}' not supported", requestId });
+            return Complete(400, new { status = "error", provider = providerId, reason = "unsupported channel", requestId });
 
         if (shutter)
-            return new DispatchResult(200, new { status = "accepted", shutterProcessed = true, provider = providerId, channel, correlationId = dispatch.CorrelationId, messageId = dispatch.MessageId, requestId });
+            return Complete(200, new { status = "accepted", shutterProcessed = true, provider = providerId, channel, correlationId = dispatch.CorrelationId, messageId = dispatch.MessageId, requestId }, Outcome.Continue);
 
         ProviderCredential? credential = null;
         try { credential = await ResolveCredentialAsync(manifest.Auth); }
-        catch (Exception ex) { log.LogError("[DISPATCH_ERROR] requestId={RequestId} provider={Provider} credential error={Error}", requestId, providerId, ex.Message); }
+        catch { /* Credential failures are reported below without SDK exception details. */ }
 
         var identityRequired = credential is { Mode: "apiKey" } && !string.IsNullOrEmpty(manifest.Auth.IdentityKeyVaultSecretName);
         var credentialUnavailable = credential is null
@@ -224,16 +226,15 @@ public sealed class DispatchEngine
             || (credential.Mode == "apiKey" && string.IsNullOrEmpty(credential.Secret))
             || (identityRequired && string.IsNullOrEmpty(credential.Identity));
         if (credentialUnavailable)
-            return new DispatchResult(502, FailBody(providerId, channel, "provider credential unavailable", dispatch, requestId));
+            return Complete(502, FailBody(providerId, channel, "provider credential unavailable", dispatch, requestId));
 
         var endpoint = _env.Get("EPP_PROVIDER_ENDPOINT");
         if (!IsValidProviderEndpoint(endpoint))
-            return new DispatchResult(502, FailBody(providerId, channel, "provider endpoint must be an absolute HTTPS URL", dispatch, requestId));
+            return Complete(502, FailBody(providerId, channel, "provider endpoint must be an absolute HTTPS URL", dispatch, requestId));
 
         var req = adapter.BuildRequest(channel, endpoint!, dispatch, credential!, _env);
         if (!IsValidProviderEndpoint(req.Url))
-            return new DispatchResult(502, FailBody(providerId, channel, "provider request URL must be absolute HTTPS", dispatch, requestId));
-        log.LogInformation("[DISPATCH] requestId={RequestId} provider={Provider} channel={Channel} shutter={Shutter}", requestId, providerId, channel, shutter);
+            return Complete(502, FailBody(providerId, channel, "provider request URL must be absolute HTTPS", dispatch, requestId));
 
         var timeoutMs = NormalizeProviderTimeoutMs(_env.Get("EPP_PROVIDER_TIMEOUT_MS"));
         int providerStatusCode;
@@ -245,13 +246,11 @@ public sealed class DispatchEngine
         }
         catch (OperationCanceledException)
         {
-            log.LogWarning("[DISPATCH_TIMEOUT] requestId={RequestId} provider={Provider}", requestId, providerId);
-            return new DispatchResult(504, FailBody(providerId, channel, $"endpoint timeout after {timeoutMs}ms", dispatch, requestId));
+            return Complete(504, FailBody(providerId, channel, $"endpoint timeout after {timeoutMs}ms", dispatch, requestId));
         }
-        catch (Exception ex)
+        catch
         {
-            log.LogError("[DISPATCH_ERROR] requestId={RequestId} provider={Provider} reason={Reason}", requestId, providerId, ex.Message);
-            return new DispatchResult(502, FailBody(providerId, channel, "provider request failed", dispatch, requestId));
+            return Complete(502, FailBody(providerId, channel, "provider request failed", dispatch, requestId));
         }
 
         JsonElement json;
@@ -262,23 +261,45 @@ public sealed class DispatchEngine
         var outcome = OutcomeMapper.ResolveOutcome(manifest, parsed);
         var httpStatus = OutcomeMapper.ToHttpStatus(outcome, parsed.ProviderHttpStatus);
 
-        log.LogInformation("[DISPATCH_RESULT] requestId={RequestId} provider={Provider} channel={Channel} outcome={Outcome} providerStatus={Status} httpStatus={Http}",
-            requestId, providerId, channel, outcome, parsed.ProviderStatusName ?? parsed.ProviderStatusCode ?? "n/a", httpStatus);
-
-        return new DispatchResult(httpStatus, new
+        // Provider diagnostics may echo delivery secrets, even on a success-looking response.
+        return Complete(httpStatus, new
         {
             status = outcome == Outcome.Continue ? "accepted" : "failed",
             outcome = outcome.ToString(),
+            reason = outcome == Outcome.Continue ? null : "provider delivery failed",
             provider = providerId,
             channel,
             messageId = dispatch.MessageId,
             correlationId = dispatch.CorrelationId,
-            providerMessageId = parsed.ProviderMessageId,
-            providerStatus = parsed.ProviderStatusName ?? parsed.ProviderStatusCode,
-            providerStatusDescription = parsed.ProviderStatusDescription,
             requestId,
-        });
+        }, outcome);
     }
+
+    // Log projection only: never replace IDs on the dispatch or response wire.
+    internal static string SafeTraceId(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return "unknown";
+        if (Guid.TryParse(value, out var id)) return id.ToString("D");
+        // A labeled 96-bit SHA256 prefix preserves correlation without logging arbitrary text.
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(value));
+        return "sha256:" + Convert.ToHexString(hash.AsSpan(0, 12)).ToLowerInvariant();
+    }
+
+    internal static string SafeProvider(string? value) => value?.ToLowerInvariant() switch
+    {
+        "infobip" => "infobip",
+        "telesign" => "telesign",
+        "sinch" => "sinch",
+        "soprano" => "soprano",
+        _ => "unknown",
+    };
+
+    internal static string SafeChannel(string? value) => value?.ToLowerInvariant() switch
+    {
+        "sms" => "sms",
+        "voice" => "voice",
+        _ => "unknown",
+    };
 
     private async Task<ProviderCredential> ResolveCredentialAsync(AuthConfig auth)
     {
@@ -317,6 +338,7 @@ public sealed class DispatchEngine
             if (k.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) continue;
             if (!message.Headers.TryAddWithoutValidation(k, v)) message.Content.Headers.TryAddWithoutValidation(k, v);
         }
+        // Do not retry an OTP delivery: SAS/the provider own resends and duplicate suppression.
         using var resp = await client.SendAsync(message, cts.Token);
         var body = await resp.Content.ReadAsStringAsync(cts.Token);
         return ((int)resp.StatusCode, resp.IsSuccessStatusCode, body);

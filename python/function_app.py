@@ -1,7 +1,4 @@
-"""POST /api/SendOtp, the SAS to External Phone Provider delivery endpoint. Validates the caller, parses
-the cleartext routing envelope, decrypts the JWE delivery context, dispatches to the provider, and
-echoes the nonce to prove decryption. Every line is tagged [EPP] so one filter pulls a whole delivery.
-"""
+"""POST /api/SendOtp: validate, decrypt, dispatch, and echo the nonce with a PII-safe summary."""
 import base64
 import json
 import logging
@@ -12,13 +9,19 @@ import uuid
 import azure.functions as func
 
 from src.dispatch import (
+    CHANNEL_BY_CODE,
+    CONTINUE,
+    FAIL,
     MODE_EVALUATION,
+    OUTCOMES,
+    PROVIDER_IDS,
     DispatchEngine,
     ProviderRegistry,
     context_to_dispatch,
     decrypt_delivery_context,
     make_key_provider,
     parse_envelope,
+    safe_trace_id,
 )
 from src.providers.infobip import InfobipProvider
 from src.providers.sinch import SinchProvider
@@ -37,16 +40,8 @@ _engine = DispatchEngine(_registry, _secrets)
 _key_provider = make_key_provider(os.environ)
 
 
-def _json(status_code, body):
-    return func.HttpResponse(json.dumps(body), status_code=status_code, mimetype="application/json")
-
-
-def _log(label, value):
-    logging.info("%s %-18s: %s", TAG, label, value)
-
-
 def _read_caller_app_id(req):
-    """Easy Auth has already validated the token; this records which identity arrived."""
+    """Easy Auth has already validated the token; check its caller against the allowlist."""
     encoded = req.headers.get("x-ms-client-principal")
     if not encoded:
         return None
@@ -62,104 +57,93 @@ def _read_caller_app_id(req):
 
 @app.route(route="SendOtp", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def send_otp(req: func.HttpRequest) -> func.HttpResponse:
-    started = time.time()
-    request_id = uuid.uuid4().hex
-    client_request_id = req.headers.get("x-ms-client-request-id") or request_id
-    header_correlation_id = req.headers.get("x-ms-correlation-id")
-    log_plaintext = (os.environ.get("EPP_LOG_PLAINTEXT") or "").lower() == "true"
-    expected_key_id = os.environ.get("EPP_ENCRYPTION_KEY_ID")
-    expected_client_id = os.environ.get("EPP_EXPECTED_CLIENT_ID")
+    started = time.perf_counter()
+    request_id = str(uuid.uuid4())
+    correlation_id = request_id
+    provider = channel = mode = "unknown"
+    status, outcome = 500, FAIL
+    nonce_echo = shutter_processed = False
 
-    logging.info("%s ======== delivery received ========", TAG)
-    _log("invocation", request_id)
+    def reply(code, body):
+        nonlocal status, nonce_echo
+        response = func.HttpResponse(json.dumps(body), status_code=code, mimetype="application/json")
+        status, nonce_echo = code, code == 200 and "nonce" in body
+        return response
 
-    correlation_id = None
     try:
+        client_request_id = req.headers.get("x-ms-client-request-id") or request_id
+        header_correlation_id = req.headers.get("x-ms-correlation-id")
+        correlation_id = header_correlation_id or request_id
+        configured_provider = (os.environ.get("EPP_PROVIDER_NAME") or "").lower()
+        provider = configured_provider if configured_provider in PROVIDER_IDS else "unknown"
+        expected_client_id = os.environ.get("EPP_EXPECTED_CLIENT_ID")
         caller_app_id = _read_caller_app_id(req)
-        _log("caller appid", caller_app_id or "none (Easy Auth off, or called directly)")
-
         if caller_app_id and expected_client_id and caller_app_id != expected_client_id:
-            logging.error("%s caller %s is not %s. Easy Auth allowedApplications is not doing its job.",
-                          TAG, caller_app_id, expected_client_id)
-            return _json(403, {"error": "unexpected_caller"})
+            return reply(403, {"error": "unexpected_caller", "requestId": request_id})
 
-        auth_ok, reason, _caller_object_id = validate_token(req.headers.get("Authorization"))
+        auth_ok, _reason, _caller_object_id = validate_token(req.headers.get("Authorization"))
         if not auth_ok:
-            logging.error("%s token rejected: %s", TAG, reason)
-            return _json(401, {"error": "unauthorized", "reason": reason, "requestId": request_id})
+            return reply(401, {"error": "unauthorized", "reason": "token validation failed",
+                               "requestId": request_id})
 
         try:
             payload = req.get_json()
         except ValueError:
-            logging.error("%s body is not JSON", TAG)
-            return _json(400, {"error": "bad_request", "reason": "invalid JSON body", "requestId": request_id})
+            return reply(400, {"error": "bad_request", "reason": "invalid JSON body",
+                               "requestId": request_id})
 
         envelope, error = parse_envelope(payload)
         if error:
-            logging.error("%s envelope rejected: %s", TAG, error)
-            return _json(400, {"error": "bad_request", "reason": error, "requestId": request_id})
-
-        _log("type", envelope["type"])
-        _log("tenantId", envelope["tenant_id"])
-        _log("correlationId", envelope["correlation_id"])
-        _log("channel", envelope["channel"])
-        _log("mode", envelope["mode"])
-        _log("ttlSeconds", envelope["ttl_seconds"])
+            return reply(400, {"error": "bad_request", "reason": error,
+                               "requestId": request_id})
 
         correlation_id = envelope["correlation_id"] or header_correlation_id or request_id
+        channel = CHANNEL_BY_CODE[envelope["channel"]]
+        evaluation = envelope["mode"] == MODE_EVALUATION
+        mode = "evaluation" if evaluation else "live"
 
         try:
-            header, delivery = decrypt_delivery_context(envelope["encrypted_delivery_context"], _key_provider)
-        except Exception as err:
-            logging.error("%s decryption failed: %s", TAG, err)
-            return _json(400, {"error": "decryption_failed", "correlationId": correlation_id, "requestId": request_id})
-
-        kid = header.get("kid")
-        kid_matches = not expected_key_id or kid == expected_key_id
-        _log("kid", f"{kid}{'' if kid_matches else ' (DOES NOT match EPP_ENCRYPTION_KEY_ID)'}")
-        _log("alg / enc", f"{header.get('alg')} / {header.get('enc')}")
-        _log("decrypted", "OK")
-        _log("nonce", delivery.get("nonce"))
-
-        if log_plaintext:
-            # DIAGNOSTICS ONLY: writes the phone number and passcode to the log.
-            _log("phoneNumber", delivery.get("phoneNumber"))
-            _log("extension", delivery.get("extension") or "(none)")
-            _log("locale", delivery.get("locale"))
-            _log("message", delivery.get("message"))
-            _log("riskContext", json.dumps(delivery["riskContext"]) if delivery.get("riskContext") else "(none)")
-        else:
-            logging.info("%s plaintext suppressed (EPP_LOG_PLAINTEXT=false)", TAG)
+            _header, delivery = decrypt_delivery_context(envelope["encrypted_delivery_context"], _key_provider)
+        except Exception:
+            return reply(400, {"error": "decryption_failed", "correlationId": correlation_id,
+                               "requestId": request_id})
 
         if not delivery.get("nonce") or not delivery.get("phoneNumber") or not delivery.get("message"):
-            logging.error("%s delivery context is incomplete (nonce/phoneNumber/message)", TAG)
-            return _json(400, {"error": "bad_request", "reason": "incomplete delivery context",
+            return reply(400, {"error": "bad_request", "reason": "incomplete delivery context",
                                "correlationId": correlation_id, "requestId": request_id})
 
-        evaluation = envelope["mode"] == MODE_EVALUATION
         dispatch = context_to_dispatch(delivery, envelope, client_request_id)
+        dispatch.correlation_id = correlation_id
 
-        status, provider_body = _engine.dispatch(dispatch, None, evaluation, request_id, logging)
-        logging.info(
-            "%s provider result   : httpStatus=%s outcome=%s providerStatus=%s providerMessageId=%s correlationId=%s",
-            TAG, status, provider_body.get("outcome") or "n/a", provider_body.get("providerStatus") or "n/a",
-            provider_body.get("providerMessageId") or "n/a", correlation_id)
+        provider_status, provider_body = _engine.dispatch(dispatch, None, evaluation, request_id, logging)
+        if type(provider_status) is not int or not 100 <= provider_status <= 599:
+            provider_status = 502
+        if provider_status != 200:
+            candidate = provider_body.get("outcome")
+            outcome = candidate if candidate in OUTCOMES and candidate != CONTINUE else FAIL
+            return reply(provider_status, {
+                "error": "provider_delivery_failed", "status": "failed", "outcome": outcome,
+                "correlationId": correlation_id, "requestId": request_id,
+            })
 
-        if status != 200:
-            return _json(status, provider_body)
-
-        # Echoing the nonce is the whole contract: a 2xx without it is treated as a failed delivery and
-        # Microsoft re-sends over its own telephony, so the user gets the code twice.
-        _log("responding", f"200, nonce echoed, {(time.time() - started) * 1000:.0f} ms")
-        logging.info("%s ======== done ========", TAG)
-
-        return _json(200, {
+        # The nonce proves decryption on the wire; logs record only its presence.
+        response = reply(200, {
             "nonce": delivery["nonce"],
             "correlationId": correlation_id,
             "providerStatus": "accepted",
         })
-    except Exception as error:
-        # Verbose on purpose: this endpoint exists to diagnose onboarding.
-        logging.error("%s FAILED after %.0f ms: %s", TAG, (time.time() - started) * 1000, error)
-        logging.info("%s ======== failed ========", TAG)
-        return _json(500, {"error": "delivery_failed", "correlationId": correlation_id})
+        outcome = CONTINUE
+        shutter_processed = evaluation and provider_body.get("shutterProcessed") is True
+        return response
+    except Exception:
+        outcome = FAIL
+        return reply(500, {"error": "delivery_failed", "correlationId": correlation_id, "requestId": request_id})
+    finally:
+        logging.info("%s %s", TAG, json.dumps({
+            "requestId": request_id,
+            "correlationId": safe_trace_id(correlation_id),
+            "provider": provider, "channel": channel, "mode": mode,
+            "httpStatus": status, "outcome": outcome,
+            "nonceEcho": nonce_echo, "shutterProcessed": shutter_processed,
+            "elapsedMs": round((time.perf_counter() - started) * 1000),
+        }))

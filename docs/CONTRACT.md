@@ -24,7 +24,7 @@ JWE; the cleartext envelope carries routing/scheduling only.
 | Header | Notes |
 |--------|-------|
 | `Authorization` | `Bearer <Entra token>` (audience = `EPP_EXPECTED_AUDIENCE`) |
-| `User-Agent` | e.g. `Microsoft-AzureMFA-SAS-CYOT/1.0` (logged) |
+| `User-Agent` | e.g. `Microsoft-AzureMFA-SAS-CYOT/1.0`; not logged |
 | `x-ms-correlation-id` | sign-in correlation id (fallback for envelope `correlationId`) |
 | `x-ms-client-request-id` | per-attempt id (used as `messageId`) |
 
@@ -54,7 +54,7 @@ verified before any plaintext is used. Decrypted plaintext = `CyotDeliveryContex
 |-------|----------|-------|
 | `nonce` | ✅ | value the endpoint MUST echo to prove decryption |
 | `phoneNumber` | ✅ | E.164, single canonical string |
-| `message` | ✅ | fully rendered + localized text; **contains the passcode**. For `voice`, the passcode digits are spaced so TTS reads them individually |
+| `message` | ✅ | fully rendered + localized text; **contains the passcode**. The caller supplies voice digit spacing. Forward the text unchanged; do not guess which number is the passcode |
 | `extension` | | office voice only |
 | `locale` | | selects TTS voice for the voice channel |
 | `riskContext` | | `CyotRiskContext` (scenario, familiarity flags, ip/asn/geo, ja4/ja4h, …) |
@@ -121,13 +121,13 @@ Set by provisioning. **Identical names across all languages.**
 | `EPP_PROVIDER_ACCOUNT_NAME` | sender / source id presented to the provider (unused by Soprano, whose omnimsg endpoint takes the sender from the account provisioning) |
 | `EPP_PROVIDER_TIMEOUT_MS` | outbound call timeout (default 1500, capped at 2500); not an end-to-end invocation deadline |
 | `EPP_DECRYPTION_KEY_PEM` | RSA private key for JWE decryption — PEM, or **base64 over the PEM** as the setup script writes it. A **Key Vault reference** in Azure |
-| `EPP_ENCRYPTION_KEY_ID` | expected JOSE `kid`; a mismatch is logged, not fatal |
+| `EPP_ENCRYPTION_KEY_ID` | legacy advisory setting; the configured PEM decrypts the JWE. Key IDs and headers are not logged |
 | `EPP_REQUIRE_AUTH` | `true` → validate the Entra token in-process. **Recommended `true` in every deployment**; Easy Auth is the primary gate, this is the backstop |
 | `EPP_EXPECTED_AUDIENCE` | v1 token `aud` — the identifier URI `api://{host}/{appId}` |
 | `EPP_EXPECTED_ISSUER` | v1 issuer `https://sts.windows.net/{tenantId}/` |
 | `EPP_TENANT_ID` | your Entra tenant id |
 | `EPP_EXPECTED_CLIENT_ID` | caller `appid`/`azp` to admit — Microsoft's app `25ec60fa-f18d-41a4-b398-50044c90ce13`. Enforced by Easy Auth (`403`) and, when `EPP_REQUIRE_AUTH=true`, against the token's own claim (`401`) |
-| `EPP_LOG_PLAINTEXT` | **diagnostics only** — `true` writes the phone number and passcode to the log. Never enable in production |
+| `EPP_LOG_PLAINTEXT` | obsolete and ignored; plaintext logging is not supported |
 | `KEY_VAULT_URL` | Key Vault URI (provider API keys) |
 | `AZURE_CLIENT_ID` | set for a user-assigned managed identity |
 
@@ -142,10 +142,11 @@ User* role). Never in code or config.
 - **Fail-closed** — only `Continue` → `200 accepted`; unknown status → `Fail`.
 - **Managed identity** — Key Vault access via managed identity only (user-assigned if `AZURE_CLIENT_ID`
   set, else system-assigned). No static credentials.
-- **Privacy** — the OTP code and phone number must **never** appear in logs or the response body (they
-  appear only in the outbound provider request, which is the delivery itself). The single exception is
-  `EPP_LOG_PLAINTEXT=true`, a **diagnostics-only** switch that logs the phone number, message, and
-  passcode. It defaults to false and **must not be enabled in production**.
+- **Privacy** — never log phone numbers, passcodes, nonce values, tokens, keys, JWE contents,
+  raw exceptions or provider bodies. There is no plaintext diagnostic override. Logs contain
+  request IDs, safe correlation IDs and fixed status/timing fields only. Non-GUID trace IDs are
+  hashed for logging; original IDs and the required nonce echo remain unchanged on the wire.
+  These pseudonymous traces still require normal retention and access controls.
 - **Auth** — **Easy Auth must be ON** (`unauthenticatedClientAction=Return401`, `allowedApplications`
   pinned to Microsoft's app); the trigger is `authLevel: anonymous`, so it is the primary gate.
   `EPP_EXPECTED_CLIENT_ID` mismatches return `403`. Azure deployments **must also** set
@@ -165,7 +166,9 @@ User* role). Never in code or config.
 
 ## 6. Conformance test scenarios
 
-Every implementation ships tests covering at least:
+Tests are organized by behavior: envelope/decryption, provider dispatch, and HTTP/authentication.
+Small tables cover input categories; avoid repeating the same matrix at every layer.
+Every implementation covers:
 
 1. Each provider builds an HTTPS request with the code present and the correct auth scheme.
 2. `Block` → 403; provider 4xx `Fail` → 400; 429 → 429; 401/403 → 401.

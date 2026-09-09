@@ -1,5 +1,5 @@
 {
-  "_comment": "Reference app settings for any implementation. Copy the Values into your local.settings.json (set FUNCTIONS_WORKER_RUNTIME to 'node', 'dotnet-isolated', or 'python') or into the Function App's environment variables. Keys are the same across languages — see CONTRACT.md §4. Provider API keys are NOT here; they live in Key Vault. EPP_DECRYPTION_KEY_PEM is a Key Vault reference in Azure.",
+  "_comment": "Shared settings for all three runtimes. Provider secrets stay in Key Vault. See CONTRACT.md for configuration and security requirements.",
   "IsEncrypted": false,
   "Values": {
     "FUNCTIONS_WORKER_RUNTIME": "node | dotnet-isolated | python",
@@ -20,7 +20,7 @@
     "_comment_provider_timeout": "Outbound provider timeout in milliseconds (default 1500, cap 2500). Not an end-to-end deadline; Key Vault/OAuth are outside it and Python uses connect/read inactivity timeouts. See CONTRACT.md.",
     "EPP_PROVIDER_TIMEOUT_MS": "1500",
 
-    "_comment_provider_oauth": "Set EPP_PROVIDER_AUTH_MODE=oauth2 to send the provider an app-only Entra JWT we mint (client-credentials) instead of an API key. Issuer is our app (EPP_PROVIDER_CLIENT_ID), authority is the provider's tenant (EPP_PROVIDER_TENANT_ID), audience is the provider's app via EPP_PROVIDER_SCOPE. Set EPP_PROVIDER_MI_CLIENT_ID for secretless workload-identity federation (a user-assigned managed identity federated on our app), OR provide the client secret as a Key Vault secret name (EPP_PROVIDER_CLIENT_SECRET_NAME).",
+    "_comment_provider_oauth": "Optional outbound OAuth: EPP_PROVIDER_CLIENT_ID is the caller, EPP_PROVIDER_TENANT_ID the issuer tenant, and EPP_PROVIDER_SCOPE the API audience. Use managed-identity federation OR a client secret from Key Vault. Never forward the inbound token.",
     "EPP_PROVIDER_AUTH_MODE": "apiKey",
     "EPP_PROVIDER_TENANT_ID": "<provider tenant id>",
     "EPP_PROVIDER_CLIENT_ID": "<our app registration client id>",
@@ -28,9 +28,6 @@
     "EPP_PROVIDER_MI_CLIENT_ID": "<user-assigned managed identity client id (federated on our app)>",
     "EPP_PROVIDER_TOKEN_EXCHANGE_AUDIENCE": "api://AzureADTokenExchange",
     "EPP_PROVIDER_CLIENT_SECRET_NAME": "<Key Vault secret name holding our client secret (only if not using a managed identity)>",
-
-    "_comment_log_plaintext": "DIAGNOSTICS ONLY. true writes the phone number and passcode to the log. Never enable in production.",
-    "EPP_LOG_PLAINTEXT": "false",
 
     "KEY_VAULT_URL": "https://<your-key-vault>.vault.azure.net/"
   }

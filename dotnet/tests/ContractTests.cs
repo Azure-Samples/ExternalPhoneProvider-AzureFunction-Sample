@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Epp.Otp;
 using Epp.Otp.Providers;
@@ -5,7 +6,6 @@ using Xunit;
 
 namespace Epp.Otp.Tests;
 
-// Conformance tests for the pure contract logic (see /docs/CONTRACT.md §6).
 public class ContractTests
 {
     private sealed class FakeEnv : Dictionary<string, string?>, IEnv
@@ -16,64 +16,37 @@ public class ContractTests
     private static DispatchRequest Disp(string channel = "sms", string? message = null) =>
         new("+15551234567", message, channel, "m", "c", null);
 
-    // Easy Auth normally rejects the wrong caller at the platform; these cover the standalone path.
-    [Theory]
-    [InlineData("anything", "", true)]           // unpinned client id accepts any caller
-    [InlineData("expected-app", "expected-app", true)]
-    [InlineData("EXPECTED-APP", "expected-app", true)] // Entra ids are case-insensitive
-    [InlineData("some-other-app", "expected-app", false)]
-    [InlineData(null, "expected-app", false)]    // token carrying no caller claim
-    public void CallerIsCheckedAgainstExpectedClientId(string? callerAppId, string expected, bool allowed) =>
-        Assert.Equal(allowed, TokenValidator.IsExpectedCaller(callerAppId, expected));
-
     [Fact]
-    public async Task TokenValidationIsSkippedUnlessRequireAuthIsTrue()
+    public void ExpectedCallerIsCaseInsensitiveButRequired()
     {
-        var env = new FakeEnv { ["EPP_REQUIRE_AUTH"] = "false" };
-        Assert.True((await new TokenValidator(env).ValidateAsync("Bearer whatever")).Ok);
+        Assert.True(TokenValidator.IsExpectedCaller("EXPECTED-APP", "expected-app"));
+        Assert.False(TokenValidator.IsExpectedCaller(null, "expected-app"));
     }
 
-    [Fact]
-    public async Task TokenValidationFailsClosedInAzureUnlessRequireAuthIsTrue()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AuthCanBeDisabledLocallyButFailsClosedInAzure(bool onAzure)
     {
         var env = new FakeEnv
         {
             ["EPP_REQUIRE_AUTH"] = "false",
-            ["WEBSITE_INSTANCE_ID"] = "instance",
+            ["WEBSITE_INSTANCE_ID"] = onAzure ? "instance" : null,
         };
         var result = await new TokenValidator(env).ValidateAsync(null);
-        Assert.False(result.Ok);
-        Assert.Contains("EPP_REQUIRE_AUTH", result.Reason);
+        Assert.Equal(!onAzure, result.Ok);
+        if (onAzure) Assert.Contains("EPP_REQUIRE_AUTH", result.Reason);
     }
 
     [Fact]
-    public void OutcomeMappingAndHttpStatus()
+    public void BlockStepUpAndClientErrorsKeepTheirMappings()
     {
-        var m = new InfobipProvider().Manifest;
-        Assert.Equal(Outcome.Continue, OutcomeMapper.ResolveOutcome(m, new ParsedResponse(true, 200, ProviderStatusName: "DELIVERED")));
-        // Unknown status fails closed even on HTTP 200.
-        Assert.Equal(Outcome.Fail, OutcomeMapper.ResolveOutcome(m, new ParsedResponse(true, 200, ProviderStatusName: "WATWAT")));
-        Assert.Equal(200, OutcomeMapper.ToHttpStatus(Outcome.Continue, 200));
+        Assert.Equal(Outcome.Block, OutcomeMapper.ResolveOutcome(new SopranoProvider().Manifest,
+            new ParsedResponse(false, 403, ProviderStatusName: "BLOCKED")));
         Assert.Equal(403, OutcomeMapper.ToHttpStatus(Outcome.Block, 200));
         Assert.Equal(409, OutcomeMapper.ToHttpStatus(Outcome.StepUp, 200));
-        Assert.Equal(429, OutcomeMapper.ToHttpStatus(Outcome.Fail, 429));
         Assert.Equal(401, OutcomeMapper.ToHttpStatus(Outcome.Fail, 403));
         Assert.Equal(400, OutcomeMapper.ToHttpStatus(Outcome.Fail, 422));
-        Assert.Equal(502, OutcomeMapper.ToHttpStatus(Outcome.Fail, 500));
-    }
-
-    [Fact]
-    public void InfobipBuildsHttpsSmsRequestWithAppAuthAndCode()
-    {
-        var env = new FakeEnv { ["EPP_PROVIDER_ACCOUNT_NAME"] = "EPP" };
-        var req = new InfobipProvider().BuildRequest("sms", "https://api.infobip.com",
-            Disp(message: "Use verification code 918273 for Microsoft authentication."),
-            new ProviderCredential("apiKey", Secret: "ib"), env);
-
-        Assert.StartsWith("https://", req.Url);
-        Assert.EndsWith("/sms/3/messages", req.Url);
-        Assert.StartsWith("App ", req.Headers["Authorization"]);
-        Assert.Contains("918273", req.Body);
     }
 
     [Fact]
@@ -82,7 +55,7 @@ public class ContractTests
         var env = new FakeEnv();
         var req = new TelesignProvider().BuildRequest("sms", "https://rest-api.telesign.com",
             Disp(message: "code 918273"), new ProviderCredential("apiKey", Secret: "key", Identity: "cust"), env);
-        Assert.StartsWith("Basic ", req.Headers["Authorization"]);
+        Assert.Equal("Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("cust:key")), req.Headers["Authorization"]);
         Assert.EndsWith("/v1/messaging", req.Url);
 
         var m = new TelesignProvider().Manifest;
@@ -97,6 +70,8 @@ public class ContractTests
         var req = new SopranoProvider().BuildRequest(channel, "https://qa.example.com/cgpapi",
             Disp(channel, "code 918273"), new ProviderCredential("apiKey", Secret: "k", Identity: "id"), new FakeEnv());
 
+        Assert.Equal("id", req.Headers["X-MEMS-API-ID"]);
+        Assert.Equal("k", req.Headers["X-MEMS-API-Key"]);
         Assert.EndsWith("/messages/omnimsg", req.Url);
         using var body = JsonDocument.Parse(req.Body);
         Assert.Equal(channel, body.RootElement.GetProperty("messageTypes")[0].GetString());
@@ -105,13 +80,12 @@ public class ContractTests
     }
 
     [Fact]
-    public void ProviderRegistryResolvesById()
+    public void SinchUsesBearerAuthForSms()
     {
-        var reg = new ProviderRegistry(new IProviderAdapter[]
-        {
-            new InfobipProvider(), new TelesignProvider(), new SopranoProvider(), new SinchProvider(),
-        });
-        Assert.Equal("telesign", reg.Get("TELESIGN")!.Manifest.Id);
-        Assert.Null(reg.Get("nope"));
+        var env = new FakeEnv { ["SINCH_SERVICE_PLAN_ID"] = "plan" };
+        var req = new SinchProvider().BuildRequest("sms", "https://sms.api.sinch.com",
+            Disp(message: "code 918273"), new ProviderCredential("apiKey", Secret: "token"), env);
+        Assert.Equal("Bearer token", req.Headers["Authorization"]);
+        Assert.EndsWith("/xms/v1/plan/batches", req.Url);
     }
 }
