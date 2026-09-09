@@ -2,8 +2,6 @@ using System.Text.Json;
 
 namespace Epp.Otp;
 
-// Language-agnostic contract types (see /docs/CONTRACT.md).
-
 public enum Outcome { Continue, Fail, Block, StepUp }
 
 public sealed record DispatchRequest(
@@ -14,7 +12,7 @@ public sealed record DispatchRequest(
     string? CorrelationId,
     string? Locale);
 
-public sealed record ProviderCredential(string Mode, string? Secret = null, string? Identity = null, string? Token = null);
+public sealed record ProviderCredential(string Mode, string? Secret = null, string? Identity = null);
 
 public sealed record ProviderHttpRequest(string Url, string Method, Dictionary<string, string> Headers, string Body);
 
@@ -32,7 +30,6 @@ public sealed record ProviderManifest(string Id, AuthConfig Auth, IReadOnlyDicti
 
 public sealed record DispatchResult(int HttpStatus, object Body);
 
-// The env snapshot passed to adapters.
 public interface IEnv { string? Get(string key); }
 
 public sealed class ProcessEnv : IEnv

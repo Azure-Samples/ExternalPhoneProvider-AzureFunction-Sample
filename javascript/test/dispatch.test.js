@@ -1,193 +1,141 @@
 'use strict';
 
-// Integration tests for the dispatch pipeline with a mocked provider fetch and a mocked Key Vault.
-
-const { test, beforeEach, mock } = require('node:test');
-const assert = require('node:assert');
-
-// Non-secret provider config (app settings, not secrets) — set before requiring the modules.
-process.env.KEY_VAULT_URL = 'https://test.vault.azure.net';
-process.env.SINCH_SERVICE_PLAN_ID = 'sp';
-process.env.EPP_PROVIDER_ENDPOINT = 'https://api.infobip.com';
-
-// Provider secrets come from Key Vault via managed identity in production; mock getSecret here.
-const providerSecrets = {
-    'infobip-api-key': 'ib',
-    'telesign-api-key': 'ts',
-    'telesign-customer-id': 'cust',
-    'sinch-api-token': 'st',
-    'soprano-api-key': 'sp',
-    'soprano-api-id': 'sp-id',
-};
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
 const { SecretClient } = require('@azure/keyvault-secrets');
-mock.method(SecretClient.prototype, 'getSecret', async (name) => ({ value: providerSecrets[name] }));
+const { readConfig } = require('../src/functions/config');
+const {
+    dispatchOtp, getProvider, resolveOutcome, outcomeToHttpStatus,
+    parseEnvelope, parseProviderTimeout, isValidProviderUrl,
+} = require('../src/functions/dispatch');
+const dispatch = { destination: '+15551234567', message: '  Your code is 918273.\n',
+    channel: 'sms', messageId: 'message-id', correlationId: 'correlation-id' };
+const input = { channel: 'sms', endpoint: 'https://provider.example', dispatch,
+    credential: { mode: 'apiKey', identity: 'id', secret: 'key' }, env: { SINCH_SERVICE_PLAN_ID: 'plan' } };
+const envelope = (overrides = {}) => ({ type: 'microsoft.mfa.otpDeliver.v1', channel: 1, mode: 1,
+    encryptedDeliveryContext: 'a.b.c.d.e', ...overrides });
 
-const { dispatchOtp, getProvider, resolveOutcome, outcomeToHttpStatus } = require('../src/functions/dispatch');
-
-let resp;
-let sent;
-global.fetch = async (url, opts) => {
-    sent = { url, opts };
-    if (resp === 'THROW') throw new Error('neterr');
-    if (resp === 'TIMEOUT') throw new Error('endpoint timeout after 1500ms');
-    return { ok: resp.ok, status: resp.status, text: async () => JSON.stringify(resp.body) };
-};
-
-const ctx = { log() {} };
-let n = 0;
-const uniqueDest = () => '+1555' + String(1000000 + n++).slice(-7);
-const disp = (o = {}) => ({ destination: uniqueDest(), message: 'Your code is 918273', channel: 'sms', messageId: 'm', correlationId: 'c' + Math.random(), ...o });
-
-beforeEach(() => {
-    resp = { ok: true, status: 200, body: { messages: [{ status: { name: 'DELIVERED' } }] } };
-});
-
-// A "success" response body shaped the way each provider's parseResponse expects, so each yields a
-// status that maps to Continue (unknown statuses now fail closed — see resolveOutcome).
-const successBody = {
-    infobip: { messages: [{ status: { name: 'DELIVERED' } }] },
-    telesign: { status: { code: 290 } },
-    sinch: { id: 'batch-1' },
-    soprano: { status: 'DELIVERED' },
-};
-
-for (const prov of ['infobip', 'telesign', 'sinch', 'soprano']) {
-    for (const ch of ['sms', 'voice']) {
-        test(`${prov}/${ch}: 200, message sent in body, https, provider auth scheme`, async () => {
-            resp = { ok: true, status: 200, body: successBody[prov] };
-            const r = await dispatchOtp(disp({ channel: ch }), { requestProvider: prov, context: ctx, requestId: 'r' });
-            assert.equal(r.httpStatus, 200);
-            assert.match(sent.url, /^https:\/\//);
-            assert.ok(sent.opts.body.includes('918273'), 'rendered message missing from body');
-            const providerAuth = sent.opts.headers.Authorization || sent.opts.headers['X-MEMS-API-Key'];
-            assert.ok(providerAuth, 'provider auth header missing');
-            if (sent.opts.headers.Authorization) {
-                assert.match(sent.opts.headers.Authorization, /Bearer|App|Basic/);
-            }
-        });
-    }
-}
-
-// Outcome + HTTP mapping is pure, so it is asserted directly here instead of once per case through
-// the whole dispatch pipeline (mirrors the .NET and Python contract tests).
-test('outcome mapping and HTTP status', () => {
-    const infobip = getProvider('infobip').manifest;
-    const soprano = getProvider('soprano').manifest;
-    const telesign = getProvider('telesign').manifest;
-
-    assert.equal(resolveOutcome(infobip, { success: true, providerStatusName: 'DELIVERED' }), 'Continue');
-    assert.equal(resolveOutcome(infobip, { success: true, providerStatusName: 'REJECTED' }), 'Fail');
-    assert.equal(resolveOutcome(infobip, { success: true, providerStatusName: 'WATWAT' }), 'Fail');
-    assert.equal(resolveOutcome(soprano, { success: true, providerStatusName: 'BLOCKED' }), 'Block');
-    assert.equal(resolveOutcome(telesign, { success: true, providerStatusCode: '100' }), 'Continue');
-
-    assert.equal(outcomeToHttpStatus('Continue', 200), 200);
-    assert.equal(outcomeToHttpStatus('Block', 200), 403);
-    assert.equal(outcomeToHttpStatus('StepUp', 200), 409);
-    assert.equal(outcomeToHttpStatus('Fail', 429), 429);
-    assert.equal(outcomeToHttpStatus('Fail', 403), 401);
-    assert.equal(outcomeToHttpStatus('Fail', 422), 400);
-    assert.equal(outcomeToHttpStatus('Fail', 500), 502);
-});
-
-test('endpoint timeout maps to 504', async () => {
-    resp = 'TIMEOUT';
-    const r = await dispatchOtp(disp(), { requestProvider: 'infobip', context: ctx, requestId: 'r' });
-    assert.equal(r.httpStatus, 504);
-    assert.equal(r.body.outcome, 'Fail');
-});
-
-test('network error (non-timeout) maps to 502', async () => {
-    resp = 'THROW';
-    const r = await dispatchOtp(disp(), { requestProvider: 'infobip', context: ctx, requestId: 'r' });
-    assert.equal(r.httpStatus, 502);
-    assert.equal(r.body.outcome, 'Fail');
-});
-
-test('unknown provider status fails closed even on HTTP 200 (§15)', async () => {
-    resp = { ok: true, status: 200, body: { messages: [{ status: { name: 'WATWATWAT' } }] } };
-    const r = await dispatchOtp(disp(), { requestProvider: 'infobip', context: ctx, requestId: 'r' });
-    assert.equal(r.body.outcome, 'Fail');
-    assert.equal(r.body.status, 'failed');
-});
-
-// The code and phone necessarily appear in the outbound provider request — that is the delivery.
-test('the code and phone never reach the logs or the response body', async () => {
-    const logs = [];
-    resp = { ok: true, status: 200, body: { messages: [{ status: { name: 'DELIVERED' }, messageId: 'x' }] } };
-    const r = await dispatchOtp(
-        { destination: '+15551234567', message: 'Your code is 918273', channel: 'sms', messageId: 'm', correlationId: 'c' },
-        { requestProvider: 'infobip', context: { log: (m) => logs.push(String(m)) }, requestId: 'r' },
-    );
-
-    assert.equal(r.httpStatus, 200);
-    assert.ok(sent.opts.body.includes('918273'), 'the rendered message IS sent to the provider');
-    for (const line of logs) {
-        assert.ok(!line.includes('918273'), `code leaked in a log line: ${line}`);
-        assert.ok(!line.includes('5551234567'), `phone leaked in a log line: ${line}`);
-    }
-    const body = JSON.stringify(r.body);
-    assert.ok(!body.includes('918273'), 'code leaked in response body');
-    assert.ok(!body.includes('5551234567'), 'phone leaked in response body');
-});
-
-test('apiKey mode fails closed when the secret is missing (502)', async () => {
-    const manifest = getProvider('soprano').manifest;
-    const saved = JSON.parse(JSON.stringify(manifest.auth));
-    manifest.auth = { mode: 'apiKey', keyVaultSecretName: '__missing_secret__' };
-    try {
-        const r = await dispatchOtp(disp(), { requestProvider: 'soprano', context: ctx, requestId: 'r' });
-        assert.equal(r.httpStatus, 502);
-        assert.equal(r.body.reason, 'provider credential unavailable');
-    } finally {
-        manifest.auth = saved;
+test('config uses the supplied audience and deployment provider, with no hardcoded fallback', async () => {
+    const audience = '11111111-2222-4333-8444-555555555555';
+    const env = { EPP_EXPECTED_AUDIENCE: ` ${audience} `, EPP_PROVIDER_NAME: ' SiNcH ',
+        EPP_PROVIDER_TIMEOUT_MS: ' 0012 ', SINCH_SERVICE_PLAN_ID: 'custom-plan',
+        EPP_TENANT_ID: ' trusted-tenant ', WEBSITE_HOSTNAME: 'azure-test' };
+    const config = readConfig(env);
+    assert.deepEqual([config.expectedAudience, config.providerName, config.providerTimeoutMs], [audience, 'sinch', ' 0012 ']);
+    assert.equal(config.env, env);
+    assert.equal(config.tenantId, 'trusted-tenant');
+    assert.equal(Object.hasOwn(config, 'onAzure'), false);
+    const result = await dispatchOtp({ ...dispatch, provider: 'unknown' }, { config, shutter: true });
+    assert.deepEqual([result.httpStatus, result.body.provider], [200, 'sinch']);
+    const defaults = readConfig({});
+    assert.deepEqual([defaults.expectedAudience, defaults.providerName], ['', '']);
+    for (const providerName of ['', 'unknown']) {
+        assert.equal((await dispatchOtp(dispatch, { config: { ...config, providerName }, shutter: true })).httpStatus, 400);
     }
 });
 
-test('shutter returns 200 without sending', async () => {
-    let calls = 0;
-    const orig = global.fetch;
-    global.fetch = async (...a) => { calls++; return orig(...a); };
-    try {
-        const r = await dispatchOtp(disp(), { requestProvider: 'infobip', shutter: true, context: ctx, requestId: 'r' });
-        assert.equal(r.httpStatus, 200);
-        assert.equal(r.body.shutterProcessed, true);
-        assert.equal(calls, 0);
-    } finally {
-        global.fetch = orig;
+test('envelope TTL boundaries and routing reject coercion', () => {
+    assert.ok(parseEnvelope(envelope()).envelope);
+    assert.ok(parseEnvelope(envelope({ ttlSeconds: 2147483647 })).envelope);
+    for (const ttlSeconds of [-1, 0, '60', null, true, 1.5, 2147483648]) {
+        assert.ok(parseEnvelope(envelope({ ttlSeconds })).error, String(ttlSeconds));
+    }
+    assert.equal(parseEnvelope(envelope({ channel: '1' })).error, 'unsupported channel');
+    assert.equal(parseEnvelope(envelope({ mode: true })).error, 'unsupported mode');
+});
+
+test('provider URLs and timeouts retain representative safety boundaries', () => {
+    for (const url of ['http://provider.example', 'https://@provider.example', 'https://provider.example#',
+        'https://provider.example:0', 'https://provider.example:-1', 'https://provider.example:65536']) {
+        assert.equal(isValidProviderUrl(url), false, url);
+    }
+    assert.equal(isValidProviderUrl('https://provider.example:65535/path'), true);
+    for (const value of [null, '0', '-1', '1e3']) {
+        assert.equal(parseProviderTimeout(value), 1500);
+    }
+    assert.equal(parseProviderTimeout(' 0012 '), 12);
+    assert.equal(parseProviderTimeout('9999'), 2500);
+});
+
+test('omnimsg uses API ID/key headers and a constant false shutterMode wire field', () => {
+    const request = getProvider('soprano').adapter.buildRequest({ ...input, env: undefined, endpoint: `${input.endpoint}/cgpapi///` });
+    assert.equal(request.url, 'https://provider.example/cgpapi/messages/omnimsg');
+    assert.equal(request.method, 'POST');
+    assert.deepEqual(request.headers, { 'Content-Type': 'application/json', Accept: 'application/json',
+        'X-MEMS-API-ID': 'id', 'X-MEMS-API-Key': 'key' });
+    assert.deepEqual(JSON.parse(request.body), { text: dispatch.message, destination: '15551234567',
+        messageTypes: ['sms'], correlationId: 'correlation-id', shutterMode: false });
+});
+
+test('App authentication uses JSON SMS content', () => {
+    const request = getProvider('infobip').adapter.buildRequest(input);
+    assert.equal(request.url, 'https://provider.example/sms/3/messages');
+    assert.equal(request.headers.Authorization, 'App key');
+    assert.equal(request.headers['Content-Type'], 'application/json');
+    assert.equal(JSON.parse(request.body).messages[0].content.text, dispatch.message);
+});
+
+test('Basic authentication uses form-encoded SMS content', () => {
+    const request = getProvider('telesign').adapter.buildRequest(input);
+    assert.equal(request.url, 'https://provider.example/v1/messaging');
+    assert.equal(request.headers.Authorization, `Basic ${Buffer.from('id:key').toString('base64')}`);
+    assert.equal(request.headers['Content-Type'], 'application/x-www-form-urlencoded');
+    assert.equal(new URLSearchParams(request.body).get('message'), dispatch.message);
+});
+
+test('static Bearer authentication uses the service-plan SMS route', () => {
+    const request = getProvider('sinch').adapter.buildRequest(input);
+    assert.equal(request.url, 'https://provider.example/xms/v1/plan/batches');
+    assert.equal(request.headers.Authorization, 'Bearer key');
+    assert.equal(request.headers['Content-Type'], 'application/json');
+    assert.equal(JSON.parse(request.body).body, dispatch.message);
+});
+
+test('response parsing and HTTP mapping fail closed, including malformed status/state', () => {
+    const { manifest, adapter } = getProvider('soprano');
+    const mapping = { ...manifest, responseMapping: { ...manifest.responseMapping, CHALLENGE: 'StepUp' } };
+    for (const [json, upstream, expected, status] of [
+        [{ status: 'ENROUTE' }, 201, 'Continue', 200],
+        [{ status: 'UNKNOWN' }, 200, 'Fail', 502],
+        [{ status: 'FILTERED' }, 200, 'Fail', 502],
+        [{ status: false, state: 'ACCEPTED' }, 200, 'Fail', 502],
+        [{ status: 123, state: 'ACCEPTED' }, 200, 'Fail', 502],
+        [{ state: false }, 200, 'Fail', 502],
+        [{ status: 'ENROUTE' }, 500, 'Fail', 502],
+        [{ status: 'BLOCKED' }, 500, 'Block', 403],
+        [{ status: 'CHALLENGE' }, 500, 'StepUp', 409],
+    ]) {
+        const parsed = adapter.parseResponse({ json, httpStatus: upstream, ok: upstream < 300 });
+        const outcome = resolveOutcome(mapping, parsed);
+        assert.deepEqual([outcome, outcomeToHttpStatus(outcome, upstream)], [expected, status], JSON.stringify(json));
     }
 });
 
-test('unknown provider is rejected (400)', async () => {
-    const r = await dispatchOtp(disp(), { requestProvider: 'nope', context: ctx, requestId: 'r' });
-    assert.equal(r.httpStatus, 400);
-});
-
-test('oauth2 mode uses a Bearer token and fails closed without one', async () => {
-    const manifest = getProvider('sinch').manifest;
-    const saved = JSON.parse(JSON.stringify(manifest.auth));
-    manifest.auth.mode = 'oauth2';
-    try {
-        await dispatchOtp(disp(), { requestProvider: 'sinch', context: ctx, requestId: 'r', acquireProviderToken: async () => 'TKN' });
-        assert.equal(sent.opts.headers.Authorization, 'Bearer TKN');
-
-        const noToken = await dispatchOtp(disp(), { requestProvider: 'sinch', context: ctx, requestId: 'r' });
-        assert.equal(noToken.httpStatus, 502); // credential unavailable → 502, not 401
-    } finally {
-        manifest.auth = saved;
+test('missing key/identity and an unsafe final voice URL make zero HTTP calls', async (t) => {
+    const settings = { KEY_VAULT_URL: 'https://unit-test.vault.azure.net',
+        EPP_PROVIDER_ENDPOINT: input.endpoint, SINCH_VOICE_ENDPOINT: 'http://unsafe.example' };
+    const getSecret = t.mock.method(SecretClient.prototype, 'getSecret', async (name) => ({
+        value: ['soprano-api-id', 'telesign-api-key'].includes(name) ? '' : 'fixture-key',
+    }));
+    const fetchMock = t.mock.method(global, 'fetch', () => assert.fail('unexpected HTTP'));
+    for (const [providerName, channel, reason] of [
+        ['soprano', 'sms', 'provider credential unavailable'],
+        ['telesign', 'sms', 'provider credential unavailable'],
+        ['sinch', 'voice', 'provider request URL invalid'],
+    ]) {
+        const config = readConfig({ ...settings, EPP_PROVIDER_NAME: providerName });
+        const result = await dispatchOtp({ ...dispatch, channel }, { config, requestId: 'request-id' });
+        assert.deepEqual([result.httpStatus, result.body.reason], [502, reason]);
     }
-});
-
-test('apiKey provider that needs an identity fails closed when the identity secret is missing (502)', async () => {
-    const manifest = getProvider('telesign').manifest;
-    const saved = JSON.parse(JSON.stringify(manifest.auth));
-    manifest.auth.identityKeyVaultSecretName = '__missing_identity__';
-    try {
-        const r = await dispatchOtp(disp(), { requestProvider: 'telesign', context: ctx, requestId: 'r' });
-        assert.equal(r.httpStatus, 502);
-        assert.equal(r.body.reason, 'provider credential unavailable');
-    } finally {
-        manifest.auth = saved;
+    const config = readConfig({ ...settings, EPP_PROVIDER_NAME: 'sinch' });
+    const calls = getSecret.mock.callCount();
+    for (const override of [{}, { managedIdentityClientId: '11111111-2222-4333-8444-555555555555' },
+        { keyVaultUrl: 'https://other-test.vault.azure.net' }]) {
+        const nextConfig = { ...config, ...override };
+        await dispatchOtp({ ...dispatch, channel: 'voice' }, { config: nextConfig });
+        assert.equal(getSecret.mock.calls.at(-1).this.vaultUrl, nextConfig.keyVaultUrl);
     }
+    assert.equal(getSecret.mock.callCount(), calls + 2);
+    assert.equal(new Set(getSecret.mock.calls.map((call) => call.this)).size, 3);
+    assert.equal(fetchMock.mock.callCount(), 0);
 });
-

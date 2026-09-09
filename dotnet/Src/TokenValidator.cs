@@ -5,15 +5,18 @@ using System.IdentityModel.Tokens.Jwt;
 
 namespace Epp.Otp;
 
-// Validates the Entra JWT when EPP_REQUIRE_AUTH=true (aud/issuer/JWKS, RS256). No-op pass-through
-// otherwise — Easy Auth is the primary gate; this is the backstop.
+// In-process Entra validation is mandatory on Azure; bypass is local-only.
 public sealed class TokenValidator
 {
     private readonly JwtSecurityTokenHandler _handler = new();
     private readonly IEnv _env;
-    private ConfigurationManager<OpenIdConnectConfiguration>? _configManager;
+    private IConfigurationManager<OpenIdConnectConfiguration>? _configManager;
 
-    public TokenValidator(IEnv? env = null) => _env = env ?? new ProcessEnv();
+    public TokenValidator(IEnv? env = null, IConfigurationManager<OpenIdConnectConfiguration>? configurationManager = null)
+    {
+        _env = env ?? new ProcessEnv();
+        _configManager = configurationManager;
+    }
 
     // azp is the v2 caller claim, appid the v1 one.
     public static bool IsExpectedCaller(string? callerAppId, string? expectedClientId) =>
@@ -22,14 +25,21 @@ public sealed class TokenValidator
 
     public sealed record Result(bool Ok, string? Reason = null, string? CallerObjectId = null);
 
-    public async Task<Result> ValidateAsync(string? authorizationHeader)
+    public async Task<Result> ValidateAsync(string? authorizationHeader, AppConfig? config = null)
     {
-        if (!string.Equals(_env.Get("EPP_REQUIRE_AUTH"), "true", StringComparison.OrdinalIgnoreCase))
-            return new Result(true);
+        config ??= AppConfig.Read(_env);
+        // Azure platform metadata prevents supplied configuration from enabling the local-only auth bypass.
+        var isAzureHost = !string.IsNullOrEmpty(_env.Get("WEBSITE_INSTANCE_ID"))
+            || !string.IsNullOrEmpty(_env.Get("WEBSITE_SITE_NAME"))
+            || !string.IsNullOrEmpty(_env.Get("WEBSITE_HOSTNAME"));
+        if (!config.RequireAuth)
+            return isAzureHost ? new Result(false, "auth misconfigured") : new Result(true);
 
-        var audience = _env.Get("EPP_EXPECTED_AUDIENCE");
-        var tenantId = _env.Get("EPP_TENANT_ID");
-        if (string.IsNullOrEmpty(audience) || string.IsNullOrEmpty(tenantId))
+        if (isAzureHost && string.IsNullOrWhiteSpace(config.ExpectedClientId))
+            return new Result(false, "auth misconfigured");
+
+        var tenantId = config.TenantId;
+        if (string.IsNullOrEmpty(config.ExpectedAudience) || string.IsNullOrEmpty(tenantId))
             return new Result(false, "auth misconfigured");
 
         if (string.IsNullOrEmpty(authorizationHeader) || !authorizationHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
@@ -42,9 +52,9 @@ public sealed class TokenValidator
 
         try
         {
-            var config = await _configManager.GetConfigurationAsync();
+            var discovery = await _configManager.GetConfigurationAsync(CancellationToken.None);
             // EPP_EXPECTED_ISSUER pins one issuer; otherwise accept both the v2 and v1 forms.
-            var pinnedIssuer = _env.Get("EPP_EXPECTED_ISSUER");
+            var pinnedIssuer = config.ExpectedIssuer;
             var validIssuers = string.IsNullOrEmpty(pinnedIssuer)
                 ? new[] { $"https://login.microsoftonline.com/{tenantId}/v2.0", $"https://sts.windows.net/{tenantId}/" }
                 : new[] { pinnedIssuer };
@@ -53,15 +63,17 @@ public sealed class TokenValidator
                 ValidateIssuer = true,
                 ValidIssuers = validIssuers,
                 ValidateAudience = true,
-                ValidAudience = audience,
+                ValidAudience = config.ExpectedAudience,
                 ValidateLifetime = true,
-                IssuerSigningKeys = config.SigningKeys,
+                RequireExpirationTime = true,
+                IssuerSigningKeys = discovery.SigningKeys,
                 ValidateIssuerSigningKey = true,
+                ValidAlgorithms = new[] { SecurityAlgorithms.RsaSha256 },
             };
             var principal = _handler.ValidateToken(token, parameters, out _);
 
             var callerAppId = principal.FindFirst("azp")?.Value ?? principal.FindFirst("appid")?.Value;
-            if (!IsExpectedCaller(callerAppId, _env.Get("EPP_EXPECTED_CLIENT_ID")))
+            if (!IsExpectedCaller(callerAppId, config.ExpectedClientId))
                 return new Result(false, "unexpected caller");
 
             var oid = principal.FindFirst("oid")?.Value ?? principal.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value;

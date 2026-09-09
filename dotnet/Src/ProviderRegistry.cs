@@ -18,11 +18,6 @@ public sealed class ProviderRegistry
         return _byId.TryGetValue(id.ToLowerInvariant(), out var adapter) ? adapter : null;
     }
 
-    public IProviderAdapter? Resolve(string? requestProvider)
-    {
-        var id = !string.IsNullOrWhiteSpace(requestProvider)
-            ? requestProvider
-            : _env.Get("EPP_PROVIDER_NAME");
-        return Get(id);
-    }
+    public IProviderAdapter? Resolve(string? requestProvider) =>
+        Get(requestProvider ?? AppConfig.Read(_env).ProviderName);
 }

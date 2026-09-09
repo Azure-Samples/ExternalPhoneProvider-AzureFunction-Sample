@@ -3,7 +3,6 @@ using System.Text.Json;
 
 namespace Epp.Otp.Providers;
 
-// Telesign: SMS via /v1/messaging, voice via /v1/voice (form-urlencoded). Auth: HTTP Basic (customer_id:api_key).
 public sealed class TelesignProvider : IProviderAdapter
 {
     public ProviderManifest Manifest { get; } = new(
@@ -25,9 +24,7 @@ public sealed class TelesignProvider : IProviderAdapter
 
     public ProviderHttpRequest BuildRequest(string channel, string endpoint, DispatchRequest dispatch, ProviderCredential credential, IEnv env)
     {
-        var authorization = credential.Mode == "oauth2"
-            ? $"Bearer {credential.Token}"
-            : "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"{credential.Identity}:{credential.Secret}"));
+        var authorization = "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"{credential.Identity}:{credential.Secret}"));
 
         var externalId = dispatch.CorrelationId ?? dispatch.MessageId;
         var form = new Dictionary<string, string>();

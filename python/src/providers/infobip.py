@@ -1,4 +1,3 @@
-"""Infobip: SMS via /sms/3/messages, voice via /tts/3/advanced. Auth: App API key."""
 import json
 
 
@@ -19,7 +18,7 @@ class InfobipProvider:
 
     def build_request(self, channel, endpoint, dispatch, credential, env):
         sender_id = env.get("EPP_PROVIDER_ACCOUNT_NAME") or "Verify"
-        authorization = f"Bearer {credential['token']}" if credential["mode"] == "oauth2" else f"App {credential['secret']}"
+        authorization = f"App {credential['secret']}"
         headers = {"Authorization": authorization, "Content-Type": "application/json", "Accept": "application/json"}
         message_id = dispatch.correlation_id or dispatch.message_id
 

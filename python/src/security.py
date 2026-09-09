@@ -1,9 +1,7 @@
-"""Validates the Entra JWT when EPP_REQUIRE_AUTH=true (aud/issuer/JWKS, RS256).
-No-op pass-through otherwise — Easy Auth is the primary gate; this is the backstop."""
-import os
-
 import jwt
 from jwt import PyJWKClient
+
+from .config import read_config
 
 _jwks_clients = {}
 
@@ -16,13 +14,20 @@ def _jwks_client(tenant_id):
     return client
 
 
-def validate_token(authorization_header):
-    """Returns (ok, reason, caller_object_id)."""
-    if (os.environ.get("EPP_REQUIRE_AUTH") or "").lower() != "true":
+def validate_token(authorization_header, config=None):
+    config = read_config() if config is None else config
+    require_auth = config["require_auth"]
+    expected_client_id = config["expected_client_id"]
+    env = config["env"]
+    on_azure = bool(env.get("WEBSITE_INSTANCE_ID") or env.get("WEBSITE_HOSTNAME")
+                    or env.get("WEBSITE_SITE_NAME"))
+    if on_azure and (not require_auth or not (expected_client_id or "").strip()):
+        return False, "auth misconfigured", None
+    if not require_auth:
         return True, None, None
 
-    audience = os.environ.get("EPP_EXPECTED_AUDIENCE")
-    tenant_id = os.environ.get("EPP_TENANT_ID")
+    audience = config["expected_audience"]
+    tenant_id = config["tenant_id"]
     if not audience or not tenant_id:
         return False, "auth misconfigured", None
 
@@ -30,6 +35,8 @@ def validate_token(authorization_header):
         return False, "missing bearer token", None
 
     token = authorization_header[len("bearer "):].strip()
+    if not token:
+        return False, "missing bearer token", None
     try:
         signing_key = _jwks_client(tenant_id).get_signing_key_from_jwt(token)
         claims = jwt.decode(
@@ -37,11 +44,11 @@ def validate_token(authorization_header):
             signing_key.key,
             algorithms=["RS256"],
             audience=audience,
-            options={"verify_iss": False},
+            options={"verify_iss": False, "require": ["exp"]},
         )
         allowed_issuers = (
-            (os.environ.get("EPP_EXPECTED_ISSUER"),)
-            if os.environ.get("EPP_EXPECTED_ISSUER")
+            (config["expected_issuer"],)
+            if config["expected_issuer"]
             else (
                 f"https://login.microsoftonline.com/{tenant_id}/v2.0",
                 f"https://sts.windows.net/{tenant_id}/",
@@ -51,9 +58,10 @@ def validate_token(authorization_header):
             return False, "token validation failed", None
 
         # azp is the v2 caller claim, appid the v1 one.
-        expected_client_id = os.environ.get("EPP_EXPECTED_CLIENT_ID")
-        if expected_client_id and (claims.get("azp") or claims.get("appid")) != expected_client_id:
-            return False, "unexpected caller", None
+        caller_id = claims.get("azp") or claims.get("appid")
+        if expected_client_id:
+            if not isinstance(caller_id, str) or caller_id.lower() != expected_client_id.lower():
+                return False, "unexpected caller", None
 
         return True, None, claims.get("oid")
     except Exception:

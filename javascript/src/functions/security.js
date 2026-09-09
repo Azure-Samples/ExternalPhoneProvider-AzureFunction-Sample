@@ -4,9 +4,10 @@
 
 'use strict';
 
-// Optional inbound bearer-token validation: anonymous unless EPP_REQUIRE_AUTH=true, which validates
-// a Microsoft JWT (iss/aud/exp/RS256). Easy Auth is the primary gate; this is the backstop.
+// Inbound Microsoft JWT validation (iss/aud/exp/RS256). Local no-auth is supported explicitly;
+// on Azure it must be enabled with a pinned caller, regardless of Easy Auth headers.
 
+const { readConfig } = require('./config');
 const jwksByTenant = new Map();
 
 function getJwks(issuerTenantId) {
@@ -23,16 +24,24 @@ function getJwks(issuerTenantId) {
 // azp is the v2 caller claim, appid the v1 one.
 function isExpectedCaller(payload, expectedClientId) {
     if (!expectedClientId) return true;
-    return (payload.azp || payload.appid) === expectedClientId;
+    const callerId = payload.azp || payload.appid;
+    return typeof callerId === 'string' && callerId.toLowerCase() === expectedClientId.toLowerCase();
 }
 
-async function validateToken(request, context, requestId) {
-    if (String(process.env.EPP_REQUIRE_AUTH || 'false').toLowerCase() !== 'true') {
+async function validateToken(request, config = readConfig()) {
+    const { env, requireAuth, expectedClientId, expectedAudience: audience, tenantId, expectedIssuer } = config;
+    const onAzure = !!(env.WEBSITE_INSTANCE_ID || env.WEBSITE_HOSTNAME || env.WEBSITE_SITE_NAME);
+    if (onAzure && !requireAuth) {
+        return { ok: false, reason: 'EPP_REQUIRE_AUTH must be true on Azure' };
+    }
+    if (!requireAuth) {
         return { ok: true, skipped: true };
     }
 
-    const audience = process.env.EPP_EXPECTED_AUDIENCE;
-    const tenantId = process.env.EPP_TENANT_ID;
+    if (onAzure && !expectedClientId) {
+        return { ok: false, reason: 'EPP_EXPECTED_CLIENT_ID is required on Azure' };
+    }
+
     if (!audience || !tenantId) {
         return { ok: false, reason: 'EPP_REQUIRE_AUTH is set but EPP_EXPECTED_AUDIENCE / EPP_TENANT_ID are missing' };
     }
@@ -46,8 +55,8 @@ async function validateToken(request, context, requestId) {
     try {
         const { jwtVerify } = require('jose');
         // Accept both the v2 and v1 issuer forms unless EPP_EXPECTED_ISSUER pins one.
-        const issuers = process.env.EPP_EXPECTED_ISSUER
-            ? [process.env.EPP_EXPECTED_ISSUER]
+        const issuers = expectedIssuer
+            ? [expectedIssuer]
             : [
                 `https://login.microsoftonline.com/${tenantId}/v2.0`,
                 `https://sts.windows.net/${tenantId}/`,
@@ -56,15 +65,14 @@ async function validateToken(request, context, requestId) {
             audience,
             issuer: issuers,
             algorithms: ['RS256'],
+            requiredClaims: ['exp'],
         });
 
-        if (!isExpectedCaller(payload, process.env.EPP_EXPECTED_CLIENT_ID)) {
-            context.log(`[AUTH_FAIL] requestId=${requestId} reason=unexpected caller appid=${payload.azp || payload.appid || 'none'}`);
+        if (!isExpectedCaller(payload, expectedClientId)) {
             return { ok: false, reason: 'unexpected caller' };
         }
         return { ok: true };
-    } catch (error) {
-        context.log(`[AUTH_FAIL] requestId=${requestId} reason=${error.message}`);
+    } catch {
         return { ok: false, reason: 'token validation failed' };
     }
 }

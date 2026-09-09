@@ -8,13 +8,19 @@ public static class OutcomeMapper
     public static Outcome ResolveOutcome(ProviderManifest manifest, ParsedResponse parsed)
     {
         var key = parsed.ProviderStatusName ?? parsed.ProviderStatusCode;
+        Outcome outcome;
         if (!string.IsNullOrEmpty(key))
         {
-            if (manifest.ResponseMapping.TryGetValue(key, out var mapped)) return mapped;
-            return manifest.ResponseMapping.TryGetValue("default", out var defaultOutcome) ? defaultOutcome : Outcome.Fail;
+            outcome = manifest.ResponseMapping.TryGetValue(key, out var mapped) ? mapped
+                : manifest.ResponseMapping.TryGetValue("default", out var defaultOutcome) ? defaultOutcome : Outcome.Fail;
         }
-        if (parsed.Success) return Outcome.Continue;
-        return manifest.ResponseMapping.TryGetValue("default", out var fallbackOutcome) ? fallbackOutcome : Outcome.Fail;
+        else
+        {
+            outcome = parsed.Success ? Outcome.Continue
+                : manifest.ResponseMapping.TryGetValue("default", out var fallbackOutcome) ? fallbackOutcome : Outcome.Fail;
+        }
+        // A success-shaped body cannot turn a failed HTTP request into an acknowledgement.
+        return outcome == Outcome.Continue && !parsed.Success ? Outcome.Fail : outcome;
     }
 
     public static int ToHttpStatus(Outcome outcome, int providerHttpStatus) => outcome switch

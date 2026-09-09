@@ -21,9 +21,8 @@ const manifest = {
 };
 
 function buildRequest({ channel, endpoint, dispatch, credential, env }) {
-    const bearerToken = credential.mode === 'oauth2' ? credential.token : credential.secret;
     const headers = {
-        Authorization: `Bearer ${bearerToken}`,
+        Authorization: `Bearer ${credential.secret}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
     };
@@ -61,7 +60,6 @@ function parseResponse({ httpStatus, ok, json }) {
         providerHttpStatus: httpStatus,
         providerMessageId: typeof messageOrCallId === 'string' ? messageOrCallId : (messageOrCallId && messageOrCallId.href) || null,
         providerStatusName: ok ? 'Dispatched' : (json && (json.text || json.status)) || null,
-        providerStatusDescription: (json && (json.text || json.detailedStatus)) || null,
     };
 }
 

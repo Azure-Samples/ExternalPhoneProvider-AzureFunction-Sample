@@ -2,7 +2,6 @@ using System.Text.Json;
 
 namespace Epp.Otp.Providers;
 
-// Sinch: SMS via XMS Batches (POST /xms/v1/{plan}/batches, Bearer). Voice via Calling TTS callout.
 public sealed class SinchProvider : IProviderAdapter
 {
     public ProviderManifest Manifest { get; } = new(
@@ -20,10 +19,9 @@ public sealed class SinchProvider : IProviderAdapter
 
     public ProviderHttpRequest BuildRequest(string channel, string endpoint, DispatchRequest dispatch, ProviderCredential credential, IEnv env)
     {
-        var bearer = credential.Mode == "oauth2" ? credential.Token : credential.Secret;
         var headers = new Dictionary<string, string>
         {
-            ["Authorization"] = $"Bearer {bearer}",
+            ["Authorization"] = $"Bearer {credential.Secret}",
             ["Content-Type"] = "application/json",
             ["Accept"] = "application/json",
         };

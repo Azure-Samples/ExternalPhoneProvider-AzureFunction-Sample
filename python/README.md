@@ -1,45 +1,44 @@
 # External Phone Provider Function — Python (v2 model)
 
-A Python implementation of the External Phone Provider OTP-delivery Function, conforming to the shared
-[contract](../docs/CONTRACT.md). Same design as the [`javascript/`](../javascript/) and
-[`dotnet/`](../dotnet/) versions: one dispatch engine + drop-in provider adapters, env-provisioned
-config, secrets in Key Vault.
+Implements the shared [contract](../docs/CONTRACT.md) with one dispatch engine and one selected
+provider per deployment. Target: Python 3.11, Azure Functions v4, Python v2 programming model.
 
-## Layout
+## Setup and deployment
 
-```
-python/
-├─ function_app.py            # HTTP trigger: POST /api/SendOtp (v2 model)
-├─ requirements.txt
-├─ src/
-│  ├─ dispatch.py             # envelope parse → JWE decrypt → provider dispatch
-│  ├─ registry.py             # adapter registry + EPP_PROVIDER_NAME resolution
-│  ├─ providers/*.py          # infobip, telesign, soprano, sinch (manifest + build/parse)
-│  ├─ secrets.py              # Key Vault via managed identity (cached)
-│  ├─ outcome.py              # status → outcome → HTTP status
-│  ├─ models.py               # DispatchRequest + outcome constants
-│  └─ security.py             # Entra JWT validation when EPP_REQUIRE_AUTH=true
-└─ tests/                     # pytest conformance tests
-```
+1. Follow [customer onboarding](../docs/ONBOARDING.md). Set `EPP_PROVIDER_NAME` to the selected
+	adapter's registered manifest id (`<adapter-id>` is only a placeholder).
+2. Consult the selected adapter and its manifest in [src/providers/](src/providers/) for required
+	credentials and options. Store credentials in Key Vault under the declared secret names, grant
+	the Function's managed identity *Key Vault Secrets User*, and configure the matching endpoint/options.
+3. Base private local settings on [../docs/local.settings.sample.json](../docs/local.settings.sample.json),
+	replacing placeholders and selecting `FUNCTIONS_WORKER_RUNTIME=python`. Put settings at the
+	app root beside [host.json](host.json). Use the shared authentication/encryption catalog; Azure
+	requires Easy Auth and in-process JWT validation. No host-detection setting is customer-provisioned.
+4. Use a virtual environment, install [requirements.txt](requirements.txt) and pytest, then run the
+	offline [tests/](tests/) from this folder. Start the local Functions host from this app root.
+5. Publish this folder to a compatible Linux Python Function App with dependencies or a supported
+	remote build. Inspect the package and apply [.funcignore](.funcignore); keep local settings and keys private.
 
-## Build, test, run
+## Request behavior
 
-```bash
-cd python
-python -m venv .venv && .venv\Scripts\activate      # (macOS/Linux: source .venv/bin/activate)
-pip install -r requirements.txt pytest
-python -m pytest tests                               # run conformance tests
-func start                                           # run locally (copy ../docs/local.settings.sample.json)
-```
+`POST /api/SendOtp` uses the same request and trust boundaries as the other runtimes. Incoming
+`mode`, `channel`, `ttlSeconds` and `tenantId` are request data, not deployment authentication settings.
 
-## Deploy
+Use incoming `mode: 2` or `mode: "evaluation"` as the generic shutter for every provider: authentication,
+validation and decryption run, but provider lookup, provider Key Vault reads and provider HTTP do not.
+No provider configuration or diagnostic environment flag is required. Authentication/key prerequisites
+and live acceptance semantics are defined in the [contract](../docs/CONTRACT.md#evaluation-generic-shutter).
 
-```bash
-func azure functionapp publish <your-function-app>   # Linux Python Function App
-```
+## Source
 
-The app's **managed identity** needs the **Key Vault Secrets User** role on the vault. Configuration
-(env var names, Key Vault secret names, behaviors) is identical to the contract — see
-[`../docs/CONTRACT.md`](../docs/CONTRACT.md).
+| Source | Purpose |
+|---|---|
+| [function_app.py](function_app.py) | HTTP handler and adapter registration |
+| [src/config.py](src/config.py) | Shared deployment settings |
+| [src/dispatch.py](src/dispatch.py) | Request model, JWE, provider registry and outcome mapping |
+| [src/providers/](src/providers/) | Adapter manifests and API-specific implementations |
+| [src/secrets.py](src/secrets.py) | Cached Key Vault access via managed identity |
+| [src/security.py](src/security.py) | Inbound JWT validation |
 
-Target: Azure Functions Python **v2** programming model (Python 3.11), Functions v4.
+Add and register an adapter without adding provider-specific branches to the shared pipeline.
+See [production limitations](../docs/CONTRACT.md#production-limitations) before production use.

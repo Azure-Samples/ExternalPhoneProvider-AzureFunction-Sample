@@ -1,45 +1,47 @@
 # External Phone Provider Function — C# (.NET isolated worker)
 
-A C# implementation of the External Phone Provider OTP-delivery Function, conforming to the shared
-[contract](../docs/CONTRACT.md). Same design as the [`javascript/`](../javascript/) version:
-one dispatch engine + drop-in provider adapters, env-provisioned config, secrets in Key Vault.
+Implements the shared [contract](../docs/CONTRACT.md) with one dispatch engine and one selected
+provider per deployment. Target: .NET 8 isolated worker, Azure Functions v4.
 
-## Layout
+## Setup and deployment
 
-```
-dotnet/
-├─ Program.cs                 # host + DI registration (add one line to onboard a provider)
-├─ Functions/SendOtp.cs       # HTTP trigger: POST /api/SendOtp
-├─ Src/
-│  ├─ DispatchEngine.cs       # envelope parse → JWE decrypt → provider dispatch
-│  ├─ ProviderRegistry.cs     # keyed adapter registry + EPP_PROVIDER_NAME resolution
-│  ├─ IProviderAdapter.cs     # Manifest + BuildRequest + ParseResponse
-│  ├─ Providers/*.cs          # infobip, telesign, soprano, sinch
-│  ├─ SecretResolver.cs       # Key Vault via managed identity (cached)
-│  ├─ ISecretResolver.cs      # secret-resolver abstraction (injectable for tests)
-│  ├─ OutcomeMapper.cs        # status → outcome → HTTP status
-│  ├─ Models.cs               # DispatchRequest + shared records
-│  └─ TokenValidator.cs       # Entra JWT validation when EPP_REQUIRE_AUTH=true
-└─ tests/                     # xUnit conformance tests
-```
+1. Follow [customer onboarding](../docs/ONBOARDING.md). Set `EPP_PROVIDER_NAME` to the selected
+	adapter's registered manifest id (`<adapter-id>` is only a placeholder).
+2. Consult the selected adapter and its manifest in [Src/Providers/](Src/Providers/) for required
+	credentials and options. Store credentials in Key Vault under the declared secret names, grant
+	the Function's managed identity *Key Vault Secrets User*, and configure the matching endpoint/options.
+3. Base private local settings on [../docs/local.settings.sample.json](../docs/local.settings.sample.json),
+	replacing placeholders and selecting `FUNCTIONS_WORKER_RUNTIME=dotnet-isolated`. Put settings
+	at the app root beside [host.json](host.json). Use the shared authentication/encryption catalog;
+	Azure requires Easy Auth and in-process JWT validation. No host-detection setting is customer-provisioned.
+4. Build [dotnet.csproj](dotnet.csproj), run the offline xUnit suites in
+	[tests/Epp.Otp.Tests.csproj](tests/Epp.Otp.Tests.csproj), and start the local Functions host from this folder.
+5. Publish this app folder to a compatible .NET isolated Function App. Inspect the package: both
+	[.funcignore](.funcignore) and the project protect local settings; private keys must not be included.
 
-## Build, test, run
+## Request behavior
 
-```bash
-cd dotnet
-dotnet build                       # build the Functions app
-dotnet test tests                  # run conformance tests
-func start                         # run locally (copy ../docs/local.settings.sample.json to local.settings.json)
-```
+`POST /api/SendOtp` uses the same request and trust boundaries as the other runtimes. Incoming
+`mode`, `channel`, `ttlSeconds` and `tenantId` are request data, not deployment authentication settings.
 
-## Deploy
+Use incoming `mode: 2` or `mode: "evaluation"` as the generic shutter for every provider: authentication,
+validation and decryption run, but provider lookup, provider Key Vault reads and provider HTTP do not.
+No provider configuration or diagnostic environment flag is required. Authentication/key prerequisites
+and live acceptance semantics are defined in the [contract](../docs/CONTRACT.md#evaluation-generic-shutter).
 
-```bash
-func azure functionapp publish <your-function-app> --dotnet-isolated
-```
+## Source
 
-The app's **managed identity** needs the **Key Vault Secrets User** role on the vault. Configuration
-(env var names, Key Vault secret names, behaviors) is identical to the contract — see
-[`../docs/CONTRACT.md`](../docs/CONTRACT.md).
+| Source | Purpose |
+|---|---|
+| [Program.cs](Program.cs) | Host and adapter registration |
+| [Functions/SendOtp.cs](Functions/SendOtp.cs) | HTTP handler |
+| [Src/AppConfig.cs](Src/AppConfig.cs) | Shared deployment settings |
+| [Src/DispatchEngine.cs](Src/DispatchEngine.cs) | Envelope/JWE handling and dispatch |
+| [Src/ProviderRegistry.cs](Src/ProviderRegistry.cs), [Src/IProviderAdapter.cs](Src/IProviderAdapter.cs) | Adapter lookup and contract |
+| [Src/Providers/](Src/Providers/) | Adapter manifests and API-specific implementations |
+| [Src/SecretResolver.cs](Src/SecretResolver.cs) | Cached Key Vault access via managed identity |
+| [Src/OutcomeMapper.cs](Src/OutcomeMapper.cs), [Src/Models.cs](Src/Models.cs) | Outcomes and shared records |
+| [Src/TokenValidator.cs](Src/TokenValidator.cs) | Inbound JWT validation |
 
-Target: .NET 8 isolated worker, Functions v4.
+Implement `IProviderAdapter` and register it in [Program.cs](Program.cs) without adding provider-specific
+branches to the shared pipeline. See [production limitations](../docs/CONTRACT.md#production-limitations) before production use.

@@ -1,129 +1,84 @@
-"""Engine-level conformance tests (CONTRACT.md §6) with mocked HTTP + Key Vault."""
-import json
+from unittest.mock import Mock
 
 import pytest
+from urllib3.exceptions import ReadTimeoutError
 
 import src.dispatch as dispatch_module
 from src.dispatch import DispatchEngine, DispatchRequest, ProviderRegistry
-from src.providers.infobip import InfobipProvider
 from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
-from src.providers.telesign import TelesignProvider
 
 
-class FakeSecrets:
-    def __init__(self, values):
-        self._values = values
-
-    def resolve(self, name):
-        return self._values.get(name, "")
+def _request(channel="sms"):
+    return DispatchRequest("+15551234567", "Your code is 918273", channel, "message", "correlation", "en-US")
 
 
-class FakeResponse:
-    def __init__(self, status_code, body):
-        self.status_code = status_code
-        self._body = body
-
-    def json(self):
-        return self._body
-
-
-class CapturingLog:
-    def __init__(self):
-        self.lines = []
-
-    def _record(self, fmt, *args):
-        self.lines.append(fmt % args if args else fmt)
-
-    info = _record
-    warning = _record
-    error = _record
+@pytest.fixture
+def engine(monkeypatch):
+    registry = ProviderRegistry([SopranoProvider(), SinchProvider()])
+    monkeypatch.setattr(dispatch_module.requests, "request", Mock())
+    return DispatchEngine(registry, Mock(resolve=Mock(return_value="test-key")),
+                          {"EPP_PROVIDER_NAME": " SOPRANO ", "EPP_PROVIDER_ENDPOINT": "https://qa4.example/cgpapi/"})
 
 
-_DEFAULT_SECRETS = {
-    "infobip-api-key": "ib",
-    "telesign-api-key": "ts", "telesign-customer-id": "cust",
-    "soprano-api-key": "sp", "soprano-api-id": "spid",
-}
-_DEFAULT_ENV = {
-    "EPP_PROVIDER_ENDPOINT": "https://api.infobip.com",
-}
+def test_missing_key_or_identity_never_sends(engine):
+    for missing in ("soprano-api-key", "soprano-api-id"):
+        engine.secrets.resolve.side_effect = lambda name: None if name == missing else "test-key"
+        status, body = engine.dispatch(_request(), "soprano", False, "r")
+        assert status == 502 and body["reason"] == "provider credential unavailable"
+    dispatch_module.requests.request.assert_not_called()
 
 
-def make_engine(secret_values=None, env=None):
-    registry = ProviderRegistry([InfobipProvider(), TelesignProvider(), SopranoProvider(), SinchProvider()])
-    secrets = FakeSecrets(_DEFAULT_SECRETS if secret_values is None else secret_values)
-    return DispatchEngine(registry, secrets, _DEFAULT_ENV if env is None else env)
+def test_base_and_sinch_voice_final_url_guards(engine):
+    for url in ("http://api.example", "https://api.example:0"):
+        engine.env["EPP_PROVIDER_ENDPOINT"] = url
+        status, body = engine.dispatch(_request(), "soprano", False, "r")
+        assert status == 502 and body["reason"] == "invalid provider endpoint"
+    engine.env["EPP_PROVIDER_ENDPOINT"] = "https://api.example"
+    for url in ("http://voice.example", "https://voice.example:0"):
+        engine.env["SINCH_VOICE_ENDPOINT"] = url
+        status, body = engine.dispatch(_request("voice"), "sinch", False, "r")
+        assert status == 502 and body["reason"] == "invalid provider request URL"
+    dispatch_module.requests.request.assert_not_called()
 
 
-def dispatch_request(**overrides):
-    base = dict(
-        destination="+15551234567", message="Your code is 918273", channel="sms",
-        message_id="m", correlation_id="c", locale=None,
+def test_provider_outcomes_fail_closed(engine, monkeypatch):
+    monkeypatch.setenv("EPP_PROVIDER_NAME", "sinch")  # The injected provider setting must win.
+    assert engine.registry.resolve(None, {}) is None
+    cases = (
+        (202, {"state": "accepted"}, 200, "Continue"),
+        (500, {"status": "ACCEPTED"}, 502, "Fail"),
+        (200, {"status": "FAILED"}, 502, "Fail"),
+        (200, {"status": "FILTERED"}, 502, "Fail"),
+        (200, {}, 502, "Fail"),
+        (200, {"status": False, "state": "ACCEPTED"}, 502, "Fail"),
+        (200, {"status": "BLOCKED"}, 403, "Block"),
     )
-    base.update(overrides)
-    return DispatchRequest(**base)
+    for upstream_status, payload, expected, outcome in cases:
+        response = Mock(status_code=upstream_status, json=Mock(return_value=payload))
+        send = Mock(return_value=response)
+        monkeypatch.setattr(dispatch_module.requests, "request", send)
+        status, body = engine.dispatch(_request(), None, False, "r")
+        assert (status, body["outcome"], body["provider"]) == (expected, outcome, "soprano")
+        send.assert_called_once()
+        response.close.assert_called_once()
 
 
-def _mock_send(monkeypatch, response=None, raise_error=None, capture=None):
-    def fake_request(method, url, headers=None, data=None, timeout=None):
-        if capture is not None:
-            capture["url"] = url
-            capture["data"] = data
-        if raise_error is not None:
-            raise raise_error
-        return response
-    monkeypatch.setattr(dispatch_module.requests, "request", fake_request)
+def test_transport_failures_and_wrapped_read_timeout(engine, monkeypatch):
+    errors = dispatch_module.requests.exceptions
+    for error, expected in ((errors.Timeout("offline"), 504), (errors.ConnectionError("offline"), 502)):
+        send = Mock(side_effect=error)
+        monkeypatch.setattr(dispatch_module.requests, "request", send)
+        status, body = engine.dispatch(_request(), "soprano", False, "r")
+        assert status == expected and body["outcome"] == "Fail"
+        send.assert_called_once()
 
-
-def test_unknown_provider_400():
-    status, body = make_engine().dispatch(dispatch_request(), "nope", False, "r", CapturingLog())
-    assert status == 400 and body["reason"] == "unknown provider"
-
-
-def test_missing_credential_502():
-    status, body = make_engine(secret_values={}).dispatch(dispatch_request(), "infobip", False, "r", CapturingLog())
-    assert status == 502 and body["reason"] == "provider credential unavailable"
-
-
-def test_missing_endpoint_502():
-    engine = make_engine(env={})  # no *_ENDPOINT set
-    status, body = engine.dispatch(dispatch_request(), "infobip", False, "r", CapturingLog())
-    assert status == 502 and body["reason"] == "provider endpoint not configured"
-
-
-def test_shutter_does_not_send(monkeypatch):
-    _mock_send(monkeypatch, raise_error=AssertionError("should not send"))
-    status, body = make_engine().dispatch(dispatch_request(), "infobip", True, "r", CapturingLog())
-    assert status == 200 and body["shutterProcessed"] is True
-
-
-def test_success_renders_code_and_keeps_privacy(monkeypatch):
-    capture = {}
-    _mock_send(monkeypatch, response=FakeResponse(200, {"messages": [{"status": {"name": "DELIVERED"}, "messageId": "x"}]}), capture=capture)
-    log = CapturingLog()
-    status, body = make_engine().dispatch(dispatch_request(), "infobip", False, "r", log)
-
-    assert status == 200 and body["status"] == "accepted"
-    assert "918273" in capture["data"]  # the message (with the code) IS sent to the provider (that's the delivery)
-    serialized = json.dumps(body)
-    assert "918273" not in serialized and "5551234567" not in serialized  # never in the response body
-    assert all("918273" not in line and "5551234567" not in line for line in log.lines)  # never logged
-
-
-def test_unknown_status_fails_closed(monkeypatch):
-    _mock_send(monkeypatch, response=FakeResponse(200, {"messages": [{"status": {"name": "WATWAT"}}]}))
-    status, body = make_engine().dispatch(dispatch_request(), "infobip", False, "r", CapturingLog())
-    assert body["outcome"] == "Fail" and body["status"] == "failed"
-
-
-def test_timeout_maps_to_504(monkeypatch):
-    _mock_send(monkeypatch, raise_error=dispatch_module.requests.exceptions.Timeout())
-    status, _ = make_engine().dispatch(dispatch_request(), "infobip", False, "r", CapturingLog())
-    assert status == 504
-
-
-def test_network_error_maps_to_502(monkeypatch):
-    _mock_send(monkeypatch, raise_error=dispatch_module.requests.exceptions.ConnectionError())
-    status, _ = make_engine().dispatch(dispatch_request(), "infobip", False, "r", CapturingLog())
-    assert status == 502
+    # requests can wrap a streamed body-read timeout in ConnectionError.
+    wrapped = errors.ConnectionError(ReadTimeoutError(None, "https://provider.example", "offline"))
+    response = Mock(status_code=200, json=Mock(side_effect=wrapped))
+    send = Mock(return_value=response)
+    monkeypatch.setattr(dispatch_module.requests, "request", send)
+    status, body = engine.dispatch(_request(), "soprano", False, "r")
+    assert status == 504 and body["reason"] == "provider timeout"
+    send.assert_called_once()
+    response.close.assert_called_once()

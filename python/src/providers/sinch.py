@@ -1,5 +1,3 @@
-"""Sinch: SMS via XMS Batches (POST /xms/v1/{plan}/batches, Bearer).
-Voice via the Calling TTS callout API."""
 import json
 
 
@@ -14,7 +12,7 @@ class SinchProvider:
     }
 
     def build_request(self, channel, endpoint, dispatch, credential, env):
-        bearer = credential["token"] if credential["mode"] == "oauth2" else credential["secret"]
+        bearer = credential["secret"]
         headers = {"Authorization": f"Bearer {bearer}", "Content-Type": "application/json", "Accept": "application/json"}
         reference = dispatch.correlation_id or dispatch.message_id
 

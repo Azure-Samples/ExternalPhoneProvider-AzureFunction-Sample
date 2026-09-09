@@ -12,6 +12,7 @@
   <ItemGroup>
     <Compile Remove="tests/**/*.cs" />
     <None Remove="tests/**/*" />
+    <None Update="local.settings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
   </ItemGroup>
 
   <ItemGroup>
