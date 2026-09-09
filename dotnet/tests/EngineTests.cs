@@ -48,7 +48,7 @@ public class EngineTests
         var log = Assert.Single(rig.Log.Messages);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Correlation)))[..16].ToLowerInvariant();
         Assert.Contains("CorrelationId=" + hash, log);
-        foreach (var value in new[] { Phone, "918273", Nonce, Correlation, "private-caller", "private-api-key", "private-api-id" })
+        foreach (var value in new[] { Phone, "918273", Nonce, Correlation, "private-api-key", "private-api-id" })
             Assert.DoesNotContain(value, log);
     }
 
@@ -103,42 +103,22 @@ public class EngineTests
     }
 
     [Fact]
-    public async Task EvaluationValidatesSignedJwtAndJweWithoutProviderConfiguration()
+    public async Task EvaluationValidatesRealJweWithoutProviderConfiguration()
     {
-        using var tokens = new InboundTokens();
-        var token = tokens.Issue(issuer: "https://login.microsoftonline.com/tenant/v2.0");
         foreach (var provider in new string?[] { null, "infobip", "telesign", "soprano", "sinch" })
         {
-            using var rig = new HandlerRig(tokens);
+            using var rig = new HandlerRig();
+            rig.Env.Clear();
             Assert.False(rig.Env.ContainsKey("EPP_PROVIDER_NAME"));
             if (provider is not null) rig.Env["EPP_PROVIDER_NAME"] = provider;
-            rig.Env.Remove("EPP_EXPECTED_ISSUER");
             rig.Env["EPP_ENCRYPTION_KEY_ID"] = "configured-key-id";
-            AssertAccepted(await rig.Invoke("evaluation", token, tenantId: "untrusted-body-tenant"));
+            AssertAccepted(await rig.Invoke("evaluation", tenantId: "untrusted-body-tenant"));
             Assert.Equal("encryption_key_id_mismatch",
                 Assert.Single(rig.Log.Entries, entry => entry.Level == LogLevel.Warning).Message);
             foreach (var value in new[] { Kid, "configured-key-id", Phone, "918273", Nonce, Correlation, "untrusted-body-tenant" })
                 Assert.DoesNotContain(value, string.Join("\n", rig.Log.Messages));
             Assert.Equal((1, 0, 0), (rig.Keys.Calls, rig.Secrets.Calls, rig.Http.Calls));
         }
-    }
-
-    [Fact]
-    public async Task AuthenticationRejectsWrongCallerBeforeDecryptionEvenInEvaluation()
-    {
-        using var tokens = new InboundTokens();
-        using var rig = new HandlerRig(tokens);
-        rig.Env.Remove("EPP_EXPECTED_ISSUER");
-        AssertFailure(rig, await rig.Invoke("evaluation", tokens.Issue(caller: "private-caller",
-            issuer: "https://login.microsoftonline.com/tenant/v2.0"),
-            principalCaller: "private-caller"), 401, "unauthorized");
-        AssertFailure(rig, await rig.Invoke("evaluation", tokens.Issue(
-            issuer: "https://login.microsoftonline.com/untrusted-body-tenant/v2.0"),
-            tenantId: "untrusted-body-tenant"), 401, "unauthorized");
-        rig.Env.Remove("EPP_TENANT_ID");
-        AssertFailure(rig, await rig.Invoke("evaluation", tokens.Issue(
-            issuer: "https://login.microsoftonline.com/tenant/v2.0"), tenantId: "tenant"), 401, "unauthorized");
-        Assert.Equal((0, 0, 0), (rig.Keys.Calls, rig.Secrets.Calls, rig.Http.Calls));
     }
 
     [Fact]
@@ -164,7 +144,7 @@ public class EngineTests
         Assert.Equal(error, body.GetProperty("error").GetString());
         Assert.False(body.TryGetProperty("nonce", out _));
         var output = body.GetRawText() + string.Join("\n", rig.Log.Messages);
-        foreach (var value in new[] { PrivateError, Phone, "918273", Nonce, "private-caller" })
+        foreach (var value in new[] { PrivateError, Phone, "918273", Nonce })
             Assert.DoesNotContain(value, output);
     }
 
@@ -179,21 +159,20 @@ public class EngineTests
         public TestHttp Http { get; } = new();
         public TestKeys Keys { get; } = new();
         public CapturingLogger Log { get; } = new();
-        public HandlerRig(InboundTokens? tokens = null)
+        public HandlerRig()
         {
-            Env = tokens?.Environment() ?? new TestEnv
+            Env = new TestEnv
             {
                 ["EPP_PROVIDER_NAME"] = "soprano",
                 ["EPP_PROVIDER_ENDPOINT"] = "https://provider.example/cgpapi",
                 ["EPP_PROVIDER_TIMEOUT_MS"] = "2500",
             };
             var registry = new ProviderRegistry(new IProviderAdapter[]
-                { new InfobipProvider(), new TelesignProvider(), new SopranoProvider(), new SinchProvider() }, new TestEnv());
+                { new InfobipProvider(), new TelesignProvider(), new SopranoProvider(), new SinchProvider() });
             _function = new SendOtp(new DispatchEngine(registry, Secrets, Http, Env),
-                new TokenValidator(Env, tokens), new JweDecryptor(Keys), Env, Log);
+                new JweDecryptor(Keys), Env, Log);
         }
-        public async Task<ObjectResult> Invoke(object? mode = null, string? token = null,
-            string channel = "sms", string? principalCaller = null, string? tenantId = null)
+        public async Task<ObjectResult> Invoke(object? mode = null, string channel = "sms", string? tenantId = null)
         {
             var context = JsonSerializer.Serialize(new { nonce = Nonce, phoneNumber = Phone, message = Message });
             var encrypted = Jose.JWT.Encode(context, Keys.Rsa, Jose.JweAlgorithm.RSA_OAEP_256, Jose.JweEncryption.A256GCM,
@@ -207,9 +186,6 @@ public class EngineTests
             request.Method = "POST";
             request.ContentType = "application/json";
             request.Body = stream;
-            if (token is not null) request.Headers.Authorization = "Bearer " + token;
-            if (principalCaller is not null) request.Headers["x-ms-client-principal"] = Convert.ToBase64String(
-                JsonSerializer.SerializeToUtf8Bytes(new { claims = new[] { new { typ = "azp", val = principalCaller } } }));
             return Assert.IsAssignableFrom<ObjectResult>(await _function.Run(request));
         }
         public void Dispose() { Keys.Dispose(); Http.Dispose(); }

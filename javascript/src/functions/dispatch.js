@@ -287,7 +287,7 @@ const failBody = (providerId, channel, reason, dispatch, requestId) =>
     ({ status: 'failed', outcome: OUTCOME.FAIL, provider: providerId, channel, reason, correlationId: dispatch.correlationId, messageId: dispatch.messageId, requestId });
 
 async function sendViaProvider(providerEntry, dispatch, options) {
-    const { shutter, requestId, config } = options;
+    const { requestId, config } = options;
     const { manifest, adapter } = providerEntry;
     const providerId = manifest.id;
     const channel = dispatch.channel === undefined ? 'sms'
@@ -295,14 +295,6 @@ async function sendViaProvider(providerEntry, dispatch, options) {
 
     if (!['sms', 'voice'].includes(channel)) {
         return { httpStatus: 400, body: { status: 'error', reason: 'unsupported channel', requestId } };
-    }
-
-    // A known-provider dry run must not require credentials, endpoints, or adapter-specific settings.
-    if (shutter) {
-        return {
-            httpStatus: 200,
-            body: { status: 'accepted', shutterProcessed: true, provider: providerId, channel, correlationId: dispatch.correlationId, messageId: dispatch.messageId, requestId },
-        };
     }
 
     const endpointBaseUrl = config.providerEndpoint;
@@ -375,7 +367,7 @@ async function sendViaProvider(providerEntry, dispatch, options) {
     };
 }
 
-async function dispatchOtp(dispatch, { config = readConfig(), requestId, shutter } = {}) {
+async function dispatchOtp(dispatch, { config = readConfig(), requestId } = {}) {
     const providerEntry = getProvider(config.providerName);
     if (!providerEntry) {
         return {
@@ -383,7 +375,7 @@ async function dispatchOtp(dispatch, { config = readConfig(), requestId, shutter
             body: { status: 'error', reason: 'unknown provider', requestId },
         };
     }
-    return sendViaProvider(providerEntry, dispatch, { config, requestId, shutter });
+    return sendViaProvider(providerEntry, dispatch, { config, requestId });
 }
 
 module.exports = {

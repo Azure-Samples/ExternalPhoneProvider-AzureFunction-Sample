@@ -1,24 +1,20 @@
+import base64
 import hashlib
 import json
 import logging
-import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
-from unittest.mock import Mock, call
+from unittest.mock import Mock
 
 import azure.functions as func
-import jwt
 import pytest
 from jwcrypto import jwe, jwk
 
 import function_app
 import src.dispatch as dispatch_module
-import src.security as security
-from src.config import read_config
 
 _KEY = jwk.JWK.generate(kty="RSA", size=2048)
 _PRIVATE_PEM = _KEY.export_to_pem(private_key=True, password=None).decode()
-_PUBLIC_PEM = _KEY.export_to_pem()
 _CORRELATION = "2b65f5e5-9628-4894-8ba6-8785c3a9c010"
 _NONCE = "test-nonce"
 _PHONE = "+14255551234"
@@ -31,10 +27,7 @@ _HANDLER = function_app.app.get_functions()[0].get_user_function()
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):
-    for name in ("WEBSITE_INSTANCE_ID", "WEBSITE_HOSTNAME", "WEBSITE_SITE_NAME", "EPP_REQUIRE_AUTH",
-                 "EPP_EXPECTED_CLIENT_ID", "EPP_EXPECTED_AUDIENCE", "EPP_TENANT_ID", "EPP_EXPECTED_ISSUER",
-                 "EPP_ENCRYPTION_KEY_ID"):
-        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("EPP_ENCRYPTION_KEY_ID", raising=False)
     monkeypatch.setenv("EPP_PROVIDER_NAME", "SOPRANO")
     monkeypatch.setattr(function_app, "_key_provider", Mock(return_value=_PRIVATE_PEM))
     engine = dispatch_module.DispatchEngine(
@@ -43,7 +36,6 @@ def _isolate(monkeypatch):
     )
     monkeypatch.setattr(function_app, "_engine", engine)
     monkeypatch.setattr(dispatch_module.requests, "request", Mock())
-    monkeypatch.setattr(security, "_jwks_client", Mock())
 
 
 def _request(body, headers=None):
@@ -83,13 +75,29 @@ def test_bad_json_and_real_jwe_fail_before_provider_secrets(monkeypatch, caplog)
     dispatch_module.requests.request.assert_not_called()
 
 
+def test_jwe_authenticates_original_protected_header_bytes():
+    header = '{ "kid" : "test-key", "enc" : "A256GCM", "alg" : "RSA-OAEP-256" }'
+    token = jwe.JWE(json.dumps(_CONTEXT).encode(), protected=header)
+    token.add_recipient(_KEY)
+    segments = token.serialize(compact=True).split('.')
+    original = base64.urlsafe_b64encode(header.encode()).decode().rstrip('=')
+    assert segments[0] == original
+    response = _HANDLER(_request(_envelope(mode=2, encryptedDeliveryContext='.'.join(segments))))
+    assert response.status_code == 200 and json.loads(response.get_body())["nonce"] == _NONCE
+    segments[0] = base64.urlsafe_b64encode(json.dumps(json.loads(header), separators=(',', ':')).encode()).decode().rstrip('=')
+    response = _HANDLER(_request(_envelope(mode=2, encryptedDeliveryContext='.'.join(segments))))
+    assert response.status_code == 400 and json.loads(response.get_body())["error"] == "decryption_failed"
+    function_app._engine.secrets.resolve.assert_not_called()
+    dispatch_module.requests.request.assert_not_called()
+
+
 def test_evaluation_decrypts_without_provider_configuration_or_work(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     monkeypatch.setenv("EPP_ENCRYPTION_KEY_ID", "configured-key-id")
     monkeypatch.delenv("EPP_PROVIDER_NAME")
     function_app._engine.env.clear()
     lookup = Mock()
-    monkeypatch.setattr(function_app._registry, "resolve", lookup)
+    monkeypatch.setattr(function_app._registry, "get", lookup)
     config_reader = Mock(wraps=function_app.read_config)
     monkeypatch.setattr(function_app, "read_config", config_reader)
     response = _HANDLER(_request(_envelope(mode="Evaluation", provider="untrusted-body-provider")))
@@ -164,58 +172,3 @@ def test_provider_failure_preserves_status_without_retry_or_nonce(monkeypatch):
     send.assert_called_once()
     assert send.call_args.kwargs["allow_redirects"] is False
     upstream.close.assert_called_once()
-
-
-def test_azure_markers_require_auth_before_body_parsing(monkeypatch):
-    for marker in ("WEBSITE_INSTANCE_ID", "WEBSITE_HOSTNAME", "WEBSITE_SITE_NAME"):
-        for require_auth, client_id in (("false", "client"), ("true", " ")):
-            with monkeypatch.context() as patch:
-                patch.setenv(marker, "azure-site")
-                patch.setenv("EPP_REQUIRE_AUTH", require_auth)
-                patch.setenv("EPP_EXPECTED_CLIENT_ID", client_id)
-                response = _HANDLER(_request(b"not-json"))
-            assert response.status_code == 401 and json.loads(response.get_body())["error"] == "unauthorized"
-    function_app._key_provider.assert_not_called()
-    security._jwks_client.assert_not_called()
-
-
-def test_real_signed_inbound_jwt_acceptance_and_rejections(monkeypatch):
-    config = read_config({"EPP_REQUIRE_AUTH": "true", "EPP_EXPECTED_CLIENT_ID": "client",
-                          "EPP_EXPECTED_AUDIENCE": "audience", "EPP_TENANT_ID": "tenant",
-                          "WEBSITE_INSTANCE_ID": "azure-site"})
-    monkeypatch.setattr(function_app, "read_config", Mock(return_value=config))
-    # Only key discovery is mocked; PyJWT still verifies the actual signatures and claims.
-    client = Mock(get_signing_key_from_jwt=Mock(return_value=Mock(key=_PUBLIC_PEM)))
-    monkeypatch.setattr(security, "_jwks_client", Mock(return_value=client))
-    other_key = jwk.JWK.generate(kty="RSA", size=2048).export_to_pem(private_key=True, password=None)
-    now = int(time.time())
-    variants = (
-        ({}, _PRIVATE_PEM, "RS256", 200),
-        ({"azp": "CLIENT"}, _PRIVATE_PEM, "RS256", 200),
-        ({"tid": "untrusted-tenant"}, _PRIVATE_PEM, "RS256", 200),
-        ({}, other_key, "RS256", 401),
-        ({"exp": now - 3600}, _PRIVATE_PEM, "RS256", 401),
-        ({"exp": None}, _PRIVATE_PEM, "RS256", 401),
-        ({"aud": "wrong"}, _PRIVATE_PEM, "RS256", 401),
-        ({"azp": "wrong", "appid": "client"}, _PRIVATE_PEM, "RS256", 401),
-        ({"iss": "https://login.microsoftonline.com/untrusted-tenant/v2.0", "tid": "untrusted-tenant"},
-         _PRIVATE_PEM, "RS256", 401),
-        ({}, _PRIVATE_PEM, "RS512", 401),
-    )
-    for changes, key, algorithm, expected in variants:
-        claims = {"iss": "https://login.microsoftonline.com/tenant/v2.0", "aud": "audience",
-                  "azp": "client", "exp": now + 3600, **changes}
-        if claims["exp"] is None:
-            claims.pop("exp")
-        token = jwt.encode(claims, key, algorithm=algorithm)
-        function_app._key_provider.reset_mock()
-        response = _HANDLER(_request(_envelope(mode=2, tenantId="untrusted-tenant"),
-                                    {"Authorization": "Bearer " + token}))
-        assert response.status_code == expected, (changes, algorithm)
-        if expected == 200:
-            assert json.loads(response.get_body())["nonce"] == _NONCE
-        else:
-            assert json.loads(response.get_body())["error"] == "unauthorized"
-            function_app._key_provider.assert_not_called()
-    assert security._jwks_client.call_args_list == [call("tenant")] * len(variants)
-    dispatch_module.requests.request.assert_not_called()

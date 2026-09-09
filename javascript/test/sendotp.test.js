@@ -23,8 +23,7 @@ try {
     registration.mock.restore();
 }
 
-const envKeys = ['EPP_REQUIRE_AUTH', 'EPP_EXPECTED_CLIENT_ID', 'EPP_ENCRYPTION_KEY_ID', 'AZURE_CLIENT_ID',
-    'WEBSITE_INSTANCE_ID', 'WEBSITE_HOSTNAME', 'WEBSITE_SITE_NAME', 'EPP_PROVIDER_NAME', 'EPP_PROVIDER_ENDPOINT',
+const envKeys = ['EPP_ENCRYPTION_KEY_ID', 'AZURE_CLIENT_ID', 'EPP_PROVIDER_NAME', 'EPP_PROVIDER_ENDPOINT',
     'EPP_PROVIDER_TIMEOUT_MS', 'EPP_LOG_PLAINTEXT', 'KEY_VAULT_URL', 'EPP_DECRYPTION_KEY_PEM'];
 let savedEnv;
 let fetchMock;
@@ -34,7 +33,7 @@ let warnings;
 beforeEach(() => {
     savedEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
     for (const key of envKeys) delete process.env[key];
-    Object.assign(process.env, { EPP_REQUIRE_AUTH: 'false', EPP_LOG_PLAINTEXT: 'true',
+    Object.assign(process.env, { EPP_LOG_PLAINTEXT: 'true',
         EPP_DECRYPTION_KEY_PEM: privateKey.export({ type: 'pkcs8', format: 'pem' }),
         KEY_VAULT_URL: 'https://unit-test.vault.azure.net', EPP_PROVIDER_NAME: 'soprano',
         EPP_PROVIDER_ENDPOINT: 'https://provider.example/cgpapi/' });
@@ -59,10 +58,10 @@ async function envelope(overrides = {}, context = delivery, header = {}) {
     return { type: 'microsoft.mfa.otpDeliver.v1', channel: 1, mode: 1, ttlSeconds: 60,
         correlationId: 'correlation-id', encryptedDeliveryContext, ...overrides };
 }
-const invoke = (body) => {
+const invoke = (body, headers = {}) => {
     logs = [];
     warnings = [];
-    return handler({ headers: { get: () => null },
+    return handler({ headers: { get: (name) => headers[name.toLowerCase()] || null },
         text: async () => typeof body === 'string' ? body : JSON.stringify(body) },
         { log: (value) => logs.push(value), warn: (...values) => warnings.push(values) });
 };
@@ -80,16 +79,38 @@ test('invalid JSON and envelope type return 400 before I/O', async () => {
     assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
 });
 
-test('real JWE rejects a bad authentication tag and an unapproved algorithm', async () => {
+test('real JWE requires five segments and rejects a bad tag or unapproved algorithm', async () => {
     process.env.EPP_ENCRYPTION_KEY_ID = 'mismatch';
     const body = await envelope();
     const parts = body.encryptedDeliveryContext.split('.');
     parts[4] = (parts[4][0] === 'A' ? 'B' : 'A') + parts[4].slice(1);
     for (const invalid of [{ ...body, encryptedDeliveryContext: parts.join('.') },
+        { ...body, encryptedDeliveryContext: parts.slice(0, 4).join('.') },
         await envelope({}, delivery, { alg: 'RSA-OAEP' })]) {
         assertFailure(await invoke(invalid), 400, 'decryption_failed');
         assert.deepEqual(warnings, []);
     }
+    assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
+});
+
+test('JWE authenticates the original protected-header bytes, not reserialized JSON', async () => {
+    const header = '{ "kid" : "test-key", "enc" : "A256GCM", "alg" : "RSA-OAEP-256" }';
+    const encodedHeader = Buffer.from(header).toString('base64url');
+    const key = crypto.randomBytes(32);
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    cipher.setAAD(Buffer.from(encodedHeader, 'ascii'));
+    const ciphertext = Buffer.concat([cipher.update(JSON.stringify(delivery), 'utf8'), cipher.final()]);
+    const wrappedKey = crypto.publicEncrypt({ key: publicKey, oaepHash: 'sha256',
+        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING }, key);
+    const segments = [encodedHeader, ...[wrappedKey, iv, ciphertext, cipher.getAuthTag()]
+        .map(value => value.toString('base64url'))];
+    const body = await envelope({ mode: 2, encryptedDeliveryContext: segments.join('.') });
+    const result = await invoke(body);
+    assert.equal(result.status, 200);
+    assert.equal(result.jsonBody.nonce, delivery.nonce);
+    segments[0] = Buffer.from(JSON.stringify(JSON.parse(header))).toString('base64url');
+    assertFailure(await invoke({ ...body, encryptedDeliveryContext: segments.join('.') }), 400, 'decryption_failed');
     assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
 });
 
@@ -116,10 +137,15 @@ test('generic evaluation decrypts and validates for every registered provider wi
     assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
 });
 
-test('SMS/voice preserve message whitespace and correlation while logging only a hash, not PII', async () => {
+test('SMS/voice preserve content and correlation without reflecting headers or logging PII', async () => {
     const correlationId = 'PRIVATE-CORRELATION';
+    const forgedHeaders = { authorization: 'Bearer FORGED-BEARER',
+        'x-ms-client-principal': Buffer.from(JSON.stringify({
+            claims: [{ typ: 'appid', val: 'FORGED-CALLER' }],
+        })).toString('base64') };
     for (const [channel, name] of [[1, 'sms'], [2, 'voice']]) {
-        const result = await invoke(await envelope({ channel, correlationId, provider: 'unknown' }));
+        const headers = channel === 1 ? {} : forgedHeaders;
+        const result = await invoke(await envelope({ channel, correlationId, provider: 'unknown' }), headers);
         assert.equal(result.status, 200);
         assert.deepEqual(result.jsonBody, { nonce: delivery.nonce, correlationId, providerStatus: 'accepted' });
         const init = fetchMock.mock.calls.at(-1).arguments[1];
@@ -130,6 +156,9 @@ test('SMS/voice preserve message whitespace and correlation while logging only a
         assert.deepEqual(Object.keys(logs[0]).sort(), ['correlationId', 'elapsedMs', 'evaluation', 'httpStatus', 'requestId']);
         assert.equal(logs[0].correlationId, crypto.createHash('sha256').update(correlationId).digest('hex').slice(0, 16));
         assert.doesNotMatch(JSON.stringify(logs), /PRIVATE|918273|15551234567/);
+        const output = JSON.stringify([result.jsonBody, logs, warnings]);
+        assert.doesNotMatch(output, /FORGED/);
+        for (const value of Object.values(forgedHeaders)) assert.equal(output.includes(value), false);
     }
     assert.equal(fetchMock.mock.callCount(), 2);
 });

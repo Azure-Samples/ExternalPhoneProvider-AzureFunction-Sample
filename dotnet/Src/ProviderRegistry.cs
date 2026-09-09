@@ -1,15 +1,12 @@
 namespace Epp.Otp;
 
-// One provider is active per deployment; requestProvider is a test override.
 public sealed class ProviderRegistry
 {
     private readonly IReadOnlyDictionary<string, IProviderAdapter> _byId;
-    private readonly IEnv _env;
 
-    public ProviderRegistry(IEnumerable<IProviderAdapter> adapters, IEnv? env = null)
+    public ProviderRegistry(IEnumerable<IProviderAdapter> adapters)
     {
         _byId = adapters.ToDictionary(a => a.Manifest.Id.ToLowerInvariant(), a => a);
-        _env = env ?? new ProcessEnv();
     }
 
     public IProviderAdapter? Get(string? id)
@@ -17,7 +14,4 @@ public sealed class ProviderRegistry
         if (string.IsNullOrWhiteSpace(id)) return null;
         return _byId.TryGetValue(id.ToLowerInvariant(), out var adapter) ? adapter : null;
     }
-
-    public IProviderAdapter? Resolve(string? requestProvider) =>
-        Get(requestProvider ?? AppConfig.Read(_env).ProviderName);
 }

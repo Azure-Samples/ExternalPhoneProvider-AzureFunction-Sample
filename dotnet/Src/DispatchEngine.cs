@@ -180,10 +180,10 @@ public sealed class DispatchEngine
         _env = env ?? new ProcessEnv();
     }
 
-    public async Task<DispatchResult> DispatchAsync(DispatchRequest dispatch, string? requestProvider, bool shutter, string requestId)
+    public async Task<DispatchResult> DispatchAsync(DispatchRequest dispatch, string requestId)
     {
         var config = AppConfig.Read(_env);
-        var adapter = _registry.Get(requestProvider ?? config.ProviderName);
+        var adapter = _registry.Get(config.ProviderName);
         if (adapter is null)
             return new DispatchResult(400, new { status = "error", reason = "unknown provider", requestId });
 
@@ -193,9 +193,6 @@ public sealed class DispatchEngine
 
         if (!OutcomeMapper.DefaultChannels.Contains(channel))
             return new DispatchResult(400, new { status = "error", provider = providerId, reason = "unsupported channel", requestId });
-
-        if (shutter)
-            return new DispatchResult(200, new { status = "accepted", shutterProcessed = true, provider = providerId, channel, correlationId = dispatch.CorrelationId, messageId = dispatch.MessageId, requestId });
 
         if (manifest.Auth.Mode != "apiKey")
             return new DispatchResult(502, FailBody(providerId, channel, "unsupported provider auth mode", dispatch, requestId));

@@ -14,22 +14,25 @@ deployment. API-specific paths, headers, payloads and status rules belong in ada
 
 ## 1. HTTP API
 
-**Endpoint:** `POST /api/SendOtp` (Functions HTTP trigger, `authLevel: anonymous`; trust comes from
-the Entra token when `EPP_REQUIRE_AUTH=true`). This is the interface **SAS (StrongAuthenticationService)**
-calls. PII (phone number + the rendered message, which contains the passcode) is **encrypted** inside a
-JWE; the cleartext envelope carries routing/scheduling only.
+**Endpoint:** `POST /api/SendOtp` (Functions HTTP trigger, `authLevel: anonymous`). **Easy Auth is the
+only caller-authentication boundary and runs before the handler**; the application has no token
+validator or function-key gate. This is the interface **SAS (StrongAuthenticationService)** calls.
+SAS sends an Entra bearer JWT as part of its protocol; Easy Auth validates it, not the handler.
+PII (phone number + the rendered message, which contains the passcode) is **encrypted** inside a JWE;
+the cleartext envelope carries routing/scheduling only.
 
 ### Request headers
 
 | Header | Notes |
 |--------|-------|
-| `Authorization` | `Bearer <Entra token>`; validate signature, configured audience/issuer, lifetime and caller before trusting claims |
+| `Authorization` | consumed by platform authentication, not parsed or echoed by handler |
 | `User-Agent` | e.g. `Microsoft-AzureMFA-SAS-CYOT/1.0`; not logged |
 | `x-ms-correlation-id` | tracing only; fallback for envelope `correlationId`, not authentication |
 | `x-ms-client-request-id` | per-attempt tracing id (used as `messageId`), not authentication |
 
 Forwarded headers, including `x-ms-client-principal`, do not establish trust by themselves and cannot
-replace JWT validation. Configure Easy Auth as described in section 5.
+replace the required Easy Auth gate. The handler does not use them to authenticate callers or forward
+the incoming `Authorization` header to the provider. Configure Easy Auth as described in section 5.
 
 ### Request body — `SendCyotOtpRequest` (cleartext envelope)
 
@@ -43,11 +46,11 @@ replace JWT validation. Configure Easy Auth as described in section 5.
 | `ttlSeconds` | no | positive JSON integer, at most `2147483647`; null, booleans, strings, fractions and nonpositive values are rejected. Use canonical integer notation (`60`, not `60.0` or `6e1`) across runtimes |
 | `encryptedDeliveryContext` | yes | JWE compact serialization (see below) |
 
-Unknown `type`, malformed or expired `ttlSeconds`, unsupported `channel` or `mode`, or missing/empty `encryptedDeliveryContext` → `400`. Arrays, objects and booleans are not channel/mode values.
+Unknown `type`, invalid `ttlSeconds`, unsupported `channel` or `mode`, or missing/empty `encryptedDeliveryContext` → `400`. Arrays, objects and booleans are not channel/mode values.
 
 These are request data, not settings to provision. The TTL check validates the supplied value; it
 does not verify passcode expiry or implement a delivery deadline. Deployment trust comes only from
-the authentication configuration and validated token, not the body or tracing headers.
+the required platform authentication and caller allowlist, not the body or tracing headers.
 
 ### `encryptedDeliveryContext` (JWE)
 
@@ -56,6 +59,9 @@ this sample uses the single configured RSA private key (`EPP_DECRYPTION_KEY_PEM`
 reference in Azure), not a multi-key lookup. The compact JWE must have **exactly five non-empty
 segments** and at most **16,384 characters**; `alg`/`enc` are pinned (only `RSA-OAEP-256` + `A256GCM` accepted) and the AES-GCM auth tag is
 verified before any plaintext is used. Decrypted plaintext = `CyotDeliveryContext`:
+
+The original compact JWE is passed unchanged to the JOSE library. Parsing header fields for the
+advisory key-ID check must not replace the original protected-header bytes used for authentication.
 
 | Field | Required | Notes |
 |-------|----------|-------|
@@ -67,6 +73,10 @@ verified before any plaintext is used. Decrypted plaintext = `CyotDeliveryContex
 | `riskContext` | no | contextual request data; no risk-policy evaluation is implemented here |
 
 Decryption failure → `400`. Missing `nonce` / `phoneNumber` / `message` → `400`.
+
+JWE provides payload confidentiality and integrity, **not SAS caller authentication**. Anyone with the
+public key can encrypt a request. The nonce acknowledges decryption; it is not an authentication
+credential or replay protection, and a fixed nonce cannot substitute for Easy Auth.
 
 ### Response — `CyotEndpointResponse` (JSON)
 
@@ -80,16 +90,18 @@ matching nonce**, SAS treats the send as handled. **Nonce mismatch / non-2xx / t
 to native CAPP delivery.** `Evaluation` mode returns `200` + nonce echo without delivering.
 
 Live handlers await provider acceptance; they do not launch background delivery after replying.
-Failures omit the nonce and accepted status and return a sanitized error with a request ID
-and, after envelope processing, a correlation ID.
+Handler failures omit the nonce and accepted status and return a sanitized error with a request ID
+and, after envelope processing, a correlation ID. Platform rejections happen before the handler and
+do not use this application response contract.
 
 ### Evaluation (generic shutter)
 
 The only shared non-delivery control is the existing incoming `mode: 2` or `mode: "evaluation"`,
-for every provider and language. Authentication, envelope validation and authenticated JWE decryption
-still run; provider lookup, provider Key Vault reads and outbound provider HTTP are skipped. No
-provider name, endpoint or credentials are needed. Authentication metadata retrieval and platform
-resolution of the decryption-key reference may still require network access.
+for every provider and language. On Azure, Easy Auth still authenticates the caller before the
+handler validates the envelope and decrypts the JWE with integrity checks. Provider lookup, provider
+Key Vault reads and outbound provider HTTP are skipped. No provider name, endpoint or credentials
+are needed. Platform authentication and resolution of the decryption-key reference may still require
+network access. Core Tools has no Easy Auth; local evaluation must remain loopback-only, without tunnels.
 
 There is no diagnostic environment flag. A live request is not an evaluation request. Adapter-specific
 wire fields, where required by an API, remain internal and cannot enable a separate non-delivery mode.
@@ -123,7 +135,7 @@ Each provider is one unit exposing three things:
 
 - **`manifest`** — protocol facts only:
   - `id` — provider id selected by `EPP_PROVIDER_NAME`; its base URL is `EPP_PROVIDER_ENDPOINT`
-  - `auth` — `{ mode: 'apiKey', keyVaultSecretName, identityKeyVaultSecretName? }`; other modes fail closed on this branch
+  - `auth` — `{ mode: 'apiKey', keyVaultSecretName, identityKeyVaultSecretName? }`; other modes fail closed
   - `responseMapping` — map of provider status → `Continue` | `Fail` | `Block` | `StepUp` (+ `default`)
 - **`buildRequest({ channel, endpoint, dispatch, credential, env })`** → `{ url, method, headers, body }`
 - **`parseResponse({ httpStatus, ok, json })`** → `{ success, providerHttpStatus, providerMessageId,
@@ -148,11 +160,6 @@ Set by provisioning. **Identical names across all languages.**
 | `EPP_PROVIDER_TIMEOUT_MS` | trimmed ASCII decimal milliseconds; default 1500 for missing/invalid/nonpositive values; capped at 2500. Not a whole-invocation deadline |
 | `EPP_DECRYPTION_KEY_PEM` | single RSA private key for JWE decryption, PEM or base64-encoded PEM; use a Key Vault secret reference in Azure, not a plaintext private key in shared settings |
 | `EPP_ENCRYPTION_KEY_ID` | optional expected JWE `kid`; after successful decryption, a mismatch emits only `encryption_key_id_mismatch`. Advisory, not a key selector or authentication check |
-| `EPP_REQUIRE_AUTH` | **must be `true` on Azure**, with `EPP_EXPECTED_CLIENT_ID` configured; missing/disabled auth is permitted only in local development |
-| `EPP_EXPECTED_AUDIENCE` | required with auth: exact inbound token `aud`, the endpoint app client-ID GUID for v2; an explicitly configured v1 deployment may use its App ID URI. Not the selected provider's audience |
-| `EPP_EXPECTED_ISSUER` | optional exact issuer pin: `https://login.microsoftonline.com/<issuer-tenant-guid>/v2.0` for v2 or `https://sts.windows.net/<issuer-tenant-guid>/` for v1. Without a pin, both forms for the configured trusted tenant are accepted |
-| `EPP_TENANT_ID` | existing trusted issuer-tenant GUID used for issuer/JWKS configuration; required when auth is enabled, even with an explicit issuer pin. It is not body `tenantId`; the runtime does not derive this setting from the issuer URL or request |
-| `EPP_EXPECTED_CLIENT_ID` | required on Azure: admitted caller app client-ID GUID supplied by onboarding; checked against validated `azp`/`appid` as well as the Easy Auth application allowlist |
 | `KEY_VAULT_URL` | Key Vault URI (provider API keys) |
 | `AZURE_CLIENT_ID` | set for a user-assigned managed identity |
 
@@ -161,13 +168,10 @@ and are fetched via **managed identity** with the *Key Vault Secrets User* role.
 values in code or app settings. No additional customer-private configuration or new environment
 variable is needed for this guidance.
 
-There is no `OnAzure` setting or shared configuration field. Authentication uses the existing,
-host-injected `WEBSITE_INSTANCE_ID`, `WEBSITE_HOSTNAME` and `WEBSITE_SITE_NAME` metadata internally to
-prevent local authentication bypass in Azure. Customers do not provision these markers.
-
-The required issuer tenant determines the trusted signing-key location. `EPP_EXPECTED_ISSUER` is an
-optional tighter issuer pin and is omitted from the minimal sample. Neither is inferred from request
-`tenantId` or unverified token claims. This avoids letting a request choose its own trust authority.
+Caller trust is configured in **Easy Auth**, not application environment variables: pin the trusted
+tenant issuer, the endpoint-app audience and the authorized SAS caller application ID. Incoming
+`tenantId` is routing metadata and cannot select any of these. There is no application host-detection
+guard or backup token validation. See [platform onboarding](ONBOARDING.md#2-provision-encryption-and-deployment-trust).
 
 ### Default provider and configuration readers
 
@@ -177,8 +181,8 @@ there is no implicit default or automatic failover. Request-body provider fields
 
 The shared configuration readers are [JavaScript `readConfig`](../javascript/src/functions/config.js),
 [Python `read_config`](../python/src/config.py), and [.NET `AppConfig.Read`](../dotnet/Src/AppConfig.cs).
-They expose authentication, encryption and selected-provider settings. Provider-specific options
-remain ordinary app settings passed to the selected adapter.
+They expose encryption, Key Vault and selected-provider settings, not caller-authentication settings.
+Provider-specific options remain ordinary app settings passed to the selected adapter.
 
 All customers call the same `POST /api/SendOtp` handler in their chosen language. Its registry selects
 the configured adapter, which builds the provider's SMS or voice API call. Purchasing an unsupported
@@ -192,7 +196,7 @@ subscription activation and changing tenant policy belong to provisioning, not t
 - **Fail-closed** — only `Continue` → `200 accepted`; unknown status → `Fail`.
 - **Managed identity** — Key Vault access via managed identity only (user-assigned if `AZURE_CLIENT_ID`
   set, else system-assigned). No static credentials.
-- **Privacy** — never log phone numbers, passcodes, nonce values, JWTs, API keys, JWE headers/payloads,
+- **Privacy** — never log phone numbers, passcodes, nonce values, bearer tokens, API keys, JWE headers/payloads,
   raw exceptions or provider responses. There is no plaintext diagnostic override. Each handler
   writes one summary with a generated request ID, the first 16 lowercase hex characters of the
   correlation ID's SHA256 hash, HTTP status,
@@ -200,13 +204,17 @@ subscription activation and changing tenant policy belong to provisioning, not t
   echo remain unchanged. Hashes are pseudonymous, not anonymous; restrict log access and retention.
   A configured encryption-key-ID mismatch adds a fixed warning, never either key ID or the JWE header.
   Disable SDK, platform and proxy body tracing separately.
-- **Auth** — enable Easy Auth with `unauthenticatedClientAction=Return401` and `allowedApplications`
-  pinned to the admitted caller. The trigger is `authLevel: anonymous`; Azure deployments also require
-  in-process validation using the provisioned audience, trusted issuer tenant and caller, RS256/JWKS
-  and required `exp`. Failed JWT validation returns `401`; an additional principal-header mismatch
-  check, where implemented, returns `403` but never grants access. Local-only auth bypass must not be
-  internet-accessible. Neither request data nor an unvalidated forwarded header establishes identity.
-- **Timeout boundaries** — auth metadata and Key Vault retrieval happen outside the outbound HTTP
+- **Platform authentication only** — enable Easy Auth with `requireAuthentication=true`,
+  `unauthenticatedClientAction=Return401` and `requireHttps=true`. Configure the trusted tenant issuer
+  and `allowedAudiences` for the endpoint app, plus a **nonempty `allowedApplications`** list pinned to
+  the authorized SAS caller application ID. No excluded path may bypass authentication for SendOtp.
+  The trigger remains `authLevel: anonymous`; there is no application token validation or function-key
+  fallback. The platform rejects unauthenticated requests with `401` and denies callers outside the
+  allowlist before the handler. **Never expose the endpoint to the public internet with Easy Auth off
+  or bypassed.** Core Tools supplies no Easy Auth: local execution must bind only to loopback, with
+  no tunnels or public forwarding. Neither request data, JWE decryption, a fixed nonce nor forwarded
+  principal headers authenticate the SAS caller.
+- **Timeout boundaries** — platform authentication and Key Vault retrieval happen outside the outbound HTTP
   timer. Python uses connect/read inactivity timeouts, not a hard elapsed-time deadline. The cap
   therefore does not guarantee a 3.2-second end-to-end response, especially on cold starts.
   A timed-out POST may already have been accepted; avoid blind retries that duplicate messages.
@@ -215,17 +223,20 @@ subscription activation and changing tenant policy belong to provisioning, not t
 
 ## 6. Lightweight tests
 
-Each language keeps three small offline test files covering representative checks for:
+Each language keeps lightweight offline tests covering representative application checks for:
 
 - Bundled adapter request formats and static provider credentials.
 - Fail-closed outcomes, missing credentials, HTTPS guards and timeouts.
 - Envelope validation and real JWE decryption/tamper rejection.
-- Inbound authentication and evaluation without provider I/O.
+- Evaluation without provider I/O.
 - Awaited delivery, nonce acknowledgement and privacy-safe logging.
 
 The sample deliberately omits exhaustive input permutations and SDK internals. These tests use
-local keys and mocked external services; they do not send SMS or replace deployment, provider
-integration or handset-delivery checks. Runtime requirements in the sections above still apply.
+local keys and mocked external services; they do not send SMS and **do not test Easy Auth or platform
+authorization**. Separate deployed security tests are required for missing/invalid credentials,
+wrong issuer or audience, unauthorized caller, HTTPS enforcement and SendOtp route protection.
+An authorized evaluation must succeed without provider I/O. These checks do not replace provider
+integration or handset-delivery checks. See [deployment verification](ONBOARDING.md#4-package-deploy-and-verify).
 
 ## Production limitations
 
@@ -234,8 +245,16 @@ not prove handset delivery or support for every provider feature.
 
 - The Function imports one private PEM through a Key Vault secret reference and decrypts in-process;
   vault-resident cryptographic operations and overlapping key rotation are not implemented.
-- The outbound timeout is not an end-to-end deadline. Cold starts, authentication metadata and Key
+- The Preview 1 setup guide requires asynchronous delivery after acceptance. This sample still waits
+  for the provider and has no durable queue or automatic retry implementation; it does not satisfy that
+  timing architecture merely because the setup script deploys it.
+- The outbound timeout is not an end-to-end deadline. Cold starts, platform authentication and Key
   Vault access can exceed the caller's budget; Python uses connect/read inactivity timeouts.
+- Voice text is forwarded unchanged. Digit-by-digit rendering required by the setup guide must be
+  verified for the chosen voice integration; unspaced numeric text is not guaranteed to be spoken correctly.
 - Full body-size/content-type and E.164 validation, subscription provisioning, certification,
   least-cost routing and voice-callback workflows are outside this sample. Native fallback belongs
   to the caller, not this Function.
+
+See [setup compatibility](ONBOARDING.md#setup-script-compatibility) for credential provisioning,
+endpoint format and unsupported setup options.

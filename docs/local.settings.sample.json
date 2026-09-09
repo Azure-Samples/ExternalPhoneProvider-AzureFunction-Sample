@@ -1,5 +1,5 @@
 {
-  "_comment": "Choose one runtime and a registered adapter. Replace placeholders with your deployment settings; no provider is selected by default. Credential values stay in Key Vault.",
+  "_comment": "Choose one runtime and a registered adapter. Credential values stay in Key Vault. Azure requires Easy Auth with authentication required and an allowed caller; configure it separately. Local hosts are unauthenticated and must stay on loopback.",
   "IsEncrypted": false,
   "Values": {
     "FUNCTIONS_WORKER_RUNTIME": "node | dotnet-isolated | python",
@@ -7,18 +7,12 @@
     "EPP_DECRYPTION_KEY_PEM": "<Key Vault secret reference in Azure; PEM or base64 PEM for local development>",
     "EPP_ENCRYPTION_KEY_ID": "<encryption key ID; mismatch gives a nonfatal warning>",
 
-    "_comment_auth": "Enable Easy Auth on the Function App (unauthenticatedClientAction=Return401, allowedApplications pinned to EPP_EXPECTED_CLIENT_ID) AND set EPP_REQUIRE_AUTH=true in any real deployment. false is for local func start only.",
-    "EPP_REQUIRE_AUTH": "true",
-    "EPP_EXPECTED_AUDIENCE": "<endpoint app client-ID GUID for v2 tokens>",
-    "EPP_EXPECTED_CLIENT_ID": "<authorized caller app client-ID GUID>",
-    "EPP_TENANT_ID": "<trusted issuer tenant GUID; not the request tenantId>",
-
     "EPP_PROVIDER_NAME": "<registered-adapter-id>",
     "EPP_PROVIDER_ENDPOINT": "https://<provider-host>/<api-base-path>",
-    "EPP_PROVIDER_ACCOUNT_NAME": "",
+    "EPP_PROVIDER_ACCOUNT_NAME": "<sender/account if required by the adapter; not an API key or credential ID>",
     "_comment_provider_timeout": "Outbound provider HTTP timeout: ASCII decimal milliseconds, default 1500, cap 2500. Not a total invocation deadline; see CONTRACT.md. Provider URLs must be HTTPS; redirects are not followed.",
     "EPP_PROVIDER_TIMEOUT_MS": "1500",
 
-    "KEY_VAULT_URL": "https://<your-key-vault>.vault.azure.net/"
+    "KEY_VAULT_URL": "https://<provider-credential-vault>.vault.azure.net/"
   }
 }

@@ -66,9 +66,6 @@ class ProviderRegistry:
             return None
         return self._by_id.get(provider_id.lower())
 
-    def resolve(self, request_provider, env=None):
-        return self.get(request_provider or read_config(env)["provider_name"])
-
 
 CHANNEL_BY_CODE = {1: "sms", 2: "voice"}
 CHANNEL_BY_NAME = {"sms": 1, "voice": 2}
@@ -253,9 +250,9 @@ class DispatchEngine:
         self.secrets = secrets
         self.env = env if env is not None else os.environ
 
-    def dispatch(self, dispatch, request_provider, shutter, request_id):
+    def dispatch(self, dispatch, request_id):
         config = read_config(self.env)
-        adapter = self.registry.resolve(request_provider, self.env)
+        adapter = self.registry.get(config["provider_name"])
         if adapter is None:
             return 400, {"status": "error", "reason": "unknown provider", "requestId": request_id}
 
@@ -268,9 +265,6 @@ class DispatchEngine:
 
         if channel not in DEFAULT_CHANNELS:
             return 400, {"status": "error", "provider": provider_id, "reason": "unsupported channel", "requestId": request_id}
-
-        if shutter:
-            return 200, {"status": "accepted", "shutterProcessed": True, "provider": provider_id, "channel": channel, "correlationId": dispatch.correlation_id, "messageId": dispatch.message_id, "requestId": request_id}
 
         auth = manifest["auth"]
         if auth.get("mode") != "apiKey":

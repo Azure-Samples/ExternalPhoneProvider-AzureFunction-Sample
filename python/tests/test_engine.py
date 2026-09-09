@@ -24,7 +24,7 @@ def engine(monkeypatch):
 def test_missing_key_or_identity_never_sends(engine):
     for missing in ("soprano-api-key", "soprano-api-id"):
         engine.secrets.resolve.side_effect = lambda name: None if name == missing else "test-key"
-        status, body = engine.dispatch(_request(), "soprano", False, "r")
+        status, body = engine.dispatch(_request(), "r")
         assert status == 502 and body["reason"] == "provider credential unavailable"
     dispatch_module.requests.request.assert_not_called()
 
@@ -32,19 +32,20 @@ def test_missing_key_or_identity_never_sends(engine):
 def test_base_and_sinch_voice_final_url_guards(engine):
     for url in ("http://api.example", "https://api.example:0"):
         engine.env["EPP_PROVIDER_ENDPOINT"] = url
-        status, body = engine.dispatch(_request(), "soprano", False, "r")
+        status, body = engine.dispatch(_request(), "r")
         assert status == 502 and body["reason"] == "invalid provider endpoint"
     engine.env["EPP_PROVIDER_ENDPOINT"] = "https://api.example"
+    engine.env["EPP_PROVIDER_NAME"] = "sinch"
     for url in ("http://voice.example", "https://voice.example:0"):
         engine.env["SINCH_VOICE_ENDPOINT"] = url
-        status, body = engine.dispatch(_request("voice"), "sinch", False, "r")
+        status, body = engine.dispatch(_request("voice"), "r")
         assert status == 502 and body["reason"] == "invalid provider request URL"
     dispatch_module.requests.request.assert_not_called()
 
 
 def test_provider_outcomes_fail_closed(engine, monkeypatch):
     monkeypatch.setenv("EPP_PROVIDER_NAME", "sinch")  # The injected provider setting must win.
-    assert engine.registry.resolve(None, {}) is None
+    assert engine.registry.get(None) is None
     cases = (
         (202, {"state": "accepted"}, 200, "Continue"),
         (500, {"status": "ACCEPTED"}, 502, "Fail"),
@@ -58,7 +59,7 @@ def test_provider_outcomes_fail_closed(engine, monkeypatch):
         response = Mock(status_code=upstream_status, json=Mock(return_value=payload))
         send = Mock(return_value=response)
         monkeypatch.setattr(dispatch_module.requests, "request", send)
-        status, body = engine.dispatch(_request(), None, False, "r")
+        status, body = engine.dispatch(_request(), "r")
         assert (status, body["outcome"], body["provider"]) == (expected, outcome, "soprano")
         send.assert_called_once()
         response.close.assert_called_once()
@@ -69,7 +70,7 @@ def test_transport_failures_and_wrapped_read_timeout(engine, monkeypatch):
     for error, expected in ((errors.Timeout("offline"), 504), (errors.ConnectionError("offline"), 502)):
         send = Mock(side_effect=error)
         monkeypatch.setattr(dispatch_module.requests, "request", send)
-        status, body = engine.dispatch(_request(), "soprano", False, "r")
+        status, body = engine.dispatch(_request(), "r")
         assert status == expected and body["outcome"] == "Fail"
         send.assert_called_once()
 
@@ -78,7 +79,7 @@ def test_transport_failures_and_wrapped_read_timeout(engine, monkeypatch):
     response = Mock(status_code=200, json=Mock(side_effect=wrapped))
     send = Mock(return_value=response)
     monkeypatch.setattr(dispatch_module.requests, "request", send)
-    status, body = engine.dispatch(_request(), "soprano", False, "r")
+    status, body = engine.dispatch(_request(), "r")
     assert status == 504 and body["reason"] == "provider timeout"
     send.assert_called_once()
     response.close.assert_called_once()

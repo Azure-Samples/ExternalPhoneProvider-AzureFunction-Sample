@@ -14,7 +14,7 @@ secrets in Key Vault.
 | Python (v2 model) | Available | [python/](python/) |
 
 All implementations conform to the **language-agnostic contract** in
-[`docs/CONTRACT.md`](docs/CONTRACT.md) — identical HTTP API, provider-adapter shape, config/env var
+[docs/CONTRACT.md](docs/CONTRACT.md) — identical HTTP API, provider-adapter shape, config/env var
 names, Key Vault secret names, and behaviors (fail-closed, managed identity, privacy). Pick any folder
 and follow its README.
 
@@ -27,30 +27,36 @@ and deploying, step by step.
 
 ## The design in one line
 
-`POST /api/SendOtp` → authenticate → validate and decrypt → select the configured adapter → read its
-credentials → send → map the outcome. Only provider acceptance returns the nonce for live requests.
-Incoming `mode: 2` (evaluation) is the generic shutter: authenticate and decrypt, but do not call a provider.
+SAS → Easy Auth → anonymous HTTP handler (`POST /api/SendOtp`, validate envelope + decrypt JWE) →
+configured provider (API key) → HTTP result with nonce on success.
+Only provider acceptance returns the nonce for live requests. Incoming `mode: 2` (evaluation) is the
+generic shutter: after platform authentication, validate and decrypt, then echo the nonce without
+calling a provider.
 
-See [`docs/CONTRACT.md`](docs/CONTRACT.md) for the full specification every implementation follows.
+See [docs/CONTRACT.md](docs/CONTRACT.md) for the full specification every implementation follows.
 
 Request `tenantId`, `channel`, `mode` and `ttlSeconds` are request data, not extra environment settings.
-The separately configured issuer tenant, audience and caller define authentication trust; an incoming
-request cannot choose them. Azure-host detection is internal and needs no customer setting.
+The trusted tenant issuer, endpoint-app audience and authorized SAS caller are configured in Easy Auth,
+not in application environment settings or incoming request data.
 
 ## Security
 
-**Turn Easy Auth (App Service Authentication) ON — that is the primary gate.** Set
-`unauthenticatedClientAction` to `Return401` and pin `allowedApplications` to Microsoft's app id. The
-HTTP trigger is `authLevel: anonymous`; it has no function-key gate. In-process token validation
-provides a separate backstop if Easy Auth is misconfigured.
+**Easy Auth (App Service Authentication) is the only caller-authentication gate, before the anonymous
+Function.** Enable it with `requireAuthentication=true`, `unauthenticatedClientAction=Return401` and
+`requireHttps=true`. Configure the trusted tenant issuer and `allowedAudiences` for the endpoint app,
+and a **nonempty `allowedApplications`** list pinned to the authorized SAS caller application ID.
+Do not exclude the SendOtp path. The handler does not parse or validate bearer tokens, and there is
+no backup application validation or function-key gate. **Never expose this endpoint to the public
+internet with Easy Auth disabled or bypassed.** See [platform setup](docs/ONBOARDING.md#2-provision-encryption-and-deployment-trust).
 
-**Also set `EPP_REQUIRE_AUTH=true` in any real deployment.** Easy Auth lives outside the code, so a
-portal change or slot swap can drop it silently; in-process validation is the backstop. The Function
-then validates the caller's **Entra JWT** (audience = `EPP_EXPECTED_AUDIENCE`, issuer tenant =
-`EPP_TENANT_ID`, signature via JWKS) and returns **401** without a valid token. Provider secrets are read
-from **Key Vault** via **managed identity** — no keys or connection strings in code or config. Locally
-(`func start`) there is no Easy Auth, so `EPP_REQUIRE_AUTH` is the only gate. See
-[authenticated evaluation](docs/ONBOARDING.md#3-validate-without-delivery) for how to test it with a token.
+JWE decryption protects the payload but **does not authenticate SAS**: anyone with the public key can
+encrypt a request. A nonce echo, including a fixed nonce, is not caller authentication. Provider API
+keys are read from **Key Vault** via **managed identity**; they authenticate the outbound provider call,
+not the inbound request.
+
+Core Tools does not provide Easy Auth. Local execution is unauthenticated: bind only to loopback,
+with no tunnels or public forwarding. Offline tests cover application behavior, not platform
+authentication; [separate deployed security checks](docs/ONBOARDING.md#4-package-deploy-and-verify) are required.
 
 ## Docs
 
@@ -62,4 +68,4 @@ from **Key Vault** via **managed identity** — no keys or connection strings in
 - **New provider** (in any language): add one adapter file exposing `manifest` + `buildRequest` +
   `parseResponse` — no engine changes. See the language folder's README.
 - **New language**: mirror the folder structure, implement the contract, add the same test scenarios,
-  and wire it into [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+  and wire it into [.github/workflows/ci.yml](.github/workflows/ci.yml).

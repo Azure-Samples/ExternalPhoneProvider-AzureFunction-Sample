@@ -15,23 +15,27 @@ const input = { channel: 'sms', endpoint: 'https://provider.example', dispatch,
 const envelope = (overrides = {}) => ({ type: 'microsoft.mfa.otpDeliver.v1', channel: 1, mode: 1,
     encryptedDeliveryContext: 'a.b.c.d.e', ...overrides });
 
-test('config uses the supplied audience and deployment provider, with no hardcoded fallback', async () => {
-    const audience = '11111111-2222-4333-8444-555555555555';
-    const env = { EPP_EXPECTED_AUDIENCE: ` ${audience} `, EPP_PROVIDER_NAME: ' SiNcH ',
+test('config uses the deployment provider, with no hardcoded fallback', async (t) => {
+    const env = { EPP_PROVIDER_NAME: ' SiNcH ',
         EPP_PROVIDER_TIMEOUT_MS: ' 0012 ', SINCH_SERVICE_PLAN_ID: 'custom-plan',
-        EPP_TENANT_ID: ' trusted-tenant ', WEBSITE_HOSTNAME: 'azure-test' };
+        EPP_PROVIDER_ENDPOINT: input.endpoint, KEY_VAULT_URL: 'https://config-test.vault.azure.net' };
+    const getSecret = t.mock.method(SecretClient.prototype, 'getSecret', async () => ({ value: 'fixture-key' }));
+    const fetchMock = t.mock.method(global, 'fetch', async () => ({ ok: true, status: 200,
+        text: async () => JSON.stringify({ id: 'batch-id' }) }));
     const config = readConfig(env);
-    assert.deepEqual([config.expectedAudience, config.providerName, config.providerTimeoutMs], [audience, 'sinch', ' 0012 ']);
+    assert.deepEqual([config.providerName, config.providerTimeoutMs], ['sinch', ' 0012 ']);
     assert.equal(config.env, env);
-    assert.equal(config.tenantId, 'trusted-tenant');
-    assert.equal(Object.hasOwn(config, 'onAzure'), false);
-    const result = await dispatchOtp({ ...dispatch, provider: 'unknown' }, { config, shutter: true });
-    assert.deepEqual([result.httpStatus, result.body.provider], [200, 'sinch']);
-    const defaults = readConfig({});
-    assert.deepEqual([defaults.expectedAudience, defaults.providerName], ['', '']);
+    assert.equal(readConfig({}).providerName, '');
     for (const providerName of ['', 'unknown']) {
-        assert.equal((await dispatchOtp(dispatch, { config: { ...config, providerName }, shutter: true })).httpStatus, 400);
+        assert.equal((await dispatchOtp(dispatch, { config: { ...config, providerName } })).httpStatus, 400);
     }
+    assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
+    const result = await dispatchOtp({ ...dispatch, provider: 'unknown' }, { config });
+    assert.deepEqual([result.httpStatus, result.body.provider, result.body.outcome], [200, 'sinch', 'Continue']);
+    assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [1, 1]);
+    const [url, init] = fetchMock.mock.calls[0].arguments;
+    assert.equal(url, `${input.endpoint}/xms/v1/custom-plan/batches`);
+    assert.equal(JSON.parse(init.body).body, dispatch.message);
 });
 
 test('envelope TTL boundaries and routing reject coercion', () => {

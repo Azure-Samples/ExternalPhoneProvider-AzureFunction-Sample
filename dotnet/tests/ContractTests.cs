@@ -1,12 +1,6 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Epp.Otp.Providers;
-using Microsoft.IdentityModel.Protocols;
-using Microsoft.IdentityModel.Protocols.OpenIdConnect;
-using Microsoft.IdentityModel.Tokens;
 using Xunit;
 
 namespace Epp.Otp.Tests;
@@ -75,7 +69,7 @@ public class ContractTests
         Assert.Contains("message=" + Uri.EscapeDataString(Request().Message!), form.Body);
 
         var call = new SinchProvider().BuildRequest("voice", "https://provider.example", Request("voice"), credential, env);
-        Assert.Equal("Bearer test-key", call.Headers["Authorization"]); // Static API token, not an acquired JWT.
+        Assert.Equal("Bearer test-key", call.Headers["Authorization"]); // Static provider credential.
         Assert.Equal("https://calling.api.sinch.com/calling/v1/callouts", call.Url);
         using var callJson = JsonDocument.Parse(call.Body);
         Assert.Equal(Request().Message, callJson.RootElement.GetProperty("ttsCallout").GetProperty("text").GetString());
@@ -88,75 +82,6 @@ public class ContractTests
         Assert.Equal(409, OutcomeMapper.ToHttpStatus(Outcome.StepUp, 200));
         Assert.Equal(429, OutcomeMapper.ToHttpStatus(Outcome.Fail, 429));
     }
-
-    [Fact]
-    public async Task InboundJwtRequiresPinnedClaimsExpirationAlgorithmAndSignature()
-    {
-        using var tokens = new InboundTokens();
-        using var stranger = new InboundTokens();
-        var localEnv = new TestEnv();
-        Assert.True((await new TokenValidator(localEnv, tokens).ValidateAsync(null, AppConfig.Read(localEnv))).Ok);
-        var misconfigured = new TokenValidator.Result(false, "auth misconfigured");
-        foreach (var marker in new[] { "WEBSITE_INSTANCE_ID", "WEBSITE_SITE_NAME", "WEBSITE_HOSTNAME" })
-        {
-            var env = tokens.Environment();
-            env.Remove("WEBSITE_SITE_NAME");
-            env["EPP_REQUIRE_AUTH"] = "false";
-            var config = AppConfig.Read(env);
-            env[marker] = "azure-test";
-            var hostValidator = new TokenValidator(env, tokens);
-            Assert.Equal(misconfigured, await hostValidator.ValidateAsync(null, config));
-            Assert.Equal(misconfigured, await hostValidator.ValidateAsync(null));
-            env["EPP_REQUIRE_AUTH"] = "true";
-            env["EPP_EXPECTED_CLIENT_ID"] = "";
-            Assert.Equal(misconfigured, await hostValidator.ValidateAsync(null, AppConfig.Read(env)));
-        }
-        var validator = new TokenValidator(tokens.Environment(), tokens);
-        Assert.True((await validator.ValidateAsync("Bearer " + tokens.Issue(caller: "EXPECTED-APP", claimType: "appid"))).Ok);
-        Assert.False((await validator.ValidateAsync(null)).Ok);
-        Assert.False((await validator.ValidateAsync("Bearer " + tokens.Issue(algorithm: SecurityAlgorithms.RsaSha384))).Ok);
-        Assert.False((await validator.ValidateAsync("Bearer " + tokens.Issue(expires: DateTime.UtcNow.AddMinutes(-10)))).Ok);
-        Assert.False((await validator.ValidateAsync("Bearer " + tokens.Issue(includeExpiration: false))).Ok);
-        Assert.False((await validator.ValidateAsync("Bearer " + tokens.Issue(caller: "wrong-app"))).Ok);
-        Assert.False((await validator.ValidateAsync("Bearer " + tokens.Issue(caller: null))).Ok);
-        Assert.False((await validator.ValidateAsync("Bearer " + tokens.Issue(audience: "wrong-audience"))).Ok);
-        Assert.False((await validator.ValidateAsync("Bearer " + tokens.Issue(issuer: "https://wrong-issuer.example"))).Ok);
-        Assert.False((await validator.ValidateAsync("Bearer " + stranger.Issue())).Ok);
-    }
-}
-
-// Only inbound authentication uses JWTs. Keys are generated in memory; no discovery HTTP or secrets.
-internal sealed class InboundTokens : IConfigurationManager<OpenIdConnectConfiguration>, IDisposable
-{
-    private readonly RSA _rsa = RSA.Create(2048);
-    private readonly OpenIdConnectConfiguration _configuration = new();
-
-    public InboundTokens() => _configuration.SigningKeys.Add(new RsaSecurityKey(_rsa.ExportParameters(false)) { KeyId = "local-signing-kid" });
-
-    public TestEnv Environment() => new()
-    {
-        ["WEBSITE_SITE_NAME"] = "azure-test",
-        ["EPP_REQUIRE_AUTH"] = "true",
-        ["EPP_TENANT_ID"] = "tenant",
-        ["EPP_EXPECTED_AUDIENCE"] = "audience",
-        ["EPP_EXPECTED_ISSUER"] = "https://issuer.example",
-        ["EPP_EXPECTED_CLIENT_ID"] = "expected-app",
-    };
-
-    public string Issue(string algorithm = SecurityAlgorithms.RsaSha256, string? caller = "expected-app",
-        string issuer = "https://issuer.example", string audience = "audience", DateTime? expires = null,
-        bool includeExpiration = true, string claimType = "azp")
-    {
-        var key = new RsaSecurityKey(_rsa) { KeyId = "local-signing-kid" };
-        var claims = caller is null ? Array.Empty<Claim>() : new[] { new Claim(claimType, caller) };
-        var token = new JwtSecurityToken(issuer, audience, claims, DateTime.UtcNow.AddHours(-1),
-            includeExpiration ? expires ?? DateTime.UtcNow.AddMinutes(5) : null, new SigningCredentials(key, algorithm));
-        return new JwtSecurityTokenHandler().WriteToken(token);
-    }
-
-    public Task<OpenIdConnectConfiguration> GetConfigurationAsync(CancellationToken cancel) => Task.FromResult(_configuration);
-    public void RequestRefresh() { }
-    public void Dispose() => _rsa.Dispose();
 }
 
 internal sealed class TestEnv : Dictionary<string, string?>, IEnv

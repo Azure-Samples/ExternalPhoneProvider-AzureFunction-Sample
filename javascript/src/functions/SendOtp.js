@@ -6,7 +6,6 @@
 
 const { app } = require('@azure/functions');
 const crypto = require('crypto');
-const { validateToken, isExpectedCaller } = require('./security');
 const {
     dispatchOtp,
     parseEnvelope,
@@ -16,21 +15,9 @@ const {
 } = require('./dispatch');
 const { readConfig } = require('./config');
 
-function readCallerAppId(request) {
-    const encoded = request.headers.get('x-ms-client-principal');
-    if (!encoded) return undefined;
-    try {
-        const principal = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
-        const claim = (principal.claims || []).find((c) => c.typ === 'appid' || c.typ === 'azp');
-        return claim && claim.val;
-    } catch {
-        return undefined;
-    }
-}
-
 app.http('SendOtp', {
     methods: ['POST'],
-    authLevel: 'anonymous', // In-process token validation is mandatory on Azure.
+    authLevel: 'anonymous', // Protected by platform authentication in Azure.
     handler: async (request, context) => {
         const started = Date.now();
         const requestId = crypto.randomUUID();
@@ -47,16 +34,6 @@ app.http('SendOtp', {
             const clientRequestId = request.headers.get('x-ms-client-request-id') || requestId;
             const headerCorrelationId = request.headers.get('x-ms-correlation-id') || null;
             correlationId = headerCorrelationId || requestId;
-            // Do not treat a forged Easy Auth header as authentication, especially on Azure.
-            const tokenValidation = await validateToken(request, config);
-            if (!tokenValidation.ok) {
-                return respond(401, { error: 'unauthorized', reason: tokenValidation.reason, requestId });
-            }
-
-            const callerAppId = readCallerAppId(request);
-            if (callerAppId && !isExpectedCaller({ azp: callerAppId }, config.expectedClientId)) {
-                return respond(403, { error: 'unexpected_caller', correlationId, requestId });
-            }
 
             let payload;
             try {

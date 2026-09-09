@@ -4,7 +4,7 @@ from urllib.parse import parse_qs
 
 import pytest
 
-from src.dispatch import DispatchRequest, parse_envelope
+from src.dispatch import DispatchRequest, ProviderRegistry, parse_envelope
 from src.providers.infobip import InfobipProvider
 from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
@@ -19,7 +19,7 @@ def _dispatch(channel="sms"):
 
 @pytest.mark.parametrize("channel", ["sms", "voice"])
 def test_soprano_exact_sms_and_voice_contract(channel):
-    request = SopranoProvider().build_request(
+    request = ProviderRegistry([SopranoProvider()]).get("SOPRANO").build_request(
         channel, "https://qa4.example/cgpapi///", _dispatch(channel),
         {"mode": "apiKey", "identity": "test-id", "secret": "test-key"},
         {},

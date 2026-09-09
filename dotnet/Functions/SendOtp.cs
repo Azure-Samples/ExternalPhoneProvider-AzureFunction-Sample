@@ -13,44 +13,19 @@ namespace Epp.Otp;
 public sealed class SendOtp
 {
     private readonly DispatchEngine _engine;
-    private readonly TokenValidator _tokens;
     private readonly JweDecryptor _decryptor;
     private readonly IEnv _env;
     private readonly ILogger<SendOtp> _log;
 
-    public SendOtp(DispatchEngine engine, TokenValidator tokens, JweDecryptor decryptor, IEnv env, ILogger<SendOtp> log)
+    public SendOtp(DispatchEngine engine, JweDecryptor decryptor, IEnv env, ILogger<SendOtp> log)
     {
         _engine = engine;
-        _tokens = tokens;
         _decryptor = decryptor;
         _env = env;
         _log = log;
     }
 
-    // Additional caller guard when Easy Auth supplies an identity; never log that identity.
-    private static string? ReadCallerAppId(HttpRequest req)
-    {
-        var encoded = req.Headers["x-ms-client-principal"].FirstOrDefault();
-        if (string.IsNullOrEmpty(encoded)) return null;
-        try
-        {
-            using var doc = JsonDocument.Parse(Convert.FromBase64String(encoded));
-            if (!doc.RootElement.TryGetProperty("claims", out var claims) || claims.ValueKind != JsonValueKind.Array)
-                return null;
-            foreach (var claim in claims.EnumerateArray())
-            {
-                var type = claim.TryGetProperty("typ", out var t) ? t.GetString() : null;
-                if (type is "appid" or "azp")
-                    return claim.TryGetProperty("val", out var v) ? v.GetString() : null;
-            }
-            return null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
+    // Anonymous at the Functions layer; EasyAuth must remain enabled and require authentication in the cloud.
     [Function("SendOtp")]
     public async Task<IActionResult> Run(
         [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = "SendOtp")] HttpRequest req)
@@ -72,13 +47,6 @@ public sealed class SendOtp
             var config = AppConfig.Read(_env);
             var clientRequestId = req.Headers["x-ms-client-request-id"].FirstOrDefault() ?? requestId;
             correlationId = req.Headers["x-ms-correlation-id"].FirstOrDefault() ?? requestId;
-            var auth = await _tokens.ValidateAsync(req.Headers.Authorization.FirstOrDefault(), config);
-            if (!auth.Ok)
-                return Reply(401, new { error = "unauthorized", reason = auth.Reason, requestId });
-
-            var callerAppId = ReadCallerAppId(req);
-            if (callerAppId is not null && !TokenValidator.IsExpectedCaller(callerAppId, config.ExpectedClientId))
-                return Reply(403, new { error = "unexpected_caller", requestId });
 
             JsonElement payload;
             try
@@ -131,7 +99,7 @@ public sealed class SendOtp
                 Locale: context.Locale);
 
             // A nonce acknowledges delivery, not just decryption. Wait for the bounded provider call.
-            var result = await _engine.DispatchAsync(dispatch, null, false, requestId);
+            var result = await _engine.DispatchAsync(dispatch, requestId);
             if (result.HttpStatus != 200)
                 return Reply(result.HttpStatus, new { error = "provider_delivery_failed", correlationId, requestId });
 

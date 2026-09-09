@@ -22,7 +22,6 @@ from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
 from src.providers.telesign import TelesignProvider
 from src.secrets import SecretResolver
-from src.security import validate_token
 
 TAG = "[EPP]"
 
@@ -34,6 +33,7 @@ _engine = DispatchEngine(_registry, _secrets)
 _key_provider = make_key_provider(os.environ)
 
 
+# Azure Easy Auth must enforce authentication; local handler calls are anonymous.
 @app.route(route="SendOtp", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
 def send_otp(req: func.HttpRequest) -> func.HttpResponse:
     started = time.monotonic()
@@ -52,10 +52,6 @@ def send_otp(req: func.HttpRequest) -> func.HttpResponse:
 
     try:
         config = read_config()
-        auth_ok, _, _ = validate_token(req.headers.get("Authorization"), config)
-        if not auth_ok:
-            return respond(401, {"error": "unauthorized", "requestId": request_id})
-
         try:
             payload = req.get_json()
         except ValueError:
@@ -86,7 +82,7 @@ def send_otp(req: func.HttpRequest) -> func.HttpResponse:
         # Evaluation skips provider lookup, configuration, secrets and HTTP.
         if not evaluation:
             dispatch = context_to_dispatch(delivery, envelope, client_request_id)
-            status, _ = _engine.dispatch(dispatch, None, False, request_id)
+            status, _ = _engine.dispatch(dispatch, request_id)
             if status != 200:
                 return respond(status, {"error": "provider_delivery_failed",
                                         "correlationId": correlation_id, "requestId": request_id})

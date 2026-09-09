@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.IdentityModel.Tokens;
 using Xunit;
 
 namespace Epp.Otp.Tests;
@@ -50,14 +50,35 @@ public class EnvelopeTests
         var compact = Jose.JWT.Encode("{\"nonce\":\"private-nonce\"}", keys.Rsa,
             Jose.JweAlgorithm.RSA_OAEP_256, Jose.JweEncryption.A256GCM);
         var parts = compact.Split('.');
-        var tag = Base64UrlEncoder.DecodeBytes(parts[4]);
-        tag[0] ^= 1;
-        parts[4] = Base64UrlEncoder.Encode(tag);
+        parts[4] = (parts[4][0] == 'A' ? "B" : "A") + parts[4][1..];
         Assert.ThrowsAny<Exception>(() => decryptor.Decrypt(string.Join(".", parts)));
         var wrongAlg = Jose.JWT.Encode("{}", keys.Rsa, Jose.JweAlgorithm.RSA_OAEP, Jose.JweEncryption.A256GCM);
         var wrongEnc = Jose.JWT.Encode("{}", keys.Rsa, Jose.JweAlgorithm.RSA_OAEP_256, Jose.JweEncryption.A128GCM);
         Assert.ThrowsAny<Exception>(() => decryptor.Decrypt(wrongAlg));
         Assert.ThrowsAny<Exception>(() => decryptor.Decrypt(wrongEnc));
+    }
+
+    [Fact]
+    public void JweAuthenticatesOriginalProtectedHeaderBytes()
+    {
+        using var keys = new TestKeys();
+        const string header = "{ \"kid\" : \"test-key\", \"enc\" : \"A256GCM\", \"alg\" : \"RSA-OAEP-256\" }";
+        static string Encode(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var encodedHeader = Encode(Encoding.UTF8.GetBytes(header));
+        var key = RandomNumberGenerator.GetBytes(32);
+        var iv = RandomNumberGenerator.GetBytes(12);
+        var plaintext = Encoding.UTF8.GetBytes("{\"nonce\":\"test-nonce\"}");
+        var ciphertext = new byte[plaintext.Length];
+        var tag = new byte[16];
+        using var cipher = new AesGcm(key, tag.Length);
+        cipher.Encrypt(iv, plaintext, ciphertext, tag, Encoding.ASCII.GetBytes(encodedHeader));
+        var wrappedKey = keys.Rsa.Encrypt(key, RSAEncryptionPadding.OaepSHA256);
+        var segments = new[] { encodedHeader, Encode(wrappedKey), Encode(iv), Encode(ciphertext), Encode(tag) };
+        var decryptor = new JweDecryptor(keys);
+        Assert.Equal("test-nonce", decryptor.Decrypt(string.Join(".", segments)).Context.Nonce);
+        segments[0] = Encode(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(JsonSerializer.Deserialize<JsonElement>(header))));
+        Assert.NotEqual(encodedHeader, segments[0]);
+        Assert.ThrowsAny<Exception>(() => decryptor.Decrypt(string.Join(".", segments)));
     }
 
     private static (Envelope? Envelope, string? Error) Parse(string routing) =>

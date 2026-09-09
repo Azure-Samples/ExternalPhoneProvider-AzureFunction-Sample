@@ -4,7 +4,7 @@
 
 'use strict';
 
-// Infobip: SMS /sms/3/messages, voice /tts/3/advanced (unverified). Auth: App API key.
+// Voice integration is unverified; confirm the request format before production use.
 
 const manifest = {
     id: 'infobip',
