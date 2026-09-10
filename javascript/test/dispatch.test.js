@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { AppConfig, readConfig } = require('../src/functions/config');
 const { DeliveryContext, ParsedResponse } = require('../src/functions/models');
+const fixtures = require('../../tests/fixtures/contract.json');
 const { inspect } = require('node:util');
 const {
     dispatchOtp, getProvider, resolveOutcome, outcomeToHttpStatus,
@@ -53,7 +54,17 @@ test('request models preserve content and accept valid TTL boundaries', () => {
     assert.ok(parseEnvelope(envelope()).envelope);
     assert.ok(parseEnvelope(envelope({ ttlSeconds: 1 })).envelope);
     assert.ok(parseEnvelope(envelope({ ttlSeconds: 2147483647 })).envelope);
-    // Invalid values and their public error responses are covered by the shared handler fixtures.
+});
+
+test('envelope parser rejects invalid inputs with the contract reason', () => {
+    for (const fixture of fixtures.badRequests) {
+        // Malformed JSON is handled before the parser receives an object.
+        if (fixture.reason === 'invalid JSON body') continue;
+        const payload = fixture.rawBody !== undefined ? JSON.parse(fixture.rawBody) : envelope(fixture.overrides);
+        const result = parseEnvelope(payload);
+        assert.equal(result.error, fixture.reason, fixture.name);
+        assert.equal(result.envelope, undefined, fixture.name);
+    }
 });
 
 test('provider URLs and timeouts retain representative safety boundaries', () => {
