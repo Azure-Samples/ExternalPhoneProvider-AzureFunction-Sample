@@ -1,10 +1,12 @@
 import base64
 import json
+from pathlib import Path
 from urllib.parse import parse_qs
 
 import pytest
 
-from src.dispatch import DispatchRequest, ProviderRegistry, parse_envelope
+from src.dispatch import DispatchRequest, ProviderRegistry, context_to_dispatch, parse_envelope
+from src.models import DeliveryContext, Envelope, ParsedResponse
 from src.providers.infobip import InfobipProvider
 from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
@@ -33,9 +35,12 @@ def test_soprano_exact_sms_and_voice_contract(channel):
         "text": MESSAGE, "destination": "15551234567", "messageTypes": [channel],
         "correlationId": "correlation-id", "shutterMode": False,
     }
+    response = SopranoProvider().parse_response(201, True, {"id": 123, "status": "ENROUTE"})
+    assert response == ParsedResponse(True, 201, provider_message_id="123", provider_status_name="ENROUTE")
+    assert "ENROUTE" not in repr(response)
 
 
-def test_infobip_sms_contract():
+def test_infobip_sms_request_and_response_contract():
     request = InfobipProvider().build_request(
         "sms", "https://infobip.example", _dispatch(),
         {"mode": "apiKey", "secret": "ib"}, {"EPP_PROVIDER_ACCOUNT_NAME": "EPP"},
@@ -46,9 +51,13 @@ def test_infobip_sms_contract():
         "sender": "EPP", "destinations": [{"to": "+15551234567", "messageId": "correlation-id"}],
         "content": {"text": MESSAGE},
     }]
+    response = InfobipProvider().parse_response(200, True, {
+        "messages": [{"messageId": "message-id", "status": {"groupName": "PENDING"}}],
+    })
+    assert response == ParsedResponse(True, 200, provider_message_id="message-id", provider_status_name="PENDING")
 
 
-def test_telesign_sms_contract():
+def test_telesign_sms_request_and_response_contract():
     request = TelesignProvider().build_request(
         "sms", "https://telesign.example", _dispatch(),
         {"mode": "apiKey", "secret": "key", "identity": "customer"}, {},
@@ -59,9 +68,11 @@ def test_telesign_sms_contract():
     form = parse_qs(request["body"])
     assert form["phone_number"] == ["+15551234567"] and form["message"] == [MESSAGE]
     assert form["message_type"] == ["OTP"] and form["external_id"] == ["correlation-id"]
+    response = TelesignProvider().parse_response(200, True, {"reference_id": "message-id", "status": {"code": 290}})
+    assert response == ParsedResponse(True, 200, provider_message_id="message-id", provider_status_code="290")
 
 
-def test_sinch_sms_static_token_contract():
+def test_sinch_sms_request_and_response_contract():
     request = SinchProvider().build_request(
         "sms", "https://sinch.example", _dispatch(),
         {"mode": "apiKey", "secret": "static-api-token"},
@@ -72,20 +83,43 @@ def test_sinch_sms_static_token_contract():
     assert json.loads(request["body"]) == {
         "from": "EPP", "to": ["+15551234567"], "body": MESSAGE, "client_reference": "correlation-id",
     }
+    response = SinchProvider().parse_response(200, True, {"id": "message-id"})
+    assert response == ParsedResponse(True, 200, provider_message_id="message-id", provider_status_name="Dispatched")
 
 
-def test_envelope_routing_and_ttl_validation():
+def test_request_models_preserve_content_and_accept_valid_routing_and_ttl():
     payload = {"type": "microsoft.mfa.otpDeliver.v1", "channel": 1, "mode": 1, "encryptedDeliveryContext": "jwe"}
     for channel, mode, expected in ((1, 1, (1, 1)), ("VOICE", "Evaluation", (2, 2))):
         envelope, error = parse_envelope({**payload, "channel": channel, "mode": mode})
-        assert error is None and (envelope["channel"], envelope["mode"]) == expected
-    for changes in ({"channel": True}, {"mode": False}, {"channel": "1"}, {"mode": None}):
-        envelope, error = parse_envelope({**payload, **changes})
-        assert envelope is None and error
-    for ttl in (None, True, "60", 0, 2147483648):
-        envelope, error = parse_envelope({**payload, "ttlSeconds": ttl})
-        assert envelope is None and "ttlSeconds" in error
+        assert error is None and isinstance(envelope, Envelope)
+        assert (envelope.channel, envelope.mode) == expected
     for ttl in (1, 2147483647):
         envelope, error = parse_envelope({**payload, "ttlSeconds": ttl})
-        assert error is None and envelope["ttl_seconds"] == ttl
-    assert parse_envelope(payload)[0]["ttl_seconds"] is None
+        assert error is None and envelope.ttl_seconds == ttl
+    envelope, error = parse_envelope(payload)
+    assert error is None and envelope.ttl_seconds is None
+
+    context = DeliveryContext.from_payload({
+        "nonce": " nonce ", "phoneNumber": "+15551234567", "message": MESSAGE,
+        "locale": {"opaque": "metadata"},
+    })
+    assert isinstance(context, DeliveryContext) and context.is_complete
+    dispatch = context_to_dispatch(context, envelope, "message-id")
+    assert isinstance(dispatch, DispatchRequest)
+    assert context.nonce == " nonce " and dispatch.message == MESSAGE
+    assert dispatch.destination == context.phone_number and dispatch.locale is context.locale
+    assert MESSAGE not in repr(context) + repr(dispatch)
+    assert "encrypted_delivery_context" not in repr(envelope)
+    assert DeliveryContext.from_payload(None) is None
+
+
+def test_envelope_parser_rejects_invalid_inputs_with_the_contract_reason():
+    fixtures = json.loads((Path(__file__).resolve().parents[2] / "tests/fixtures/contract.json").read_text())
+    valid = {"type": "microsoft.mfa.otpDeliver.v1", "channel": 1, "mode": 1, "encryptedDeliveryContext": "jwe"}
+    for fixture in fixtures["badRequests"]:
+        # Malformed JSON is handled before the parser receives an object.
+        if fixture["reason"] == "invalid JSON body":
+            continue
+        payload = json.loads(fixture["rawBody"]) if "rawBody" in fixture else {**valid, **fixture["overrides"]}
+        envelope, error = parse_envelope(payload)
+        assert envelope is None and error == fixture["reason"], fixture["name"]

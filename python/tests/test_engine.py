@@ -4,6 +4,7 @@ import pytest
 from urllib3.exceptions import ReadTimeoutError
 
 import src.dispatch as dispatch_module
+from src.config import AppConfig, read_config
 from src.dispatch import DispatchEngine, DispatchRequest, ProviderRegistry
 from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
@@ -45,6 +46,11 @@ def test_base_and_sinch_voice_final_url_guards(engine):
 
 def test_provider_outcomes_fail_closed(engine, monkeypatch):
     monkeypatch.setenv("EPP_PROVIDER_NAME", "sinch")  # The injected provider setting must win.
+    engine.env["EPP_DECRYPTION_KEY_PEM"] = "test-private-pem"
+    config = read_config(engine.env)
+    assert isinstance(config, AppConfig) and config.provider_name == "soprano"
+    assert config.env is engine.env and config.decryption_key_pem == "test-private-pem"
+    assert "test-private-pem" not in repr(config) and "EPP_PROVIDER_NAME" not in repr(config)
     assert engine.registry.get(None) is None
     cases = (
         (202, {"state": "accepted"}, 200, "Continue"),

@@ -64,8 +64,7 @@ app.http('SendOtp', {
                 context.warn('encryption_key_id_mismatch');
             }
 
-            if (!delivery || typeof delivery !== 'object' || Array.isArray(delivery)
-                || ['nonce', 'phoneNumber', 'message'].some((field) => typeof delivery[field] !== 'string' || !delivery[field].trim())) {
+            if (!delivery?.isComplete) {
                 return respond(400, { error: 'bad_request', reason: 'incomplete delivery context', correlationId, requestId });
             }
 

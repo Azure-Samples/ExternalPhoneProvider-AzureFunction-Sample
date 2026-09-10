@@ -13,6 +13,8 @@
     { "name": "boolean channel", "overrides": { "channel": true }, "reason": "unsupported channel" },
     { "name": "numeric string channel", "overrides": { "channel": "1" }, "reason": "unsupported channel" },
     { "name": "null mode", "overrides": { "mode": null }, "reason": "unsupported mode" },
+    { "name": "boolean mode", "overrides": { "mode": true }, "reason": "unsupported mode" },
+    { "name": "false mode", "overrides": { "mode": false }, "reason": "unsupported mode" },
     { "name": "empty encryption", "overrides": { "encryptedDeliveryContext": "" }, "reason": "encryptedDeliveryContext is required" },
     { "name": "blank encryption", "overrides": { "encryptedDeliveryContext": " " }, "reason": "encryptedDeliveryContext is required" },
     { "name": "string TTL", "overrides": { "ttlSeconds": "60" }, "reason": "invalid ttlSeconds" },
@@ -27,7 +29,10 @@
   ],
   "incompleteContexts": [
     { "nonce": "" },
+    { "nonce": null },
+    { "nonce": 123 },
     { "phoneNumber": null },
-    { "message": " " }
+    { "phoneNumber": "" },
+    { "message": " \t\r\n" }
   ]
 }

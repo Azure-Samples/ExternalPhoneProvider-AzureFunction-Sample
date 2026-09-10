@@ -36,19 +36,24 @@ public class ContractTests
     }
 
     [Fact]
-    public void SopranoRequiresAnExplicitAcceptedStatus()
+    public void ProviderStatusesMapToExpectedOutcomesAndHttpCodes()
     {
         var adapter = new SopranoProvider();
         Outcome Parse(string body)
         {
             using var json = JsonDocument.Parse(body);
-            return OutcomeMapper.ResolveOutcome(adapter.Manifest, adapter.ParseResponse(200, true, json.RootElement));
+            var response = adapter.ParseResponse(200, true, json.RootElement);
+            Assert.Equal(nameof(ParsedResponse), response.ToString());
+            return OutcomeMapper.ResolveOutcome(adapter.Manifest, response);
         }
         Assert.Equal(Outcome.Continue, Parse("[{\"id\":12,\"state\":\"enroute\"}]"));
         Assert.Equal(Outcome.Fail, Parse("{\"status\":\"FILTERED\"}"));
         Assert.Equal(Outcome.Fail, Parse("{\"status\":\"unknown\"}"));
         Assert.Equal(Outcome.Fail, Parse("{\"status\":123,\"state\":\"ACCEPTED\"}"));
         Assert.Equal(Outcome.Fail, Parse("{\"status\":false,\"state\":\"ACCEPTED\"}"));
+        Assert.Equal(403, OutcomeMapper.ToHttpStatus(Outcome.Block, 200));
+        Assert.Equal(409, OutcomeMapper.ToHttpStatus(Outcome.StepUp, 200));
+        Assert.Equal(429, OutcomeMapper.ToHttpStatus(Outcome.Fail, 429));
     }
 
     [Fact]
@@ -75,13 +80,6 @@ public class ContractTests
         Assert.Equal(Request().Message, callJson.RootElement.GetProperty("ttsCallout").GetProperty("text").GetString());
     }
 
-    [Fact]
-    public void OutcomesMapToPublicHttpStatuses()
-    {
-        Assert.Equal(403, OutcomeMapper.ToHttpStatus(Outcome.Block, 200));
-        Assert.Equal(409, OutcomeMapper.ToHttpStatus(Outcome.StepUp, 200));
-        Assert.Equal(429, OutcomeMapper.ToHttpStatus(Outcome.Fail, 429));
-    }
 }
 
 internal sealed class TestEnv : Dictionary<string, string?>, IEnv

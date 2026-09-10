@@ -28,6 +28,41 @@ provider per deployment. Target: .NET 8 isolated worker, Azure Functions v4.
 	Offline tests cover application behavior, not platform authentication; run the separate
 	[deployed security checks](../docs/ONBOARDING.md#4-package-deploy-and-verify).
 
+## Environment configuration
+
+Run Core Tools from `dotnet/`. Create an untracked `local.settings.json` beside
+[host.json](host.json), starting from the [shared sample](../docs/local.settings.sample.json).
+For local evaluation, start Azurite and replace the test-key placeholder in this minimal setup:
+
+```json
+{
+	"IsEncrypted": false,
+	"Values": {
+		"AzureWebJobsStorage": "UseDevelopmentStorage=true",
+		"FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+		"EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>"
+	}
+}
+```
+
+For live delivery, add `EPP_PROVIDER_NAME`, `EPP_PROVIDER_ENDPOINT` and `KEY_VAULT_URL` to `Values`.
+Add `EPP_PROVIDER_ACCOUNT_NAME` and adapter-specific options only when required. Optional
+`EPP_PROVIDER_TIMEOUT_MS` is a string such as `"1500"`. Replace placeholders; store provider credentials
+under the adapter manifest's Key Vault secret names, not in local settings. See the
+[complete variable table](../README.md#configure-environment-variables).
+
+Core Tools loads `Values` into environment variables. [AppConfig.Read](Src/AppConfig.cs) reads them
+through `IEnv`; direct worker execution and unit tests do not automatically load local settings.
+Restart the host after edits. Configure local host storage other than Azurite separately; do not copy
+the emulator connection into Azure. Core Tools does not resolve Key Vault references locally; supply
+the local test PEM or base64 PEM directly. The [project](dotnet.csproj) excludes private local settings
+from publish output.
+
+For Azure, configure the same application variables on the serving app/slot's **Environment variables
+→ App settings** page and resolve the private PEM through a Key Vault reference. Key Vault provider
+credentials use managed identity, not the developer's CLI login. Use loopback-only local evaluation
+or the offline tests' injected environment and secret resolver for local development.
+
 ## Request behavior
 
 `POST /api/SendOtp` uses the same request and trust boundaries as the other runtimes. Incoming

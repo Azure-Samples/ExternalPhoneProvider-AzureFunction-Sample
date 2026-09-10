@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
@@ -48,20 +47,9 @@ public sealed class SendOtp
             var clientRequestId = req.Headers["x-ms-client-request-id"].FirstOrDefault() ?? requestId;
             correlationId = req.Headers["x-ms-correlation-id"].FirstOrDefault() ?? requestId;
 
-            JsonElement payload;
-            try
-            {
-                using var doc = await JsonDocument.ParseAsync(req.Body);
-                payload = doc.RootElement.Clone();
-            }
-            catch
-            {
-                return Reply(400, new { error = "bad_request", reason = "invalid JSON body", requestId });
-            }
-
-            var (envelope, envelopeError) = EnvelopeParser.Parse(payload);
+            var (envelope, envelopeError) = await EnvelopeParser.ParseAsync(req.Body, req.HttpContext.RequestAborted);
             if (envelopeError is not null)
-                return Reply(400, new { error = "bad_request", reason = envelopeError, requestId });
+                return Reply(400, new EndpointErrorResponse("bad_request", requestId, Reason: envelopeError));
 
             correlationId = envelope!.CorrelationId ?? correlationId;
             evaluation = envelope.Mode == EnvelopeParser.ModeEvaluation;
@@ -73,7 +61,7 @@ public sealed class SendOtp
             }
             catch
             {
-                return Reply(400, new { error = "decryption_failed", correlationId, requestId });
+                return Reply(400, new EndpointErrorResponse("decryption_failed", requestId, CorrelationId: correlationId));
             }
 
             if (!string.IsNullOrEmpty(config.ExpectedKeyId)
@@ -81,12 +69,12 @@ public sealed class SendOtp
                 _log.LogWarning("encryption_key_id_mismatch");
 
             var context = decrypted.Context;
-            if (string.IsNullOrWhiteSpace(context.Nonce) || string.IsNullOrWhiteSpace(context.PhoneNumber) || string.IsNullOrWhiteSpace(context.Message))
-                return Reply(400, new { error = "bad_request", reason = "incomplete delivery context", correlationId, requestId });
+            if (!context.IsComplete)
+                return Reply(400, new EndpointErrorResponse("bad_request", requestId, Reason: "incomplete delivery context", CorrelationId: correlationId));
 
             // Evaluation proves validation/decryption without requiring any provider configuration.
             if (evaluation)
-                return Reply(200, new { nonce = context.Nonce, correlationId, providerStatus = "accepted" });
+                return Reply(200, new EndpointSuccessResponse(context.Nonce!, correlationId));
 
             var channel = EnvelopeParser.ChannelName(envelope.Channel)!;
 
@@ -101,13 +89,13 @@ public sealed class SendOtp
             // A nonce acknowledges delivery, not just decryption. Wait for the bounded provider call.
             var result = await _engine.DispatchAsync(dispatch, requestId);
             if (result.HttpStatus != 200)
-                return Reply(result.HttpStatus, new { error = "provider_delivery_failed", correlationId, requestId });
+                return Reply(result.HttpStatus, new EndpointErrorResponse("provider_delivery_failed", requestId, CorrelationId: correlationId));
 
-            return Reply(200, new { nonce = context.Nonce, correlationId, providerStatus = "accepted" });
+            return Reply(200, new EndpointSuccessResponse(context.Nonce!, correlationId));
         }
         catch
         {
-            return Reply(500, new { error = "delivery_failed", correlationId, requestId });
+            return Reply(500, new EndpointErrorResponse("delivery_failed", requestId, CorrelationId: correlationId));
         }
         finally
         {

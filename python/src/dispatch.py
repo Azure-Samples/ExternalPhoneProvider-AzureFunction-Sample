@@ -1,7 +1,6 @@
 import base64
 import json
 import os
-from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 import requests
@@ -10,6 +9,7 @@ from jwcrypto import jwk
 from urllib3.exceptions import ReadTimeoutError
 
 from .config import read_config
+from .models import DeliveryContext, DispatchRequest, Envelope, ParsedResponse
 
 DEFAULT_TIMEOUT_MS = 1500
 DEFAULT_CHANNELS = ["sms", "voice"]
@@ -20,24 +20,14 @@ BLOCK = "Block"
 STEP_UP = "StepUp"
 
 
-@dataclass
-class DispatchRequest:
-    destination: str
-    message: str | None
-    channel: str
-    message_id: str
-    correlation_id: str | None
-    locale: str | None
-
-
-def resolve_outcome(manifest, parsed):
+def resolve_outcome(manifest, parsed: ParsedResponse):
     mapping = manifest["response_mapping"]
-    key = parsed.get("provider_status_name") or parsed.get("provider_status_code")
+    key = parsed.provider_status_name or parsed.provider_status_code
     if key:
         outcome = mapping.get(key) or mapping.get("default", FAIL)
     else:
-        outcome = CONTINUE if parsed.get("success") else mapping.get("default", FAIL)
-    return FAIL if outcome == CONTINUE and not parsed.get("success") else outcome
+        outcome = CONTINUE if parsed.success else mapping.get("default", FAIL)
+    return FAIL if outcome == CONTINUE and not parsed.success else outcome
 
 
 def to_http_status(outcome, provider_http_status):
@@ -92,7 +82,7 @@ def _normalize_mode(mode):
     return None
 
 
-def parse_envelope(payload):
+def parse_envelope(payload) -> tuple[Envelope | None, str | None]:
     if not isinstance(payload, dict):
         return None, "invalid envelope"
     if payload.get("type") != "microsoft.mfa.otpDeliver.v1":
@@ -114,15 +104,15 @@ def parse_envelope(payload):
             return None, "ttlSeconds expired"
         if ttl_seconds > 2147483647:
             return None, "invalid ttlSeconds"
-    return {
-        "type": payload.get("type"),
-        "tenant_id": payload.get("tenantId"),
-        "correlation_id": payload.get("correlationId"),
-        "channel": channel,
-        "mode": mode,
-        "ttl_seconds": ttl_seconds,
-        "encrypted_delivery_context": encrypted,
-    }, None
+    return Envelope(
+        type=payload.get("type"),
+        tenant_id=payload.get("tenantId"),
+        correlation_id=payload.get("correlationId"),
+        channel=channel,
+        mode=mode,
+        ttl_seconds=ttl_seconds,
+        encrypted_delivery_context=encrypted,
+    ), None
 
 
 def read_protected_header(compact_jwe):
@@ -133,7 +123,7 @@ def read_protected_header(compact_jwe):
 
 def make_key_provider(env):
     def key_provider(_kid):
-        return read_config(env)["decryption_key_pem"]
+        return read_config(env).decryption_key_pem
 
     return key_provider
 
@@ -177,17 +167,18 @@ def decrypt_delivery_context(compact_jwe, key_provider):
     key = _load_private_key(key_provider(header.get("kid")))
     token = jwe_module.JWE(algs=["RSA-OAEP-256", "A256GCM"])
     token.deserialize(compact_jwe, key=key)
-    return header, json.loads(token.payload.decode("utf-8"))
+    payload = json.loads(token.payload.decode("utf-8"))
+    return header, DeliveryContext.from_payload(payload)
 
 
 def context_to_dispatch(context, envelope, message_id):
     return DispatchRequest(
-        destination=context.get("phoneNumber"),
-        message=context.get("message"),
-        channel=CHANNEL_BY_CODE[envelope["channel"]],
+        destination=context.phone_number,
+        message=context.message,
+        channel=CHANNEL_BY_CODE[envelope.channel],
         message_id=message_id,
-        correlation_id=envelope["correlation_id"],
-        locale=context.get("locale"),
+        correlation_id=envelope.correlation_id,
+        locale=context.locale,
     )
 
 
@@ -252,7 +243,7 @@ class DispatchEngine:
 
     def dispatch(self, dispatch, request_id):
         config = read_config(self.env)
-        adapter = self.registry.get(config["provider_name"])
+        adapter = self.registry.get(config.provider_name)
         if adapter is None:
             return 400, {"status": "error", "reason": "unknown provider", "requestId": request_id}
 
@@ -276,20 +267,20 @@ class DispatchEngine:
         if not credential.get("secret") or (auth.get("identity_key_vault_secret_name") and not credential.get("identity")):
             return 502, self._fail_body(provider_id, channel, "provider credential unavailable", dispatch, request_id)
 
-        endpoint = config["provider_endpoint"]
+        endpoint = config.provider_endpoint
         if not endpoint:
             return 502, self._fail_body(provider_id, channel, "provider endpoint not configured", dispatch, request_id)
         if not _valid_provider_url(endpoint):
             return 502, self._fail_body(provider_id, channel, "invalid provider endpoint", dispatch, request_id)
 
         try:
-            provider_request = adapter.build_request(channel, endpoint, dispatch, credential, config["env"])
+            provider_request = adapter.build_request(channel, endpoint, dispatch, credential, config.env)
         except Exception:
             return 502, self._fail_body(provider_id, channel, "provider request failed", dispatch, request_id)
         if not _valid_provider_url(provider_request.get("url")):
             return 502, self._fail_body(provider_id, channel, "invalid provider request URL", dispatch, request_id)
 
-        timeout_ms = _provider_timeout_ms(config["provider_timeout_ms"])
+        timeout_ms = _provider_timeout_ms(config.provider_timeout_ms)
         response = None
         try:
             response = requests.request(
@@ -311,7 +302,7 @@ class DispatchEngine:
             ok = 200 <= response.status_code < 300
             parsed = adapter.parse_response(response.status_code, ok, body_json)
             outcome = resolve_outcome(manifest, parsed)
-            http_status = to_http_status(outcome, parsed.get("provider_http_status") or response.status_code)
+            http_status = to_http_status(outcome, parsed.provider_http_status or response.status_code)
 
             return http_status, {
                 "status": "accepted" if outcome == CONTINUE else "failed",

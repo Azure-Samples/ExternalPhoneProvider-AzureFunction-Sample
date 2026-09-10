@@ -1,8 +1,22 @@
-using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Epp.Otp;
 
 public enum Outcome { Continue, Fail, Block, StepUp }
+
+public sealed record EndpointSuccessResponse(
+    [property: JsonPropertyName("nonce")] string Nonce,
+    [property: JsonPropertyName("correlationId")] string CorrelationId,
+    [property: JsonPropertyName("providerStatus")] string ProviderStatus = "accepted")
+{
+    public override string ToString() => nameof(EndpointSuccessResponse);
+}
+
+public sealed record EndpointErrorResponse(
+    [property: JsonPropertyName("error")] string Error,
+    [property: JsonPropertyName("requestId"), JsonPropertyOrder(1)] string RequestId,
+    [property: JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Reason = null,
+    [property: JsonPropertyName("correlationId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CorrelationId = null);
 
 public sealed record DispatchRequest(
     string Destination,
@@ -22,7 +36,10 @@ public sealed record ParsedResponse(
     string? ProviderMessageId = null,
     string? ProviderStatusName = null,
     string? ProviderStatusCode = null,
-    string? ProviderStatusDescription = null);
+    string? ProviderStatusDescription = null)
+{
+    public override string ToString() => nameof(ParsedResponse);
+}
 
 public sealed record AuthConfig(string Mode, string? KeyVaultSecretName = null, string? IdentityKeyVaultSecretName = null);
 

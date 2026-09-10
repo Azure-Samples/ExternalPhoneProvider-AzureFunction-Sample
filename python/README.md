@@ -28,6 +28,41 @@ provider per deployment. Target: Python 3.11, Azure Functions v4, Python v2 prog
 	Offline tests cover application behavior, not platform authentication; run the separate
 	[deployed security checks](../docs/ONBOARDING.md#4-package-deploy-and-verify).
 
+## Environment configuration
+
+Run Core Tools from `python/`. Create an untracked `local.settings.json` beside
+[host.json](host.json), starting from the [shared sample](../docs/local.settings.sample.json).
+For local evaluation, start Azurite and replace the test-key placeholder in this minimal setup:
+
+```json
+{
+	"IsEncrypted": false,
+	"Values": {
+		"AzureWebJobsStorage": "UseDevelopmentStorage=true",
+		"FUNCTIONS_WORKER_RUNTIME": "python",
+		"EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>"
+	}
+}
+```
+
+For live delivery, add `EPP_PROVIDER_NAME`, `EPP_PROVIDER_ENDPOINT` and `KEY_VAULT_URL` to `Values`.
+Add `EPP_PROVIDER_ACCOUNT_NAME` and any adapter-specific options only when required. Keep values as
+strings, including optional `EPP_PROVIDER_TIMEOUT_MS: "1500"`. Replace placeholders; provider API
+keys belong in the manifest-named Key Vault secrets, not this file. See the
+[complete variable table](../README.md#configure-environment-variables).
+
+Core Tools loads `Values` into `os.environ`. Direct Python execution and pytest do not automatically
+read local settings. [read_config](src/config.py) returns an `AppConfig` object; the handler/engine
+use attributes such as `config.provider_name`, not dictionary key lookups. Restart the host after
+settings change. Configure local host storage other than Azurite separately; do not copy the emulator
+connection into Azure. Core Tools does not resolve Key Vault references locally; supply the local test
+PEM or base64 PEM directly.
+
+For Azure, set the same application variables on the serving app/slot's **Environment variables → App
+settings** page. Use a Key Vault reference for the private PEM. Provider secrets require managed
+identity, which is not supplied by a developer's CLI login. Use local evaluation or the mocked offline
+tests on an ordinary workstation, and bind local hosts only to loopback.
+
 ## Request behavior
 
 `POST /api/SendOtp` uses the same request and trust boundaries as the other runtimes. Incoming
@@ -50,9 +85,12 @@ Platform/key prerequisites and HTTP outcomes are defined in the
 |---|---|
 | [function_app.py](function_app.py) | HTTP handler and adapter registration |
 | [src/config.py](src/config.py) | Shared deployment settings |
-| [src/dispatch.py](src/dispatch.py) | Request model, JWE, provider registry and outcome mapping |
+| [src/models.py](src/models.py) | Envelope, delivery-context, dispatch and normalized `ParsedResponse` dataclasses |
+| [src/dispatch.py](src/dispatch.py) | Boundary validation, JWE, provider registry and outcome mapping |
 | [src/providers/](src/providers/) | Adapter manifests and API-specific implementations |
 | [src/secrets.py](src/secrets.py) | Cached Key Vault access via managed identity |
 
 Add and register an adapter without adding provider-specific branches to the shared pipeline.
+Return `ParsedResponse` from `parse_response` using named fields; the engine reads attributes such as
+`parsed.provider_status_name`. Raw provider JSON remains local to the adapter, not a shared model hierarchy.
 See [production limitations](../docs/CONTRACT.md#production-limitations) before production use.

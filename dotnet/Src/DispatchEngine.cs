@@ -26,6 +26,20 @@ public static class EnvelopeParser
 
     public static string? ChannelName(int code) => ChannelByCode.TryGetValue(code, out var name) ? name : null;
 
+    public static async Task<(Envelope? Envelope, string? Error)> ParseAsync(Stream body, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var document = await JsonDocument.ParseAsync(body, cancellationToken: cancellationToken);
+            return Parse(document.RootElement);
+        }
+        catch (Exception error) when (error is JsonException or DecoderFallbackException
+            || error is InvalidOperationException { InnerException: DecoderFallbackException })
+        {
+            return (null, "invalid JSON body");
+        }
+    }
+
     public static (Envelope? Envelope, string? Error) Parse(JsonElement payload)
     {
         if (payload.ValueKind != JsonValueKind.Object)
@@ -89,6 +103,27 @@ public sealed class DeliveryContext
     [JsonPropertyName("locale")] public string? Locale { get; set; }
     [JsonPropertyName("message")] public string? Message { get; set; }
     [JsonPropertyName("riskContext")] public JsonElement? RiskContext { get; set; }
+
+    [JsonIgnore]
+    public bool IsComplete => !string.IsNullOrWhiteSpace(Nonce)
+        && !string.IsNullOrWhiteSpace(PhoneNumber)
+        && !string.IsNullOrWhiteSpace(Message);
+
+    public static DeliveryContext FromPayload(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object) return new();
+        string? ReadString(string name) => payload.TryGetProperty(name, out var value)
+            && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        return new()
+        {
+            Nonce = ReadString("nonce"),
+            PhoneNumber = ReadString("phoneNumber"),
+            Message = ReadString("message"),
+            Extension = ReadString("extension"),
+            Locale = ReadString("locale"),
+            RiskContext = payload.TryGetProperty("riskContext", out var risk) ? risk.Clone() : null,
+        };
+    }
 }
 
 public sealed record JweResult(string? Kid, string? Alg, string? Enc, DeliveryContext Context);
@@ -115,7 +150,8 @@ public sealed class JweDecryptor
         var rsa = _keys.GetPrivateKey(kid);
         // Pin alg/enc so a tampered header can't downgrade the crypto.
         var plaintext = Jose.JWT.Decrypt(compactJwe, rsa, Jose.JweAlgorithm.RSA_OAEP_256, Jose.JweEncryption.A256GCM);
-        var context = JsonSerializer.Deserialize<DeliveryContext>(plaintext) ?? new DeliveryContext();
+        using var payload = JsonDocument.Parse(plaintext);
+        var context = DeliveryContext.FromPayload(payload.RootElement);
         return new JweResult(kid, alg, enc, context);
     }
 
