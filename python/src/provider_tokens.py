@@ -71,18 +71,26 @@ class ProviderTokenConfig:
         mi_client = env.get("EPP_PROVIDER_MI_CLIENT_ID") or ""
         vault_url = env.get("KEY_VAULT_URL") or ""
         vault_client = env.get("AZURE_CLIENT_ID") or ""
-        if (
-            "EPP_PROVIDER_CLIENT_SECRET" in env
-            or "EPP_PROVIDER_TOKEN_EXCHANGE_AUDIENCE" in env
-            or not all(valid_bearer_token(value) for value in (tenant, client, scope))
-            or tenant.lower() in ("common", "organizations", "consumers", "adfs")
-            or not all(character.isascii() and (character.isalnum() or character in "-.") for character in tenant)
-            or not scope.endswith("/.default") or scope == "/.default"
-            or bool(secret_name) == bool(mi_client)
-            or not valid_bearer_token(secret_name or mi_client)
-            or (vault_client and not valid_bearer_token(vault_client))
-            or (secret_name and not _valid_vault_url(vault_url))
-        ):
+        # Settings checks, not JWT verification; the SDK acquires/caches tokens, and the provider verifies them.
+        required_settings = [tenant, client, scope, secret_name or mi_client]
+        if vault_client:
+            required_settings.append(vault_client)
+        valid_settings = all(valid_bearer_token(value) for value in required_settings)
+
+        valid_authority = valid_settings and (
+            tenant.lower() not in ("common", "organizations", "consumers", "adfs")
+            and all(character.isascii() and (character.isalnum() or character in "-.") for character in tenant)
+            and scope.endswith("/.default") and scope != "/.default"
+        )
+
+        valid_credentials = (
+            bool(secret_name) != bool(mi_client)
+            and "EPP_PROVIDER_CLIENT_SECRET" not in env
+            and "EPP_PROVIDER_TOKEN_EXCHANGE_AUDIENCE" not in env
+            and (not secret_name or _valid_vault_url(vault_url))
+        )
+
+        if not (valid_settings and valid_authority and valid_credentials):
             raise ValueError("invalid provider token configuration")
         return cls(provider_id, config.provider_endpoint, tenant, client, scope, secret_name,
                    mi_client, vault_url, vault_client, timeout_seconds)

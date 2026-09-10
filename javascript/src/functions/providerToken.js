@@ -7,23 +7,9 @@
 const { inspect } = require('node:util');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { ManagedIdentityCredential, ClientAssertionCredential, ClientSecretCredential, logger } = require('@azure/identity');
-const { parseProviderTimeout } = require('./config');
+const { parseProviderTimeout, isValidProviderUrl } = require('./config');
 
 const TOKEN_EXCHANGE_SCOPE = 'api://AzureADTokenExchange/.default';
-
-function isValidVaultUrl(value) {
-    if (typeof value !== 'string' || !value.toLowerCase().startsWith('https://')
-        || [...value].some(character => !character.trim() || character.charCodeAt(0) < 32 || character === '\\' || character === '#')) return false;
-    const authority = value.slice('https://'.length).split('/')[0].split('?')[0];
-    if (!authority || authority.includes('@') || authority.endsWith(':')) return false;
-    try {
-        const url = new URL(value);
-        return url.protocol === 'https:' && !!url.hostname && !url.username && !url.password && !url.hash
-            && (!url.port || Number(url.port) > 0);
-    } catch {
-        return false;
-    }
-}
 
 class ProviderTokenConfig {
     constructor(config) {
@@ -41,17 +27,23 @@ class ProviderTokenConfig {
         this.hasExchangeOverride = Object.hasOwn(env, 'EPP_PROVIDER_TOKEN_EXCHANGE_AUDIENCE');
     }
 
-    validate() {
+    // Settings checks, not JWT verification; the SDK acquires/caches tokens, and the provider verifies them.
+    checkConfiguration() {
+        const requiredSettings = [this.tenantId, this.clientId, this.scope, this.miClientId || this.secretName];
+        if (this.vaultIdentityClientId) requiredSettings.push(this.vaultIdentityClientId);
+        const validSettings = requiredSettings.every(isSafeBearerToken);
+
         const tenantCharacters = 'abcdefghijklmnopqrstuvwxyz0123456789.-';
-        if (![this.tenantId, this.clientId, this.scope].every(isSafeBearerToken)
-            || ['common', 'organizations', 'consumers', 'adfs'].includes(this.tenantId.toLowerCase())
-            || [...this.tenantId.toLowerCase()].some((character) => !tenantCharacters.includes(character))
-            || !this.scope.endsWith('/.default') || this.scope.length <= '/.default'.length
-            || Boolean(this.miClientId) === Boolean(this.secretName)
-            || !isSafeBearerToken(this.miClientId || this.secretName)
-            || (this.vaultIdentityClientId && !isSafeBearerToken(this.vaultIdentityClientId))
-            || (this.secretName && !isValidVaultUrl(this.keyVaultUrl))
-            || this.hasPlaintextSecret || this.hasExchangeOverride) {
+        const validAuthority = validSettings
+            && !['common', 'organizations', 'consumers', 'adfs'].includes(this.tenantId.toLowerCase())
+            && [...this.tenantId.toLowerCase()].every((character) => tenantCharacters.includes(character))
+            && this.scope.endsWith('/.default') && this.scope.length > '/.default'.length;
+
+        const validCredentials = Boolean(this.miClientId) !== Boolean(this.secretName)
+            && (!this.secretName || isValidProviderUrl(this.keyVaultUrl))
+            && !this.hasPlaintextSecret && !this.hasExchangeOverride;
+
+        if (!(validSettings && validAuthority && validCredentials)) {
             throw new Error('provider authentication configuration invalid');
         }
     }
@@ -128,7 +120,7 @@ class ProviderTokenAcquirer {
 
     async #acquire(config, signal) {
         const auth = new ProviderTokenConfig(config);
-        auth.validate();
+        auth.checkConfiguration();
         const secret = auth.secretName ? await this.#resolveSecret(auth.secretName, config, { abortSignal: signal }) : '';
         signal.throwIfAborted();
         if (auth.secretName && (typeof secret !== 'string' || !secret.trim())) throw new Error('provider secret unavailable');

@@ -31,25 +31,30 @@ public sealed record ProviderTokenConfig(
             env.Get("EPP_PROVIDER_MI_CLIENT_ID"),
             env.Get("EPP_PROVIDER_CLIENT_SECRET_NAME"),
             env.Get("KEY_VAULT_URL"), env.Get("AZURE_CLIENT_ID"), timeoutMs);
-        config.Validate();
+        config.CheckConfiguration();
         return config;
     }
 
-    internal void Validate()
+    // Settings checks, not JWT verification; the SDK acquires/caches tokens, and the provider verifies them.
+    internal void CheckConfiguration()
     {
-        static bool IsValue(string? value) => ProviderCredential.IsHeaderSafeToken(value);
         var hasIdentity = !string.IsNullOrEmpty(ManagedIdentityClientId);
         var hasSecret = !string.IsNullOrEmpty(ClientSecretName);
-        if (!DispatchEngine.IsHttpsEndpoint(Endpoint)
-            || !IsValue(TenantId) || TenantId.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-' && c != '.')
-            || new[] { "common", "organizations", "consumers", "adfs" }.Contains(TenantId, StringComparer.OrdinalIgnoreCase)
-            || !IsValue(ClientId)
-            || !IsValue(Scope) || Scope.Length <= "/.default".Length || !Scope.EndsWith("/.default", StringComparison.Ordinal)
-            || hasIdentity == hasSecret
-            || (hasIdentity && !IsValue(ManagedIdentityClientId))
-            || (hasSecret && (!IsValue(ClientSecretName) || !DispatchEngine.IsHttpsEndpoint(KeyVaultUrl)))
-            || (!string.IsNullOrEmpty(VaultManagedIdentityClientId) && !IsValue(VaultManagedIdentityClientId))
-            || TimeoutMs <= 0 || TimeoutMs > 2500)
+        var requiredSettings = new List<string?> { TenantId, ClientId, Scope,
+            hasIdentity ? ManagedIdentityClientId : ClientSecretName };
+        if (!string.IsNullOrEmpty(VaultManagedIdentityClientId)) requiredSettings.Add(VaultManagedIdentityClientId);
+        var validSettings = requiredSettings.All(ProviderCredential.IsHeaderSafeToken)
+            && DispatchEngine.IsHttpsEndpoint(Endpoint) && TimeoutMs > 0 && TimeoutMs <= 2500;
+
+        var validAuthority = validSettings
+            && TenantId.All(c => char.IsAsciiLetterOrDigit(c) || c == '-' || c == '.')
+            && !new[] { "common", "organizations", "consumers", "adfs" }.Contains(TenantId, StringComparer.OrdinalIgnoreCase)
+            && Scope.Length > "/.default".Length && Scope.EndsWith("/.default", StringComparison.Ordinal);
+
+        var validCredentials = hasIdentity != hasSecret
+            && (!hasSecret || DispatchEngine.IsHttpsEndpoint(KeyVaultUrl));
+
+        if (!(validSettings && validAuthority && validCredentials))
             throw new InvalidOperationException("provider token configuration invalid");
     }
 }
@@ -76,7 +81,7 @@ public sealed class ProviderTokenAcquirer : IProviderTokenAcquirer
 
     public async Task<string> AcquireAsync(ProviderTokenConfig config)
     {
-        config.Validate();
+        config.CheckConfiguration();
         using var timeout = new CancellationTokenSource(config.TimeoutMs);
         var cancellation = timeout.Token;
         string? secret = null;

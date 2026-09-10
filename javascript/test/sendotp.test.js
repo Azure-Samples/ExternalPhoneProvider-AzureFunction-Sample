@@ -76,7 +76,8 @@ function assertFailure(result, status, error = 'provider_delivery_failed') {
     assert.equal(result.status, status);
     assert.equal(result.jsonBody.error, error);
     assert.equal(result.jsonBody.nonce, undefined);
-    assert.doesNotMatch(JSON.stringify(result.jsonBody), /PRIVATE|accepted/);
+    for (const value of ['PRIVATE', 'accepted'])
+        assert.equal(JSON.stringify(result.jsonBody).includes(value), false);
 }
 
 test('shared invalid requests return matching safe reasons before provider I/O', async () => {
@@ -193,12 +194,13 @@ test('SMS/voice preserve content and correlation without reflecting headers or l
         assert.equal(logs.length, 1);
         assert.deepEqual(Object.keys(logs[0]).sort(), ['correlationId', 'elapsedMs', 'evaluation', 'httpStatus', 'requestId']);
         assert.equal(logs[0].correlationId, crypto.createHash('sha256').update(correlationId).digest('hex').slice(0, 16));
-        assert.doesNotMatch(JSON.stringify(logs), /PRIVATE|918273|15551234567/);
+        for (const value of ['PRIVATE', '918273', '15551234567'])
+            assert.equal(JSON.stringify(logs).includes(value), false);
         for (const value of Object.values(fixtures.textToVoice)) {
             assert.equal(JSON.stringify([result.jsonBody, logs, warnings]).includes(value), false);
         }
         const output = JSON.stringify([result.jsonBody, logs, warnings]);
-        assert.doesNotMatch(output, /FORGED/);
+        assert.equal(output.includes('FORGED'), false);
         for (const value of Object.values(forgedHeaders)) assert.equal(output.includes(value), false);
     }
     assert.equal(fetchMock.mock.callCount(), 8);
@@ -215,7 +217,8 @@ test('incomplete encrypted voice fails closed even with a valid outer voice obje
             assertFailure(result, 400);
             assert.deepEqual(result.jsonBody, { error: 'provider_delivery_failed', correlationId: 'correlation-id',
                 requestId: result.jsonBody.requestId });
-            assert.doesNotMatch(JSON.stringify([logs, warnings]), /PRIVATE|012345|en-GB|Your code is/);
+            for (const value of ['PRIVATE', '012345', 'en-GB', 'Your code is'])
+                assert.equal(JSON.stringify([logs, warnings]).includes(value), false);
         }
     }
     assert.deepEqual([getSecret.mock.callCount(), getToken.mock.callCount(), fetchMock.mock.callCount()], [0, 0, 0]);
@@ -230,7 +233,7 @@ test('outbound authentication failures return fixed 502/504 without a nonce or p
         assertFailure(result, status);
         assert.deepEqual(result.jsonBody, { error: 'provider_delivery_failed', correlationId: 'correlation-id',
             requestId: result.jsonBody.requestId });
-        assert.doesNotMatch(JSON.stringify([logs, warnings]), /PRIVATE/);
+        assert.equal(JSON.stringify([logs, warnings]).includes('PRIVATE'), false);
     }
     assert.deepEqual([getSecret.mock.callCount(), getToken.mock.callCount(), fetchMock.mock.callCount()], [0, 2, 0]);
 });

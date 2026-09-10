@@ -37,4 +37,21 @@ function parseProviderTimeout(value) {
     return milliseconds > 0 ? Math.min(milliseconds, 2500) : 1500;
 }
 
-module.exports = { AppConfig, readConfig, parseProviderTimeout };
+function isValidProviderUrl(value) {
+    if (typeof value !== 'string' || !value.toLowerCase().startsWith('https://')) return false;
+    for (const character of value) {
+        if (!character.trim() || character.charCodeAt(0) < 32 || character === '\\' || character === '#') return false;
+    }
+    const authority = value.slice('https://'.length).split('/')[0].split('?')[0];
+    // URL normalizes empty userinfo and empty ports away; reject those in the original authority too.
+    if (!authority || authority.includes('@') || authority.endsWith(':')) return false;
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:' && !!url.hostname && !url.username && !url.password && !url.hash
+            && (!url.port || (Number(url.port) >= 1 && Number(url.port) <= 65535));
+    } catch {
+        return false;
+    }
+}
+
+module.exports = { AppConfig, readConfig, parseProviderTimeout, isValidProviderUrl };

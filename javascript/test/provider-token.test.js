@@ -65,7 +65,7 @@ test('auth settings fail closed before secrets, SDK construction or sends', asyn
     assert.equal(inspect(acquirer), '[ProviderTokenAcquirer]');
     assert.equal(inspect(new ProviderTokenConfig(readConfig(base))), '[ProviderTokenConfig]');
     new ProviderTokenConfig(readConfig({ ...base, EPP_PROVIDER_SCOPE: 'resource/.default',
-        KEY_VAULT_URL: ` ${base.KEY_VAULT_URL} ` })).validate(); // Scope need not be a URL; AppConfig still trims the vault URL.
+        KEY_VAULT_URL: ` ${base.KEY_VAULT_URL} ` })).checkConfiguration(); // Scope need not be a URL; AppConfig still trims the vault URL.
     for (const change of [
         ...['common', 'ORGANIZATIONS', 'consumers', 'AdFs', '', 'tenant/path'].map(EPP_PROVIDER_TENANT_ID => ({ EPP_PROVIDER_TENANT_ID })),
         ...['', ' value', 'value ', 'va lue', 'val\u0001ue', 'val\u007fue', 'val\u00e9ue', 123]

@@ -89,7 +89,7 @@ public class ProviderTokenTests
         var factory = new TestProviderCredentialFactory();
         var acquirer = new ProviderTokenAcquirer(secrets, factory);
         var config = Config();
-        (config with { Scope = "resource/.default" }).Validate(); // No URL restriction on the resource.
+        (config with { Scope = "resource/.default" }).CheckConfiguration(); // No URL restriction on the resource.
         foreach (var invalid in new[]
         {
             config with { TenantId = "" },

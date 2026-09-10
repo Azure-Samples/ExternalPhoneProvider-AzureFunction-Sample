@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const { compactDecrypt } = require('jose');
 const { ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
-const { readConfig, parseProviderTimeout } = require('./config');
+const { readConfig, parseProviderTimeout, isValidProviderUrl } = require('./config');
 const { DeliveryContext, TextToVoice } = require('./models');
 const { ProviderTokenAcquirer, isSafeBearerToken } = require('./providerToken');
 
@@ -261,23 +261,6 @@ function outcomeToHttpStatus(outcome, providerHttpStatus) {
             return 502;
         default:
             return 502;
-    }
-}
-
-function isValidProviderUrl(value) {
-    if (typeof value !== 'string' || !value.toLowerCase().startsWith('https://')) return false;
-    for (const character of value) {
-        if (!character.trim() || character.charCodeAt(0) < 32 || character === '\\' || character === '#') return false;
-    }
-    const authority = value.slice('https://'.length).split('/')[0].split('?')[0];
-    // URL normalizes empty userinfo and empty ports away; reject those in the original authority too.
-    if (!authority || authority.includes('@') || authority.endsWith(':')) return false;
-    try {
-        const url = new URL(value);
-        return url.protocol === 'https:' && !!url.hostname && !url.username && !url.password && !url.hash
-            && (!url.port || (Number(url.port) >= 1 && Number(url.port) <= 65535));
-    } catch {
-        return false;
     }
 }
 
