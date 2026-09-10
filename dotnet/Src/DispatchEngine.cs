@@ -70,9 +70,9 @@ public static class EnvelopeParser
         if (payload.TryGetProperty("ttlSeconds", out var ttl))
         {
             if (ttl.ValueKind != JsonValueKind.Number || !ttl.TryGetInt32(out var seconds))
-                return (null, "ttlSeconds must be a positive int32");
+                return (null, "invalid ttlSeconds");
             if (seconds <= 0)
-                return (null, "delivery context expired");
+                return (null, "ttlSeconds expired");
             ttlSeconds = seconds;
         }
 

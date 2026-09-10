@@ -1,0 +1,33 @@
+{
+  "jwe": [
+    { "alg": "RSA-OAEP-256", "enc": "A256GCM", "accepted": true },
+    { "alg": "RSA-OAEP", "enc": "A256GCM", "accepted": false },
+    { "alg": "RSA-OAEP-256", "enc": "A128GCM", "accepted": false },
+    { "alg": "RSA-OAEP-256", "enc": "A256CBC-HS512", "accepted": false }
+  ],
+  "badRequests": [
+    { "name": "invalid JSON", "rawBody": "{", "reason": "invalid JSON body" },
+    { "name": "array envelope", "rawBody": "[]", "reason": "invalid envelope" },
+    { "name": "null envelope", "rawBody": "null", "reason": "invalid envelope" },
+    { "name": "wrong version", "overrides": { "type": "wrong" }, "reason": "unsupported envelope type" },
+    { "name": "boolean channel", "overrides": { "channel": true }, "reason": "unsupported channel" },
+    { "name": "numeric string channel", "overrides": { "channel": "1" }, "reason": "unsupported channel" },
+    { "name": "null mode", "overrides": { "mode": null }, "reason": "unsupported mode" },
+    { "name": "empty encryption", "overrides": { "encryptedDeliveryContext": "" }, "reason": "encryptedDeliveryContext is required" },
+    { "name": "blank encryption", "overrides": { "encryptedDeliveryContext": " " }, "reason": "encryptedDeliveryContext is required" },
+    { "name": "string TTL", "overrides": { "ttlSeconds": "60" }, "reason": "invalid ttlSeconds" },
+    { "name": "null TTL", "overrides": { "ttlSeconds": null }, "reason": "invalid ttlSeconds" },
+    { "name": "boolean TTL", "overrides": { "ttlSeconds": true }, "reason": "invalid ttlSeconds" },
+    { "name": "fractional TTL", "overrides": { "ttlSeconds": 1.5 }, "reason": "invalid ttlSeconds" },
+    { "name": "oversized TTL", "overrides": { "ttlSeconds": 2147483648 }, "reason": "invalid ttlSeconds" },
+    { "name": "expired TTL", "overrides": { "ttlSeconds": 0 }, "reason": "ttlSeconds expired" },
+    { "name": "negative TTL", "overrides": { "ttlSeconds": -1 }, "reason": "ttlSeconds expired" },
+    { "name": "encryption before TTL", "overrides": { "encryptedDeliveryContext": "", "ttlSeconds": "bad" }, "reason": "encryptedDeliveryContext is required" },
+    { "name": "channel before mode and TTL", "overrides": { "channel": false, "mode": null, "ttlSeconds": "bad" }, "reason": "unsupported channel" }
+  ],
+  "incompleteContexts": [
+    { "nonce": "" },
+    { "phoneNumber": null },
+    { "message": " " }
+  ]
+}

@@ -38,15 +38,7 @@ function parseEnvelope(payload) {
     if (type !== 'microsoft.mfa.otpDeliver.v1') {
         return { error: 'unsupported envelope type' };
     }
-    if (Object.hasOwn(payload, 'ttlSeconds')) {
-        if (!Number.isInteger(ttlSeconds) || ttlSeconds > 2147483647) {
-            return { error: 'invalid ttlSeconds' };
-        }
-        if (ttlSeconds <= 0) {
-            return { error: 'ttlSeconds expired' };
-        }
-    }
-    if (typeof encryptedDeliveryContext !== 'string' || !encryptedDeliveryContext) {
+    if (typeof encryptedDeliveryContext !== 'string' || !encryptedDeliveryContext.trim()) {
         return { error: 'encryptedDeliveryContext is required' };
     }
     const channelCode = normalizeChannel(channel);
@@ -56,6 +48,14 @@ function parseEnvelope(payload) {
     const modeCode = normalizeMode(mode);
     if (!modeCode) {
         return { error: 'unsupported mode' };
+    }
+    if (Object.hasOwn(payload, 'ttlSeconds')) {
+        if (!Number.isInteger(ttlSeconds) || ttlSeconds > 2147483647) {
+            return { error: 'invalid ttlSeconds' };
+        }
+        if (ttlSeconds <= 0) {
+            return { error: 'ttlSeconds expired' };
+        }
     }
     return { envelope: { type, tenantId, correlationId, channel: channelCode, mode: modeCode, ttlSeconds, encryptedDeliveryContext } };
 }

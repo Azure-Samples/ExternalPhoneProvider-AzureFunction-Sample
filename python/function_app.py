@@ -55,11 +55,11 @@ def send_otp(req: func.HttpRequest) -> func.HttpResponse:
         try:
             payload = req.get_json()
         except ValueError:
-            return respond(400, {"error": "bad_request", "requestId": request_id})
+            return respond(400, {"error": "bad_request", "reason": "invalid JSON body", "requestId": request_id})
 
         envelope, error = parse_envelope(payload)
         if error:
-            return respond(400, {"error": "bad_request", "requestId": request_id})
+            return respond(400, {"error": "bad_request", "reason": error, "requestId": request_id})
 
         correlation_id = envelope["correlation_id"] or header_correlation_id or request_id
         envelope["correlation_id"] = correlation_id
@@ -77,7 +77,8 @@ def send_otp(req: func.HttpRequest) -> func.HttpResponse:
             isinstance(delivery.get(field), str) and delivery[field].strip()
             for field in ("nonce", "phoneNumber", "message")
         ):
-            return respond(400, {"error": "bad_request", "correlationId": correlation_id, "requestId": request_id})
+            return respond(400, {"error": "bad_request", "reason": "incomplete delivery context",
+                                 "correlationId": correlation_id, "requestId": request_id})
 
         # Evaluation skips provider lookup, configuration, secrets and HTTP.
         if not evaluation:

@@ -24,6 +24,7 @@
   <ItemGroup>
     <Compile Include="..\Src\**\*.cs" />
     <Compile Include="..\Functions\SendOtp.cs" />
+    <None Include="..\..\tests\fixtures\contract.json" Link="fixtures\contract.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

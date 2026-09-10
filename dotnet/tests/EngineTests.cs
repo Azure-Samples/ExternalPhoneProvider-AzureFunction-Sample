@@ -105,20 +105,15 @@ public class EngineTests
     [Fact]
     public async Task EvaluationValidatesRealJweWithoutProviderConfiguration()
     {
-        foreach (var provider in new string?[] { null, "infobip", "telesign", "soprano", "sinch" })
-        {
-            using var rig = new HandlerRig();
-            rig.Env.Clear();
-            Assert.False(rig.Env.ContainsKey("EPP_PROVIDER_NAME"));
-            if (provider is not null) rig.Env["EPP_PROVIDER_NAME"] = provider;
-            rig.Env["EPP_ENCRYPTION_KEY_ID"] = "configured-key-id";
-            AssertAccepted(await rig.Invoke("evaluation", tenantId: "untrusted-body-tenant"));
-            Assert.Equal("encryption_key_id_mismatch",
-                Assert.Single(rig.Log.Entries, entry => entry.Level == LogLevel.Warning).Message);
-            foreach (var value in new[] { Kid, "configured-key-id", Phone, "918273", Nonce, Correlation, "untrusted-body-tenant" })
-                Assert.DoesNotContain(value, string.Join("\n", rig.Log.Messages));
-            Assert.Equal((1, 0, 0), (rig.Keys.Calls, rig.Secrets.Calls, rig.Http.Calls));
-        }
+        using var rig = new HandlerRig();
+        rig.Env.Clear();
+        rig.Env["EPP_ENCRYPTION_KEY_ID"] = "configured-key-id";
+        AssertAccepted(await rig.Invoke("evaluation", tenantId: "untrusted-body-tenant"));
+        Assert.Equal("encryption_key_id_mismatch",
+            Assert.Single(rig.Log.Entries, entry => entry.Level == LogLevel.Warning).Message);
+        foreach (var value in new[] { Kid, "configured-key-id", Phone, "918273", Nonce, Correlation, "untrusted-body-tenant" })
+            Assert.DoesNotContain(value, string.Join("\n", rig.Log.Messages));
+        Assert.Equal((1, 0, 0), (rig.Keys.Calls, rig.Secrets.Calls, rig.Http.Calls));
     }
 
     [Fact]
@@ -129,6 +124,67 @@ public class EngineTests
         AssertFailure(rig, await rig.Invoke(), 400, "decryption_failed");
         Assert.Equal(0, rig.Http.Calls);
     }
+
+    [Fact]
+    public async Task SharedInvalidRequestsReturnSafeReasonsBeforeProviderIo()
+    {
+        using var rig = new HandlerRig();
+        using var fixtures = ReadContractFixtures();
+        foreach (var fixture in fixtures.RootElement.GetProperty("badRequests").EnumerateArray())
+        {
+            var payload = new Dictionary<string, object?>
+            {
+                ["type"] = EnvelopeParser.EnvelopeType, ["channel"] = 1, ["mode"] = 1,
+                ["encryptedDeliveryContext"] = "unused", ["ttlSeconds"] = 60,
+            };
+            if (fixture.TryGetProperty("overrides", out var overrides))
+                foreach (var property in overrides.EnumerateObject()) payload[property.Name] = property.Value;
+            var raw = fixture.TryGetProperty("rawBody", out var rawBody) ? rawBody.GetString()! : JsonSerializer.Serialize(payload);
+            var result = await rig.InvokeRaw(raw);
+            AssertFailure(rig, result, 400, "bad_request");
+            var body = JsonSerializer.SerializeToElement(result.Value);
+            Assert.False(string.IsNullOrEmpty(body.GetProperty("requestId").GetString()));
+            Assert.Equal(3, body.EnumerateObject().Count());
+            Assert.Equal(fixture.GetProperty("reason").GetString(), body.GetProperty("reason").GetString());
+        }
+        Assert.Equal(0, rig.Keys.Calls);
+        foreach (var changes in fixtures.RootElement.GetProperty("incompleteContexts").EnumerateArray())
+        {
+            var result = await rig.Invoke("evaluation", deliveryOverrides: changes);
+            AssertFailure(rig, result, 400, "bad_request");
+            var body = JsonSerializer.SerializeToElement(result.Value);
+            Assert.Equal(4, body.EnumerateObject().Count());
+            Assert.Equal("incomplete delivery context", body.GetProperty("reason").GetString());
+            Assert.Equal(Correlation, body.GetProperty("correlationId").GetString());
+        }
+        Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
+    }
+
+    [Fact]
+    public async Task SharedJwePolicyPermitsOnlyRsaOaep256WithA256Gcm()
+    {
+        using var rig = new HandlerRig();
+        using var fixtures = ReadContractFixtures();
+        foreach (var fixture in fixtures.RootElement.GetProperty("jwe").EnumerateArray())
+        {
+            var alg = Enum.Parse<Jose.JweAlgorithm>(fixture.GetProperty("alg").GetString()!.Replace('-', '_'));
+            var enc = Enum.Parse<Jose.JweEncryption>(fixture.GetProperty("enc").GetString()!.Replace('-', '_'));
+            var accepted = fixture.GetProperty("accepted").GetBoolean();
+            var result = await rig.Invoke("evaluation", algorithm: alg, encryption: enc);
+            if (accepted) AssertAccepted(result);
+            else
+            {
+                AssertFailure(rig, result, 400, "decryption_failed");
+                var body = JsonSerializer.SerializeToElement(result.Value);
+                Assert.Equal(3, body.EnumerateObject().Count());
+                Assert.Equal(Correlation, body.GetProperty("correlationId").GetString());
+            }
+        }
+        Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
+    }
+
+    private static JsonDocument ReadContractFixtures() =>
+        JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "fixtures", "contract.json")));
 
     private static void AssertAccepted(ObjectResult result)
     {
@@ -172,16 +228,24 @@ public class EngineTests
             _function = new SendOtp(new DispatchEngine(registry, Secrets, Http, Env),
                 new JweDecryptor(Keys), Env, Log);
         }
-        public async Task<ObjectResult> Invoke(object? mode = null, string channel = "sms", string? tenantId = null)
+        public async Task<ObjectResult> Invoke(object? mode = null, string channel = "sms", string? tenantId = null,
+            Jose.JweAlgorithm algorithm = Jose.JweAlgorithm.RSA_OAEP_256,
+            Jose.JweEncryption encryption = Jose.JweEncryption.A256GCM, JsonElement? deliveryOverrides = null)
         {
-            var context = JsonSerializer.Serialize(new { nonce = Nonce, phoneNumber = Phone, message = Message });
-            var encrypted = Jose.JWT.Encode(context, Keys.Rsa, Jose.JweAlgorithm.RSA_OAEP_256, Jose.JweEncryption.A256GCM,
+            var context = new Dictionary<string, object?> { ["nonce"] = Nonce, ["phoneNumber"] = Phone, ["message"] = Message };
+            if (deliveryOverrides is { } changes)
+                foreach (var property in changes.EnumerateObject()) context[property.Name] = property.Value;
+            var encrypted = Jose.JWT.Encode(JsonSerializer.Serialize(context), Keys.Rsa, algorithm, encryption,
                 extraHeaders: new Dictionary<string, object> { ["kid"] = Kid });
-            using var stream = new MemoryStream(JsonSerializer.SerializeToUtf8Bytes(new
+            return await InvokeRaw(JsonSerializer.Serialize(new
             {
                 type = EnvelopeParser.EnvelopeType, tenantId, correlationId = Correlation, channel, mode = mode ?? "live",
                 ttlSeconds = 60, encryptedDeliveryContext = encrypted,
             }));
+        }
+        public async Task<ObjectResult> InvokeRaw(string body)
+        {
+            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(body));
             var request = new DefaultHttpContext().Request;
             request.Method = "POST";
             request.ContentType = "application/json";

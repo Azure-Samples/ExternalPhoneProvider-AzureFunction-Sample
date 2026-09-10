@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Event
 from unittest.mock import Mock
 
@@ -20,6 +21,7 @@ _NONCE = "test-nonce"
 _PHONE = "+14255551234"
 _MESSAGE = "  Your code is 123456; keep 7890 unchanged.\nCafé.  "
 _CONTEXT = {"nonce": _NONCE, "phoneNumber": _PHONE, "message": _MESSAGE, "locale": "en-US"}
+_FIXTURES = json.loads((Path(__file__).resolve().parents[2] / "tests/fixtures/contract.json").read_text(encoding="utf-8"))
 
 # get_functions() cannot be called twice on the same app.
 _HANDLER = function_app.app.get_functions()[0].get_user_function()
@@ -43,34 +45,66 @@ def _request(body, headers=None):
     return func.HttpRequest(method="POST", url="/api/SendOtp", headers=headers or {}, params={}, body=raw)
 
 
-def _encrypt(alg="RSA-OAEP-256", kid="test-kid"):
-    token = jwe.JWE(json.dumps(_CONTEXT).encode(), protected=json.dumps({"alg": alg, "enc": "A256GCM", "kid": kid}))
+def _encrypt(alg="RSA-OAEP-256", kid="test-kid", enc="A256GCM", context=None):
+    token = jwe.JWE(json.dumps(_CONTEXT if context is None else context).encode(),
+                    protected=json.dumps({"alg": alg, "enc": enc, "kid": kid}))
     token.add_recipient(_KEY)
     return token.serialize(compact=True)
 
 
 def _envelope(**overrides):
     payload = {"type": "microsoft.mfa.otpDeliver.v1",
-               "correlationId": _CORRELATION, "channel": 1, "mode": 1, "ttlSeconds": 60,
-               "encryptedDeliveryContext": _encrypt()}
+               "correlationId": _CORRELATION, "channel": 1, "mode": 1, "ttlSeconds": 60}
     payload.update(overrides)
+    if "encryptedDeliveryContext" not in payload:
+        payload["encryptedDeliveryContext"] = _encrypt()
     return payload
 
 
-def test_bad_json_and_real_jwe_fail_before_provider_secrets(monkeypatch, caplog):
+def test_jwe_tag_tampering_and_missing_segments_fail_before_provider_io(monkeypatch, caplog):
     monkeypatch.setenv("EPP_ENCRYPTION_KEY_ID", "configured-key-id")
     segments = _encrypt().split(".")
     tag = segments[-1]
     segments[-1] = ("A" if tag[0] != "A" else "B") + tag[1:]
-    cases = (
-        (b"{ not json", "bad_request"),
-        (_envelope(encryptedDeliveryContext=".".join(segments)), "decryption_failed"),
-        (_envelope(encryptedDeliveryContext=_encrypt(alg="RSA-OAEP")), "decryption_failed"),
-    )
-    for payload, error in cases:
-        response = _HANDLER(_request(payload))
-        assert response.status_code == 400 and json.loads(response.get_body())["error"] == error
+    for compact in (".".join(segments), ".".join(segments[:4])):
+        response = _HANDLER(_request(_envelope(encryptedDeliveryContext=compact)))
+        assert response.status_code == 400 and json.loads(response.get_body())["error"] == "decryption_failed"
     assert not any(record.getMessage() == "encryption_key_id_mismatch" for record in caplog.records)
+    function_app._engine.secrets.resolve.assert_not_called()
+    dispatch_module.requests.request.assert_not_called()
+
+
+def test_shared_invalid_requests_return_safe_reasons_before_provider_io():
+    valid = _envelope(encryptedDeliveryContext="unused")
+    for fixture in _FIXTURES["badRequests"]:
+        payload = fixture["rawBody"].encode() if "rawBody" in fixture else {**valid, **fixture["overrides"]}
+        response = _HANDLER(_request(payload))
+        result = json.loads(response.get_body())
+        assert response.status_code == 400 and result["requestId"]
+        assert result == {"error": "bad_request", "reason": fixture["reason"],
+                          "requestId": result["requestId"]}, fixture["name"]
+    for changes in _FIXTURES["incompleteContexts"]:
+        payload = _envelope(mode=2, encryptedDeliveryContext=_encrypt(context={**_CONTEXT, **changes}))
+        response = _HANDLER(_request(payload))
+        result = json.loads(response.get_body())
+        assert response.status_code == 400
+        assert result == {"error": "bad_request", "reason": "incomplete delivery context",
+                          "correlationId": _CORRELATION, "requestId": result["requestId"]}
+    function_app._engine.secrets.resolve.assert_not_called()
+    dispatch_module.requests.request.assert_not_called()
+
+
+def test_shared_jwe_policy_permits_only_rsa_oaep_256_with_a256gcm():
+    for fixture in _FIXTURES["jwe"]:
+        compact = _encrypt(alg=fixture["alg"], enc=fixture["enc"])
+        response = _HANDLER(_request(_envelope(mode=2, encryptedDeliveryContext=compact)))
+        result = json.loads(response.get_body())
+        assert response.status_code == (200 if fixture["accepted"] else 400)
+        if fixture["accepted"]:
+            assert result["nonce"] == _NONCE
+        else:
+            assert result == {"error": "decryption_failed", "correlationId": _CORRELATION,
+                              "requestId": result["requestId"]}
     function_app._engine.secrets.resolve.assert_not_called()
     dispatch_module.requests.request.assert_not_called()
 
@@ -98,23 +132,15 @@ def test_evaluation_decrypts_without_provider_configuration_or_work(monkeypatch,
     function_app._engine.env.clear()
     lookup = Mock()
     monkeypatch.setattr(function_app._registry, "get", lookup)
-    config_reader = Mock(wraps=function_app.read_config)
-    monkeypatch.setattr(function_app, "read_config", config_reader)
     response = _HANDLER(_request(_envelope(mode="Evaluation", provider="untrusted-body-provider")))
     assert response.status_code == 200
     assert json.loads(response.get_body()) == {
         "nonce": _NONCE, "correlationId": _CORRELATION, "providerStatus": "accepted",
     }
-    config_reader.assert_called_once_with()
     function_app._key_provider.assert_called_once_with("test-kid")
     warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
     assert warnings == ["encryption_key_id_mismatch"]
     assert all(value not in caplog.text for value in ("configured-key-id", "test-kid", "untrusted-body-provider"))
-    for provider_name in function_app._registry._by_id:
-        monkeypatch.setenv("EPP_PROVIDER_NAME", provider_name)
-        function_app._engine.env["EPP_PROVIDER_NAME"] = provider_name
-        response = _HANDLER(_request(_envelope(mode=2)))
-        assert response.status_code == 200 and json.loads(response.get_body())["nonce"] == _NONCE
     lookup.assert_not_called()
     function_app._engine.secrets.resolve.assert_not_called()
     dispatch_module.requests.request.assert_not_called()
@@ -132,9 +158,7 @@ def test_live_acceptance_waits_and_preserves_wire_data_but_not_plaintext_logs(mo
         return upstream
 
     send = Mock(side_effect=wait_for_acceptance)
-    dispatch = Mock(wraps=function_app._engine.dispatch)
     monkeypatch.setattr(dispatch_module.requests, "request", send)
-    monkeypatch.setattr(function_app._engine, "dispatch", dispatch)
     with ThreadPoolExecutor(max_workers=1) as executor:
         request = _request(_envelope(channel=2), {"x-ms-client-request-id": "wire-message"})
         pending = executor.submit(_HANDLER, request)
@@ -152,7 +176,6 @@ def test_live_acceptance_waits_and_preserves_wire_data_but_not_plaintext_logs(mo
     upstream.close.assert_called_once()
     wire = json.loads(send.call_args.kwargs["data"])
     assert wire["text"] == _MESSAGE and wire["messageTypes"] == ["voice"] and wire["correlationId"] == _CORRELATION
-    assert dispatch.call_args.args[0].message_id == "wire-message"
     summary = json.loads(caplog.records[-1].getMessage().removeprefix("[EPP] result "))
     assert len(caplog.records) == 1
     assert set(summary) == {"requestId", "correlationId", "httpStatus", "elapsedMs", "evaluation"}

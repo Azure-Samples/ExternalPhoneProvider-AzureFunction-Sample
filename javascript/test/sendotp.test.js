@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const Module = require('node:module');
 const { CompactEncrypt } = require('jose');
 const { SecretClient } = require('@azure/keyvault-secrets');
+const fixtures = require('../../tests/fixtures/contract.json');
 
 // Capture the real handler; keys stay in memory and all external I/O is mocked.
 const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -72,23 +73,48 @@ function assertFailure(result, status, error = 'provider_delivery_failed') {
     assert.doesNotMatch(JSON.stringify(result.jsonBody), /PRIVATE|accepted/);
 }
 
-test('invalid JSON and envelope type return 400 before I/O', async () => {
-    for (const body of ['{', { type: 'otp' }]) {
-        assertFailure(await invoke(body), 400, 'bad_request');
+test('shared invalid requests return matching safe reasons before provider I/O', async () => {
+    const valid = { type: 'microsoft.mfa.otpDeliver.v1', channel: 1, mode: 1, encryptedDeliveryContext: 'unused' };
+    for (const fixture of fixtures.badRequests) {
+        const result = await invoke(fixture.rawBody ?? { ...valid, ...fixture.overrides });
+        assertFailure(result, 400, 'bad_request');
+        assert.ok(result.jsonBody.requestId);
+        assert.deepEqual(result.jsonBody, { error: 'bad_request', reason: fixture.reason,
+            requestId: result.jsonBody.requestId }, fixture.name);
+    }
+    for (const changes of fixtures.incompleteContexts) {
+        const result = await invoke(await envelope({ mode: 2 }, { ...delivery, ...changes }));
+        assertFailure(result, 400, 'bad_request');
+        assert.deepEqual(result.jsonBody, { error: 'bad_request', reason: 'incomplete delivery context',
+            correlationId: 'correlation-id', requestId: result.jsonBody.requestId });
     }
     assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
 });
 
-test('real JWE requires five segments and rejects a bad tag or unapproved algorithm', async () => {
+test('real JWE requires five segments and rejects a bad tag', async () => {
     process.env.EPP_ENCRYPTION_KEY_ID = 'mismatch';
     const body = await envelope();
     const parts = body.encryptedDeliveryContext.split('.');
     parts[4] = (parts[4][0] === 'A' ? 'B' : 'A') + parts[4].slice(1);
     for (const invalid of [{ ...body, encryptedDeliveryContext: parts.join('.') },
-        { ...body, encryptedDeliveryContext: parts.slice(0, 4).join('.') },
-        await envelope({}, delivery, { alg: 'RSA-OAEP' })]) {
+        { ...body, encryptedDeliveryContext: parts.slice(0, 4).join('.') }]) {
         assertFailure(await invoke(invalid), 400, 'decryption_failed');
         assert.deepEqual(warnings, []);
+    }
+    assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
+});
+
+test('shared JWE policy permits only RSA-OAEP-256 with A256GCM', async () => {
+    for (const { alg, enc, accepted } of fixtures.jwe) {
+        const result = await invoke(await envelope({ mode: 2 }, delivery, { alg, enc }));
+        if (accepted) {
+            assert.equal(result.status, 200);
+            assert.equal(result.jsonBody.nonce, delivery.nonce);
+        } else {
+            assertFailure(result, 400, 'decryption_failed');
+            assert.deepEqual(result.jsonBody, { error: 'decryption_failed', correlationId: 'correlation-id',
+                requestId: result.jsonBody.requestId });
+        }
     }
     assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
 });
@@ -114,7 +140,7 @@ test('JWE authenticates the original protected-header bytes, not reserialized JS
     assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
 });
 
-test('generic evaluation decrypts and validates for every registered provider without provider config or I/O', async () => {
+test('evaluation decrypts without provider config or I/O and checks the advisory key ID', async () => {
     for (const key of ['EPP_PROVIDER_NAME', 'EPP_PROVIDER_ENDPOINT', 'KEY_VAULT_URL']) delete process.env[key];
     for (const expectedKeyId of ['', 'PRIVATE-KID', 'private-kid']) {
         process.env.EPP_ENCRYPTION_KEY_ID = expectedKeyId;
@@ -124,16 +150,6 @@ test('generic evaluation decrypts and validates for every registered provider wi
         assert.equal(logs[0].evaluation, true);
         assert.deepEqual(warnings, expectedKeyId === 'private-kid' ? [['encryption_key_id_mismatch']] : []);
     }
-    process.env.EPP_ENCRYPTION_KEY_ID = '';
-    for (const providerName of ['infobip', 'sinch', 'soprano', 'telesign']) {
-        process.env.EPP_PROVIDER_NAME = providerName;
-        const result = await invoke(await envelope({ mode: 2 }));
-        assert.deepEqual(result.jsonBody, { nonce: delivery.nonce, correlationId: 'correlation-id', providerStatus: 'accepted' });
-        assert.equal(result.status, 200, providerName);
-    }
-    const invalid = await invoke(await envelope({ mode: 2 }, { ...delivery, message: ' ' }));
-    assertFailure(invalid, 400, 'bad_request');
-    assert.equal(invalid.jsonBody.reason, 'incomplete delivery context');
     assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
 });
 

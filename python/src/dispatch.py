@@ -98,7 +98,7 @@ def parse_envelope(payload):
     if payload.get("type") != "microsoft.mfa.otpDeliver.v1":
         return None, "unsupported envelope type"
     encrypted = payload.get("encryptedDeliveryContext")
-    if not isinstance(encrypted, str) or not encrypted:
+    if not isinstance(encrypted, str) or not encrypted.strip():
         return None, "encryptedDeliveryContext is required"
     channel = _normalize_channel(payload.get("channel"))
     if channel is None:
@@ -109,11 +109,11 @@ def parse_envelope(payload):
     ttl_seconds = payload.get("ttlSeconds")
     if "ttlSeconds" in payload:
         if type(ttl_seconds) is not int:
-            return None, "ttlSeconds must be a positive JSON integer"
+            return None, "invalid ttlSeconds"
         if ttl_seconds <= 0:
             return None, "ttlSeconds expired"
         if ttl_seconds > 2147483647:
-            return None, "ttlSeconds exceeds 2147483647"
+            return None, "invalid ttlSeconds"
     return {
         "type": payload.get("type"),
         "tenant_id": payload.get("tenantId"),

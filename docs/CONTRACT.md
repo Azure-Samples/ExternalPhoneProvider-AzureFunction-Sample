@@ -63,6 +63,11 @@ verified before any plaintext is used. Decrypted plaintext = `CyotDeliveryContex
 The original compact JWE is passed unchanged to the JOSE library. Parsing header fields for the
 advisory key-ID check must not replace the original protected-header bytes used for authentication.
 
+All three HTTP-handler suites use [shared policy cases](../tests/fixtures/contract.json): the allowed
+pair succeeds, while `RSA-OAEP`, `A128GCM` and `A256CBC-HS512` alternatives return `400 decryption_failed`
+without provider I/O. Decryption uses the same policy before live/evaluation branching, so the matrix
+runs once per language. Tag tampering and original-header-byte tests remain.
+
 | Field | Required | Notes |
 |-------|----------|-------|
 | `nonce` | yes | value the endpoint MUST echo to prove decryption |
@@ -93,6 +98,14 @@ Live handlers await provider acceptance; they do not launch background delivery 
 Handler failures omit the nonce and accepted status and return a sanitized error with a request ID
 and, after envelope processing, a correlation ID. Platform rejections happen before the handler and
 do not use this application response contract.
+
+Validation failures return `error: "bad_request"` and a fixed `reason` in every language. Envelope
+checks run in this order: object shape, version, encrypted-context presence, channel, mode, TTL.
+Reasons are `invalid JSON body`, `invalid envelope`, `unsupported envelope type`,
+`encryptedDeliveryContext is required`, `unsupported channel`, `unsupported mode`, `invalid ttlSeconds`
+or `ttlSeconds expired`. A decrypted context missing a required nonblank string returns
+`incomplete delivery context`. Reasons never include supplied values or exception text. JWE failures
+return `error: "decryption_failed"` without a cryptographic reason or nonce.
 
 ### Evaluation (generic shutter)
 
