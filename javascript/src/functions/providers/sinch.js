@@ -4,6 +4,8 @@
 
 'use strict';
 
+const { ParsedResponse } = require('../models');
+
 // A batch identifier indicates acceptance, not final delivery; delivery status arrives by callback.
 
 const manifest = {
@@ -54,12 +56,12 @@ function buildRequest({ channel, endpoint, dispatch, credential, env }) {
 
 function parseResponse({ httpStatus, ok, json }) {
     const messageOrCallId = (json && (json.id || json.callId || json._links && json._links.self)) || null;
-    return {
+    return new ParsedResponse({
         success: ok,
         providerHttpStatus: httpStatus,
         providerMessageId: typeof messageOrCallId === 'string' ? messageOrCallId : (messageOrCallId && messageOrCallId.href) || null,
         providerStatusName: ok ? 'Dispatched' : (json && (json.text || json.status)) || null,
-    };
+    });
 }
 
 module.exports = { manifest, buildRequest, parseResponse };

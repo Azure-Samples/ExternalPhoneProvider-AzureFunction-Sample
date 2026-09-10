@@ -1,6 +1,8 @@
 import base64
 import urllib.parse
 
+from ..models import ParsedResponse
+
 
 class TelesignProvider:
     manifest = {
@@ -48,11 +50,10 @@ class TelesignProvider:
     def parse_response(self, http_status, ok, json_body):
         status = json_body.get("status") or {} if isinstance(json_body, dict) else {}
         code = status.get("code")
-        return {
-            "success": ok,
-            "provider_http_status": http_status,
-            "provider_message_id": json_body.get("reference_id") if isinstance(json_body, dict) else None,
-            "provider_status_name": None,
-            "provider_status_code": str(code) if code is not None else None,
-            "provider_status_description": status.get("description"),
-        }
+        return ParsedResponse(
+            success=ok,
+            provider_http_status=http_status,
+            provider_message_id=json_body.get("reference_id") if isinstance(json_body, dict) else None,
+            provider_status_code=str(code) if code is not None else None,
+            provider_status_description=status.get("description"),
+        )

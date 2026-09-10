@@ -4,6 +4,8 @@
 
 'use strict';
 
+const { ParsedResponse } = require('../models');
+
 const manifest = {
     id: 'soprano',
     auth: {
@@ -51,12 +53,12 @@ function parseResponse({ httpStatus, ok, json }) {
     const payload = (Array.isArray(json) ? json[0] : json) || {};
     const value = payload.status ?? payload.state;
     const status = typeof value === 'string' && value ? value.toUpperCase() : 'UNKNOWN';
-    return {
+    return new ParsedResponse({
         success: ok,
         providerHttpStatus: httpStatus,
         providerMessageId: (payload.id != null ? String(payload.id) : null) || payload.messageId || null,
         providerStatusName: status,
-    };
+    });
 }
 
 module.exports = { manifest, buildRequest, parseResponse };

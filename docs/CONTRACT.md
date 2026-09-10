@@ -155,8 +155,22 @@ Each provider is one unit exposing three things:
   - `auth` — `{ mode: 'apiKey', keyVaultSecretName, identityKeyVaultSecretName? }`; other modes fail closed
   - `responseMapping` — map of provider status → `Continue` | `Fail` | `Block` | `StepUp` (+ `default`)
 - **`buildRequest({ channel, endpoint, dispatch, credential, env })`** → `{ url, method, headers, body }`
-- **`parseResponse({ httpStatus, ok, json })`** → `{ success, providerHttpStatus, providerMessageId,
-  providerStatusName | providerStatusCode, providerStatusDescription }`
+- **`parseResponse({ httpStatus, ok, json })`** → `ParsedResponse`, containing `success`,
+  `providerHttpStatus`, optional `providerMessageId`, `providerStatusName`, `providerStatusCode`
+  and `providerStatusDescription` (snake_case attributes in Python, PascalCase in .NET).
+
+The adapter reads its API-specific JSON and constructs a normalized `ParsedResponse` object:
+[JavaScript](../javascript/src/functions/models.js), [Python](../python/src/models.py),
+[.NET](../dotnet/Src/Models.cs). The engine reads named properties/attributes rather than provider JSON
+or string-key response dictionaries. Optional values default to null/None; a status name takes precedence
+over a code during outcome mapping, as before. Custom Python adapters must return `ParsedResponse`,
+not the former dictionary.
+
+This model is internal: do not serialize it into the endpoint response or log its fields. Public HTTP
+responses still expose only the existing nonce/correlation/status or sanitized error contract.
+Provider requests are serialized only when building the outbound HTTP body; incoming provider JSON
+is parsed once and normalized inside its adapter. No serialization framework or provider-specific
+class hierarchy is required.
 
 Adapters require registration in the chosen runtime. Consult the selected adapter and its manifest
 for required credentials and options: the manifest declares secret names and protocol mappings;

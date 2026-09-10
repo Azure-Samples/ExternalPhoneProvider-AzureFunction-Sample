@@ -4,6 +4,8 @@
 
 'use strict';
 
+const { ParsedResponse } = require('../models');
+
 const manifest = {
     id: 'telesign',
     auth: {
@@ -68,13 +70,12 @@ function buildRequest({ channel, endpoint, dispatch, credential, env }) {
 
 function parseResponse({ httpStatus, ok, json }) {
     const status = (json && json.status) || {};
-    return {
+    return new ParsedResponse({
         success: ok,
         providerHttpStatus: httpStatus,
         providerMessageId: (json && json.reference_id) || null,
         providerStatusCode: status.code != null ? String(status.code) : null,
-        providerStatusName: null,
-    };
+    });
 }
 
 module.exports = { manifest, buildRequest, parseResponse };

@@ -48,4 +48,28 @@ class DeliveryContext {
     [inspect.custom]() { return '[DeliveryContext]'; }
 }
 
-module.exports = { DeliveryContext };
+// Adapter-normalized result for outcome mapping, not a public HTTP response.
+class ParsedResponse {
+    /**
+     * @param {Object} fields
+     * @param {boolean} fields.success
+     * @param {number} fields.providerHttpStatus
+     * @param {string|null} [fields.providerMessageId]
+     * @param {string|null} [fields.providerStatusName]
+     * @param {string|null} [fields.providerStatusCode]
+     * @param {string|null} [fields.providerStatusDescription]
+     */
+    constructor({ success, providerHttpStatus, providerMessageId = null,
+        providerStatusName = null, providerStatusCode = null, providerStatusDescription = null }) {
+        this.success = success;
+        this.providerHttpStatus = providerHttpStatus;
+        this.providerMessageId = providerMessageId;
+        this.providerStatusName = providerStatusName;
+        this.providerStatusCode = providerStatusCode;
+        this.providerStatusDescription = providerStatusDescription;
+    }
+
+    [inspect.custom]() { return '[ParsedResponse]'; }
+}
+
+module.exports = { DeliveryContext, ParsedResponse };

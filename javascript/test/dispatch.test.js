@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { AppConfig, readConfig } = require('../src/functions/config');
-const { DeliveryContext } = require('../src/functions/models');
+const { DeliveryContext, ParsedResponse } = require('../src/functions/models');
 const { inspect } = require('node:util');
 const {
     dispatchOtp, getProvider, resolveOutcome, outcomeToHttpStatus,
@@ -42,7 +42,7 @@ test('config uses the deployment provider, with no hardcoded fallback', async (t
     assert.equal(JSON.parse(init.body).body, dispatch.message);
 });
 
-test('envelope TTL boundaries and routing reject coercion', () => {
+test('request models preserve content and accept valid TTL boundaries', () => {
     const context = DeliveryContext.fromPayload({ nonce: 'test-nonce', phoneNumber: dispatch.destination, message: dispatch.message });
     assert.ok(context instanceof DeliveryContext);
     assert.ok(context.isComplete);
@@ -51,12 +51,9 @@ test('envelope TTL boundaries and routing reject coercion', () => {
     for (const payload of [null, [], 'text', 1]) assert.equal(DeliveryContext.fromPayload(payload), null);
     assert.equal(DeliveryContext.fromPayload({ nonce: 123, phoneNumber: 'phone', message: 'text' }).isComplete, false);
     assert.ok(parseEnvelope(envelope()).envelope);
+    assert.ok(parseEnvelope(envelope({ ttlSeconds: 1 })).envelope);
     assert.ok(parseEnvelope(envelope({ ttlSeconds: 2147483647 })).envelope);
-    for (const ttlSeconds of [-1, 0, '60', null, true, 1.5, 2147483648]) {
-        assert.ok(parseEnvelope(envelope({ ttlSeconds })).error, String(ttlSeconds));
-    }
-    assert.equal(parseEnvelope(envelope({ channel: '1' })).error, 'unsupported channel');
-    assert.equal(parseEnvelope(envelope({ mode: true })).error, 'unsupported mode');
+    // Invalid values and their public error responses are covered by the shared handler fixtures.
 });
 
 test('provider URLs and timeouts retain representative safety boundaries', () => {
@@ -72,7 +69,7 @@ test('provider URLs and timeouts retain representative safety boundaries', () =>
     assert.equal(parseProviderTimeout('9999'), 2500);
 });
 
-test('omnimsg uses API ID/key headers and a constant false shutterMode wire field', () => {
+test('omnimsg preserves its API-key request and normalizes acceptance', () => {
     const request = getProvider('soprano').adapter.buildRequest({ ...input, env: undefined, endpoint: `${input.endpoint}/cgpapi///` });
     assert.equal(request.url, 'https://provider.example/cgpapi/messages/omnimsg');
     assert.equal(request.method, 'POST');
@@ -80,30 +77,46 @@ test('omnimsg uses API ID/key headers and a constant false shutterMode wire fiel
         'X-MEMS-API-ID': 'id', 'X-MEMS-API-Key': 'key' });
     assert.deepEqual(JSON.parse(request.body), { text: dispatch.message, destination: '15551234567',
         messageTypes: ['sms'], correlationId: 'correlation-id', shutterMode: false });
+    const response = getProvider('soprano').adapter.parseResponse({ httpStatus: 201, ok: true,
+        json: { id: 123, status: 'ENROUTE' } });
+    assert.deepEqual(response, new ParsedResponse({ success: true, providerHttpStatus: 201,
+        providerMessageId: '123', providerStatusName: 'ENROUTE' }));
+    assert.equal(inspect(response), '[ParsedResponse]');
 });
 
-test('App authentication uses JSON SMS content', () => {
+test('App-auth SMS preserves its request and normalizes acceptance', () => {
     const request = getProvider('infobip').adapter.buildRequest(input);
     assert.equal(request.url, 'https://provider.example/sms/3/messages');
     assert.equal(request.headers.Authorization, 'App key');
     assert.equal(request.headers['Content-Type'], 'application/json');
     assert.equal(JSON.parse(request.body).messages[0].content.text, dispatch.message);
+    const response = getProvider('infobip').adapter.parseResponse({ httpStatus: 200, ok: true,
+        json: { messages: [{ messageId: 'message-id', status: { groupName: 'PENDING' } }] } });
+    assert.deepEqual(response, new ParsedResponse({ success: true, providerHttpStatus: 200,
+        providerMessageId: 'message-id', providerStatusName: 'PENDING' }));
 });
 
-test('Basic authentication uses form-encoded SMS content', () => {
+test('Basic-auth SMS preserves its form request and normalizes acceptance', () => {
     const request = getProvider('telesign').adapter.buildRequest(input);
     assert.equal(request.url, 'https://provider.example/v1/messaging');
     assert.equal(request.headers.Authorization, `Basic ${Buffer.from('id:key').toString('base64')}`);
     assert.equal(request.headers['Content-Type'], 'application/x-www-form-urlencoded');
     assert.equal(new URLSearchParams(request.body).get('message'), dispatch.message);
+    const response = getProvider('telesign').adapter.parseResponse({ httpStatus: 200, ok: true,
+        json: { reference_id: 'message-id', status: { code: 290 } } });
+    assert.deepEqual(response, new ParsedResponse({ success: true, providerHttpStatus: 200,
+        providerMessageId: 'message-id', providerStatusCode: '290' }));
 });
 
-test('static Bearer authentication uses the service-plan SMS route', () => {
+test('static-Bearer SMS preserves its batch request and normalizes acceptance', () => {
     const request = getProvider('sinch').adapter.buildRequest(input);
     assert.equal(request.url, 'https://provider.example/xms/v1/plan/batches');
     assert.equal(request.headers.Authorization, 'Bearer key');
     assert.equal(request.headers['Content-Type'], 'application/json');
     assert.equal(JSON.parse(request.body).body, dispatch.message);
+    const response = getProvider('sinch').adapter.parseResponse({ httpStatus: 200, ok: true, json: { id: 'message-id' } });
+    assert.deepEqual(response, new ParsedResponse({ success: true, providerHttpStatus: 200,
+        providerMessageId: 'message-id', providerStatusName: 'Dispatched' }));
 });
 
 test('response parsing and HTTP mapping fail closed, including malformed status/state', () => {

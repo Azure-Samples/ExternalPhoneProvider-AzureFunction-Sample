@@ -51,3 +51,15 @@ class DispatchRequest:
     message_id: str
     correlation_id: str | None
     locale: str | None
+
+
+@dataclass(repr=False)
+class ParsedResponse:
+    """Adapter-normalized result for outcome mapping, not a public HTTP response."""
+
+    success: bool
+    provider_http_status: int
+    provider_message_id: str | None = None
+    provider_status_name: str | None = None
+    provider_status_code: str | None = None
+    provider_status_description: str | None = None

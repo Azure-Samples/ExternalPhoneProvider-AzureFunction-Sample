@@ -36,7 +36,10 @@ public sealed record ParsedResponse(
     string? ProviderMessageId = null,
     string? ProviderStatusName = null,
     string? ProviderStatusCode = null,
-    string? ProviderStatusDescription = null);
+    string? ProviderStatusDescription = null)
+{
+    public override string ToString() => nameof(ParsedResponse);
+}
 
 public sealed record AuthConfig(string Mode, string? KeyVaultSecretName = null, string? IdentityKeyVaultSecretName = null);
 

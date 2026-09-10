@@ -82,10 +82,12 @@ Platform/key prerequisites and HTTP outcomes are defined in the
 |---|---|
 | [function_app.py](function_app.py) | HTTP handler and adapter registration |
 | [src/config.py](src/config.py) | Shared deployment settings |
-| [src/models.py](src/models.py) | Envelope, delivery-context and dispatch dataclasses |
+| [src/models.py](src/models.py) | Envelope, delivery-context, dispatch and normalized `ParsedResponse` dataclasses |
 | [src/dispatch.py](src/dispatch.py) | Boundary validation, JWE, provider registry and outcome mapping |
 | [src/providers/](src/providers/) | Adapter manifests and API-specific implementations |
 | [src/secrets.py](src/secrets.py) | Cached Key Vault access via managed identity |
 
 Add and register an adapter without adding provider-specific branches to the shared pipeline.
+Return `ParsedResponse` from `parse_response` using named fields; the engine reads attributes such as
+`parsed.provider_status_name`. Raw provider JSON remains local to the adapter, not a shared model hierarchy.
 See [production limitations](../docs/CONTRACT.md#production-limitations) before production use.

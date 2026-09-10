@@ -1,5 +1,7 @@
 import json
 
+from ..models import ParsedResponse
+
 
 class SinchProvider:
     manifest = {
@@ -39,11 +41,10 @@ class SinchProvider:
         identifier = None
         if isinstance(json_body, dict):
             identifier = json_body.get("id") or json_body.get("callId")
-        return {
-            "success": ok,
-            "provider_http_status": http_status,
-            "provider_message_id": str(identifier) if identifier is not None else None,
-            "provider_status_name": "Dispatched" if ok else None,
-            "provider_status_code": None,
-            "provider_status_description": json_body.get("text") if isinstance(json_body, dict) else None,
-        }
+        return ParsedResponse(
+            success=ok,
+            provider_http_status=http_status,
+            provider_message_id=str(identifier) if identifier is not None else None,
+            provider_status_name="Dispatched" if ok else None,
+            provider_status_description=json_body.get("text") if isinstance(json_body, dict) else None,
+        )

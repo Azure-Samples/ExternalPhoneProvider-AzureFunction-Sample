@@ -208,6 +208,7 @@ async function resolveProviderCredential(authConfiguration = {}, config) {
 }
 
 // Status mappings may restrict HTTP success, but cannot turn failed HTTP into Continue.
+/** @param {import('./models').ParsedResponse} parsedResponse */
 function resolveOutcome(manifest, parsedResponse) {
     const responseMapping = manifest.responseMapping || {};
     const providerStatusKey = parsedResponse.providerStatusName || parsedResponse.providerStatusCode;

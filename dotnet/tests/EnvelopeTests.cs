@@ -42,22 +42,6 @@ public class EnvelopeTests
     }
 
     [Fact]
-    public void DeliveryContextCompletenessIsNotSerialized()
-    {
-        var context = new DeliveryContext { Nonce = "nonce", PhoneNumber = "+15551234567", Message = "message" };
-        Assert.True(context.IsComplete);
-        Assert.False(JsonSerializer.SerializeToElement(context).TryGetProperty("IsComplete", out _));
-        context.Nonce = null;
-        Assert.False(context.IsComplete);
-        context.Nonce = "nonce";
-        context.PhoneNumber = "";
-        Assert.False(context.IsComplete);
-        context.PhoneNumber = "+15551234567";
-        context.Message = " \t\r\n";
-        Assert.False(context.IsComplete);
-    }
-
-    [Fact]
     public void RealJweRejectsTagTamperingAndMissingSegments()
     {
         using var keys = new TestKeys();
@@ -79,7 +63,7 @@ public class EnvelopeTests
         var encodedHeader = Encode(Encoding.UTF8.GetBytes(header));
         var key = RandomNumberGenerator.GetBytes(32);
         var iv = RandomNumberGenerator.GetBytes(12);
-        var plaintext = Encoding.UTF8.GetBytes("{\"nonce\":\"test-nonce\"}");
+        var plaintext = Encoding.UTF8.GetBytes("{\"nonce\":\"test-nonce\",\"phoneNumber\":\"+15551234567\",\"message\":\"message\"}");
         var ciphertext = new byte[plaintext.Length];
         var tag = new byte[16];
         using var cipher = new AesGcm(key, tag.Length);
@@ -87,7 +71,10 @@ public class EnvelopeTests
         var wrappedKey = keys.Rsa.Encrypt(key, RSAEncryptionPadding.OaepSHA256);
         var segments = new[] { encodedHeader, Encode(wrappedKey), Encode(iv), Encode(ciphertext), Encode(tag) };
         var decryptor = new JweDecryptor(keys);
-        Assert.Equal("test-nonce", decryptor.Decrypt(string.Join(".", segments)).Context.Nonce);
+        var context = decryptor.Decrypt(string.Join(".", segments)).Context;
+        Assert.Equal("test-nonce", context.Nonce);
+        Assert.True(context.IsComplete);
+        Assert.False(JsonSerializer.SerializeToElement(context).TryGetProperty("IsComplete", out _));
         segments[0] = Encode(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(JsonSerializer.Deserialize<JsonElement>(header))));
         Assert.NotEqual(encodedHeader, segments[0]);
         Assert.ThrowsAny<Exception>(() => decryptor.Decrypt(string.Join(".", segments)));

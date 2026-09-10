@@ -1,5 +1,7 @@
 import json
 
+from ..models import ParsedResponse
+
 
 class SopranoProvider:
     manifest = {
@@ -42,10 +44,9 @@ class SopranoProvider:
         if value is None:
             value = payload.get("state")
         status = value.upper() if isinstance(value, str) and value else "UNKNOWN"
-        return {
-            "success": ok,
-            "provider_http_status": http_status,
-            "provider_message_id": identifier,
-            "provider_status_name": status,
-            "provider_status_code": None,
-        }
+        return ParsedResponse(
+            success=ok,
+            provider_http_status=http_status,
+            provider_message_id=identifier,
+            provider_status_name=status,
+        )

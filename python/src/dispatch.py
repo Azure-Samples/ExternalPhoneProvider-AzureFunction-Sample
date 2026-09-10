@@ -9,7 +9,7 @@ from jwcrypto import jwk
 from urllib3.exceptions import ReadTimeoutError
 
 from .config import read_config
-from .models import DeliveryContext, DispatchRequest, Envelope
+from .models import DeliveryContext, DispatchRequest, Envelope, ParsedResponse
 
 DEFAULT_TIMEOUT_MS = 1500
 DEFAULT_CHANNELS = ["sms", "voice"]
@@ -20,14 +20,14 @@ BLOCK = "Block"
 STEP_UP = "StepUp"
 
 
-def resolve_outcome(manifest, parsed):
+def resolve_outcome(manifest, parsed: ParsedResponse):
     mapping = manifest["response_mapping"]
-    key = parsed.get("provider_status_name") or parsed.get("provider_status_code")
+    key = parsed.provider_status_name or parsed.provider_status_code
     if key:
         outcome = mapping.get(key) or mapping.get("default", FAIL)
     else:
-        outcome = CONTINUE if parsed.get("success") else mapping.get("default", FAIL)
-    return FAIL if outcome == CONTINUE and not parsed.get("success") else outcome
+        outcome = CONTINUE if parsed.success else mapping.get("default", FAIL)
+    return FAIL if outcome == CONTINUE and not parsed.success else outcome
 
 
 def to_http_status(outcome, provider_http_status):
@@ -302,7 +302,7 @@ class DispatchEngine:
             ok = 200 <= response.status_code < 300
             parsed = adapter.parse_response(response.status_code, ok, body_json)
             outcome = resolve_outcome(manifest, parsed)
-            http_status = to_http_status(outcome, parsed.get("provider_http_status") or response.status_code)
+            http_status = to_http_status(outcome, parsed.provider_http_status or response.status_code)
 
             return http_status, {
                 "status": "accepted" if outcome == CONTINUE else "failed",

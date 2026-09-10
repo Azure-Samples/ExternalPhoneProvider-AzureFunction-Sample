@@ -4,6 +4,8 @@
 
 'use strict';
 
+const { ParsedResponse } = require('../models');
+
 // Voice integration is unverified; confirm the request format before production use.
 
 const manifest = {
@@ -55,12 +57,12 @@ function buildRequest({ channel, endpoint, dispatch, credential, env }) {
 function parseResponse({ httpStatus, ok, json }) {
     const firstMessage = json && json.messages && json.messages[0];
     const status = (firstMessage && firstMessage.status) || {};
-    return {
+    return new ParsedResponse({
         success: ok,
         providerHttpStatus: httpStatus,
         providerMessageId: (firstMessage && firstMessage.messageId) || null,
         providerStatusName: (status.groupName || status.name || '').toUpperCase() || null,
-    };
+    });
 }
 
 module.exports = { manifest, buildRequest, parseResponse };

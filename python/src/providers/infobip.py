@@ -1,5 +1,7 @@
 import json
 
+from ..models import ParsedResponse
+
 
 class InfobipProvider:
     manifest = {
@@ -44,11 +46,10 @@ class InfobipProvider:
         first_message = messages[0] if messages else {}
         status = first_message.get("status") or {}
         status_name = (status.get("groupName") or status.get("name") or "").upper() or None
-        return {
-            "success": ok,
-            "provider_http_status": http_status,
-            "provider_message_id": first_message.get("messageId"),
-            "provider_status_name": status_name,
-            "provider_status_code": None,
-            "provider_status_description": status.get("description"),
-        }
+        return ParsedResponse(
+            success=ok,
+            provider_http_status=http_status,
+            provider_message_id=first_message.get("messageId"),
+            provider_status_name=status_name,
+            provider_status_description=status.get("description"),
+        )

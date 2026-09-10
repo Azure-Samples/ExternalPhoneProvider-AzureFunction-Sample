@@ -94,12 +94,13 @@ retries. The shared contract defines validation, HTTP outcomes and privacy-safe 
 |---|---|
 | [src/functions/SendOtp.js](src/functions/SendOtp.js) | HTTP handler |
 | [src/functions/config.js](src/functions/config.js) | Shared deployment settings |
-| [src/functions/models.js](src/functions/models.js) | Named delivery context and documented request objects |
+| [src/functions/models.js](src/functions/models.js) | Delivery context, normalized `ParsedResponse`, and documented request objects |
 | [src/functions/dispatch.js](src/functions/dispatch.js) | Envelope/JWE handling, registry and dispatch |
 | [src/functions/providers/](src/functions/providers/) | Adapter manifests and API-specific implementations |
 | [test/](test/) | Representative offline checks |
 
 To add an adapter, implement `manifest`, `buildRequest` and `parseResponse` in the adapter folder and
-register it in [src/functions/dispatch.js](src/functions/dispatch.js). Keep credentials, options and
+register it in [src/functions/dispatch.js](src/functions/dispatch.js). Return a `ParsedResponse` from
+`parseResponse`; raw API-specific JSON stays inside that adapter. Keep credentials, options and
 status mapping with that adapter; the shared pipeline needs no provider-specific branches. See
 [production limitations](../docs/CONTRACT.md#production-limitations) before production use.
