@@ -27,6 +27,7 @@
   ],
   "incompleteContexts": [
     { "nonce": "" },
+    { "nonce": 123 },
     { "phoneNumber": null },
     { "message": " " }
   ]

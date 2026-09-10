@@ -3,7 +3,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { SecretClient } = require('@azure/keyvault-secrets');
-const { readConfig } = require('../src/functions/config');
+const { AppConfig, readConfig } = require('../src/functions/config');
+const { DeliveryContext } = require('../src/functions/models');
+const { inspect } = require('node:util');
 const {
     dispatchOtp, getProvider, resolveOutcome, outcomeToHttpStatus,
     parseEnvelope, parseProviderTimeout, isValidProviderUrl,
@@ -23,6 +25,8 @@ test('config uses the deployment provider, with no hardcoded fallback', async (t
     const fetchMock = t.mock.method(global, 'fetch', async () => ({ ok: true, status: 200,
         text: async () => JSON.stringify({ id: 'batch-id' }) }));
     const config = readConfig(env);
+    assert.ok(config instanceof AppConfig);
+    assert.equal(inspect(config), '[AppConfig]');
     assert.deepEqual([config.providerName, config.providerTimeoutMs], ['sinch', ' 0012 ']);
     assert.equal(config.env, env);
     assert.equal(readConfig({}).providerName, '');
@@ -39,6 +43,13 @@ test('config uses the deployment provider, with no hardcoded fallback', async (t
 });
 
 test('envelope TTL boundaries and routing reject coercion', () => {
+    const context = DeliveryContext.fromPayload({ nonce: 'test-nonce', phoneNumber: dispatch.destination, message: dispatch.message });
+    assert.ok(context instanceof DeliveryContext);
+    assert.ok(context.isComplete);
+    assert.equal(context.message, dispatch.message);
+    assert.equal(inspect(context), '[DeliveryContext]');
+    for (const payload of [null, [], 'text', 1]) assert.equal(DeliveryContext.fromPayload(payload), null);
+    assert.equal(DeliveryContext.fromPayload({ nonce: 123, phoneNumber: 'phone', message: 'text' }).isComplete, false);
     assert.ok(parseEnvelope(envelope()).envelope);
     assert.ok(parseEnvelope(envelope({ ttlSeconds: 2147483647 })).envelope);
     for (const ttlSeconds of [-1, 0, '60', null, true, 1.5, 2147483648]) {

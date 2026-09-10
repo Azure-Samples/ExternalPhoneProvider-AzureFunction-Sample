@@ -10,7 +10,7 @@ public class EnvelopeTests
     [Theory]
     [InlineData("\"channel\":1,\"mode\":2,\"ttlSeconds\":60", "sms", 2, 60)]
     [InlineData("\"channel\":\"VOICE\",\"mode\":\"Live\"", "voice", 1, null)]
-    public void NumericAndNamedRoutingParse(string routing, string channel, int mode, int? ttl)
+    public async Task NumericAndNamedRoutingParse(string routing, string channel, int mode, int? ttl)
     {
         var (envelope, error) = Parse(routing);
         Assert.Null(error);
@@ -18,6 +18,43 @@ public class EnvelopeTests
         Assert.Equal(channel, EnvelopeParser.ChannelName(envelope.Channel));
         Assert.Equal(mode, envelope.Mode);
         Assert.Equal(ttl, envelope.TtlSeconds);
+        using var body = new MemoryStream(Encoding.UTF8.GetBytes(Payload(routing)));
+        Assert.Equal((envelope, error), await EnvelopeParser.ParseAsync(body));
+        Assert.True(body.CanRead);
+    }
+
+    [Fact]
+    public async Task StreamParserRejectsInvalidUtf8ButPropagatesCancellationAndReadErrors()
+    {
+        var bytes = Encoding.UTF8.GetBytes("{\"type\":\"private-input\"}");
+        bytes[9] = 0xff;
+        using var invalidUtf8 = new MemoryStream(bytes);
+        var (envelope, error) = await EnvelopeParser.ParseAsync(invalidUtf8);
+        Assert.Null(envelope);
+        Assert.Equal("invalid JSON body", error);
+
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        using var body = new MemoryStream(Encoding.UTF8.GetBytes("{}"));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => EnvelopeParser.ParseAsync(body, cancelled.Token));
+        using var unreadable = new UnreadableBody();
+        await Assert.ThrowsAsync<IOException>(() => EnvelopeParser.ParseAsync(unreadable));
+    }
+
+    [Fact]
+    public void DeliveryContextCompletenessIsNotSerialized()
+    {
+        var context = new DeliveryContext { Nonce = "nonce", PhoneNumber = "+15551234567", Message = "message" };
+        Assert.True(context.IsComplete);
+        Assert.False(JsonSerializer.SerializeToElement(context).TryGetProperty("IsComplete", out _));
+        context.Nonce = null;
+        Assert.False(context.IsComplete);
+        context.Nonce = "nonce";
+        context.PhoneNumber = "";
+        Assert.False(context.IsComplete);
+        context.PhoneNumber = "+15551234567";
+        context.Message = " \t\r\n";
+        Assert.False(context.IsComplete);
     }
 
     [Fact]
@@ -56,9 +93,17 @@ public class EnvelopeTests
         Assert.ThrowsAny<Exception>(() => decryptor.Decrypt(string.Join(".", segments)));
     }
 
+    private static string Payload(string routing) =>
+        "{\"type\":\"microsoft.mfa.otpDeliver.v1\",\"encryptedDeliveryContext\":\"x\"," + routing + "}";
+
     private static (Envelope? Envelope, string? Error) Parse(string routing) =>
-        EnvelopeParser.Parse(JsonSerializer.Deserialize<JsonElement>(
-            "{\"type\":\"microsoft.mfa.otpDeliver.v1\",\"encryptedDeliveryContext\":\"x\"," + routing + "}"));
+        EnvelopeParser.Parse(JsonSerializer.Deserialize<JsonElement>(Payload(routing)));
+
+    private sealed class UnreadableBody : MemoryStream
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<int>(new IOException("private read error"));
+    }
 }
 
 internal sealed class TestKeys : IJweKeyProvider, IDisposable

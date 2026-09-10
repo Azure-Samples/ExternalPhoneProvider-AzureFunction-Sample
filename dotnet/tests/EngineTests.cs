@@ -189,6 +189,7 @@ public class EngineTests
     private static void AssertAccepted(ObjectResult result)
     {
         Assert.Equal(200, result.StatusCode);
+        Assert.IsType<EndpointSuccessResponse>(result.Value);
         Assert.Equal(JsonSerializer.Serialize(new { nonce = Nonce, correlationId = Correlation, providerStatus = "accepted" }),
             JsonSerializer.Serialize(result.Value));
     }
@@ -196,6 +197,7 @@ public class EngineTests
     private static void AssertFailure(HandlerRig rig, ObjectResult result, int status, string error = "provider_delivery_failed")
     {
         Assert.Equal(status, result.StatusCode);
+        Assert.IsType<EndpointErrorResponse>(result.Value);
         var body = JsonSerializer.SerializeToElement(result.Value);
         Assert.Equal(error, body.GetProperty("error").GetString());
         Assert.False(body.TryGetProperty("nonce", out _));

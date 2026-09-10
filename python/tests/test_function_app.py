@@ -83,8 +83,9 @@ def test_shared_invalid_requests_return_safe_reasons_before_provider_io():
         assert response.status_code == 400 and result["requestId"]
         assert result == {"error": "bad_request", "reason": fixture["reason"],
                           "requestId": result["requestId"]}, fixture["name"]
-    for changes in _FIXTURES["incompleteContexts"]:
-        payload = _envelope(mode=2, encryptedDeliveryContext=_encrypt(context={**_CONTEXT, **changes}))
+    contexts = [{**_CONTEXT, **changes} for changes in _FIXTURES["incompleteContexts"]]
+    for context in (*contexts, False, []):
+        payload = _envelope(mode=2, encryptedDeliveryContext=_encrypt(context=context))
         response = _HANDLER(_request(payload))
         result = json.loads(response.get_body())
         assert response.status_code == 400
@@ -195,3 +196,13 @@ def test_provider_failure_preserves_status_without_retry_or_nonce(monkeypatch):
     send.assert_called_once()
     assert send.call_args.kwargs["allow_redirects"] is False
     upstream.close.assert_called_once()
+
+
+def test_unexpected_handler_error_is_generic_and_does_not_send(monkeypatch, caplog):
+    monkeypatch.setattr(function_app, "read_config", Mock(side_effect=RuntimeError("PRIVATE-ERROR")))
+    response = _HANDLER(_request({}))
+    body = json.loads(response.get_body())
+    assert response.status_code == 500 and body["error"] == "delivery_failed"
+    assert set(body) == {"error", "correlationId", "requestId"}
+    assert "PRIVATE-ERROR" not in response.get_body().decode() + caplog.text
+    dispatch_module.requests.request.assert_not_called()

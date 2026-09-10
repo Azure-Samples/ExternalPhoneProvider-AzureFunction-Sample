@@ -61,22 +61,19 @@ def send_otp(req: func.HttpRequest) -> func.HttpResponse:
         if error:
             return respond(400, {"error": "bad_request", "reason": error, "requestId": request_id})
 
-        correlation_id = envelope["correlation_id"] or header_correlation_id or request_id
-        envelope["correlation_id"] = correlation_id
-        evaluation = envelope["mode"] == MODE_EVALUATION
+        correlation_id = envelope.correlation_id or header_correlation_id or request_id
+        envelope.correlation_id = correlation_id
+        evaluation = envelope.mode == MODE_EVALUATION
 
         try:
-            header, delivery = decrypt_delivery_context(envelope["encrypted_delivery_context"], _key_provider)
+            header, delivery = decrypt_delivery_context(envelope.encrypted_delivery_context, _key_provider)
         except Exception:
             return respond(400, {"error": "decryption_failed", "correlationId": correlation_id, "requestId": request_id})
 
-        if config["expected_key_id"] and header.get("kid") != config["expected_key_id"]:
+        if config.expected_key_id and header.get("kid") != config.expected_key_id:
             logging.warning('encryption_key_id_mismatch')
 
-        if not isinstance(delivery, dict) or not all(
-            isinstance(delivery.get(field), str) and delivery[field].strip()
-            for field in ("nonce", "phoneNumber", "message")
-        ):
+        if delivery is None or not delivery.is_complete:
             return respond(400, {"error": "bad_request", "reason": "incomplete delivery context",
                                  "correlationId": correlation_id, "requestId": request_id})
 
@@ -90,12 +87,12 @@ def send_otp(req: func.HttpRequest) -> func.HttpResponse:
 
         # Live delivery must finish before nonce acceptance.
         return respond(200, {
-            "nonce": delivery["nonce"],
+            "nonce": delivery.nonce,
             "correlationId": correlation_id,
             "providerStatus": "accepted",
         })
     except Exception:
-        return respond(500, {"error": "provider_delivery_failed", "correlationId": correlation_id, "requestId": request_id})
+        return respond(500, {"error": "delivery_failed", "correlationId": correlation_id, "requestId": request_id})
     finally:
         # Hash even generated correlations; wire IDs stay raw.
         logging.info("%s result %s", TAG, json.dumps({

@@ -4,7 +4,8 @@ from urllib.parse import parse_qs
 
 import pytest
 
-from src.dispatch import DispatchRequest, ProviderRegistry, parse_envelope
+from src.dispatch import DispatchRequest, ProviderRegistry, context_to_dispatch, parse_envelope
+from src.models import DeliveryContext, Envelope
 from src.providers.infobip import InfobipProvider
 from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
@@ -74,11 +75,12 @@ def test_sinch_sms_static_token_contract():
     }
 
 
-def test_envelope_routing_and_ttl_validation():
+def test_envelope_context_routing_and_ttl_validation():
     payload = {"type": "microsoft.mfa.otpDeliver.v1", "channel": 1, "mode": 1, "encryptedDeliveryContext": "jwe"}
     for channel, mode, expected in ((1, 1, (1, 1)), ("VOICE", "Evaluation", (2, 2))):
         envelope, error = parse_envelope({**payload, "channel": channel, "mode": mode})
-        assert error is None and (envelope["channel"], envelope["mode"]) == expected
+        assert error is None and isinstance(envelope, Envelope)
+        assert (envelope.channel, envelope.mode) == expected
     for changes in ({"channel": True}, {"mode": False}, {"channel": "1"}, {"mode": None}):
         envelope, error = parse_envelope({**payload, **changes})
         assert envelope is None and error
@@ -87,5 +89,19 @@ def test_envelope_routing_and_ttl_validation():
         assert envelope is None and "ttlSeconds" in error
     for ttl in (1, 2147483647):
         envelope, error = parse_envelope({**payload, "ttlSeconds": ttl})
-        assert error is None and envelope["ttl_seconds"] == ttl
-    assert parse_envelope(payload)[0]["ttl_seconds"] is None
+        assert error is None and envelope.ttl_seconds == ttl
+    envelope, error = parse_envelope(payload)
+    assert error is None and envelope.ttl_seconds is None
+
+    context = DeliveryContext.from_payload({
+        "nonce": " nonce ", "phoneNumber": "+15551234567", "message": MESSAGE,
+        "locale": {"opaque": "metadata"},
+    })
+    assert isinstance(context, DeliveryContext) and context.is_complete
+    dispatch = context_to_dispatch(context, envelope, "message-id")
+    assert isinstance(dispatch, DispatchRequest)
+    assert context.nonce == " nonce " and dispatch.message == MESSAGE
+    assert dispatch.destination == context.phone_number and dispatch.locale is context.locale
+    assert MESSAGE not in repr(context) + repr(dispatch)
+    assert "encrypted_delivery_context" not in repr(envelope)
+    assert DeliveryContext.from_payload(None) is None

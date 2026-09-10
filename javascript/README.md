@@ -28,6 +28,48 @@ engine and one selected provider per deployment. API-specific behavior stays in 
    behavior, not platform authentication; run the separate
    [deployed security checks](../docs/ONBOARDING.md#4-package-deploy-and-verify).
 
+## Environment configuration
+
+Run Core Tools from `javascript/`. Create an untracked `local.settings.json` **beside
+[host.json](host.json), not inside `src/`**. Start from the
+[shared sample](../docs/local.settings.sample.json); a minimal evaluation setup is:
+
+```json
+{
+   "IsEncrypted": false,
+   "Values": {
+      "FUNCTIONS_WORKER_RUNTIME": "node",
+      "EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>"
+   }
+}
+```
+
+For live delivery, add `EPP_PROVIDER_NAME`, `EPP_PROVIDER_ENDPOINT` and `KEY_VAULT_URL` to `Values`.
+Add `EPP_PROVIDER_ACCOUNT_NAME` and any adapter-specific options only when required. Optional
+`EPP_PROVIDER_TIMEOUT_MS` is a string such as `"1500"`. Replace placeholders; do not put API keys in
+this file. See the [complete variable table](../README.md#configure-environment-variables).
+
+Core Tools copies `Values` into the process environment; direct Node processes and the offline tests
+do **not** automatically load this file. [AppConfig](src/functions/config.js) reads `process.env`
+once per call to `readConfig()`. Restart the host after changing settings. Configure any local host
+storage separately; do not copy a local emulator connection into Azure.
+
+Older private settings may contain `DEFAULT_PROVIDER`, `ENDPOINT_TIMEOUT_MS`, `REQUIRE_AUTH`,
+`EXPECTED_AUDIENCE`, `ISSUER_TENANT_ID`, `EUDB`, or per-provider `*_ENDPOINT` entries. Those do not
+configure the current shared engine. Use `EPP_PROVIDER_NAME`, `EPP_PROVIDER_ENDPOINT` and
+`EPP_PROVIDER_TIMEOUT_MS` instead; configure caller authentication in Easy Auth. Keep adapter options
+that are actually read, such as a service-plan ID or voice selection. Private integration helpers may
+load settings from another location or use test credential variables, but the Function itself does not.
+
+For the omnimsg adapter, the configured base ends in `/cgpapi`; the adapter appends `/messages/omnimsg`
+for SMS and voice. QA4 is the test environment; select the provider-approved production base separately.
+The base URL is not hard-coded and changing local settings does not change an already deployed app.
+
+For Azure, set these application variables on the Function App/slot's **Environment variables → App
+settings** page and use a Key Vault reference for the private PEM. The provider-secret resolver uses
+managed identity; signing into the CLI locally does not supply that identity. Local evaluation avoids
+provider lookup, while tests inject mocked credentials and HTTP. Keep the local endpoint on loopback.
+
 ## Request behavior
 
 Easy Auth authenticates and authorizes the caller before `POST /api/SendOtp`; the anonymous handler
@@ -52,6 +94,7 @@ retries. The shared contract defines validation, HTTP outcomes and privacy-safe 
 |---|---|
 | [src/functions/SendOtp.js](src/functions/SendOtp.js) | HTTP handler |
 | [src/functions/config.js](src/functions/config.js) | Shared deployment settings |
+| [src/functions/models.js](src/functions/models.js) | Named delivery context and documented request objects |
 | [src/functions/dispatch.js](src/functions/dispatch.js) | Envelope/JWE handling, registry and dispatch |
 | [src/functions/providers/](src/functions/providers/) | Adapter manifests and API-specific implementations |
 | [test/](test/) | Representative offline checks |

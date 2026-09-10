@@ -9,6 +9,7 @@ const { compactDecrypt } = require('jose');
 const { ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { readConfig } = require('./config');
+const { DeliveryContext } = require('./models');
 
 const CHANNEL_BY_CODE = Object.freeze({ 1: 'sms', 2: 'voice' });
 const CHANNEL_BY_NAME = Object.freeze({ sms: 1, voice: 2 });
@@ -30,6 +31,7 @@ function normalizeMode(mode) {
     return null;
 }
 
+/** @returns {{envelope?: import('./models').Envelope, error?: string}} */
 function parseEnvelope(payload) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         return { error: 'invalid envelope' };
@@ -111,9 +113,15 @@ async function decryptDeliveryContext(compactJwe, config = readConfig()) {
         keyManagementAlgorithms: ['RSA-OAEP-256'],
         contentEncryptionAlgorithms: ['A256GCM'],
     });
-    return { header, context: JSON.parse(Buffer.from(plaintext).toString('utf8')) };
+    return { header, context: DeliveryContext.fromPayload(JSON.parse(Buffer.from(plaintext).toString('utf8'))) };
 }
 
+/**
+ * @param {DeliveryContext} context
+ * @param {import('./models').Envelope} envelope
+ * @param {string} messageId
+ * @returns {import('./models').DispatchRequest}
+ */
 function contextToDispatch(context, envelope, messageId) {
     const channel = CHANNEL_BY_CODE[envelope.channel];
     return {

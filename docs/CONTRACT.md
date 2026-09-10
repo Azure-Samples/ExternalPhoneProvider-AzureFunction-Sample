@@ -3,9 +3,9 @@
 This defines the shared contract for [JavaScript](../javascript/), [Python](../python/) and
 [.NET](../dotnet/). See [production limitations](#production-limitations) before production use.
 
-> **Naming.** "CYOT" (Choose Your Own Telecom) is the internal code name for this feature. It still
-> appears in wire-level identifiers that must not change — type names (`SendCyotOtpRequest`,
-> `CyotDeliveryContext`) and the caller's `User-Agent`. App settings use the `EPP_` prefix.
+> **Naming.** EPP means **External Phone Provider**. App settings use the `EPP_` prefix; the
+> request and delivery models are `Envelope`, `DeliveryContext` and `DispatchRequest`.
+> Documentation names do not change the external JSON fields or `microsoft.mfa.otpDeliver.v1` version.
 
 The design is **one dispatch engine + registered provider adapters**, with one selected provider per
 deployment. API-specific paths, headers, payloads and status rules belong in adapters, not this guide.
@@ -26,7 +26,7 @@ the cleartext envelope carries routing/scheduling only.
 | Header | Notes |
 |--------|-------|
 | `Authorization` | consumed by platform authentication, not parsed or echoed by handler |
-| `User-Agent` | e.g. `Microsoft-AzureMFA-SAS-CYOT/1.0`; not logged |
+| `User-Agent` | caller-supplied identifier; not interpreted or logged |
 | `x-ms-correlation-id` | tracing only; fallback for envelope `correlationId`, not authentication |
 | `x-ms-client-request-id` | per-attempt tracing id (used as `messageId`), not authentication |
 
@@ -34,7 +34,7 @@ Forwarded headers, including `x-ms-client-principal`, do not establish trust by 
 replace the required Easy Auth gate. The handler does not use them to authenticate callers or forward
 the incoming `Authorization` header to the provider. Configure Easy Auth as described in section 5.
 
-### Request body — `SendCyotOtpRequest` (cleartext envelope)
+### EPP request body — `Envelope` (cleartext envelope)
 
 | Field | Required | Notes |
 |-------|----------|-------|
@@ -45,6 +45,10 @@ the incoming `Authorization` header to the provider. Configure Easy Auth as desc
 | `mode` | yes | request delivery mode: `1`/`live` or `2`/`evaluation`; evaluation does not deliver |
 | `ttlSeconds` | no | positive JSON integer, at most `2147483647`; null, booleans, strings, fractions and nonpositive values are rejected. Use canonical integer notation (`60`, not `60.0` or `6e1`) across runtimes |
 | `encryptedDeliveryContext` | yes | JWE compact serialization (see below) |
+
+Canonical integer notation is a caller requirement, not a portable raw-JSON-token check: JavaScript's
+JSON parser normalizes `60.0` and `6e1` to `60`, while Python/.NET reject those representations here.
+Always send `60` to obtain the same result across runtimes; no custom JSON tokenizer is used.
 
 Unknown `type`, invalid `ttlSeconds`, unsupported `channel` or `mode`, or missing/empty `encryptedDeliveryContext` → `400`. Arrays, objects and booleans are not channel/mode values.
 
@@ -58,7 +62,7 @@ Alg: **RSA-OAEP-256** (CEK wrap) + **A256GCM** (content). The JOSE protected hea
 this sample uses the single configured RSA private key (`EPP_DECRYPTION_KEY_PEM`, a Key Vault
 reference in Azure), not a multi-key lookup. The compact JWE must have **exactly five non-empty
 segments** and at most **16,384 characters**; `alg`/`enc` are pinned (only `RSA-OAEP-256` + `A256GCM` accepted) and the AES-GCM auth tag is
-verified before any plaintext is used. Decrypted plaintext = `CyotDeliveryContext`:
+verified before any plaintext is used. Decrypted plaintext = `DeliveryContext`:
 
 The original compact JWE is passed unchanged to the JOSE library. Parsing header fields for the
 advisory key-ID check must not replace the original protected-header bytes used for authentication.
@@ -83,7 +87,7 @@ JWE provides payload confidentiality and integrity, **not SAS caller authenticat
 public key can encrypt a request. The nonce acknowledges decryption; it is not an authentication
 credential or replay protection, and a fixed nonce cannot substitute for Easy Auth.
 
-### Response — `CyotEndpointResponse` (JSON)
+### EPP response (JSON)
 
 ```json
 { "nonce": "<echo of request nonce>", "correlationId": "<echo>", "providerStatus": "accepted" }
@@ -194,8 +198,14 @@ there is no implicit default or automatic failover. Request-body provider fields
 
 The shared configuration readers are [JavaScript `readConfig`](../javascript/src/functions/config.js),
 [Python `read_config`](../python/src/config.py), and [.NET `AppConfig.Read`](../dotnet/Src/AppConfig.cs).
-They expose encryption, Key Vault and selected-provider settings, not caller-authentication settings.
+They return named configuration objects for encryption and the selected provider, not caller-authentication
+settings. Key Vault settings are read by JavaScript's configuration object and by the Python/.NET secret resolvers.
 Provider-specific options remain ordinary app settings passed to the selected adapter.
+
+JSON parsing and type checks stay at the request boundary. Downstream code uses `Envelope`,
+`DeliveryContext` and `DispatchRequest` models (documented object shapes in JavaScript, dataclasses
+in Python, and classes/records in .NET). Named .NET response records preserve the existing wire names
+and optional-field omission. Object construction does not replace validation or coerce invalid input.
 
 All customers call the same `POST /api/SendOtp` handler in their chosen language. Its registry selects
 the configured adapter, which builds the provider's SMS or voice API call. Purchasing an unsupported
