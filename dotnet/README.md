@@ -32,12 +32,13 @@ provider per deployment. Target: .NET 8 isolated worker, Azure Functions v4.
 
 Run Core Tools from `dotnet/`. Create an untracked `local.settings.json` beside
 [host.json](host.json), starting from the [shared sample](../docs/local.settings.sample.json).
-A minimal evaluation setup is:
+For local evaluation, start Azurite and replace the test-key placeholder in this minimal setup:
 
 ```json
 {
 	"IsEncrypted": false,
 	"Values": {
+		"AzureWebJobsStorage": "UseDevelopmentStorage=true",
 		"FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
 		"EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>"
 	}
@@ -52,8 +53,10 @@ under the adapter manifest's Key Vault secret names, not in local settings. See 
 
 Core Tools loads `Values` into environment variables. [AppConfig.Read](Src/AppConfig.cs) reads them
 through `IEnv`; direct worker execution and unit tests do not automatically load local settings.
-Restart the host after edits and configure any required local host storage separately. The
-[project](dotnet.csproj) excludes private local settings from publish output.
+Restart the host after edits. Configure local host storage other than Azurite separately; do not copy
+the emulator connection into Azure. Core Tools does not resolve Key Vault references locally; supply
+the local test PEM or base64 PEM directly. The [project](dotnet.csproj) excludes private local settings
+from publish output.
 
 For Azure, configure the same application variables on the serving app/slot's **Environment variables
 → App settings** page and resolve the private PEM through a Key Vault reference. Key Vault provider

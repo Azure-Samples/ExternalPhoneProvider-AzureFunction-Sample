@@ -74,8 +74,10 @@ script prerequisites separately; the application tests do not validate provision
 ## 2. Provision encryption and deployment trust
 
 Use [local.settings.sample.json](local.settings.sample.json) as a starting point, replacing its
-placeholders with the selected adapter's configuration. Keep local settings private and set the
-same shared values in the Function App environment for deployment; the
+placeholders with the selected adapter's configuration and choosing the matching worker runtime.
+The sample's `UseDevelopmentStorage=true` is local-only and requires Azurite. Keep local settings
+private; set application values in the Function App environment for deployment, configure its host
+storage separately, and use a Key Vault reference instead of a local private-key value. The
 [configuration catalog](CONTRACT.md#4-configuration-app-settings--env) is authoritative.
 
 - Configure `EPP_DECRYPTION_KEY_PEM` through a Key Vault secret reference in Azure and give the caller

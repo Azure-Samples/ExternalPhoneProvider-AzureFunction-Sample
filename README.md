@@ -45,6 +45,12 @@ Use the [sample settings](docs/local.settings.sample.json) as the starting point
 runtime. All entries in its `Values` object are **strings**. The application reads environment
 variables; Azure Functions Core Tools loads that `Values` object for local runs.
 
+The sample uses `node`; change it to `python` or `dotnet-isolated` for those runtimes. Replace the
+provider, endpoint, vault and test-key placeholders before use. Its storage value assumes **Azurite
+is running**; do not copy `UseDevelopmentStorage=true` into Azure. Optional settings stay in the table
+below rather than appearing as required placeholders in the sample. Keep explanatory comments outside
+`Values`, otherwise the host loads them as environment variables too.
+
 The local settings file is an environment-variable input for the Functions host, **not a serialized
 `AppConfig` or request model**. For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in
 JavaScript, `config.provider_name` in Python, and `config.ProviderName` in .NET. The refactor changed
@@ -52,7 +58,8 @@ how code accesses configuration, not the environment-variable names.
 
 | Variable | When needed | Value |
 |---|---|---|
-| `FUNCTIONS_WORKER_RUNTIME` | Functions host | `node`, `python`, or `dotnet-isolated`—choose one, not the sample's combined placeholder. |
+| `AzureWebJobsStorage` | Functions host storage | Local sample: `UseDevelopmentStorage=true` with Azurite running. Configure Azure host storage separately for the selected plan. |
+| `FUNCTIONS_WORKER_RUNTIME` | Functions host | `node`, `python`, or `dotnet-isolated`—exactly one value matching the chosen implementation. |
 | `EPP_DECRYPTION_KEY_PEM` | Every request | Local test PEM or base64 PEM. In Azure, use a Key Vault reference resolving to the private-key secret. |
 | `EPP_ENCRYPTION_KEY_ID` | Optional | Expected encryption key ID; mismatch only produces an advisory warning. |
 | `EPP_PROVIDER_NAME` | Live delivery | Selected adapter's manifest ID. No default provider. |
@@ -77,6 +84,10 @@ key. The default credential resolvers use `ManagedIdentityCredential`, **not** t
 login; ordinary local machines have no managed-identity endpoint. Use offline tests or loopback-only
 evaluation locally, or an explicitly injected test resolver for integration work. Never commit local
 settings, keys or test credentials.
+
+Core Tools does not resolve Azure Key Vault reference expressions locally. Supply the local test PEM
+or base64 PEM directly; use a reference such as `@Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/<private-key-secret>/)`
+for `EPP_DECRYPTION_KEY_PEM` in Azure app settings, where the platform resolves it.
 
 Configure inbound issuer/audience/caller trust in **Easy Auth**, not these application variables.
 Incoming `tenantId`, `channel`, `mode` and `ttlSeconds` are request data. No outbound OAuth settings

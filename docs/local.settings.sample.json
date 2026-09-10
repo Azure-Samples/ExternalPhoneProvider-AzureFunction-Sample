@@ -1,16 +1,14 @@
 {
-  "_comment": "Choose one runtime and a registered adapter. Credential values stay in Key Vault. Azure requires Easy Auth with authentication required and an allowed caller; configure it separately. Local hosts are unauthenticated and must stay on loopback.",
+  "_comment": "Local template: copy beside the chosen app's host.json and replace placeholders. Change node to python or dotnet-isolated for those runtimes. Start Azurite for UseDevelopmentStorage=true. Provider credentials stay in Key Vault. Local hosts have no Easy Auth; keep them on loopback. See README.md for Azure settings and optional values.",
   "IsEncrypted": false,
   "Values": {
-    "FUNCTIONS_WORKER_RUNTIME": "node | dotnet-isolated | python",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
 
-    "EPP_DECRYPTION_KEY_PEM": "<Key Vault secret reference in Azure; PEM or base64 PEM for local development>",
-    "EPP_ENCRYPTION_KEY_ID": "<encryption key ID; mismatch gives a nonfatal warning>",
+    "EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>",
 
     "EPP_PROVIDER_NAME": "<registered-adapter-id>",
     "EPP_PROVIDER_ENDPOINT": "https://<provider-host>/<api-base-path>",
-    "EPP_PROVIDER_ACCOUNT_NAME": "<sender/account if required by the adapter; not an API key or credential ID>",
-    "_comment_provider_timeout": "Outbound provider HTTP timeout: ASCII decimal milliseconds, default 1500, cap 2500. Not a total invocation deadline; see CONTRACT.md. Provider URLs must be HTTPS; redirects are not followed.",
     "EPP_PROVIDER_TIMEOUT_MS": "1500",
 
     "KEY_VAULT_URL": "https://<provider-credential-vault>.vault.azure.net/"

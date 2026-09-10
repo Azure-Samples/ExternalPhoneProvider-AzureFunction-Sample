@@ -32,12 +32,14 @@ engine and one selected provider per deployment. API-specific behavior stays in 
 
 Run Core Tools from `javascript/`. Create an untracked `local.settings.json` **beside
 [host.json](host.json), not inside `src/`**. Start from the
-[shared sample](../docs/local.settings.sample.json); a minimal evaluation setup is:
+[shared sample](../docs/local.settings.sample.json); for local evaluation, start Azurite and replace
+the test-key placeholder in this minimal setup:
 
 ```json
 {
    "IsEncrypted": false,
    "Values": {
+      "AzureWebJobsStorage": "UseDevelopmentStorage=true",
       "FUNCTIONS_WORKER_RUNTIME": "node",
       "EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>"
    }
@@ -52,7 +54,8 @@ this file. See the [complete variable table](../README.md#configure-environment-
 Core Tools copies `Values` into the process environment; direct Node processes and the offline tests
 do **not** automatically load this file. [AppConfig](src/functions/config.js) reads `process.env`
 once per call to `readConfig()`. Restart the host after changing settings. Configure any local host
-storage separately; do not copy a local emulator connection into Azure.
+storage other than Azurite separately; do not copy a local emulator connection into Azure. Core Tools
+does not resolve Key Vault references locally; supply the local test PEM or base64 PEM directly.
 
 Older private settings may contain `DEFAULT_PROVIDER`, `ENDPOINT_TIMEOUT_MS`, `REQUIRE_AUTH`,
 `EXPECTED_AUDIENCE`, `ISSUER_TENANT_ID`, `EUDB`, or per-provider `*_ENDPOINT` entries. Those do not

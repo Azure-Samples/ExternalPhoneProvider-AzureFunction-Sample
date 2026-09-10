@@ -32,12 +32,13 @@ provider per deployment. Target: Python 3.11, Azure Functions v4, Python v2 prog
 
 Run Core Tools from `python/`. Create an untracked `local.settings.json` beside
 [host.json](host.json), starting from the [shared sample](../docs/local.settings.sample.json).
-A minimal evaluation setup is:
+For local evaluation, start Azurite and replace the test-key placeholder in this minimal setup:
 
 ```json
 {
 	"IsEncrypted": false,
 	"Values": {
+		"AzureWebJobsStorage": "UseDevelopmentStorage=true",
 		"FUNCTIONS_WORKER_RUNTIME": "python",
 		"EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>"
 	}
@@ -53,7 +54,9 @@ keys belong in the manifest-named Key Vault secrets, not this file. See the
 Core Tools loads `Values` into `os.environ`. Direct Python execution and pytest do not automatically
 read local settings. [read_config](src/config.py) returns an `AppConfig` object; the handler/engine
 use attributes such as `config.provider_name`, not dictionary key lookups. Restart the host after
-settings change. Configure any required local host storage separately.
+settings change. Configure local host storage other than Azurite separately; do not copy the emulator
+connection into Azure. Core Tools does not resolve Key Vault references locally; supply the local test
+PEM or base64 PEM directly.
 
 For Azure, set the same application variables on the serving app/slot's **Environment variables → App
 settings** page. Use a Key Vault reference for the private PEM. Provider secrets require managed
