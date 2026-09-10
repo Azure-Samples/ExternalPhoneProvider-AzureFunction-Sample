@@ -107,7 +107,6 @@ def test_request_models_preserve_content_and_accept_valid_routing_and_ttl():
         envelope, error = parse_envelope({**payload, "channel": channel, "mode": mode})
         assert error is None and isinstance(envelope, Envelope)
         assert (envelope.channel, envelope.mode) == expected
-    # Invalid inputs and their public errors are covered by the shared handler fixtures.
     for ttl in (1, 2147483647):
         envelope, error = parse_envelope({**payload, "ttlSeconds": ttl})
         assert error is None and envelope.ttl_seconds == ttl
@@ -142,3 +141,15 @@ def test_request_models_preserve_content_and_accept_valid_routing_and_ttl():
     assert TextToVoice.from_payload({**FIXTURES["textToVoice"], "password": 12345}).password is None
     for prefix in ("", " " * 1601):
         assert TextToVoice(prefix, "012345", "en-GB").is_complete
+
+
+def test_envelope_parser_rejects_invalid_inputs_with_the_contract_reason():
+    fixtures = json.loads((Path(__file__).resolve().parents[2] / "tests/fixtures/contract.json").read_text())
+    valid = {"type": "microsoft.mfa.otpDeliver.v1", "channel": 1, "mode": 1, "encryptedDeliveryContext": "jwe"}
+    for fixture in fixtures["badRequests"]:
+        # Malformed JSON is handled before the parser receives an object.
+        if fixture["reason"] == "invalid JSON body":
+            continue
+        payload = json.loads(fixture["rawBody"]) if "rawBody" in fixture else {**valid, **fixture["overrides"]}
+        envelope, error = parse_envelope(payload)
+        assert envelope is None and error == fixture["reason"], fixture["name"]

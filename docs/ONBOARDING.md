@@ -140,6 +140,18 @@ storage separately, and use a Key Vault reference instead of a local private-key
 	the matching public key. `EPP_ENCRYPTION_KEY_ID` is an optional advisory comparison after decryption,
 	not strict key pinning or multi-key lookup.
 
+**Do not enable Entra access-token encryption for the Easy Auth resource app.** Leave its app
+registration's `tokenEncryptionKeyId` as `null`; if previously configured, clear that property without
+deleting its certificates or changing signing keys. This integration expects a signed bearer JWT,
+not an encrypted access token that requires a separate private-key decryption step before validation.
+After changing the registration, request a fresh token rather than reusing a cached encrypted token.
+The resource is the endpoint app configured in Easy Auth's `clientId`/audience, not necessarily the
+application requesting the token. The application code does not configure `tokenEncryptionKeyId`.
+
+This is separate from the **required JWE encryption of `encryptedDeliveryContext`** in the request
+body. Keep `EPP_DECRYPTION_KEY_PEM`; `EPP_ENCRYPTION_KEY_ID` only produces an advisory warning after
+successful payload decryption and cannot cause a platform `401`.
+
 Configure caller trust in the Function App's **App Service Authentication (Easy Auth)** platform
 settings, not application environment variables:
 

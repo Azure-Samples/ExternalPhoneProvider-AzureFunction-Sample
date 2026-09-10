@@ -280,6 +280,25 @@ public class EngineTests
         Assert.Equal(0, rig.Http.Calls);
     }
 
+    [Theory]
+    [InlineData("{", "decryption_failed", null)]
+    [InlineData("null", "bad_request", "incomplete delivery context")]
+    [InlineData("[]", "bad_request", "incomplete delivery context")]
+    [InlineData("{\"nonce\":123,\"phoneNumber\":\"phone\",\"message\":\"message\"}", "bad_request", "incomplete delivery context")]
+    [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":false,\"message\":\"message\"}", "bad_request", "incomplete delivery context")]
+    [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":\"phone\",\"message\":{}}", "bad_request", "incomplete delivery context")]
+    public async Task AuthenticatedPlaintextDistinguishesInvalidJsonFromIncompleteContext(string plaintext, string error, string? reason)
+    {
+        using var rig = new HandlerRig();
+        var result = await rig.Invoke(plaintext: plaintext);
+        AssertFailure(rig, result, 400, error);
+        var body = JsonSerializer.SerializeToElement(result.Value);
+        if (reason is null) Assert.False(body.TryGetProperty("reason", out _));
+        else Assert.Equal(reason, body.GetProperty("reason").GetString());
+        Assert.Equal(Correlation, body.GetProperty("correlationId").GetString());
+        Assert.Equal((1, 0, 0), (rig.Keys.Calls, rig.Secrets.Calls, rig.Http.Calls));
+    }
+
     [Fact]
     public async Task SharedInvalidRequestsReturnSafeReasonsBeforeProviderIo()
     {
@@ -411,12 +430,12 @@ public class EngineTests
         public async Task<ObjectResult> Invoke(object? mode = null, string channel = "sms", string? tenantId = null,
             Jose.JweAlgorithm algorithm = Jose.JweAlgorithm.RSA_OAEP_256,
             Jose.JweEncryption encryption = Jose.JweEncryption.A256GCM, JsonElement? deliveryOverrides = null,
-            JsonElement? outerVoice = null)
+            JsonElement? outerVoice = null, string? plaintext = null)
         {
             var context = new Dictionary<string, object?> { ["nonce"] = Nonce, ["phoneNumber"] = Phone, ["message"] = Message };
             if (deliveryOverrides is { } changes)
                 foreach (var property in changes.EnumerateObject()) context[property.Name] = property.Value;
-            var encrypted = Jose.JWT.Encode(JsonSerializer.Serialize(context), Keys.Rsa, algorithm, encryption,
+            var encrypted = Jose.JWT.Encode(plaintext ?? JsonSerializer.Serialize(context), Keys.Rsa, algorithm, encryption,
                 extraHeaders: new Dictionary<string, object> { ["kid"] = Kid });
             return await InvokeRaw(JsonSerializer.Serialize(new
             {
