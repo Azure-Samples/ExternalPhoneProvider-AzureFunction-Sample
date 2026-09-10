@@ -1,5 +1,3 @@
-"""Telesign: SMS via /v1/messaging, voice via /v1/voice (form-urlencoded).
-Auth: HTTP Basic (customer_id:api_key)."""
 import base64
 import urllib.parse
 
@@ -20,11 +18,8 @@ class TelesignProvider:
     }
 
     def build_request(self, channel, endpoint, dispatch, credential, env):
-        if credential["mode"] == "oauth2":
-            authorization = f"Bearer {credential['token']}"
-        else:
-            raw = f"{credential['identity']}:{credential['secret']}".encode()
-            authorization = "Basic " + base64.b64encode(raw).decode()
+        raw = f"{credential['identity']}:{credential['secret']}".encode()
+        authorization = "Basic " + base64.b64encode(raw).decode()
 
         external_id = dispatch.correlation_id or dispatch.message_id
         if channel == "voice":

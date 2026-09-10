@@ -2,7 +2,6 @@ using System.Text.Json;
 
 namespace Epp.Otp.Providers;
 
-// Infobip: SMS via /sms/3/messages, voice via /tts/3/advanced. Auth: App API key.
 public sealed class InfobipProvider : IProviderAdapter
 {
     public ProviderManifest Manifest { get; } = new(
@@ -22,10 +21,9 @@ public sealed class InfobipProvider : IProviderAdapter
     public ProviderHttpRequest BuildRequest(string channel, string endpoint, DispatchRequest dispatch, ProviderCredential credential, IEnv env)
     {
         var senderId = env.Get("EPP_PROVIDER_ACCOUNT_NAME") ?? "Verify";
-        var auth = credential.Mode == "oauth2" ? $"Bearer {credential.Token}" : $"App {credential.Secret}";
         var headers = new Dictionary<string, string>
         {
-            ["Authorization"] = auth,
+            ["Authorization"] = $"App {credential.Secret}",
             ["Content-Type"] = "application/json",
             ["Accept"] = "application/json",
         };

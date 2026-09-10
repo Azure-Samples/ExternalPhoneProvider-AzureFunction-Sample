@@ -1,45 +1,58 @@
 # External Phone Provider Function — Python (v2 model)
 
-A Python implementation of the External Phone Provider OTP-delivery Function, conforming to the shared
-[contract](../docs/CONTRACT.md). Same design as the [`javascript/`](../javascript/) and
-[`dotnet/`](../dotnet/) versions: one dispatch engine + drop-in provider adapters, env-provisioned
-config, secrets in Key Vault.
+Implements the shared [contract](../docs/CONTRACT.md) with one dispatch engine and one selected
+provider per deployment. Target: Python 3.11, Azure Functions v4, Python v2 programming model.
 
-## Layout
+## Setup and deployment
 
-```
-python/
-├─ function_app.py            # HTTP trigger: POST /api/SendOtp (v2 model)
-├─ requirements.txt
-├─ src/
-│  ├─ dispatch.py             # envelope parse → JWE decrypt → provider dispatch
-│  ├─ registry.py             # adapter registry + EPP_PROVIDER_NAME resolution
-│  ├─ providers/*.py          # infobip, telesign, soprano, sinch (manifest + build/parse)
-│  ├─ secrets.py              # Key Vault via managed identity (cached)
-│  ├─ outcome.py              # status → outcome → HTTP status
-│  ├─ models.py               # DispatchRequest + outcome constants
-│  └─ security.py             # Entra JWT validation when EPP_REQUIRE_AUTH=true
-└─ tests/                     # pytest conformance tests
-```
+1. Follow [customer onboarding](../docs/ONBOARDING.md). Set `EPP_PROVIDER_NAME` to the selected
+	adapter's registered manifest id (`<adapter-id>` is only a placeholder).
+2. Consult the selected adapter and its manifest in [src/providers/](src/providers/) for required
+	credentials and options. Store credentials in Key Vault under the declared secret names, grant
+	the Function's managed identity *Key Vault Secrets User*, and configure the matching endpoint/options.
+3. Base private local settings on [../docs/local.settings.sample.json](../docs/local.settings.sample.json),
+	replacing placeholders and selecting `FUNCTIONS_WORKER_RUNTIME=python`. Put settings at the
+	app root beside [host.json](host.json). Configure decryption from the
+	[shared catalog](../docs/CONTRACT.md#4-configuration-app-settings--env) and caller trust through
+	[Easy Auth](../docs/ONBOARDING.md#2-provision-encryption-and-deployment-trust), the only authentication
+	gate before the anonymous Function. Enable `requireAuthentication=true`,
+	`unauthenticatedClientAction=Return401` and `requireHttps=true`; pin the trusted tenant issuer,
+	endpoint-app `allowedAudiences` and a nonempty `allowedApplications` list for the authorized SAS
+	caller. Do not exclude SendOtp. There is no backup application token validation; never expose the
+	endpoint to the public internet with Easy Auth disabled or bypassed.
+4. Use a virtual environment, install [requirements.txt](requirements.txt) and pytest, then run the
+	offline [tests/](tests/) from this folder. Start the local Functions host from this app root.
+	Core Tools has no Easy Auth: bind only to loopback, with no tunnels or public forwarding.
+5. Publish this folder to a compatible Linux Python Function App with dependencies or a supported
+	remote build. Inspect the package and apply [.funcignore](.funcignore); keep local settings and keys private.
+	Offline tests cover application behavior, not platform authentication; run the separate
+	[deployed security checks](../docs/ONBOARDING.md#4-package-deploy-and-verify).
 
-## Build, test, run
+## Request behavior
 
-```bash
-cd python
-python -m venv .venv && .venv\Scripts\activate      # (macOS/Linux: source .venv/bin/activate)
-pip install -r requirements.txt pytest
-python -m pytest tests                               # run conformance tests
-func start                                           # run locally (copy ../docs/local.settings.sample.json)
-```
+`POST /api/SendOtp` uses the same request and trust boundaries as the other runtimes. Incoming
+`mode`, `channel`, `ttlSeconds` and `tenantId` are request data, not deployment authentication settings.
+Easy Auth authenticates and authorizes the caller before the anonymous handler validates the envelope
+and decrypts the JWE. Incoming `Authorization` is not parsed or echoed by the handler. JWE does not
+authenticate SAS: anyone with the public key can encrypt a request, and a fixed nonce is not authentication.
 
-## Deploy
+Use incoming `mode: 2` or `mode: "evaluation"` as the generic shutter for every provider: platform
+authentication on Azure, handler validation and decryption run, but provider lookup, provider Key Vault
+reads and provider HTTP do not. No provider configuration or diagnostic environment flag is required.
+Live requests forward the rendered message unchanged using the configured provider's API key and
+await acceptance before returning the nonce; failures omit it. Acceptance is not handset delivery.
+Platform/key prerequisites and HTTP outcomes are defined in the
+[contract](../docs/CONTRACT.md#evaluation-generic-shutter).
 
-```bash
-func azure functionapp publish <your-function-app>   # Linux Python Function App
-```
+## Source
 
-The app's **managed identity** needs the **Key Vault Secrets User** role on the vault. Configuration
-(env var names, Key Vault secret names, behaviors) is identical to the contract — see
-[`../docs/CONTRACT.md`](../docs/CONTRACT.md).
+| Source | Purpose |
+|---|---|
+| [function_app.py](function_app.py) | HTTP handler and adapter registration |
+| [src/config.py](src/config.py) | Shared deployment settings |
+| [src/dispatch.py](src/dispatch.py) | Request model, JWE, provider registry and outcome mapping |
+| [src/providers/](src/providers/) | Adapter manifests and API-specific implementations |
+| [src/secrets.py](src/secrets.py) | Cached Key Vault access via managed identity |
 
-Target: Azure Functions Python **v2** programming model (Python 3.11), Functions v4.
+Add and register an adapter without adding provider-specific branches to the shared pipeline.
+See [production limitations](../docs/CONTRACT.md#production-limitations) before production use.

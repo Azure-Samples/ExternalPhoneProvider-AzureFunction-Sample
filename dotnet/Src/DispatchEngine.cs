@@ -2,12 +2,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.Extensions.Logging;
 
 namespace Epp.Otp;
-
-// Delivery pipeline: parse the cleartext SAS envelope, decrypt the JWE that carries the PII, then
-// dispatch to the configured provider. Fail-closed — only a Continue outcome is "accepted".
 
 public sealed record Envelope(
     string? Type,
@@ -20,6 +16,7 @@ public sealed record Envelope(
 
 public static class EnvelopeParser
 {
+    public const string EnvelopeType = "microsoft.mfa.otpDeliver.v1";
     public const int ModeLive = 1;
     public const int ModeEvaluation = 2;
 
@@ -54,8 +51,11 @@ public static class EnvelopeParser
             return name is not null && ModeByName.TryGetValue(name, out var mapped) ? mapped : null;
         }
 
+        if (String("type") != EnvelopeType)
+            return (null, "unsupported envelope type");
+
         var encrypted = String("encryptedDeliveryContext");
-        if (string.IsNullOrEmpty(encrypted))
+        if (string.IsNullOrWhiteSpace(encrypted))
             return (null, "encryptedDeliveryContext is required");
 
         var channel = Channel();
@@ -66,12 +66,21 @@ public static class EnvelopeParser
         if (mode is null)
             return (null, "unsupported mode");
 
+        int? ttlSeconds = null;
+        if (payload.TryGetProperty("ttlSeconds", out var ttl))
+        {
+            if (ttl.ValueKind != JsonValueKind.Number || !ttl.TryGetInt32(out var seconds))
+                return (null, "invalid ttlSeconds");
+            if (seconds <= 0)
+                return (null, "ttlSeconds expired");
+            ttlSeconds = seconds;
+        }
+
         return (new Envelope(String("type"), String("tenantId"), String("correlationId"),
-            channel.Value, mode.Value, Int("ttlSeconds"), encrypted), null);
+            channel.Value, mode.Value, ttlSeconds, encrypted), null);
     }
 }
 
-// Decrypted JWE plaintext: phone + the rendered message, which includes the passcode.
 public sealed class DeliveryContext
 {
     [JsonPropertyName("nonce")] public string? Nonce { get; set; }
@@ -84,7 +93,6 @@ public sealed class DeliveryContext
 
 public sealed record JweResult(string? Kid, string? Alg, string? Enc, DeliveryContext Context);
 
-// Injectable so tests use a local key.
 public interface IJweKeyProvider
 {
     RSA GetPrivateKey(string? kid);
@@ -124,7 +132,6 @@ public sealed class JweDecryptor
     }
 }
 
-// Imported once: a per-delivery RSA import would sit inside the response budget.
 public sealed class EnvJweKeyProvider : IJweKeyProvider
 {
     private readonly IEnv _env;
@@ -135,7 +142,7 @@ public sealed class EnvJweKeyProvider : IJweKeyProvider
 
     public RSA GetPrivateKey(string? kid)
     {
-        var pem = _env.Get("EPP_DECRYPTION_KEY_PEM");
+        var pem = AppConfig.Read(_env).DecryptionKeyPem;
         if (string.IsNullOrEmpty(pem))
             throw new InvalidOperationException("private key unavailable (EPP_DECRYPTION_KEY_PEM is not set)");
 
@@ -148,8 +155,7 @@ public sealed class EnvJweKeyProvider : IJweKeyProvider
         return rsa;
     }
 
-    // The setup script stores the key as base64 over the PEM so its newlines survive being carried as
-    // an app setting, so accept either form.
+    // Base64 preserves PEM newlines in app settings; accept either form.
     private static string NormalizePem(string value) =>
         value.Contains("-----BEGIN", StringComparison.Ordinal)
             ? value
@@ -158,7 +164,9 @@ public sealed class EnvJweKeyProvider : IJweKeyProvider
 
 public sealed class DispatchEngine
 {
+    public const string ProviderHttpClientName = "otp-provider";
     private const int DefaultTimeoutMs = 1500;
+    private const int MaxTimeoutMs = 2500;
     private readonly ProviderRegistry _registry;
     private readonly ISecretResolver _secrets;
     private readonly IHttpClientFactory _httpFactory;
@@ -172,105 +180,109 @@ public sealed class DispatchEngine
         _env = env ?? new ProcessEnv();
     }
 
-    public async Task<DispatchResult> DispatchAsync(DispatchRequest dispatch, string? requestProvider, bool shutter, string requestId, ILogger log)
+    public async Task<DispatchResult> DispatchAsync(DispatchRequest dispatch, string requestId)
     {
-        var adapter = _registry.Resolve(requestProvider);
+        var config = AppConfig.Read(_env);
+        var adapter = _registry.Get(config.ProviderName);
         if (adapter is null)
-        {
-            log.LogWarning("[DISPATCH_ERROR] requestId={RequestId} unknown provider={Provider}", requestId, requestProvider ?? "n/a");
             return new DispatchResult(400, new { status = "error", reason = "unknown provider", requestId });
-        }
 
         var manifest = adapter.Manifest;
         var providerId = manifest.Id;
         var channel = (dispatch.Channel ?? "sms").ToLowerInvariant();
 
         if (!OutcomeMapper.DefaultChannels.Contains(channel))
-            return new DispatchResult(400, new { status = "error", provider = providerId, reason = $"channel '{channel}' not supported", requestId });
+            return new DispatchResult(400, new { status = "error", provider = providerId, reason = "unsupported channel", requestId });
 
-        // Credential (fail closed 502 if missing) — this is our credential, not the caller's token.
-        ProviderCredential? credential = null;
+        if (manifest.Auth.Mode != "apiKey")
+            return new DispatchResult(502, FailBody(providerId, channel, "unsupported provider auth mode", dispatch, requestId));
+
+        ProviderCredential credential;
         try { credential = await ResolveCredentialAsync(manifest.Auth); }
-        catch (Exception ex) { log.LogError("[DISPATCH_ERROR] requestId={RequestId} provider={Provider} credential error={Error}", requestId, providerId, ex.Message); }
+        catch { return new DispatchResult(502, FailBody(providerId, channel, "provider credential unavailable", dispatch, requestId)); }
 
-        var identityRequired = credential is { Mode: "apiKey" } && !string.IsNullOrEmpty(manifest.Auth.IdentityKeyVaultSecretName);
-        var credentialUnavailable = credential is null
-            || (credential.Mode == "oauth2" && string.IsNullOrEmpty(credential.Token))
-            || (credential.Mode == "apiKey" && string.IsNullOrEmpty(credential.Secret))
+        var identityRequired = !string.IsNullOrEmpty(manifest.Auth.IdentityKeyVaultSecretName);
+        var credentialUnavailable = string.IsNullOrEmpty(credential.Secret)
             || (identityRequired && string.IsNullOrEmpty(credential.Identity));
         if (credentialUnavailable)
             return new DispatchResult(502, FailBody(providerId, channel, "provider credential unavailable", dispatch, requestId));
 
-        var endpoint = ResolveEndpoint(manifest, _env);
-        if (string.IsNullOrEmpty(endpoint))
-            return new DispatchResult(502, FailBody(providerId, channel, "provider endpoint not configured", dispatch, requestId));
+        var endpoint = config.ProviderEndpoint;
+        if (!IsHttpsEndpoint(endpoint))
+            return new DispatchResult(502, FailBody(providerId, channel, "provider endpoint invalid or not configured", dispatch, requestId));
 
-        var req = adapter.BuildRequest(channel, endpoint, dispatch, credential!, _env);
-        log.LogInformation("[DISPATCH] requestId={RequestId} provider={Provider} channel={Channel} shutter={Shutter}", requestId, providerId, channel, shutter);
-
-        if (shutter)
-            return new DispatchResult(200, new { status = "accepted", shutterProcessed = true, provider = providerId, channel, correlationId = dispatch.CorrelationId, messageId = dispatch.MessageId, requestId });
-
-        var timeoutMs = int.TryParse(_env.Get("EPP_PROVIDER_TIMEOUT_MS"), out var parsedTimeout) ? parsedTimeout : DefaultTimeoutMs;
-        HttpResponseMessage resp;
-        string body;
+        var timeoutMs = NormalizeProviderTimeoutMs(config.ProviderTimeoutMs);
         try
         {
-            (resp, body) = await SendAsync(req, timeoutMs);
+            var req = adapter.BuildRequest(channel, endpoint!, dispatch, credential, _env);
+            if (!IsHttpsEndpoint(req.Url))
+                return new DispatchResult(502, FailBody(providerId, channel, "provider request endpoint invalid", dispatch, requestId));
+
+            var (providerHttpStatus, success, body) = await SendAsync(req, timeoutMs);
+            JsonElement json;
+            try { using var responseDocument = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body); json = responseDocument.RootElement.Clone(); }
+            catch { using var emptyDocument = JsonDocument.Parse("{}"); json = emptyDocument.RootElement.Clone(); }
+
+            var parsed = adapter.ParseResponse(providerHttpStatus, success, json);
+            var outcome = OutcomeMapper.ResolveOutcome(manifest, parsed);
+            var httpStatus = OutcomeMapper.ToHttpStatus(outcome, parsed.ProviderHttpStatus);
+
+            return new DispatchResult(httpStatus, new
+            {
+                status = outcome == Outcome.Continue ? "accepted" : "failed",
+                outcome = outcome.ToString(),
+                provider = providerId,
+                channel,
+                messageId = dispatch.MessageId,
+                correlationId = dispatch.CorrelationId,
+                requestId,
+            });
         }
         catch (OperationCanceledException)
         {
-            log.LogWarning("[DISPATCH_TIMEOUT] requestId={RequestId} provider={Provider}", requestId, providerId);
             return new DispatchResult(504, FailBody(providerId, channel, $"endpoint timeout after {timeoutMs}ms", dispatch, requestId));
         }
-        catch (Exception ex)
+        catch
         {
-            log.LogError("[DISPATCH_ERROR] requestId={RequestId} provider={Provider} reason={Reason}", requestId, providerId, ex.Message);
-            return new DispatchResult(502, FailBody(providerId, channel, ex.Message, dispatch, requestId));
+            return new DispatchResult(502, FailBody(providerId, channel, "provider request failed", dispatch, requestId));
         }
-
-        JsonElement json;
-        try { using var responseDocument = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body); json = responseDocument.RootElement.Clone(); }
-        catch { using var emptyDocument = JsonDocument.Parse("{}"); json = emptyDocument.RootElement.Clone(); }
-
-        var parsed = adapter.ParseResponse((int)resp.StatusCode, resp.IsSuccessStatusCode, json);
-        var outcome = OutcomeMapper.ResolveOutcome(manifest, parsed);
-        var httpStatus = OutcomeMapper.ToHttpStatus(outcome, parsed.ProviderHttpStatus);
-
-        log.LogInformation("[DISPATCH_RESULT] requestId={RequestId} provider={Provider} channel={Channel} outcome={Outcome} providerStatus={Status} httpStatus={Http}",
-            requestId, providerId, channel, outcome, parsed.ProviderStatusName ?? parsed.ProviderStatusCode ?? "n/a", httpStatus);
-
-        return new DispatchResult(httpStatus, new
-        {
-            status = outcome == Outcome.Continue ? "accepted" : "failed",
-            outcome = outcome.ToString(),
-            provider = providerId,
-            channel,
-            messageId = dispatch.MessageId,
-            correlationId = dispatch.CorrelationId,
-            providerMessageId = parsed.ProviderMessageId,
-            providerStatus = parsed.ProviderStatusName ?? parsed.ProviderStatusCode,
-            providerStatusDescription = parsed.ProviderStatusDescription,
-            requestId,
-        });
     }
 
     private async Task<ProviderCredential> ResolveCredentialAsync(AuthConfig auth)
     {
-        if (auth.Mode == "oauth2") return new ProviderCredential("oauth2", Token: null); // not wired -> fails closed
         var secret = await _secrets.ResolveAsync(auth.KeyVaultSecretName);
         var identity = string.IsNullOrEmpty(auth.IdentityKeyVaultSecretName) ? string.Empty : await _secrets.ResolveAsync(auth.IdentityKeyVaultSecretName);
         return new ProviderCredential("apiKey", Secret: secret, Identity: identity);
     }
 
-    // Base URL from app settings: one provider is active per deployment, so the endpoint is a single
-    // EPP_PROVIDER_ENDPOINT rather than a per-provider key.
-    private static string? ResolveEndpoint(ProviderManifest manifest, IEnv env) => env.Get("EPP_PROVIDER_ENDPOINT");
+    internal static int NormalizeProviderTimeoutMs(string? value)
+    {
+        var text = value?.Trim();
+        if (string.IsNullOrEmpty(text)) return DefaultTimeoutMs;
 
-    private async Task<(HttpResponseMessage, string)> SendAsync(ProviderHttpRequest req, int timeoutMs)
+        // Saturate while scanning every character: arbitrarily large decimal values are valid,
+        // but signs, exponents, hex, non-ASCII digits and invalid suffixes are not.
+        var timeout = 0;
+        foreach (var digit in text)
+        {
+            if (digit < '0' || digit > '9') return DefaultTimeoutMs;
+            timeout = Math.Min(MaxTimeoutMs, timeout * 10 + digit - '0');
+        }
+        return timeout > 0 ? timeout : DefaultTimeoutMs;
+    }
+
+    internal static bool IsHttpsEndpoint(string? endpoint) =>
+        Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
+        && uri.Scheme == Uri.UriSchemeHttps
+        && !string.IsNullOrEmpty(uri.Host)
+        && uri.Port > 0
+        && string.IsNullOrEmpty(uri.UserInfo)
+        && string.IsNullOrEmpty(uri.Fragment);
+
+    private async Task<(int HttpStatus, bool Success, string Body)> SendAsync(ProviderHttpRequest req, int timeoutMs)
     {
         using var cts = new CancellationTokenSource(timeoutMs);
-        var client = _httpFactory.CreateClient();
+        using var client = _httpFactory.CreateClient(ProviderHttpClientName);
         using var message = new HttpRequestMessage(new HttpMethod(req.Method), req.Url)
         {
             Content = new StringContent(req.Body, Encoding.UTF8, req.Headers.TryGetValue("Content-Type", out var ct) ? ct : "application/json"),
@@ -280,9 +292,11 @@ public sealed class DispatchEngine
             if (k.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) continue;
             if (!message.Headers.TryAddWithoutValidation(k, v)) message.Content.Headers.TryAddWithoutValidation(k, v);
         }
-        var resp = await client.SendAsync(message, cts.Token);
-        var body = await resp.Content.ReadAsStringAsync(cts.Token);
-        return (resp, body);
+        using var resp = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+        using var stream = await resp.Content.ReadAsStreamAsync(cts.Token);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        var text = await reader.ReadToEndAsync(cts.Token);
+        return ((int)resp.StatusCode, resp.IsSuccessStatusCode, text);
     }
 
     private static object FailBody(string provider, string channel, string reason, DispatchRequest d, string requestId) =>

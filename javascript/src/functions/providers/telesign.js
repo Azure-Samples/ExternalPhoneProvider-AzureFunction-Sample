@@ -4,9 +4,6 @@
 
 'use strict';
 
-// Telesign: SMS /v1/messaging, voice /v1/voice, form-urlencoded.
-// Auth: HTTP Basic (customer_id:api_key) from Key Vault, or Bearer in oauth2 mode.
-
 const manifest = {
     id: 'telesign',
     auth: {
@@ -32,10 +29,7 @@ const manifest = {
 function buildRequest({ channel, endpoint, dispatch, credential, env }) {
     const base = endpoint;
     const contentType = 'application/x-www-form-urlencoded';
-
-    const authorization = credential.mode === 'oauth2'
-        ? `Bearer ${credential.token}`
-        : `Basic ${Buffer.from(`${credential.identity}:${credential.secret}`).toString('base64')}`;
+    const authorization = `Basic ${Buffer.from(`${credential.identity}:${credential.secret}`).toString('base64')}`;
 
     let path;
     let params;
@@ -80,7 +74,6 @@ function parseResponse({ httpStatus, ok, json }) {
         providerMessageId: (json && json.reference_id) || null,
         providerStatusCode: status.code != null ? String(status.code) : null,
         providerStatusName: null,
-        providerStatusDescription: status.description || null,
     };
 }
 

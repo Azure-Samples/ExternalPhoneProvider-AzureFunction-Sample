@@ -1,19 +1,19 @@
-"""Delivery pipeline: parse the cleartext SAS envelope, decrypt the JWE that carries the PII, then
-dispatch to the configured provider. Fail-closed — only a Continue outcome is "accepted"."""
 import base64
 import json
 import os
-import re
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import requests
 from jwcrypto import jwe as jwe_module
 from jwcrypto import jwk
+from urllib3.exceptions import ReadTimeoutError
+
+from .config import read_config
 
 DEFAULT_TIMEOUT_MS = 1500
 DEFAULT_CHANNELS = ["sms", "voice"]
 
-# Outcomes (mirrors the other languages).
 CONTINUE = "Continue"
 FAIL = "Fail"
 BLOCK = "Block"
@@ -31,13 +31,13 @@ class DispatchRequest:
 
 
 def resolve_outcome(manifest, parsed):
-    """A recognized status wins; an unknown status is fail-closed; only a status-less response
-    trusts the HTTP result."""
     mapping = manifest["response_mapping"]
     key = parsed.get("provider_status_name") or parsed.get("provider_status_code")
     if key:
-        return mapping.get(key) or mapping.get("default", FAIL)
-    return CONTINUE if parsed.get("success") else mapping.get("default", FAIL)
+        outcome = mapping.get(key) or mapping.get("default", FAIL)
+    else:
+        outcome = CONTINUE if parsed.get("success") else mapping.get("default", FAIL)
+    return FAIL if outcome == CONTINUE and not parsed.get("success") else outcome
 
 
 def to_http_status(outcome, provider_http_status):
@@ -58,8 +58,6 @@ def to_http_status(outcome, provider_http_status):
 
 
 class ProviderRegistry:
-    """One provider is active per deployment; request_provider is a test override."""
-
     def __init__(self, adapters):
         self._by_id = {adapter.manifest["id"].lower(): adapter for adapter in adapters}
 
@@ -68,11 +66,7 @@ class ProviderRegistry:
             return None
         return self._by_id.get(provider_id.lower())
 
-    def resolve(self, request_provider):
-        return self.get(request_provider or os.environ.get("EPP_PROVIDER_NAME"))
 
-
-# Channel: 1=Sms, 2=Voice. DeliveryMode: 1=Live, 2=Evaluation (do NOT deliver).
 CHANNEL_BY_CODE = {1: "sms", 2: "voice"}
 CHANNEL_BY_NAME = {"sms": 1, "voice": 2}
 MODE_LIVE = 1
@@ -83,45 +77,50 @@ MAX_JWE_LENGTH = 16384
 
 
 def _normalize_channel(channel):
-    if isinstance(channel, bool):
-        return None
-    if channel in CHANNEL_BY_CODE:
-        return channel
+    if type(channel) is int:
+        return channel if channel in CHANNEL_BY_CODE else None
     if isinstance(channel, str):
         return CHANNEL_BY_NAME.get(channel.lower())
     return None
 
 
 def _normalize_mode(mode):
-    if isinstance(mode, bool):
-        return None
-    if mode in (MODE_LIVE, MODE_EVALUATION):
-        return mode
+    if type(mode) is int:
+        return mode if mode in (MODE_LIVE, MODE_EVALUATION) else None
     if isinstance(mode, str):
         return MODE_BY_NAME.get(mode.lower())
     return None
 
 
 def parse_envelope(payload):
-    """Returns (envelope, None) or (None, error)."""
     if not isinstance(payload, dict):
         return None, "invalid envelope"
+    if payload.get("type") != "microsoft.mfa.otpDeliver.v1":
+        return None, "unsupported envelope type"
     encrypted = payload.get("encryptedDeliveryContext")
-    if not isinstance(encrypted, str) or not encrypted:
+    if not isinstance(encrypted, str) or not encrypted.strip():
         return None, "encryptedDeliveryContext is required"
     channel = _normalize_channel(payload.get("channel"))
     if channel is None:
-        return None, f"unsupported channel '{payload.get('channel')}'"
+        return None, "unsupported channel"
     mode = _normalize_mode(payload.get("mode"))
     if mode is None:
-        return None, f"unsupported mode '{payload.get('mode')}'"
+        return None, "unsupported mode"
+    ttl_seconds = payload.get("ttlSeconds")
+    if "ttlSeconds" in payload:
+        if type(ttl_seconds) is not int:
+            return None, "invalid ttlSeconds"
+        if ttl_seconds <= 0:
+            return None, "ttlSeconds expired"
+        if ttl_seconds > 2147483647:
+            return None, "invalid ttlSeconds"
     return {
         "type": payload.get("type"),
         "tenant_id": payload.get("tenantId"),
         "correlation_id": payload.get("correlationId"),
         "channel": channel,
         "mode": mode,
-        "ttl_seconds": payload.get("ttlSeconds"),
+        "ttl_seconds": ttl_seconds,
         "encrypted_delivery_context": encrypted,
     }, None
 
@@ -134,13 +133,12 @@ def read_protected_header(compact_jwe):
 
 def make_key_provider(env):
     def key_provider(_kid):
-        return env.get("EPP_DECRYPTION_KEY_PEM") or ""
+        return read_config(env)["decryption_key_pem"]
 
     return key_provider
 
 
 def _assert_well_formed_jwe(compact_jwe):
-    # Reject oversized or malformed input before decoding or allocating buffers.
     if not isinstance(compact_jwe, str) or not compact_jwe:
         raise ValueError("malformed JWE")
     if len(compact_jwe) > MAX_JWE_LENGTH:
@@ -150,13 +148,12 @@ def _assert_well_formed_jwe(compact_jwe):
         raise ValueError("malformed JWE: expected five non-empty segments")
 
 
-# Imported once: a per-delivery RSA import would sit inside the response budget.
+# Cache only the configured key to avoid repeated RSA imports.
 _key_cache = {}
 
 
 def _normalize_pem(value):
-    """The setup script stores the key as base64 over the PEM so its newlines survive being carried as
-    an app setting, so accept either form."""
+    # Base64 preserves PEM newlines in app settings.
     text = value if isinstance(value, str) else value.decode("utf-8")
     if "-----BEGIN" in text:
         return text
@@ -175,32 +172,76 @@ def _load_private_key(pem):
 
 
 def decrypt_delivery_context(compact_jwe, key_provider):
-    """key_provider(kid) -> PEM string. Returns (header, delivery context dict)."""
     _assert_well_formed_jwe(compact_jwe)
     header = read_protected_header(compact_jwe)
     key = _load_private_key(key_provider(header.get("kid")))
-    # Pin alg/enc so a tampered header can't downgrade the crypto.
     token = jwe_module.JWE(algs=["RSA-OAEP-256", "A256GCM"])
     token.deserialize(compact_jwe, key=key)
     return header, json.loads(token.payload.decode("utf-8"))
 
 
-def _space_passcode_for_voice(message):
-    """Left alone, TTS reads 641895 as "six hundred forty-one thousand...", which no user can type."""
-    return re.sub(r"\b\d{4,8}\b", lambda m: " ".join(m.group(0)), message or "", count=1)
-
-
 def context_to_dispatch(context, envelope, message_id):
-    """The message is pre-rendered and already contains the passcode, so there is no separate code."""
     return DispatchRequest(
         destination=context.get("phoneNumber"),
-        message=(_space_passcode_for_voice(context.get("message"))
-                 if CHANNEL_BY_CODE[envelope["channel"]] == "voice" else context.get("message")),
+        message=context.get("message"),
         channel=CHANNEL_BY_CODE[envelope["channel"]],
         message_id=message_id,
         correlation_id=envelope["correlation_id"],
         locale=context.get("locale"),
     )
+
+
+def _valid_provider_url(value):
+    if not isinstance(value, str) or not value or "#" in value:
+        return False
+    # urlsplit strips controls; reject them before parsing.
+    if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value):
+        return False
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port  # Access validates the port's syntax and range.
+        return (
+            parsed.scheme == "https"
+            and bool(parsed.hostname)
+            and port != 0
+            and parsed.username is None
+            and parsed.password is None
+            and not parsed.fragment
+            and not parsed.netloc.endswith(":")
+        )
+    except ValueError:
+        return False
+
+
+def _provider_timeout_ms(value):
+    digits = value.strip() if isinstance(value, str) else ""
+    if not digits or not digits.isascii() or not digits.isdecimal():
+        return DEFAULT_TIMEOUT_MS
+    digits = digits.lstrip("0")
+    if not digits:
+        return DEFAULT_TIMEOUT_MS
+    # Clamp before int() to avoid its digit limit.
+    if len(digits) > 4 or (len(digits) == 4 and digits > "2500"):
+        return 2500
+    return int(digits)
+
+
+def _has_read_timeout(error):
+    # requests wraps urllib3 body-read timeouts in ConnectionError.
+    pending = [error]
+    seen = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, ReadTimeoutError):
+            return True
+        pending.extend(
+            nested for nested in (current.__cause__, current.__context__, *current.args)
+            if isinstance(nested, Exception)
+        )
+    return False
 
 
 class DispatchEngine:
@@ -209,105 +250,100 @@ class DispatchEngine:
         self.secrets = secrets
         self.env = env if env is not None else os.environ
 
-    def dispatch(self, dispatch, request_provider, shutter, request_id, log):
-        adapter = self.registry.resolve(request_provider)
+    def dispatch(self, dispatch, request_id):
+        config = read_config(self.env)
+        adapter = self.registry.get(config["provider_name"])
         if adapter is None:
-            log.warning("[DISPATCH_ERROR] requestId=%s unknown provider=%s", request_id, request_provider or "n/a")
             return 400, {"status": "error", "reason": "unknown provider", "requestId": request_id}
 
         manifest = adapter.manifest
         provider_id = manifest["id"]
-        channel = (dispatch.channel or "sms").lower()
+        channel = dispatch.channel if dispatch.channel is not None else "sms"
+        if not isinstance(channel, str):
+            return 400, {"status": "error", "provider": provider_id, "reason": "unsupported channel", "requestId": request_id}
+        channel = channel.lower()
 
         if channel not in DEFAULT_CHANNELS:
-            return 400, {"status": "error", "provider": provider_id, "reason": f"channel '{channel}' not supported", "requestId": request_id}
-
-        # Credential (fail closed 502 if missing) — this is our credential, not the caller's token.
-        credential = None
-        try:
-            credential = self._resolve_credential(manifest["auth"])
-        except Exception as error:
-            log.error("[DISPATCH_ERROR] requestId=%s provider=%s credential error=%s", request_id, provider_id, error)
+            return 400, {"status": "error", "provider": provider_id, "reason": "unsupported channel", "requestId": request_id}
 
         auth = manifest["auth"]
-        identity_required = (
-            credential is not None
-            and credential["mode"] == "apiKey"
-            and bool(auth.get("identity_key_vault_secret_name"))
-        )
-        credential_unavailable = (
-            credential is None
-            or (credential["mode"] == "oauth2" and not credential.get("token"))
-            or (credential["mode"] == "apiKey" and not credential.get("secret"))
-            or (identity_required and not credential.get("identity"))
-        )
-        if credential_unavailable:
+        if auth.get("mode") != "apiKey":
+            return 502, self._fail_body(provider_id, channel, "unsupported provider auth mode", dispatch, request_id)
+        try:
+            credential = self._resolve_credential(auth)
+        except Exception:
+            return 502, self._fail_body(provider_id, channel, "provider credential unavailable", dispatch, request_id)
+        if not credential.get("secret") or (auth.get("identity_key_vault_secret_name") and not credential.get("identity")):
             return 502, self._fail_body(provider_id, channel, "provider credential unavailable", dispatch, request_id)
 
-        endpoint = self._resolve_endpoint(manifest)
+        endpoint = config["provider_endpoint"]
         if not endpoint:
             return 502, self._fail_body(provider_id, channel, "provider endpoint not configured", dispatch, request_id)
-
-        provider_request = adapter.build_request(channel, endpoint, dispatch, credential, self.env)
-        log.info("[DISPATCH] requestId=%s provider=%s channel=%s shutter=%s", request_id, provider_id, channel, bool(shutter))
-
-        if shutter:
-            return 200, {"status": "accepted", "shutterProcessed": True, "provider": provider_id, "channel": channel, "correlationId": dispatch.correlation_id, "messageId": dispatch.message_id, "requestId": request_id}
+        if not _valid_provider_url(endpoint):
+            return 502, self._fail_body(provider_id, channel, "invalid provider endpoint", dispatch, request_id)
 
         try:
-            timeout_ms = int(self.env.get("EPP_PROVIDER_TIMEOUT_MS") or DEFAULT_TIMEOUT_MS)
-        except (TypeError, ValueError):
-            timeout_ms = DEFAULT_TIMEOUT_MS
+            provider_request = adapter.build_request(channel, endpoint, dispatch, credential, config["env"])
+        except Exception:
+            return 502, self._fail_body(provider_id, channel, "provider request failed", dispatch, request_id)
+        if not _valid_provider_url(provider_request.get("url")):
+            return 502, self._fail_body(provider_id, channel, "invalid provider request URL", dispatch, request_id)
+
+        timeout_ms = _provider_timeout_ms(config["provider_timeout_ms"])
+        response = None
         try:
             response = requests.request(
                 provider_request["method"],
                 provider_request["url"],
                 headers=provider_request["headers"],
                 data=provider_request["body"],
+                # Connect/read inactivity, not a total delivery deadline.
                 timeout=timeout_ms / 1000,
+                allow_redirects=False,  # Never forward credentials to a redirect target.
+                stream=True,  # Own the response for cleanup if body reading fails.
             )
-        except requests.exceptions.Timeout:
-            log.warning("[DISPATCH_TIMEOUT] requestId=%s provider=%s", request_id, provider_id)
-            return 504, self._fail_body(provider_id, channel, f"endpoint timeout after {timeout_ms}ms", dispatch, request_id)
+
+            try:
+                body_json = response.json()
+            except ValueError:
+                body_json = {}
+
+            ok = 200 <= response.status_code < 300
+            parsed = adapter.parse_response(response.status_code, ok, body_json)
+            outcome = resolve_outcome(manifest, parsed)
+            http_status = to_http_status(outcome, parsed.get("provider_http_status") or response.status_code)
+
+            return http_status, {
+                "status": "accepted" if outcome == CONTINUE else "failed",
+                "outcome": outcome,
+                "provider": provider_id,
+                "channel": channel,
+                "messageId": dispatch.message_id,
+                "correlationId": dispatch.correlation_id,
+                "requestId": request_id,
+            }
         except requests.exceptions.RequestException as error:
-            log.error("[DISPATCH_ERROR] requestId=%s provider=%s reason=%s", request_id, provider_id, error)
-            return 502, self._fail_body(provider_id, channel, str(error), dispatch, request_id)
-
-        try:
-            body_json = response.json()
-        except ValueError:
-            body_json = {}
-
-        ok = 200 <= response.status_code < 300
-        parsed = adapter.parse_response(response.status_code, ok, body_json)
-        outcome = resolve_outcome(manifest, parsed)
-        http_status = to_http_status(outcome, parsed.get("provider_http_status") or response.status_code)
-
-        log.info("[DISPATCH_RESULT] requestId=%s provider=%s channel=%s outcome=%s httpStatus=%s", request_id, provider_id, channel, outcome, http_status)
-
-        return http_status, {
-            "status": "accepted" if outcome == CONTINUE else "failed",
-            "outcome": outcome,
-            "provider": provider_id,
-            "channel": channel,
-            "messageId": dispatch.message_id,
-            "correlationId": dispatch.correlation_id,
-            "providerMessageId": parsed.get("provider_message_id"),
-            "providerStatus": parsed.get("provider_status_name") or parsed.get("provider_status_code"),
-            "providerStatusDescription": parsed.get("provider_status_description"),
-            "requestId": request_id,
-        }
+            if response is None:
+                response = getattr(error, "response", None)
+            if isinstance(error, requests.exceptions.Timeout) or (
+                isinstance(error, requests.exceptions.ConnectionError) and _has_read_timeout(error)
+            ):
+                return 504, self._fail_body(provider_id, channel, "provider timeout", dispatch, request_id)
+            return 502, self._fail_body(provider_id, channel, "provider request failed", dispatch, request_id)
+        except Exception:
+            return 502, self._fail_body(provider_id, channel, "provider response failed", dispatch, request_id)
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
 
     def _resolve_credential(self, auth):
-        if auth.get("mode") == "oauth2":
-            return {"mode": "oauth2", "token": None}  # not wired -> fails closed
         secret = self.secrets.resolve(auth.get("key_vault_secret_name"))
         identity = self.secrets.resolve(auth.get("identity_key_vault_secret_name")) if auth.get("identity_key_vault_secret_name") else ""
         return {"mode": "apiKey", "secret": secret, "identity": identity}
-
-    def _resolve_endpoint(self, manifest):
-        # One provider is active per deployment, so the endpoint is a single EPP_PROVIDER_ENDPOINT.
-        return self.env.get("EPP_PROVIDER_ENDPOINT")
 
     def _fail_body(self, provider, channel, reason, dispatch, request_id):
         return {"status": "failed", "outcome": "Fail", "provider": provider, "channel": channel, "reason": reason, "correlationId": dispatch.correlation_id, "messageId": dispatch.message_id, "requestId": request_id}

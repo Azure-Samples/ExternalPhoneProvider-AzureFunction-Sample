@@ -1,25 +1,55 @@
 # Dependencies
 node_modules/
 
+# Local helper scripts
+scripts/
+
 # Python
 .venv/
 venv/
 *.pyc
 .pytest_cache/
 
-# Azure Functions local settings — may contain secrets; never commit.
-local.settings.json
+# Local secrets (keep the shared sample)
+local.settings*.json
+!local.settings.sample.json
+.env
+.env.*
+!.env.example
+.keys/
 
-# Keys / certificates — never commit private keys.
+# Keys and publish credentials
 *.pem
 *.pfx
+*.key
+*.p12
+*.publishsettings
+*.pubxml
+*.pubxml.user
 
 # Azure Functions build/runtime
-bin/
-obj/
+[Bb]in/
+[Oo]bj/
+publish/
+artifacts/
 .azure/
 .python_packages/
 __pycache__/
+coverage/
+[Tt]est[Rr]esults*/
+
+# .NET developer output
+[Dd]ebug*/
+[Rr]elease*/
+*.nupkg
+*.snupkg
+*.suo
+*.user
+*.userprefs
+*.userosscache
+*.sln.docstates
+_ReSharper*/
+*.DotSettings.user
 
 # Logs
 *.log
@@ -27,5 +57,7 @@ npm-debug.log*
 
 # Editor / OS
 .vscode/
+.vs/
+.idea/
 .DS_Store
 Thumbs.db

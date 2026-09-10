@@ -4,52 +4,61 @@
 
 'use strict';
 
-// Delivery pipeline: parse the cleartext SAS envelope, decrypt the JWE that carries the PII, then
-// dispatch to the configured provider. Fail-closed — only a Continue outcome is "accepted".
-
 const crypto = require('crypto');
 const { compactDecrypt } = require('jose');
 const { ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { readConfig } = require('./config');
 
-// CyotChannel: 1=Sms, 2=Voice. CyotDeliveryMode: 1=Live, 2=Evaluation (do NOT deliver).
 const CHANNEL_BY_CODE = Object.freeze({ 1: 'sms', 2: 'voice' });
 const CHANNEL_BY_NAME = Object.freeze({ sms: 1, voice: 2 });
 const MODE = Object.freeze({ LIVE: 1, EVALUATION: 2 });
 const MODE_BY_NAME = Object.freeze({ live: 1, evaluation: 2 });
 
-// channel/mode accept the int enum (1/2) or the string form ("sms"/"voice", "live"/"evaluation").
 function normalizeChannel(channel) {
-    if (CHANNEL_BY_CODE[channel]) return Number(channel);
-    if (typeof channel === 'string' && CHANNEL_BY_NAME[channel.toLowerCase()]) return CHANNEL_BY_NAME[channel.toLowerCase()];
+    if (channel === 1 || channel === 2) return channel;
+    if (typeof channel === 'string' && Object.hasOwn(CHANNEL_BY_NAME, channel.toLowerCase())) {
+        return CHANNEL_BY_NAME[channel.toLowerCase()];
+    }
     return null;
 }
 function normalizeMode(mode) {
     if (mode === MODE.LIVE || mode === MODE.EVALUATION) return mode;
-    if (typeof mode === 'string' && MODE_BY_NAME[mode.toLowerCase()]) return MODE_BY_NAME[mode.toLowerCase()];
+    if (typeof mode === 'string' && Object.hasOwn(MODE_BY_NAME, mode.toLowerCase())) {
+        return MODE_BY_NAME[mode.toLowerCase()];
+    }
     return null;
 }
 
 function parseEnvelope(payload) {
-    if (!payload || typeof payload !== 'object') {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         return { error: 'invalid envelope' };
     }
     const { type, tenantId, correlationId, channel, mode, ttlSeconds, encryptedDeliveryContext } = payload;
-    if (typeof encryptedDeliveryContext !== 'string' || !encryptedDeliveryContext) {
+    if (type !== 'microsoft.mfa.otpDeliver.v1') {
+        return { error: 'unsupported envelope type' };
+    }
+    if (typeof encryptedDeliveryContext !== 'string' || !encryptedDeliveryContext.trim()) {
         return { error: 'encryptedDeliveryContext is required' };
     }
     const channelCode = normalizeChannel(channel);
     if (!channelCode) {
-        return { error: `unsupported channel '${channel}'` };
+        return { error: 'unsupported channel' };
     }
     const modeCode = normalizeMode(mode);
     if (!modeCode) {
-        return { error: `unsupported mode '${mode}'` };
+        return { error: 'unsupported mode' };
+    }
+    if (Object.hasOwn(payload, 'ttlSeconds')) {
+        if (!Number.isInteger(ttlSeconds) || ttlSeconds > 2147483647) {
+            return { error: 'invalid ttlSeconds' };
+        }
+        if (ttlSeconds <= 0) {
+            return { error: 'ttlSeconds expired' };
+        }
     }
     return { envelope: { type, tenantId, correlationId, channel: channelCode, mode: modeCode, ttlSeconds, encryptedDeliveryContext } };
 }
-
 
 // Reject oversized or structurally invalid JWEs before decoding or allocating buffers.
 const MAX_JWE_LENGTH = 16384;
@@ -72,12 +81,9 @@ function readProtectedHeader(compactJwe) {
     return JSON.parse(Buffer.from(protectedSegment, 'base64url').toString('utf8'));
 }
 
-// Imported once: a per-delivery RSA import would sit inside the response budget.
 let cachedKey;
 let cachedKeyPem;
 
-// The setup script stores the key as base64 over the PEM so its newlines survive being carried as an
-// app setting, so accept either form.
 function normalizePem(value) {
     const text = String(value || '');
     if (text.includes('-----BEGIN')) return text;
@@ -96,8 +102,6 @@ function loadPrivateKey(pem) {
     return cachedKey;
 }
 
-// Decrypts the JWE compact serialization. Returns the protected header (for kid/alg logging) alongside
-// the CyotDeliveryContext.
 async function decryptDeliveryContext(compactJwe, config = readConfig()) {
     assertWellFormedJwe(compactJwe);
     const header = readProtectedHeader(compactJwe);
@@ -110,24 +114,17 @@ async function decryptDeliveryContext(compactJwe, config = readConfig()) {
     return { header, context: JSON.parse(Buffer.from(plaintext).toString('utf8')) };
 }
 
-// Left alone, TTS reads 641895 as "six hundred forty-one thousand...", which no user can type.
-function spacePasscodeForVoice(message) {
-    return String(message || '').replace(/\b\d{4,8}\b/, (digits) => digits.split('').join(' '));
-}
-
-// The message is pre-rendered and already contains the passcode, so there is no separate code field.
 function contextToDispatch(context, envelope, messageId) {
     const channel = CHANNEL_BY_CODE[envelope.channel];
     return {
         destination: context.phoneNumber,
-        message: channel === 'voice' ? spacePasscodeForVoice(context.message) : context.message,
+        message: context.message,
         channel,
         messageId,
         correlationId: envelope.correlationId,
         locale: context.locale || undefined,
     };
 }
-
 
 const OUTCOME = Object.freeze({
     CONTINUE: 'Continue',
@@ -136,32 +133,8 @@ const OUTCOME = Object.freeze({
     STEP_UP: 'StepUp',
 });
 
-const HTTP_STATUS = Object.freeze({
-    OK: 200,
-    BAD_REQUEST: 400,
-    UNAUTHORIZED: 401,
-    FORBIDDEN: 403,
-    CONFLICT: 409,
-    TOO_MANY_REQUESTS: 429,
-    BAD_GATEWAY: 502,
-    GATEWAY_TIMEOUT: 504,
-});
-
-const RESPONSE_STATUS = Object.freeze({
-    ACCEPTED: 'accepted',
-    FAILED: 'failed',
-    ERROR: 'error',
-});
-
-const DEFAULTS = Object.freeze({
-    CHANNEL: 'sms',
-    ENDPOINT_TIMEOUT_MILLISECONDS: 1500,
-    CHANNELS: ['sms', 'voice'],
-});
-
 const SECRET_CACHE_TIME_TO_LIVE_MILLISECONDS = 5 * 60 * 1000; // rotated secrets picked up within this window
 
-// Onboarding a provider is a new file plus one line here — static, so a broken provider fails at load.
 const providerRegistry = new Map(
     [
         require('./providers/infobip'),
@@ -175,91 +148,113 @@ const providerRegistry = new Map(
 );
 
 function getProvider(providerId) {
-    return providerId ? providerRegistry.get(String(providerId).toLowerCase()) || null : null;
+    return providerId ? providerRegistry.get(String(providerId).trim().toLowerCase()) || null : null;
 }
 
-// One provider is active per deployment; the argument is a test override.
-function resolveProvider(requestProvider) {
-    return getProvider(requestProvider || process.env.EPP_PROVIDER_NAME);
-}
-
-// The manifest carries only the secret's name; the value is read just-in-time and never logged.
 let keyVaultSecretClient = null;
+let keyVaultClientConfig;
 const secretCache = new Map();
 
-// The identity needs the Key Vault Secrets User role on the vault.
-function getKeyVaultSecretClient() {
-    if (!keyVaultSecretClient) {
-        const credential = process.env.AZURE_CLIENT_ID
-            ? new ManagedIdentityCredential(process.env.AZURE_CLIENT_ID)
+function getKeyVaultSecretClient(config) {
+    const cacheKey = JSON.stringify([config.keyVaultUrl, config.managedIdentityClientId]);
+    if (!keyVaultSecretClient || keyVaultClientConfig !== cacheKey) {
+        const credential = config.managedIdentityClientId
+            ? new ManagedIdentityCredential(config.managedIdentityClientId)
             : new ManagedIdentityCredential();
-        keyVaultSecretClient = new SecretClient(process.env.KEY_VAULT_URL, credential);
+        keyVaultSecretClient = new SecretClient(config.keyVaultUrl, credential);
+        keyVaultClientConfig = cacheKey;
     }
     return keyVaultSecretClient;
 }
 
-async function resolveSecretValue(keyVaultSecretName) {
+async function resolveSecretValue(keyVaultSecretName, config) {
     if (!keyVaultSecretName) {
         return '';
     }
-    const cachedSecret = secretCache.get(keyVaultSecretName);
+    const cacheKey = JSON.stringify([config.keyVaultUrl, config.managedIdentityClientId, keyVaultSecretName]);
+    const cachedSecret = secretCache.get(cacheKey);
     if (cachedSecret && cachedSecret.expiresAt > Date.now()) {
         return cachedSecret.value;
     }
 
-    const secretValue = (await getKeyVaultSecretClient().getSecret(keyVaultSecretName)).value || '';
+    const secretValue = (await getKeyVaultSecretClient(config).getSecret(keyVaultSecretName)).value || '';
 
-    secretCache.set(keyVaultSecretName, {
+    secretCache.set(cacheKey, {
         value: secretValue,
         expiresAt: Date.now() + SECRET_CACHE_TIME_TO_LIVE_MILLISECONDS,
     });
     return secretValue;
 }
 
-async function resolveProviderCredential(authConfiguration = {}, acquireProviderToken) {
-    if ((authConfiguration.mode || 'apiKey') === 'oauth2') {
-        // oauth2 is not wired end-to-end yet: with no injected acquireProviderToken it fails closed.
-        const bearerToken = typeof acquireProviderToken === 'function' ? await acquireProviderToken() : null;
-        return { mode: 'oauth2', token: bearerToken };
-    }
+async function resolveProviderCredential(authConfiguration = {}, config) {
+    const { mode = 'apiKey' } = authConfiguration;
+    if (mode !== 'apiKey') throw new Error('unsupported provider authentication');
 
     const [secret, identity] = await Promise.all([
-        resolveSecretValue(authConfiguration.keyVaultSecretName),
+        resolveSecretValue(authConfiguration.keyVaultSecretName, config),
         authConfiguration.identityKeyVaultSecretName
-            ? resolveSecretValue(authConfiguration.identityKeyVaultSecretName)
+            ? resolveSecretValue(authConfiguration.identityKeyVaultSecretName, config)
             : Promise.resolve(''),
     ]);
     return { mode: 'apiKey', secret, identity };
 }
 
-// A recognized status wins; an unknown status is fail-closed; only a status-less response trusts HTTP.
+// Status mappings may restrict HTTP success, but cannot turn failed HTTP into Continue.
 function resolveOutcome(manifest, parsedResponse) {
     const responseMapping = manifest.responseMapping || {};
     const providerStatusKey = parsedResponse.providerStatusName || parsedResponse.providerStatusCode;
-    if (providerStatusKey) {
-        return responseMapping[providerStatusKey] || responseMapping.default || OUTCOME.FAIL;
-    }
-    return parsedResponse.success ? OUTCOME.CONTINUE : (responseMapping.default || OUTCOME.FAIL);
+    const fallback = Object.hasOwn(responseMapping, 'default')
+        ? responseMapping.default || OUTCOME.FAIL : OUTCOME.FAIL;
+    const hasMapping = (typeof providerStatusKey === 'string' || typeof providerStatusKey === 'number')
+        && Object.hasOwn(responseMapping, providerStatusKey);
+    const outcome = providerStatusKey
+        ? (hasMapping ? responseMapping[providerStatusKey] || fallback : fallback)
+        : (parsedResponse.success ? OUTCOME.CONTINUE : fallback);
+    return outcome === OUTCOME.CONTINUE && !parsedResponse.success ? OUTCOME.FAIL : outcome;
 }
 
 function outcomeToHttpStatus(outcome, providerHttpStatus) {
     switch (outcome) {
         case OUTCOME.CONTINUE:
-            return HTTP_STATUS.OK;
+            return 200;
         case OUTCOME.BLOCK:
-            return HTTP_STATUS.FORBIDDEN;
+            return 403;
         case OUTCOME.STEP_UP:
-            return HTTP_STATUS.CONFLICT;
+            return 409;
         case OUTCOME.FAIL:
-            if (providerHttpStatus === HTTP_STATUS.TOO_MANY_REQUESTS) return HTTP_STATUS.TOO_MANY_REQUESTS;
-            if (providerHttpStatus === HTTP_STATUS.UNAUTHORIZED || providerHttpStatus === HTTP_STATUS.FORBIDDEN) return HTTP_STATUS.UNAUTHORIZED;
-            if (providerHttpStatus >= 400 && providerHttpStatus < 500) return HTTP_STATUS.BAD_REQUEST;
-            return HTTP_STATUS.BAD_GATEWAY;
+            if (providerHttpStatus === 429) return 429;
+            if (providerHttpStatus === 401 || providerHttpStatus === 403) return 401;
+            if (providerHttpStatus >= 400 && providerHttpStatus < 500) return 400;
+            return 502;
         default:
-            return HTTP_STATUS.BAD_GATEWAY;
+            return 502;
     }
 }
 
+// App settings use one grammar: trimmed ASCII decimal digits, no sign, exponent, or hex.
+function parseProviderTimeout(value) {
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (!text || [...text].some((character) => character < '0' || character > '9')) return 1500;
+    const milliseconds = Number(text);
+    return milliseconds > 0 ? Math.min(milliseconds, 2500) : 1500;
+}
+
+function isValidProviderUrl(value) {
+    if (typeof value !== 'string' || !value.toLowerCase().startsWith('https://')) return false;
+    for (const character of value) {
+        if (!character.trim() || character.charCodeAt(0) < 32 || character === '\\' || character === '#') return false;
+    }
+    const authority = value.slice('https://'.length).split('/')[0].split('?')[0];
+    // URL normalizes empty userinfo and empty ports away; reject those in the original authority too.
+    if (!authority || authority.includes('@') || authority.endsWith(':')) return false;
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:' && !!url.hostname && !url.username && !url.password && !url.hash
+            && (!url.port || (Number(url.port) >= 1 && Number(url.port) <= 65535));
+    } catch {
+        return false;
+    }
+}
 
 async function fetchWithTimeout(providerRequest, timeoutMilliseconds) {
     const abortController = new AbortController();
@@ -270,58 +265,54 @@ async function fetchWithTimeout(providerRequest, timeoutMilliseconds) {
     }, timeoutMilliseconds);
 
     try {
-        return await fetch(providerRequest.url, {
+        const response = await fetch(providerRequest.url, {
             method: providerRequest.method || 'POST',
             headers: providerRequest.headers,
             body: providerRequest.body,
             signal: abortController.signal,
+            redirect: 'manual', // Never forward provider credentials to a redirect target.
         });
-    } catch (error) {
-        throw new Error(timedOut ? `endpoint timeout after ${timeoutMilliseconds}ms` : error.message);
+        const responseText = await response.text();
+        return { response, responseText };
+    } catch {
+        const error = new Error('provider request failed');
+        error.name = timedOut ? 'TimeoutError' : 'Error';
+        throw error;
     } finally {
         clearTimeout(timeoutTimer);
     }
 }
 
-const errorBody = (providerId, reason, requestId) =>
-    ({ status: RESPONSE_STATUS.ERROR, provider: providerId, reason, requestId });
 const failBody = (providerId, channel, reason, dispatch, requestId) =>
-    ({ status: RESPONSE_STATUS.FAILED, outcome: OUTCOME.FAIL, provider: providerId, channel, reason, correlationId: dispatch.correlationId, messageId: dispatch.messageId, requestId });
+    ({ status: 'failed', outcome: OUTCOME.FAIL, provider: providerId, channel, reason, correlationId: dispatch.correlationId, messageId: dispatch.messageId, requestId });
 
 async function sendViaProvider(providerEntry, dispatch, options) {
-    const { shutter, context, requestId } = options;
-    const writeLog = (logMessage) => context && context.log(logMessage);
-
+    const { requestId, config } = options;
     const { manifest, adapter } = providerEntry;
     const providerId = manifest.id;
-    const channel = (dispatch.channel || DEFAULTS.CHANNEL).toLowerCase();
+    const channel = dispatch.channel === undefined ? 'sms'
+        : (typeof dispatch.channel === 'string' ? dispatch.channel.toLowerCase() : null);
 
-    if (!DEFAULTS.CHANNELS.includes(channel)) {
-        writeLog(`[DISPATCH_ERROR] requestId=${requestId} provider=${providerId} channel=${channel} not supported`);
-        return { httpStatus: HTTP_STATUS.BAD_REQUEST, body: errorBody(providerId, `channel '${channel}' not supported`, requestId) };
+    if (!['sms', 'voice'].includes(channel)) {
+        return { httpStatus: 400, body: { status: 'error', reason: 'unsupported channel', requestId } };
     }
 
-    // Fail closed (502) if the credential is missing — this is our credential, not the caller's token.
+    const endpointBaseUrl = config.providerEndpoint;
+    if (!isValidProviderUrl(endpointBaseUrl)) {
+        return { httpStatus: 502, body: failBody(providerId, channel, 'provider endpoint missing or invalid', dispatch, requestId) };
+    }
+
     let credential = null;
     try {
-        credential = await resolveProviderCredential(manifest.auth, options.acquireProviderToken);
-    } catch (error) {
-        writeLog(`[DISPATCH_ERROR] requestId=${requestId} provider=${providerId} channel=${channel} credential error=${error.message}`);
+        credential = await resolveProviderCredential(manifest.auth, config);
+    } catch {
+        // Configuration and secret lookup failures share a generic failure response.
     }
-    const identityRequired = credential && credential.mode === 'apiKey' && !!manifest.auth.identityKeyVaultSecretName;
-    const credentialUnavailable = !credential
-        || (credential.mode === 'oauth2' && !credential.token)
-        || (credential.mode === 'apiKey' && !credential.secret)
+    const identityRequired = !!manifest.auth?.identityKeyVaultSecretName;
+    const credentialUnavailable = !credential || !credential.secret
         || (identityRequired && !credential.identity);
     if (credentialUnavailable) {
-        writeLog(`[DISPATCH_ERROR] requestId=${requestId} provider=${providerId} channel=${channel} provider credential unavailable`);
-        return { httpStatus: HTTP_STATUS.BAD_GATEWAY, body: failBody(providerId, channel, 'provider credential unavailable', dispatch, requestId) };
-    }
-
-    const endpointBaseUrl = process.env.EPP_PROVIDER_ENDPOINT;
-    if (!endpointBaseUrl) {
-        writeLog(`[DISPATCH_ERROR] requestId=${requestId} provider=${providerId} channel=${channel} endpoint not configured`);
-        return { httpStatus: HTTP_STATUS.BAD_GATEWAY, body: failBody(providerId, channel, 'provider endpoint not configured', dispatch, requestId) };
+        return { httpStatus: 502, body: failBody(providerId, channel, 'provider credential unavailable', dispatch, requestId) };
     }
 
     const providerRequest = adapter.buildRequest({
@@ -329,37 +320,29 @@ async function sendViaProvider(providerEntry, dispatch, options) {
         endpoint: endpointBaseUrl,
         dispatch,
         credential,
-        env: process.env,
+        env: config.env,
     });
 
-    writeLog(`[DISPATCH] requestId=${requestId} provider=${providerId} channel=${channel} correlationId=${dispatch.correlationId} shutter=${!!shutter}`);
-
-    if (shutter) {
-        writeLog(`[SHUTTER] requestId=${requestId} provider=${providerId} channel=${channel} processed but NOT sending`);
-        return {
-            httpStatus: HTTP_STATUS.OK,
-            body: { status: RESPONSE_STATUS.ACCEPTED, shutterProcessed: true, provider: providerId, channel, correlationId: dispatch.correlationId, messageId: dispatch.messageId, requestId },
-        };
+    if (!isValidProviderUrl(providerRequest.url)) {
+        return { httpStatus: 502, body: failBody(providerId, channel, 'provider request URL invalid', dispatch, requestId) };
     }
 
-    const timeoutMilliseconds = Number(process.env.EPP_PROVIDER_TIMEOUT_MS) || DEFAULTS.ENDPOINT_TIMEOUT_MILLISECONDS;
+    const timeoutMilliseconds = parseProviderTimeout(config.providerTimeoutMs);
     let providerResponse;
+    let responseText;
     try {
-        providerResponse = await fetchWithTimeout(providerRequest, timeoutMilliseconds);
+        ({ response: providerResponse, responseText } = await fetchWithTimeout(providerRequest, timeoutMilliseconds));
     } catch (error) {
-        const isTimeout = typeof error.message === 'string' && error.message.startsWith('endpoint timeout');
-        const httpStatus = isTimeout ? HTTP_STATUS.GATEWAY_TIMEOUT : HTTP_STATUS.BAD_GATEWAY;
-        writeLog(`[${isTimeout ? 'DISPATCH_TIMEOUT' : 'DISPATCH_ERROR'}] requestId=${requestId} provider=${providerId} channel=${channel} reason=${error.message}`);
-        return { httpStatus, body: failBody(providerId, channel, error.message, dispatch, requestId) };
+        const isTimeout = error.name === 'TimeoutError';
+        const httpStatus = isTimeout ? 504 : 502;
+        return { httpStatus, body: failBody(providerId, channel, isTimeout ? 'provider request timed out' : 'provider request failed', dispatch, requestId) };
     }
 
-    const responseText = await providerResponse.text();
     let responseJson;
     try {
         responseJson = JSON.parse(responseText);
     } catch {
-        // Keep a non-JSON body raw so the adapter's parseResponse still runs.
-        responseJson = { raw: responseText };
+        responseJson = {};
     }
 
     const parsedResponse = adapter.parseResponse({
@@ -370,38 +353,29 @@ async function sendViaProvider(providerEntry, dispatch, options) {
     const outcome = resolveOutcome(manifest, parsedResponse);
     const httpStatus = outcomeToHttpStatus(outcome, parsedResponse.providerHttpStatus);
 
-    writeLog(`[DISPATCH_RESULT] requestId=${requestId} provider=${providerId} channel=${channel} outcome=${outcome} providerStatus=${parsedResponse.providerStatusName || parsedResponse.providerStatusCode || 'n/a'} httpStatus=${httpStatus} correlationId=${dispatch.correlationId}`);
-
     return {
         httpStatus,
         body: {
-            status: outcome === OUTCOME.CONTINUE ? RESPONSE_STATUS.ACCEPTED : RESPONSE_STATUS.FAILED,
+            status: outcome === OUTCOME.CONTINUE ? 'accepted' : 'failed',
             outcome,
             provider: providerId,
             channel,
             messageId: dispatch.messageId,
             correlationId: dispatch.correlationId,
-            providerMessageId: parsedResponse.providerMessageId || null,
-            providerStatus: parsedResponse.providerStatusName || parsedResponse.providerStatusCode || null,
-            providerStatusDescription: parsedResponse.providerStatusDescription || null,
             requestId,
         },
     };
 }
 
-async function dispatchOtp(dispatch, options) {
-    const { requestProvider, context, requestId } = options;
-    const writeLog = (logMessage) => context && context.log(logMessage);
-
-    const providerEntry = resolveProvider(requestProvider);
+async function dispatchOtp(dispatch, { config = readConfig(), requestId } = {}) {
+    const providerEntry = getProvider(config.providerName);
     if (!providerEntry) {
-        writeLog(`[DISPATCH_ERROR] requestId=${requestId} unknown provider=${requestProvider || 'n/a'}`);
         return {
-            httpStatus: HTTP_STATUS.BAD_REQUEST,
-            body: { status: RESPONSE_STATUS.ERROR, reason: 'unknown provider', requestId },
+            httpStatus: 400,
+            body: { status: 'error', reason: 'unknown provider', requestId },
         };
     }
-    return sendViaProvider(providerEntry, dispatch, options);
+    return sendViaProvider(providerEntry, dispatch, { config, requestId });
 }
 
 module.exports = {
@@ -413,4 +387,6 @@ module.exports = {
     getProvider,
     resolveOutcome,
     outcomeToHttpStatus,
+    parseProviderTimeout,
+    isValidProviderUrl,
 };

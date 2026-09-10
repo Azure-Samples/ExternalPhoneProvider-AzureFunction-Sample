@@ -4,7 +4,7 @@
 
 'use strict';
 
-// Infobip: SMS /sms/3/messages, voice /tts/3/advanced (unverified). Auth: App API key, or Bearer in oauth2 mode.
+// Voice integration is unverified; confirm the request format before production use.
 
 const manifest = {
     id: 'infobip',
@@ -23,9 +23,8 @@ const manifest = {
 function buildRequest({ channel, endpoint, dispatch, credential, env }) {
     const base = endpoint;
     const senderId = env.EPP_PROVIDER_ACCOUNT_NAME || 'Verify';
-    const authorization = credential.mode === 'oauth2' ? `Bearer ${credential.token}` : `App ${credential.secret}`;
     const headers = {
-        Authorization: authorization,
+        Authorization: `App ${credential.secret}`,
         'Content-Type': 'application/json',
         Accept: 'application/json',
     };
@@ -61,7 +60,6 @@ function parseResponse({ httpStatus, ok, json }) {
         providerHttpStatus: httpStatus,
         providerMessageId: (firstMessage && firstMessage.messageId) || null,
         providerStatusName: (status.groupName || status.name || '').toUpperCase() || null,
-        providerStatusDescription: status.description || null,
     };
 }
 

@@ -1,0 +1,12 @@
+local.settings*.json
+**/local.settings*.json
+.env*
+**/.env*
+.keys/
+**/.keys/
+**/*.pem
+**/*.pfx
+**/*.key
+tests/
+obj/
+.vscode/
