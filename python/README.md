@@ -3,6 +3,9 @@
 Implements the shared [contract](../docs/CONTRACT.md) with one dispatch engine and one selected
 provider per deployment. Target: Python 3.11, Azure Functions v4, Python v2 programming model.
 
+See the [auth gates](../docs/CONTRACT.md#provider-authentication-gates) and
+[voice setup](../docs/ONBOARDING.md#structured-voice-input). API keys remain the default; JWT lookup is off.
+
 ## Setup and deployment
 
 1. Follow [customer onboarding](../docs/ONBOARDING.md). Set `EPP_PROVIDER_NAME` to the selected
@@ -57,6 +60,7 @@ use attributes such as `config.provider_name`, not dictionary key lookups. Resta
 settings change. Configure local host storage other than Azurite separately; do not copy the emulator
 connection into Azure. Core Tools does not resolve Key Vault references locally; supply the local test
 PEM or base64 PEM directly.
+For HTTP-only local execution, the emulator storage setting can be omitted; offline tests do not use it.
 
 For Azure, set the same application variables on the serving app/slot's **Environment variables → App
 settings** page. Use a Key Vault reference for the private PEM. Provider secrets require managed
@@ -74,8 +78,9 @@ authenticate SAS: anyone with the public key can encrypt a request, and a fixed 
 Use incoming `mode: 2` or `mode: "evaluation"` as the generic shutter for every provider: platform
 authentication on Azure, handler validation and decryption run, but provider lookup, provider Key Vault
 reads and provider HTTP do not. No provider configuration or diagnostic environment flag is required.
-Live requests forward the rendered message unchanged using the configured provider's API key and
-await acceptance before returning the nonce; failures omit it. Acceptance is not handset delivery.
+Live requests preserve caller-provided message/structured voice fields using the configured provider's
+API key, or an SDK-acquired provider token when explicitly supported and enabled. They await acceptance
+before returning the nonce; failures omit it. Acceptance is not handset delivery.
 Platform/key prerequisites and HTTP outcomes are defined in the
 [contract](../docs/CONTRACT.md#evaluation-generic-shutter).
 
@@ -89,6 +94,7 @@ Platform/key prerequisites and HTTP outcomes are defined in the
 | [src/dispatch.py](src/dispatch.py) | Boundary validation, JWE, provider registry and outcome mapping |
 | [src/providers/](src/providers/) | Adapter manifests and API-specific implementations |
 | [src/secrets.py](src/secrets.py) | Cached Key Vault access via managed identity |
+| [src/provider_tokens.py](src/provider_tokens.py) | Opt-in Entra provider-token acquisition; never inbound token validation |
 
 Add and register an adapter without adding provider-specific branches to the shared pipeline.
 Return `ParsedResponse` from `parse_response` using named fields; the engine reads attributes such as

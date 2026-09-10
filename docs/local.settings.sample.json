@@ -1,5 +1,5 @@
 {
-  "_comment": "Local template: copy beside the chosen app's host.json and replace placeholders. Change node to python or dotnet-isolated for those runtimes. Start Azurite for UseDevelopmentStorage=true. Provider credentials stay in Key Vault. Local hosts have no Easy Auth; keep them on loopback. See README.md for Azure settings and optional values.",
+  "_comment": "Local API-key template: copy beside the chosen app's host.json and replace placeholders. Change node to python or dotnet-isolated for those runtimes. Start Azurite for UseDevelopmentStorage=true, or omit storage for HTTP-only local use. Provider credentials stay in Key Vault. Local hosts have no Easy Auth; keep them on loopback. See README.md for Azure settings and optional OAuth configuration.",
   "IsEncrypted": false,
   "Values": {
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
@@ -9,6 +9,8 @@
 
     "EPP_PROVIDER_NAME": "<registered-adapter-id>",
     "EPP_PROVIDER_ENDPOINT": "https://<provider-host>/<api-base-path>",
+    "EPP_PROVIDER_AUTH_MODE": "apiKey",
+    "EPP_PROVIDER_JWT_ENABLED": "false",
     "EPP_PROVIDER_TIMEOUT_MS": "1500",
 
     "KEY_VAULT_URL": "https://<provider-credential-vault>.vault.azure.net/"

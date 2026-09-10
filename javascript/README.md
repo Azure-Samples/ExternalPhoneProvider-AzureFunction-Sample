@@ -3,6 +3,9 @@
 A Node.js Azure Function implementing the shared [contract](../docs/CONTRACT.md): one dispatch
 engine and one selected provider per deployment. API-specific behavior stays in registered adapters.
 
+See the [auth gates](../docs/CONTRACT.md#provider-authentication-gates) and
+[voice setup](../docs/ONBOARDING.md#structured-voice-input). API keys remain the default; JWT lookup is off.
+
 ## Setup
 
 1. Follow [customer onboarding](../docs/ONBOARDING.md). Choose a registered adapter and set
@@ -56,6 +59,7 @@ do **not** automatically load this file. [AppConfig](src/functions/config.js) re
 once per call to `readConfig()`. Restart the host after changing settings. Configure any local host
 storage other than Azurite separately; do not copy a local emulator connection into Azure. Core Tools
 does not resolve Key Vault references locally; supply the local test PEM or base64 PEM directly.
+For HTTP-only local execution, the emulator storage setting can be omitted; offline tests do not use it.
 
 Older private settings may contain `DEFAULT_PROVIDER`, `ENDPOINT_TIMEOUT_MS`, `REQUIRE_AUTH`,
 `EXPECTED_AUDIENCE`, `ISSUER_TENANT_ID`, `EUDB`, or per-provider `*_ENDPOINT` entries. Those do not
@@ -79,15 +83,16 @@ Easy Auth authenticates and authorizes the caller before `POST /api/SendOtp`; th
 validates the envelope and decrypts the JWE, without parsing or echoing incoming `Authorization`.
 JWE does not authenticate SAS: anyone with the public key can encrypt a request, and a fixed nonce
 is not authentication. Request `mode`, `channel`, `ttlSeconds` and `tenantId` are request data, not
-environment settings or sources of identity trust. The caller-rendered message is forwarded unchanged;
-the endpoint does not guess a passcode.
+environment settings or sources of identity trust. Caller-provided message/structured voice fields
+are preserved; the endpoint does not guess a passcode or extract it from the message.
 
 For non-delivery validation, use incoming `mode: 2` or `mode: "evaluation"`. This generic shutter
 works for every provider without provider configuration, provider Key Vault reads or provider HTTP;
 platform authentication on Azure and handler decryption still run. No diagnostic environment flag is needed. See the
 [evaluation contract](../docs/CONTRACT.md#evaluation-generic-shutter) for authentication/key prerequisites.
 
-Live requests use the configured provider's API key and await acceptance before returning the nonce.
+Live requests use the configured provider's API key, or an SDK-acquired provider token when explicitly
+supported and enabled, and await acceptance before returning the nonce.
 Acceptance is not handset delivery; failures omit the nonce, and timeouts must not trigger blind
 retries. The shared contract defines validation, HTTP outcomes and privacy-safe logging.
 
@@ -98,6 +103,7 @@ retries. The shared contract defines validation, HTTP outcomes and privacy-safe 
 | [src/functions/SendOtp.js](src/functions/SendOtp.js) | HTTP handler |
 | [src/functions/config.js](src/functions/config.js) | Shared deployment settings |
 | [src/functions/models.js](src/functions/models.js) | Delivery context, normalized `ParsedResponse`, and documented request objects |
+| [src/functions/providerToken.js](src/functions/providerToken.js) | Opt-in Entra provider-token acquisition; never inbound token validation |
 | [src/functions/dispatch.js](src/functions/dispatch.js) | Envelope/JWE handling, registry and dispatch |
 | [src/functions/providers/](src/functions/providers/) | Adapter manifests and API-specific implementations |
 | [test/](test/) | Representative offline checks |

@@ -9,7 +9,8 @@ from jwcrypto import jwk
 from urllib3.exceptions import ReadTimeoutError
 
 from .config import read_config
-from .models import DeliveryContext, DispatchRequest, Envelope, ParsedResponse
+from .models import DeliveryContext, DispatchRequest, Envelope, ParsedResponse, TextToVoice
+from .provider_tokens import ProviderTokenConfig, ProviderTokenError, default_token_acquirer, valid_bearer_token
 
 DEFAULT_TIMEOUT_MS = 1500
 DEFAULT_CHANNELS = ["sms", "voice"]
@@ -179,6 +180,7 @@ def context_to_dispatch(context, envelope, message_id):
         message_id=message_id,
         correlation_id=envelope.correlation_id,
         locale=context.locale,
+        text_to_voice=context.text_to_voice,
     )
 
 
@@ -236,10 +238,11 @@ def _has_read_timeout(error):
 
 
 class DispatchEngine:
-    def __init__(self, registry, secrets, env=None):
+    def __init__(self, registry, secrets, env=None, token_acquirer=None):
         self.registry = registry
         self.secrets = secrets
         self.env = env if env is not None else os.environ
+        self.token_acquirer = default_token_acquirer if token_acquirer is None else token_acquirer
 
     def dispatch(self, dispatch, request_id):
         config = read_config(self.env)
@@ -257,21 +260,25 @@ class DispatchEngine:
         if channel not in DEFAULT_CHANNELS:
             return 400, {"status": "error", "provider": provider_id, "reason": "unsupported channel", "requestId": request_id}
 
-        auth = manifest["auth"]
-        if auth.get("mode") != "apiKey":
-            return 502, self._fail_body(provider_id, channel, "unsupported provider auth mode", dispatch, request_id)
-        try:
-            credential = self._resolve_credential(auth)
-        except Exception:
-            return 502, self._fail_body(provider_id, channel, "provider credential unavailable", dispatch, request_id)
-        if not credential.get("secret") or (auth.get("identity_key_vault_secret_name") and not credential.get("identity")):
-            return 502, self._fail_body(provider_id, channel, "provider credential unavailable", dispatch, request_id)
+        if channel == "voice" and manifest.get("requires_text_to_voice", False) is True and (
+            not isinstance(dispatch.text_to_voice, TextToVoice) or not dispatch.text_to_voice.is_complete
+        ):
+            return 400, self._fail_body(provider_id, channel, "incomplete voice context", dispatch, request_id)
 
         endpoint = config.provider_endpoint
         if not endpoint:
             return 502, self._fail_body(provider_id, channel, "provider endpoint not configured", dispatch, request_id)
         if not _valid_provider_url(endpoint):
             return 502, self._fail_body(provider_id, channel, "invalid provider endpoint", dispatch, request_id)
+
+        timeout_ms = _provider_timeout_ms(config.provider_timeout_ms)
+        try:
+            credential = self._resolve_credential(config, manifest, timeout_ms / 1000)
+        except ProviderTokenError as error:
+            status = 504 if error.timed_out else 502
+            return status, self._fail_body(provider_id, channel, "provider token unavailable", dispatch, request_id)
+        except Exception:
+            return 502, self._fail_body(provider_id, channel, "provider credential unavailable", dispatch, request_id)
 
         try:
             provider_request = adapter.build_request(channel, endpoint, dispatch, credential, config.env)
@@ -280,7 +287,6 @@ class DispatchEngine:
         if not _valid_provider_url(provider_request.get("url")):
             return 502, self._fail_body(provider_id, channel, "invalid provider request URL", dispatch, request_id)
 
-        timeout_ms = _provider_timeout_ms(config.provider_timeout_ms)
         response = None
         try:
             response = requests.request(
@@ -331,10 +337,36 @@ class DispatchEngine:
                 except Exception:
                     pass
 
-    def _resolve_credential(self, auth):
-        secret = self.secrets.resolve(auth.get("key_vault_secret_name"))
-        identity = self.secrets.resolve(auth.get("identity_key_vault_secret_name")) if auth.get("identity_key_vault_secret_name") else ""
-        return {"mode": "apiKey", "secret": secret, "identity": identity}
+    def _resolve_credential(self, config, manifest, timeout_seconds):
+        auth, mode, jwt_enabled = manifest["auth"], config.provider_auth_mode, config.provider_jwt_enabled
+        if (mode not in ("apikey", "oauth2") or jwt_enabled is None
+                or (jwt_enabled and not auth.get("supports_oauth"))
+                or (mode == "oauth2" and not jwt_enabled)
+                or (mode == "apikey" and auth.get("mode") != "apiKey")):
+            raise ValueError("unsupported provider auth configuration")
+
+        credential = {"mode": "oauth2"}
+        if mode == "apikey":
+            secret = self.secrets.resolve(auth.get("key_vault_secret_name"))
+            identity_name = auth.get("identity_key_vault_secret_name")
+            identity = self.secrets.resolve(identity_name) if identity_name else ""
+            required = (secret, identity) if identity_name else (secret,)
+            if not all(valid_bearer_token(value) if auth.get("supports_oauth") else value for value in required):
+                raise ValueError("provider credential unavailable")
+            credential = {"mode": "apiKey", "secret": secret, "identity": identity}
+
+        if jwt_enabled:
+            try:
+                token_config = ProviderTokenConfig.read(config, manifest["id"], timeout_seconds)
+                token = self.token_acquirer.acquire(token_config, self.secrets)
+                if not valid_bearer_token(token):
+                    raise ProviderTokenError()
+                credential["token"] = token
+            except Exception:
+                if mode == "oauth2":
+                    raise
+                # Only token failures are optional; required API keys were already checked.
+        return credential
 
     def _fail_body(self, provider, channel, reason, dispatch, request_id):
         return {"status": "failed", "outcome": "Fail", "provider": provider, "channel": channel, "reason": reason, "correlationId": dispatch.correlation_id, "messageId": dispatch.message_id, "requestId": request_id}

@@ -13,6 +13,7 @@ from jwcrypto import jwe, jwk
 
 import function_app
 import src.dispatch as dispatch_module
+from src.provider_tokens import ProviderTokenError
 
 _KEY = jwk.JWK.generate(kty="RSA", size=2048)
 _PRIVATE_PEM = _KEY.export_to_pem(private_key=True, password=None).decode()
@@ -35,6 +36,7 @@ def _isolate(monkeypatch):
     engine = dispatch_module.DispatchEngine(
         function_app._registry, Mock(resolve=Mock(return_value="test-key")),
         {"EPP_PROVIDER_NAME": "soprano", "EPP_PROVIDER_ENDPOINT": "https://qa4.example/cgpapi"},
+        token_acquirer=Mock(),
     )
     monkeypatch.setattr(function_app, "_engine", engine)
     monkeypatch.setattr(dispatch_module.requests, "request", Mock())
@@ -126,14 +128,18 @@ def test_jwe_authenticates_original_protected_header_bytes():
     dispatch_module.requests.request.assert_not_called()
 
 
-def test_evaluation_decrypts_without_provider_configuration_or_work(monkeypatch, caplog):
+@pytest.mark.parametrize("auth_mode,jwt_enabled", [("apiKey", "true"), ("oauth2", "true"), ("oauth2", "invalid")])
+def test_evaluation_decrypts_without_provider_configuration_or_work(monkeypatch, caplog, auth_mode, jwt_enabled):
     caplog.set_level(logging.INFO)
     monkeypatch.setenv("EPP_ENCRYPTION_KEY_ID", "configured-key-id")
     monkeypatch.delenv("EPP_PROVIDER_NAME")
+    monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", auth_mode)
+    monkeypatch.setenv("EPP_PROVIDER_JWT_ENABLED", jwt_enabled)
     function_app._engine.env.clear()
+    function_app._engine.env.update(EPP_PROVIDER_AUTH_MODE=auth_mode, EPP_PROVIDER_JWT_ENABLED=jwt_enabled)
     lookup = Mock()
     monkeypatch.setattr(function_app._registry, "get", lookup)
-    response = _HANDLER(_request(_envelope(mode="Evaluation", provider="untrusted-body-provider")))
+    response = _HANDLER(_request(_envelope(channel=2, mode="Evaluation", provider="untrusted-body-provider")))
     assert response.status_code == 200
     assert json.loads(response.get_body()) == {
         "nonce": _NONCE, "correlationId": _CORRELATION, "providerStatus": "accepted",
@@ -144,12 +150,21 @@ def test_evaluation_decrypts_without_provider_configuration_or_work(monkeypatch,
     assert all(value not in caplog.text for value in ("configured-key-id", "test-kid", "untrusted-body-provider"))
     lookup.assert_not_called()
     function_app._engine.secrets.resolve.assert_not_called()
+    function_app._engine.token_acquirer.acquire.assert_not_called()
     dispatch_module.requests.request.assert_not_called()
 
 
-def test_live_acceptance_waits_and_preserves_wire_data_but_not_plaintext_logs(monkeypatch, caplog):
+@pytest.mark.parametrize("auth_mode,jwt_enabled", [("apiKey", "false"), ("apiKey", "true"), ("oauth2", "true")])
+@pytest.mark.parametrize("channel", ["sms", "voice"])
+def test_live_acceptance_waits_and_preserves_wire_data_but_not_plaintext_logs(monkeypatch, caplog, auth_mode, jwt_enabled, channel):
     caplog.set_level(logging.INFO)
     monkeypatch.setenv("EPP_LOG_PLAINTEXT", "true")  # Must not bypass privacy.
+    function_app._engine.env.update({
+        "EPP_PROVIDER_AUTH_MODE": auth_mode, "EPP_PROVIDER_JWT_ENABLED": jwt_enabled, "EPP_PROVIDER_TENANT_ID": "tenant-id",
+        "EPP_PROVIDER_CLIENT_ID": "client-id", "EPP_PROVIDER_SCOPE": "api://provider/.default",
+        "EPP_PROVIDER_MI_CLIENT_ID": "mi-id",
+    })
+    function_app._engine.token_acquirer.acquire.return_value = "provider-token"
     entered, release = Event(), Event()
     upstream = Mock(status_code=202, json=Mock(return_value={"status": "ENROUTE"}))
 
@@ -161,7 +176,8 @@ def test_live_acceptance_waits_and_preserves_wire_data_but_not_plaintext_logs(mo
     send = Mock(side_effect=wait_for_acceptance)
     monkeypatch.setattr(dispatch_module.requests, "request", send)
     with ThreadPoolExecutor(max_workers=1) as executor:
-        request = _request(_envelope(channel=2), {"x-ms-client-request-id": "wire-message"})
+        compact = _encrypt(context={**_CONTEXT, "voice": {"text2voice": _FIXTURES["textToVoice"]}})
+        request = _request(_envelope(channel=channel, encryptedDeliveryContext=compact), {"x-ms-client-request-id": "wire-message"})
         pending = executor.submit(_HANDLER, request)
         try:
             assert entered.wait(5), "handler did not reach provider"
@@ -176,26 +192,80 @@ def test_live_acceptance_waits_and_preserves_wire_data_but_not_plaintext_logs(mo
     send.assert_called_once()
     upstream.close.assert_called_once()
     wire = json.loads(send.call_args.kwargs["data"])
-    assert wire["text"] == _MESSAGE and wire["messageTypes"] == ["voice"] and wire["correlationId"] == _CORRELATION
+    content = {"voice": {"text2voice": _FIXTURES["textToVoice"]}} if channel == "voice" else {"text": _MESSAGE}
+    assert wire == {"destination": _PHONE.lstrip("+"), "messageTypes": [channel], "correlationId": _CORRELATION,
+                    "shutterMode": False, **content}
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if jwt_enabled == "true":
+        function_app._engine.token_acquirer.acquire.assert_called_once()
+        headers["Authorization"] = "Bearer provider-token"
+    else:
+        function_app._engine.token_acquirer.acquire.assert_not_called()
+    if auth_mode == "oauth2":
+        function_app._engine.secrets.resolve.assert_not_called()
+    else:
+        headers.update({"X-MEMS-API-ID": "test-key", "X-MEMS-API-Key": "test-key"})
+        assert function_app._engine.secrets.resolve.call_count == 2
+    assert send.call_args.kwargs["headers"] == headers
     summary = json.loads(caplog.records[-1].getMessage().removeprefix("[EPP] result "))
     assert len(caplog.records) == 1
     assert set(summary) == {"requestId", "correlationId", "httpStatus", "elapsedMs", "evaluation"}
     assert summary["correlationId"] == hashlib.sha256(_CORRELATION.encode()).hexdigest()[:16]
-    for private in (_NONCE, _PHONE, _MESSAGE, "123456", _CORRELATION, "wire-message", "test-key"):
+    for private in (_NONCE, _PHONE, _MESSAGE, "123456", _CORRELATION, "wire-message", "test-key", "provider-token"):
         assert private not in caplog.text
+    for private in _FIXTURES["textToVoice"].values():
+        assert private not in caplog.text + response.get_body().decode()
+
+
+def test_incomplete_encrypted_voice_fails_even_with_valid_outer_voice(caplog):
+    caplog.set_level(logging.INFO)
+    function_app._engine.env["EPP_PROVIDER_JWT_ENABLED"] = "true"
+    for mode in ("apiKey", "oauth2"):
+        function_app._engine.env["EPP_PROVIDER_AUTH_MODE"] = mode
+        for changes in _FIXTURES["incompleteVoiceContexts"]:
+            compact = _encrypt(context={**_CONTEXT, **changes})
+            response = _HANDLER(_request(_envelope(channel=2, encryptedDeliveryContext=compact,
+                                                  voice={"text2voice": _FIXTURES["textToVoice"]})))
+            result = json.loads(response.get_body())
+            assert response.status_code == 400
+            assert result == {"error": "provider_delivery_failed", "correlationId": _CORRELATION,
+                              "requestId": result["requestId"]}
+    for private in (_NONCE, _PHONE, _MESSAGE, *_FIXTURES["textToVoice"].values()):
+        assert private not in caplog.text
+    function_app._engine.secrets.resolve.assert_not_called()
+    function_app._engine.token_acquirer.acquire.assert_not_called()
+    dispatch_module.requests.request.assert_not_called()
 
 
 def test_provider_failure_preserves_status_without_retry_or_nonce(monkeypatch):
-    upstream = Mock(status_code=429, json=Mock(return_value={"status": "ENROUTE"}))
-    send = Mock(return_value=upstream)
-    monkeypatch.setattr(dispatch_module.requests, "request", send)
-    response = _HANDLER(_request(_envelope()))
-    body = json.loads(response.get_body())
-    assert response.status_code == 429 and body["error"] == "provider_delivery_failed"
-    assert "nonce" not in body
-    send.assert_called_once()
-    assert send.call_args.kwargs["allow_redirects"] is False
-    upstream.close.assert_called_once()
+    function_app._engine.env.update({
+        "EPP_PROVIDER_JWT_ENABLED": "true", "EPP_PROVIDER_TENANT_ID": "tenant-id",
+        "EPP_PROVIDER_CLIENT_ID": "client-id", "EPP_PROVIDER_SCOPE": "api://provider/.default",
+        "EPP_PROVIDER_MI_CLIENT_ID": "mi-id",
+    })
+    function_app._engine.token_acquirer.acquire.return_value = "provider-token"
+    for provider_status, expected in ((429, 429), (401, 401)):
+        upstream = Mock(status_code=provider_status, json=Mock(return_value={"status": "ENROUTE"}))
+        send = Mock(return_value=upstream)
+        monkeypatch.setattr(dispatch_module.requests, "request", send)
+        response = _HANDLER(_request(_envelope()))
+        body = json.loads(response.get_body())
+        assert response.status_code == expected and body["error"] == "provider_delivery_failed"
+        assert "nonce" not in body
+        send.assert_called_once()  # No API-key-only resend after the optional bearer is rejected.
+        assert send.call_args.kwargs["headers"]["Authorization"] == "Bearer provider-token"
+        assert send.call_args.kwargs["headers"]["X-MEMS-API-Key"] == "test-key"
+        assert send.call_args.kwargs["allow_redirects"] is False
+        upstream.close.assert_called_once()
+    function_app._engine.env["EPP_PROVIDER_AUTH_MODE"] = "oauth2"
+    send.reset_mock()
+    for timed_out, status in ((False, 502), (True, 504)):
+        function_app._engine.token_acquirer.acquire.side_effect = ProviderTokenError(timed_out=timed_out)
+        response = _HANDLER(_request(_envelope()))
+        body = json.loads(response.get_body())
+        assert response.status_code == status and body["error"] == "provider_delivery_failed"
+        assert "nonce" not in body
+    send.assert_not_called()
 
 
 def test_unexpected_handler_error_is_generic_and_does_not_send(monkeypatch, caplog):

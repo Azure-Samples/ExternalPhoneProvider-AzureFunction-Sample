@@ -63,7 +63,10 @@ public class EnvelopeTests
         var encodedHeader = Encode(Encoding.UTF8.GetBytes(header));
         var key = RandomNumberGenerator.GetBytes(32);
         var iv = RandomNumberGenerator.GetBytes(12);
-        var plaintext = Encoding.UTF8.GetBytes("{\"nonce\":\"test-nonce\",\"phoneNumber\":\"+15551234567\",\"message\":\"message\"}");
+        using var fixtures = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "fixtures", "contract.json")));
+        var voiceFields = fixtures.RootElement.GetProperty("textToVoice");
+        var plaintext = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { nonce = "test-nonce",
+            phoneNumber = "+15551234567", message = "message", voice = new { text2voice = voiceFields } }));
         var ciphertext = new byte[plaintext.Length];
         var tag = new byte[16];
         using var cipher = new AesGcm(key, tag.Length);
@@ -75,6 +78,21 @@ public class EnvelopeTests
         Assert.Equal("test-nonce", context.Nonce);
         Assert.True(context.IsComplete);
         Assert.False(JsonSerializer.SerializeToElement(context).TryGetProperty("IsComplete", out _));
+        var voice = Assert.IsType<TextToVoice>(context.TextToVoice);
+        Assert.True(voice.IsComplete);
+        Assert.Equal("  Your code is \n", voice.BeforePasswordText);
+        Assert.Equal("012345", voice.Password);
+        Assert.Equal("en-GB", voice.Language);
+        Assert.Equal(nameof(TextToVoice), voice.ToString());
+        Assert.False(JsonSerializer.SerializeToElement(voice).TryGetProperty("IsComplete", out _));
+        foreach (var prefix in new[] { "", new string(' ', 1601) })
+            Assert.True((voice with { BeforePasswordText = prefix }).IsComplete);
+        foreach (var changes in fixtures.RootElement.GetProperty("incompleteVoiceContexts").EnumerateArray())
+            Assert.NotEqual(true, DeliveryContext.FromPayload(changes).TextToVoice?.IsComplete);
+        var numeric = TextToVoice.FromPayload(JsonSerializer.SerializeToElement(new {
+            beforePasswordText = "Your code is", password = 12345, language = "en-GB" }));
+        Assert.Null(numeric!.Password);
+        Assert.Null(new DispatchRequest("phone", "message", "sms", "id", null, null).TextToVoice);
         segments[0] = Encode(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(JsonSerializer.Deserialize<JsonElement>(header))));
         Assert.NotEqual(encodedHeader, segments[0]);
         Assert.ThrowsAny<Exception>(() => decryptor.Decrypt(string.Join(".", segments)));

@@ -20,7 +20,7 @@ account and environment. Individual API contracts stay in the adapters.
 ### Setup script compatibility
 
 The Preview 1 setup script creates the encryption-key secret, not the selected provider's API
-credentials. Before live delivery, complete these steps:
+credentials. Before live delivery, complete these steps (or the supported adapter's opt-in OAuth setup):
 
 1. Set `KEY_VAULT_URL` to the vault containing the provider credentials. When it is the vault created
 	by setup, use that vault's `vaultUri`; otherwise explicitly select the credential vault and grant
@@ -37,6 +37,9 @@ credentials. Before live delivery, complete these steps:
 	every account option or channel automatically available.
 
 The script already writes the correct `EPP_` names; no variable-prefix translation is required.
+
+Provider tokens require the separate [JWT setup](#provider-jwt-setup) below. API-key-only behavior
+remains the default; see the [two-setting auth gate table](CONTRACT.md#provider-authentication-gates).
 
 | Setup value | Current application behavior |
 |---|---|
@@ -71,11 +74,64 @@ A public-only certificate cannot supply the private key it later exports. Treat 
 role assignments as failures unless the exact assignment is verified as already present. Verify these
 script prerequisites separately; the application tests do not validate provisioning.
 
+### Provider JWT setup
+
+Only Soprano currently supports the JWT gate. QA4 accepted client-secret-issued v2 Bearer tokens for
+SMS and voice in local integration tests. Managed-identity federation, combined-header precedence and
+handset playback remain unverified. See the [auth gate table](CONTRACT.md#provider-authentication-gates).
+
+Soprano requires `ver=2.0`, its resource app ID as `aud`, the issuing tenant's
+`https://login.microsoftonline.com/{tenantId}/v2.0` issuer, and the registered client app ID as `azp`.
+The resource registration controls access-token version; using a v2 token endpoint alone does not
+guarantee a v2 token. Confirm the client's provider-side account mapping before rollout.
+
+| Setting | Value |
+|---|---|
+| `EPP_PROVIDER_TENANT_ID` | Specific issuing Entra tenant, not `common`, `organizations`, `consumers` or `adfs` |
+| `EPP_PROVIDER_CLIENT_ID` | Client application ID requesting the token, not the inbound caller or provider API ID |
+| `EPP_PROVIDER_SCOPE` | One agreed provider resource scope ending in `/.default` |
+| `EPP_PROVIDER_CLIENT_SECRET_NAME` | **Secret flow:** client-secret name in `KEY_VAULT_URL` |
+| `EPP_PROVIDER_MI_CLIENT_ID` | **Federated flow:** user-assigned managed identity client ID |
+
+Choose exactly one source, with no surrounding whitespace. Plaintext `EPP_PROVIDER_CLIENT_SECRET`
+and `EPP_PROVIDER_TOKEN_EXCHANGE_AUDIENCE` overrides are rejected.
+
+Azure Identity uses the named client secret or exchanges a managed-identity assertion for
+`api://AzureADTokenExchange/.default` through `ClientAssertionCredential`. Federation requires the
+matching identity issuer/subject and exchange audience on the client app, plus provider permissions
+and consent. `AZURE_CLIENT_ID` selects the separate Key Vault identity. This targets public Azure;
+Entra issues the provider token, and the inbound token is never forwarded.
+
+### Structured voice input
+
+Soprano's **new omnimsg** adapter appends `/messages/omnimsg` to `EPP_PROVIDER_ENDPOINT`.
+
+For voice, supply this object **inside the encrypted delivery context**, alongside the existing
+required `nonce`, `phoneNumber` and `message` fields:
+
+```json
+{
+	"voice": {
+		"text2voice": {
+			"beforePasswordText": "Your code is",
+			"password": "012345",
+			"language": "en-US"
+		}
+	}
+}
+```
+
+Confirm SAS can supply this [opt-in encrypted extension](CONTRACT.md#encrypteddeliverycontext-jwe).
+Voice emits `messageTypes: ["voice"]` and the nested object without top-level `text`; SMS keeps `text`.
+Language controls pronunciation, not translation. The old Connect Voice PDF's form encoding and
+numeric language/voice/loop options do not apply. Acceptance is not proof of audible playback.
+
 ## 2. Provision encryption and deployment trust
 
 Use [local.settings.sample.json](local.settings.sample.json) as a starting point, replacing its
 placeholders with the selected adapter's configuration and choosing the matching worker runtime.
-The sample's `UseDevelopmentStorage=true` is local-only and requires Azurite. Keep local settings
+The sample's `UseDevelopmentStorage=true` is local-only and requires Azurite when used; HTTP-only
+local execution can omit it. Keep local settings
 private; set application values in the Function App environment for deployment, configure its host
 storage separately, and use a Key Vault reference instead of a local private-key value. The
 [configuration catalog](CONTRACT.md#4-configuration-app-settings--env) is authoritative.
@@ -121,7 +177,7 @@ platform gate before publishing this code, then repeat the deployed security che
 Use `POST /api/SendOtp` with an admitted caller's token and a valid encrypted envelope containing
 `mode: 2` or `mode: "evaluation"`. On Azure, Easy Auth authenticates and authorizes the caller first.
 The handler then validates and decrypts, and echoes the nonce without provider lookup, provider Key
-Vault reads or provider HTTP. No provider configuration or diagnostic environment flag is required.
+Vault reads, provider-token acquisition or provider HTTP. No provider configuration or diagnostic environment flag is required.
 Platform trust configuration and the decryption key remain prerequisites; see the
 [evaluation contract](CONTRACT.md#evaluation-generic-shutter).
 
@@ -133,7 +189,10 @@ does not enable authentication, and local success does not verify platform secur
 Evaluation success proves the validation/decryption path, not live credentials or handset delivery.
 A live `200` with the matching nonce means provider acceptance, not handset receipt; confirm delivery
 through the selected provider's reports. Forward the rendered message unchanged, including voice
-digit spacing, without guessing a passcode. A timed-out send may already be accepted; avoid blind retries.
+digit spacing, without guessing a passcode. Adapters requiring structured voice input must receive it
+explicitly inside the JWE; do not derive a password from the rendered message. Evaluation does not
+verify provider-specific voice fields or actual playback. A timed-out send may already be accepted;
+avoid blind retries.
 
 ## 4. Package, deploy and verify
 

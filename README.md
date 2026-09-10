@@ -28,7 +28,7 @@ and deploying, step by step.
 ## The design in one line
 
 SAS → Easy Auth → anonymous HTTP handler (`POST /api/SendOtp`, validate envelope + decrypt JWE) →
-configured provider (API key) → HTTP result with nonce on success.
+configured provider (API key by default; opt-in OAuth for a supporting adapter) → HTTP result with nonce on success.
 Only provider acceptance returns the nonce for live requests. Incoming `mode: 2` (evaluation) is the
 generic shutter: after platform authentication, validate and decrypt, then echo the nonce without
 calling a provider.
@@ -47,8 +47,9 @@ variables; Azure Functions Core Tools loads that `Values` object for local runs.
 
 The sample uses `node`; change it to `python` or `dotnet-isolated` for those runtimes. Replace the
 provider, endpoint, vault and test-key placeholders before use. Its storage value assumes **Azurite
-is running**; do not copy `UseDevelopmentStorage=true` into Azure. Optional settings stay in the table
-below rather than appearing as required placeholders in the sample. Keep explanatory comments outside
+is running**; local HTTP-only execution can omit that storage setting. Do not copy
+`UseDevelopmentStorage=true` into Azure. The sample shows safe auth-gate defaults; other optional
+settings stay in the table below rather than appearing as required placeholders. Keep explanatory comments outside
 `Values`, otherwise the host loads them as environment variables too.
 
 The local settings file is an environment-variable input for the Functions host, **not a serialized
@@ -64,6 +65,8 @@ how code accesses configuration, not the environment-variable names.
 | `EPP_ENCRYPTION_KEY_ID` | Optional | Expected encryption key ID; mismatch only produces an advisory warning. |
 | `EPP_PROVIDER_NAME` | Live delivery | Selected adapter's manifest ID. No default provider. |
 | `EPP_PROVIDER_ENDPOINT` | Live delivery | HTTPS **base URL**, in the same environment as the provider credentials; the adapter adds its route. |
+| `EPP_PROVIDER_AUTH_MODE` | Optional | Defaults to `apiKey`; `oauth2` requires a provider JWT. See the [auth gate table](docs/CONTRACT.md#provider-authentication-gates). |
+| `EPP_PROVIDER_JWT_ENABLED` | Optional | Defaults to `false`: no provider-token lookup. `true` enables optional JWT alongside API keys or required JWT in `oauth2` mode, only for supporting adapters. |
 | `EPP_PROVIDER_TIMEOUT_MS` | Optional | Decimal milliseconds. Defaults to `1500`, capped at `2500`; not an end-to-end deadline. |
 | `EPP_PROVIDER_ACCOUNT_NAME` | Adapter-dependent | Sender/account metadata, not an API key or credential identity. |
 | `KEY_VAULT_URL` | Provider credential lookup | URI of the vault containing the manifest-named provider secrets. Separate from the encryption-key reference. |
@@ -90,8 +93,9 @@ or base64 PEM directly; use a reference such as `@Microsoft.KeyVault(SecretUri=h
 for `EPP_DECRYPTION_KEY_PEM` in Azure app settings, where the platform resolves it.
 
 Configure inbound issuer/audience/caller trust in **Easy Auth**, not these application variables.
-Incoming `tenantId`, `channel`, `mode` and `ttlSeconds` are request data. No outbound OAuth settings
-are supported by this main-based implementation.
+Incoming `tenantId`, `channel`, `mode` and `ttlSeconds` are request data. Outbound OAuth settings are
+separate from that inbound trust; see the [configuration catalog](docs/CONTRACT.md#4-configuration-app-settings--env)
+and [onboarding](docs/ONBOARDING.md#provider-jwt-setup) for token setup and structured voice input.
 
 ## Security
 
@@ -105,8 +109,9 @@ internet with Easy Auth disabled or bypassed.** See [platform setup](docs/ONBOAR
 
 JWE decryption protects the payload but **does not authenticate SAS**: anyone with the public key can
 encrypt a request. A nonce echo, including a fixed nonce, is not caller authentication. Provider API
-keys are read from **Key Vault** via **managed identity**; they authenticate the outbound provider call,
-not the inbound request.
+keys or OAuth client secrets are read from **Key Vault** via **managed identity**. A supported OAuth
+adapter may instead exchange a managed-identity assertion for a provider token. These credentials
+authenticate the outbound provider call, not the inbound request; the caller's token is never forwarded.
 
 Core Tools does not provide Easy Auth. Local execution is unauthenticated: bind only to loopback,
 with no tunnels or public forwarding. Offline tests cover application behavior, not platform

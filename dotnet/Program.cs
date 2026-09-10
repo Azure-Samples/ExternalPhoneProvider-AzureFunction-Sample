@@ -16,6 +16,7 @@ builder.Services.AddHttpClient(DispatchEngine.ProviderHttpClientName)
 	.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<IEnv, ProcessEnv>();
 builder.Services.AddSingleton<ISecretResolver, SecretResolver>();
+builder.Services.AddSingleton<IProviderTokenAcquirer, ProviderTokenAcquirer>();
 builder.Services.AddSingleton<IJweKeyProvider, EnvJweKeyProvider>();
 builder.Services.AddSingleton<JweDecryptor>();
 

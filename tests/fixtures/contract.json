@@ -27,6 +27,27 @@
     { "name": "encryption before TTL", "overrides": { "encryptedDeliveryContext": "", "ttlSeconds": "bad" }, "reason": "encryptedDeliveryContext is required" },
     { "name": "channel before mode and TTL", "overrides": { "channel": false, "mode": null, "ttlSeconds": "bad" }, "reason": "unsupported channel" }
   ],
+  "textToVoice": { "beforePasswordText": "  Your code is \n", "password": "012345", "language": "en-GB" },
+  "incompleteVoiceContexts": [
+    {},
+    { "voice": null },
+    { "voice": [] },
+    { "voice": "voice" },
+    { "voice": 1 },
+    { "voice": {} },
+    { "voice": { "text2voice": null } },
+    { "voice": { "text2voice": [] } },
+    { "voice": { "text2voice": "012345" } },
+    { "voice": { "text2voice": { "beforePasswordText": "Your code is", "password": 12345, "language": "en-GB" } } },
+    { "voice": { "text2voice": { "beforePasswordText": "Your code is", "password": "012345" } } },
+    { "voice": { "text2voice": { "password": "012345", "language": "en-GB" } } },
+    { "voice": { "text2voice": { "beforePasswordText": 123, "password": "012345", "language": "en-GB" } } },
+    { "voice": { "text2voice": { "beforePasswordText": "Your code is", "password": null, "language": "en-GB" } } },
+    { "voice": { "text2voice": { "beforePasswordText": "Your code is", "password": "\u2003\t", "language": "en-GB" } } },
+    { "voice": { "text2voice": { "beforePasswordText": "Your code is", "password": "012345", "language": 2057 } } },
+    { "voice": { "text2voice": { "beforePasswordText": "Your code is", "password": "012345", "language": "\u2003\n" } } },
+    { "textToVoice": { "beforePasswordText": "Your code is", "password": "012345", "language": "en-GB" } }
+  ],
   "incompleteContexts": [
     { "nonce": "" },
     { "nonce": null },

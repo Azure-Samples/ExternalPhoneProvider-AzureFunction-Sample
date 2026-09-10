@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Epp.Otp;
@@ -24,9 +25,33 @@ public sealed record DispatchRequest(
     string Channel,
     string MessageId,
     string? CorrelationId,
-    string? Locale);
+    string? Locale,
+    TextToVoice? TextToVoice = null);
 
-public sealed record ProviderCredential(string Mode, string? Secret = null, string? Identity = null);
+public sealed record TextToVoice(string? BeforePasswordText, string? Password, string? Language)
+{
+    [JsonIgnore]
+    public bool IsComplete => BeforePasswordText is not null
+        && !string.IsNullOrWhiteSpace(Password) && !string.IsNullOrWhiteSpace(Language);
+
+    public static TextToVoice? FromPayload(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object) return null;
+        string? ReadString(string name) => payload.TryGetProperty(name, out var value)
+            && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        return new(ReadString("beforePasswordText"), ReadString("password"), ReadString("language"));
+    }
+
+    public override string ToString() => nameof(TextToVoice);
+}
+
+public sealed record ProviderCredential(string Mode, string? Secret = null, string? Identity = null, string? Token = null)
+{
+    public override string ToString() => nameof(ProviderCredential);
+
+    internal static bool IsHeaderSafeToken(string? token) =>
+        !string.IsNullOrEmpty(token) && token.All(c => c > ' ' && c < '\u007f');
+}
 
 public sealed record ProviderHttpRequest(string Url, string Method, Dictionary<string, string> Headers, string Body);
 
@@ -41,9 +66,11 @@ public sealed record ParsedResponse(
     public override string ToString() => nameof(ParsedResponse);
 }
 
-public sealed record AuthConfig(string Mode, string? KeyVaultSecretName = null, string? IdentityKeyVaultSecretName = null);
+public sealed record AuthConfig(string Mode, string? KeyVaultSecretName = null, string? IdentityKeyVaultSecretName = null,
+    bool SupportsOAuth = false);
 
-public sealed record ProviderManifest(string Id, AuthConfig Auth, IReadOnlyDictionary<string, Outcome> ResponseMapping);
+public sealed record ProviderManifest(string Id, AuthConfig Auth, IReadOnlyDictionary<string, Outcome> ResponseMapping,
+    bool RequiresTextToVoice = false);
 
 public sealed record DispatchResult(int HttpStatus, object Body);
 

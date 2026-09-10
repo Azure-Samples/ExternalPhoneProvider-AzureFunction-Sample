@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const Module = require('node:module');
 const { CompactEncrypt } = require('jose');
 const { SecretClient } = require('@azure/keyvault-secrets');
+const { ProviderTokenAcquirer } = require('../src/functions/providerToken');
 const fixtures = require('../../tests/fixtures/contract.json');
 
 // Capture the real handler; keys stay in memory and all external I/O is mocked.
@@ -25,10 +26,14 @@ try {
 }
 
 const envKeys = ['EPP_ENCRYPTION_KEY_ID', 'AZURE_CLIENT_ID', 'EPP_PROVIDER_NAME', 'EPP_PROVIDER_ENDPOINT',
-    'EPP_PROVIDER_TIMEOUT_MS', 'EPP_LOG_PLAINTEXT', 'KEY_VAULT_URL', 'EPP_DECRYPTION_KEY_PEM'];
+    'EPP_PROVIDER_TIMEOUT_MS', 'EPP_LOG_PLAINTEXT', 'KEY_VAULT_URL', 'EPP_DECRYPTION_KEY_PEM',
+    'EPP_PROVIDER_AUTH_MODE', 'EPP_PROVIDER_TENANT_ID', 'EPP_PROVIDER_CLIENT_ID', 'EPP_PROVIDER_SCOPE',
+    'EPP_PROVIDER_MI_CLIENT_ID', 'EPP_PROVIDER_CLIENT_SECRET_NAME', 'EPP_PROVIDER_CLIENT_SECRET',
+    'EPP_PROVIDER_TOKEN_EXCHANGE_AUDIENCE', 'EPP_PROVIDER_JWT_ENABLED'];
 let savedEnv;
 let fetchMock;
 let getSecret;
+let getToken;
 let logs;
 let warnings;
 beforeEach(() => {
@@ -39,6 +44,7 @@ beforeEach(() => {
         KEY_VAULT_URL: 'https://unit-test.vault.azure.net', EPP_PROVIDER_NAME: 'soprano',
         EPP_PROVIDER_ENDPOINT: 'https://provider.example/cgpapi/' });
     getSecret = mock.method(SecretClient.prototype, 'getSecret', async () => ({ value: 'PRIVATE-API-KEY' }));
+    getToken = mock.method(ProviderTokenAcquirer.prototype, 'acquire', async () => 'PRIVATE-PROVIDER-TOKEN');
     fetchMock = mock.method(global, 'fetch', async () => ({ ok: true, status: 201,
         text: async () => JSON.stringify({ status: 'ENROUTE', id: 'PRIVATE-ID', description: 'PRIVATE-STATUS' }) }));
 });
@@ -142,15 +148,17 @@ test('JWE authenticates the original protected-header bytes, not reserialized JS
 
 test('evaluation decrypts without provider config or I/O and checks the advisory key ID', async () => {
     for (const key of ['EPP_PROVIDER_NAME', 'EPP_PROVIDER_ENDPOINT', 'KEY_VAULT_URL']) delete process.env[key];
+    process.env.EPP_PROVIDER_AUTH_MODE = 'oauth2';
+    process.env.EPP_PROVIDER_JWT_ENABLED = 'true';
     for (const expectedKeyId of ['', 'PRIVATE-KID', 'private-kid']) {
         process.env.EPP_ENCRYPTION_KEY_ID = expectedKeyId;
-        const result = await invoke(await envelope({ mode: 'evaluation', provider: 'unknown' }));
+        const result = await invoke(await envelope({ channel: 2, mode: 'evaluation', provider: 'unknown' }));
         assert.equal(result.status, 200);
         assert.deepEqual(result.jsonBody, { nonce: delivery.nonce, correlationId: 'correlation-id', providerStatus: 'accepted' });
         assert.equal(logs[0].evaluation, true);
         assert.deepEqual(warnings, expectedKeyId === 'private-kid' ? [['encryption_key_id_mismatch']] : []);
     }
-    assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
+    assert.deepEqual([getSecret.mock.callCount(), getToken.mock.callCount(), fetchMock.mock.callCount()], [0, 0, 0]);
 });
 
 test('SMS/voice preserve content and correlation without reflecting headers or logging PII', async () => {
@@ -159,28 +167,77 @@ test('SMS/voice preserve content and correlation without reflecting headers or l
         'x-ms-client-principal': Buffer.from(JSON.stringify({
             claims: [{ typ: 'appid', val: 'FORGED-CALLER' }],
         })).toString('base64') };
-    for (const [channel, name] of [[1, 'sms'], [2, 'voice']]) {
+    for (const [channel, name, mode, jwtEnabled, tokenError] of [[1, 'sms', 'apiKey', 'false'], [2, 'voice', 'apiKey', 'false'],
+        [1, 'sms', 'oauth2', 'true'], [2, 'voice', 'oauth2', 'true'],
+        [1, 'sms', 'apiKey', 'true'], [2, 'voice', 'apiKey', 'true'],
+        [1, 'sms', 'apiKey', 'true', 'Error'], [2, 'voice', 'apiKey', 'true', 'TimeoutError']]) {
+        process.env.EPP_PROVIDER_AUTH_MODE = mode;
+        process.env.EPP_PROVIDER_JWT_ENABLED = jwtEnabled;
+        getToken.mock.mockImplementation(async () => {
+            if (tokenError) throw Object.assign(new Error('PRIVATE-SDK-ERROR'), { name: tokenError });
+            return 'PRIVATE-PROVIDER-TOKEN';
+        });
         const headers = channel === 1 ? {} : forgedHeaders;
-        const result = await invoke(await envelope({ channel, correlationId, provider: 'unknown' }), headers);
+        const voiceContext = { ...delivery, voice: { text2voice: fixtures.textToVoice } };
+        const result = await invoke(await envelope({ channel, correlationId, provider: 'unknown' }, voiceContext), headers);
         assert.equal(result.status, 200);
         assert.deepEqual(result.jsonBody, { nonce: delivery.nonce, correlationId, providerStatus: 'accepted' });
         const init = fetchMock.mock.calls.at(-1).arguments[1];
+        assert.equal(init.headers.Authorization, jwtEnabled === 'true' && !tokenError ? 'Bearer PRIVATE-PROVIDER-TOKEN' : undefined);
+        assert.equal(init.headers['X-MEMS-API-Key'], mode === 'apiKey' ? 'PRIVATE-API-KEY' : undefined);
+        assert.equal(init.headers['X-MEMS-API-ID'], mode === 'apiKey' ? 'PRIVATE-API-KEY' : undefined);
         const sent = JSON.parse(init.body);
-        assert.deepEqual([sent.text, sent.messageTypes, sent.correlationId], [delivery.message, [name], correlationId]);
+        assert.deepEqual(sent, { destination: delivery.phoneNumber.slice(1), messageTypes: [name], correlationId,
+            shutterMode: false, ...(channel === 2 ? { voice: { text2voice: fixtures.textToVoice } } : { text: delivery.message }) });
         assert.equal(init.redirect, 'manual');
         assert.equal(logs.length, 1);
         assert.deepEqual(Object.keys(logs[0]).sort(), ['correlationId', 'elapsedMs', 'evaluation', 'httpStatus', 'requestId']);
         assert.equal(logs[0].correlationId, crypto.createHash('sha256').update(correlationId).digest('hex').slice(0, 16));
         assert.doesNotMatch(JSON.stringify(logs), /PRIVATE|918273|15551234567/);
+        for (const value of Object.values(fixtures.textToVoice)) {
+            assert.equal(JSON.stringify([result.jsonBody, logs, warnings]).includes(value), false);
+        }
         const output = JSON.stringify([result.jsonBody, logs, warnings]);
         assert.doesNotMatch(output, /FORGED/);
         for (const value of Object.values(forgedHeaders)) assert.equal(output.includes(value), false);
     }
-    assert.equal(fetchMock.mock.callCount(), 2);
+    assert.equal(fetchMock.mock.callCount(), 8);
+    assert.equal(getToken.mock.callCount(), 6);
 });
 
-test('handler awaits the provider body and returns 502/429 without a nonce or retries', async () => {
-    for (const status of [500, 429]) {
+test('incomplete encrypted voice fails closed even with a valid outer voice object', async () => {
+    process.env.EPP_PROVIDER_JWT_ENABLED = 'true';
+    for (const mode of ['apiKey', 'oauth2']) {
+        process.env.EPP_PROVIDER_AUTH_MODE = mode;
+        for (const changes of fixtures.incompleteVoiceContexts) {
+            const result = await invoke(await envelope({ channel: 2, voice: { text2voice: fixtures.textToVoice } },
+                { ...delivery, ...changes }));
+            assertFailure(result, 400);
+            assert.deepEqual(result.jsonBody, { error: 'provider_delivery_failed', correlationId: 'correlation-id',
+                requestId: result.jsonBody.requestId });
+            assert.doesNotMatch(JSON.stringify([logs, warnings]), /PRIVATE|012345|en-GB|Your code is/);
+        }
+    }
+    assert.deepEqual([getSecret.mock.callCount(), getToken.mock.callCount(), fetchMock.mock.callCount()], [0, 0, 0]);
+});
+
+test('outbound authentication failures return fixed 502/504 without a nonce or provider send', async () => {
+    process.env.EPP_PROVIDER_JWT_ENABLED = 'true';
+    for (const [mode, errorName, status] of [['unknown', 'Error', 502], ['oauth2', 'Error', 502], ['oauth2', 'TimeoutError', 504]]) {
+        process.env.EPP_PROVIDER_AUTH_MODE = mode;
+        getToken.mock.mockImplementation(async () => { throw Object.assign(new Error('PRIVATE-SDK-ERROR'), { name: errorName }); });
+        const result = await invoke(await envelope());
+        assertFailure(result, status);
+        assert.deepEqual(result.jsonBody, { error: 'provider_delivery_failed', correlationId: 'correlation-id',
+            requestId: result.jsonBody.requestId });
+        assert.doesNotMatch(JSON.stringify([logs, warnings]), /PRIVATE/);
+    }
+    assert.deepEqual([getSecret.mock.callCount(), getToken.mock.callCount(), fetchMock.mock.callCount()], [0, 2, 0]);
+});
+
+test('handler awaits the provider body and returns failures without a nonce or retries, including dual-header 401', async () => {
+    process.env.EPP_PROVIDER_JWT_ENABLED = 'true';
+    for (const status of [500, 429, 401]) {
         let release;
         let bodyStarted;
         const started = new Promise((resolve) => { bodyStarted = resolve; });
@@ -196,9 +253,10 @@ test('handler awaits the provider body and returns 502/429 without a nonce or re
         } finally {
             release(JSON.stringify({ status: 'ENROUTE', description: 'PRIVATE-STATUS' }));
         }
-        assertFailure(await pending, status === 500 ? 502 : 429);
+        assertFailure(await pending, status === 500 ? 502 : status);
     }
-    assert.equal(fetchMock.mock.callCount(), 2);
+    assert.equal(fetchMock.mock.callCount(), 3);
+    assert.equal(getToken.mock.callCount(), 3);
 });
 
 test('the real abort timer covers response-body reading: 504, no retry and no nonce', async () => {

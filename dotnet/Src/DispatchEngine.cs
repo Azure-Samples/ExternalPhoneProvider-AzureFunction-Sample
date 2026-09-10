@@ -103,6 +103,7 @@ public sealed class DeliveryContext
     [JsonPropertyName("locale")] public string? Locale { get; set; }
     [JsonPropertyName("message")] public string? Message { get; set; }
     [JsonPropertyName("riskContext")] public JsonElement? RiskContext { get; set; }
+    public TextToVoice? TextToVoice { get; set; }
 
     [JsonIgnore]
     public bool IsComplete => !string.IsNullOrWhiteSpace(Nonce)
@@ -122,6 +123,8 @@ public sealed class DeliveryContext
             Extension = ReadString("extension"),
             Locale = ReadString("locale"),
             RiskContext = payload.TryGetProperty("riskContext", out var risk) ? risk.Clone() : null,
+            TextToVoice = payload.TryGetProperty("voice", out var voice) && voice.ValueKind == JsonValueKind.Object
+                && voice.TryGetProperty("text2voice", out var textToVoice) ? TextToVoice.FromPayload(textToVoice) : null,
         };
     }
 }
@@ -207,13 +210,16 @@ public sealed class DispatchEngine
     private readonly ISecretResolver _secrets;
     private readonly IHttpClientFactory _httpFactory;
     private readonly IEnv _env;
+    private readonly IProviderTokenAcquirer _tokens;
 
-    public DispatchEngine(ProviderRegistry registry, ISecretResolver secrets, IHttpClientFactory httpFactory, IEnv? env = null)
+    public DispatchEngine(ProviderRegistry registry, ISecretResolver secrets, IHttpClientFactory httpFactory, IEnv? env = null,
+        IProviderTokenAcquirer? tokens = null)
     {
         _registry = registry;
         _secrets = secrets;
         _httpFactory = httpFactory;
         _env = env ?? new ProcessEnv();
+        _tokens = tokens ?? new ProviderTokenAcquirer(secrets);
     }
 
     public async Task<DispatchResult> DispatchAsync(DispatchRequest dispatch, string requestId)
@@ -230,24 +236,38 @@ public sealed class DispatchEngine
         if (!OutcomeMapper.DefaultChannels.Contains(channel))
             return new DispatchResult(400, new { status = "error", provider = providerId, reason = "unsupported channel", requestId });
 
-        if (manifest.Auth.Mode != "apiKey")
+        if (channel == "voice" && manifest.RequiresTextToVoice && dispatch.TextToVoice?.IsComplete != true)
+            return new DispatchResult(400, FailBody(providerId, channel, "incomplete voice context", dispatch, requestId));
+
+        var jwtEnabled = string.Equals(config.ProviderJwtEnabled, "true", StringComparison.OrdinalIgnoreCase);
+        if (!jwtEnabled && !string.Equals(config.ProviderJwtEnabled, "false", StringComparison.OrdinalIgnoreCase))
+            return new DispatchResult(502, FailBody(providerId, channel, "invalid provider JWT setting", dispatch, requestId));
+
+        var jwtRequired = string.Equals(config.ProviderAuthMode, "oauth2", StringComparison.OrdinalIgnoreCase);
+        if (manifest.Auth.Mode != "apiKey"
+            || (jwtRequired ? !jwtEnabled : !string.Equals(config.ProviderAuthMode, "apiKey", StringComparison.OrdinalIgnoreCase))
+            || (jwtEnabled && !manifest.Auth.SupportsOAuth))
             return new DispatchResult(502, FailBody(providerId, channel, "unsupported provider auth mode", dispatch, requestId));
-
-        ProviderCredential credential;
-        try { credential = await ResolveCredentialAsync(manifest.Auth); }
-        catch { return new DispatchResult(502, FailBody(providerId, channel, "provider credential unavailable", dispatch, requestId)); }
-
-        var identityRequired = !string.IsNullOrEmpty(manifest.Auth.IdentityKeyVaultSecretName);
-        var credentialUnavailable = string.IsNullOrEmpty(credential.Secret)
-            || (identityRequired && string.IsNullOrEmpty(credential.Identity));
-        if (credentialUnavailable)
-            return new DispatchResult(502, FailBody(providerId, channel, "provider credential unavailable", dispatch, requestId));
 
         var endpoint = config.ProviderEndpoint;
         if (!IsHttpsEndpoint(endpoint))
             return new DispatchResult(502, FailBody(providerId, channel, "provider endpoint invalid or not configured", dispatch, requestId));
 
         var timeoutMs = NormalizeProviderTimeoutMs(config.ProviderTimeoutMs);
+        ProviderCredential credential;
+        try
+        {
+            credential = await ResolveCredentialAsync(manifest, config, jwtEnabled, jwtRequired, timeoutMs);
+        }
+        catch (OperationCanceledException) when (jwtRequired)
+        {
+            return new DispatchResult(504, FailBody(providerId, channel, "provider token acquisition timed out", dispatch, requestId));
+        }
+        catch
+        {
+            return new DispatchResult(502, FailBody(providerId, channel, "provider credential unavailable", dispatch, requestId));
+        }
+
         try
         {
             var req = adapter.BuildRequest(channel, endpoint!, dispatch, credential, _env);
@@ -284,11 +304,36 @@ public sealed class DispatchEngine
         }
     }
 
-    private async Task<ProviderCredential> ResolveCredentialAsync(AuthConfig auth)
+    private async Task<ProviderCredential> ResolveCredentialAsync(ProviderManifest manifest, AppConfig config,
+        bool jwtEnabled, bool jwtRequired, int timeoutMs)
     {
-        var secret = await _secrets.ResolveAsync(auth.KeyVaultSecretName);
-        var identity = string.IsNullOrEmpty(auth.IdentityKeyVaultSecretName) ? string.Empty : await _secrets.ResolveAsync(auth.IdentityKeyVaultSecretName);
-        return new ProviderCredential("apiKey", Secret: secret, Identity: identity);
+        var credential = new ProviderCredential(jwtRequired ? "oauth2" : "apiKey");
+        if (!jwtRequired)
+        {
+            var auth = manifest.Auth;
+            var secret = await _secrets.ResolveAsync(auth.KeyVaultSecretName);
+            var identityRequired = !string.IsNullOrEmpty(auth.IdentityKeyVaultSecretName);
+            var identity = identityRequired ? await _secrets.ResolveAsync(auth.IdentityKeyVaultSecretName) : null;
+            bool IsPresent(string? value) => auth.SupportsOAuth
+                ? ProviderCredential.IsHeaderSafeToken(value) : !string.IsNullOrEmpty(value);
+            if (!IsPresent(secret) || (identityRequired && !IsPresent(identity)))
+                throw new InvalidOperationException("provider credential unavailable");
+            credential = credential with { Secret = secret, Identity = identity };
+        }
+        if (!jwtEnabled) return credential;
+
+        try
+        {
+            var token = await _tokens.AcquireAsync(ProviderTokenConfig.Read(_env, manifest.Id, config.ProviderEndpoint!, timeoutMs));
+            if (!ProviderCredential.IsHeaderSafeToken(token))
+                throw new InvalidOperationException("provider token unavailable");
+            return credential with { Token = token };
+        }
+        catch when (!jwtRequired)
+        {
+            // Optional token failure never changes the selected API-key method or triggers a resend.
+            return credential;
+        }
     }
 
     internal static int NormalizeProviderTimeoutMs(string? value)

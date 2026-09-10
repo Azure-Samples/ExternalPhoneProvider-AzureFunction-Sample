@@ -4,11 +4,13 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { AppConfig, readConfig } = require('../src/functions/config');
-const { DeliveryContext, ParsedResponse } = require('../src/functions/models');
+const { DeliveryContext, ParsedResponse, TextToVoice } = require('../src/functions/models');
+const fixtures = require('../../tests/fixtures/contract.json');
+const { ProviderTokenAcquirer } = require('../src/functions/providerToken');
 const { inspect } = require('node:util');
 const {
     dispatchOtp, getProvider, resolveOutcome, outcomeToHttpStatus,
-    parseEnvelope, parseProviderTimeout, isValidProviderUrl,
+    parseEnvelope, parseProviderTimeout, isValidProviderUrl, contextToDispatch,
 } = require('../src/functions/dispatch');
 const dispatch = { destination: '+15551234567', message: '  Your code is 918273.\n',
     channel: 'sms', messageId: 'message-id', correlationId: 'correlation-id' };
@@ -48,6 +50,17 @@ test('request models preserve content and accept valid TTL boundaries', () => {
     assert.ok(context.isComplete);
     assert.equal(context.message, dispatch.message);
     assert.equal(inspect(context), '[DeliveryContext]');
+    assert.equal(context.textToVoice, null);
+    const voiceContext = DeliveryContext.fromPayload({ ...context, voice: { text2voice: fixtures.textToVoice } });
+    const voice = voiceContext.textToVoice;
+    assert.ok(voice instanceof TextToVoice && voice.isComplete);
+    assert.equal(inspect(voice), '[TextToVoice]');
+    assert.deepEqual({ ...voice }, fixtures.textToVoice);
+    assert.equal(contextToDispatch(voiceContext, { channel: 2 }, 'id').textToVoice, voice);
+    assert.equal(TextToVoice.fromPayload({ ...fixtures.textToVoice, password: 12345 }).password, null);
+    for (const beforePasswordText of ['', ' '.repeat(1601)]) {
+        assert.ok(new TextToVoice({ ...fixtures.textToVoice, beforePasswordText }).isComplete);
+    }
     for (const payload of [null, [], 'text', 1]) assert.equal(DeliveryContext.fromPayload(payload), null);
     assert.equal(DeliveryContext.fromPayload({ nonce: 123, phoneNumber: 'phone', message: 'text' }).isComplete, false);
     assert.ok(parseEnvelope(envelope()).envelope);
@@ -69,14 +82,23 @@ test('provider URLs and timeouts retain representative safety boundaries', () =>
     assert.equal(parseProviderTimeout('9999'), 2500);
 });
 
-test('omnimsg preserves its API-key request and normalizes acceptance', () => {
-    const request = getProvider('soprano').adapter.buildRequest({ ...input, env: undefined, endpoint: `${input.endpoint}/cgpapi///` });
+test('omnimsg preserves its API-key request and rejects unsafe credentials', () => {
+    const { adapter, manifest } = getProvider('soprano');
+    assert.equal(manifest.supportsOAuth, true);
+    assert.equal(manifest.requiresTextToVoice, true);
+    const request = adapter.buildRequest({ ...input, env: undefined, endpoint: `${input.endpoint}/cgpapi///` });
     assert.equal(request.url, 'https://provider.example/cgpapi/messages/omnimsg');
     assert.equal(request.method, 'POST');
     assert.deepEqual(request.headers, { 'Content-Type': 'application/json', Accept: 'application/json',
         'X-MEMS-API-ID': 'id', 'X-MEMS-API-Key': 'key' });
     assert.deepEqual(JSON.parse(request.body), { text: dispatch.message, destination: '15551234567',
         messageTypes: ['sms'], correlationId: 'correlation-id', shutterMode: false });
+    assert.deepEqual(adapter.buildRequest({ ...input,
+        credential: { ...input.credential, token: 'bad\r\nheader' } }).headers, request.headers);
+    for (const credential of [{ mode: 'unknown' }, { mode: 'oauth2', token: 123 },
+        { secret: 'bad\r\nheader', token: 'fixture-token' }, { identity: null, token: 'fixture-token' }]) {
+        assert.throws(() => adapter.buildRequest({ ...input, credential: { ...input.credential, ...credential } }));
+    }
     const response = getProvider('soprano').adapter.parseResponse({ httpStatus: 201, ok: true,
         json: { id: 123, status: 'ENROUTE' } });
     assert.deepEqual(response, new ParsedResponse({ success: true, providerHttpStatus: 201,
@@ -124,6 +146,9 @@ test('response parsing and HTTP mapping fail closed, including malformed status/
     const mapping = { ...manifest, responseMapping: { ...manifest.responseMapping, CHALLENGE: 'StepUp' } };
     for (const [json, upstream, expected, status] of [
         [{ status: 'ENROUTE' }, 201, 'Continue', 200],
+        [{}, 200, 'Fail', 502],
+        [null, 200, 'Fail', 502],
+        [{ ApiResponse: { StatusCode: 1000 } }, 200, 'Fail', 502],
         [{ status: 'UNKNOWN' }, 200, 'Fail', 502],
         [{ status: 'FILTERED' }, 200, 'Fail', 502],
         [{ status: false, state: 'ACCEPTED' }, 200, 'Fail', 502],
@@ -166,4 +191,20 @@ test('missing key/identity and an unsafe final voice URL make zero HTTP calls', 
     assert.equal(getSecret.mock.callCount(), calls + 2);
     assert.equal(new Set(getSecret.mock.calls.map((call) => call.this)).size, 3);
     assert.equal(fetchMock.mock.callCount(), 0);
+});
+
+test('other channels and providers ignore incomplete voice metadata', async (t) => {
+    t.mock.method(SecretClient.prototype, 'getSecret', async () => ({ value: 'fixture-key' }));
+    const tokens = t.mock.method(ProviderTokenAcquirer.prototype, 'acquire', async () => 'fixture-token');
+    const send = t.mock.method(global, 'fetch', async () => ({ ok: true, status: 201,
+        text: async () => JSON.stringify({ status: 'ENROUTE', messages: [{ status: { groupName: 'PENDING' } }] }) }));
+    const settings = { EPP_PROVIDER_NAME: 'soprano', EPP_PROVIDER_ENDPOINT: input.endpoint,
+        KEY_VAULT_URL: 'https://voice-test.vault.azure.net' };
+    for (const [provider, channel] of [['soprano', 'sms'], ['infobip', 'voice']]) {
+        assert.equal((await dispatchOtp({ ...dispatch, channel, textToVoice: new TextToVoice({ password: 123 }) }, {
+            config: readConfig({ ...settings, EPP_PROVIDER_NAME: provider }) })).httpStatus, 200);
+    }
+    assert.equal(send.mock.callCount(), 2);
+    assert.equal(tokens.mock.callCount(), 0);
+    assert.equal(JSON.parse(send.mock.calls[0].arguments[1].body).voice, undefined);
 });

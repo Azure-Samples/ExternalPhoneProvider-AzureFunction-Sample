@@ -8,8 +8,9 @@ const crypto = require('crypto');
 const { compactDecrypt } = require('jose');
 const { ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
-const { readConfig } = require('./config');
-const { DeliveryContext } = require('./models');
+const { readConfig, parseProviderTimeout } = require('./config');
+const { DeliveryContext, TextToVoice } = require('./models');
+const { ProviderTokenAcquirer, isSafeBearerToken } = require('./providerToken');
 
 const CHANNEL_BY_CODE = Object.freeze({ 1: 'sms', 2: 'voice' });
 const CHANNEL_BY_NAME = Object.freeze({ sms: 1, voice: 2 });
@@ -131,6 +132,7 @@ function contextToDispatch(context, envelope, messageId) {
         messageId,
         correlationId: envelope.correlationId,
         locale: context.locale || undefined,
+        textToVoice: context.textToVoice ?? null,
     };
 }
 
@@ -175,7 +177,7 @@ function getKeyVaultSecretClient(config) {
     return keyVaultSecretClient;
 }
 
-async function resolveSecretValue(keyVaultSecretName, config) {
+async function resolveSecretValue(keyVaultSecretName, config, options) {
     if (!keyVaultSecretName) {
         return '';
     }
@@ -185,7 +187,7 @@ async function resolveSecretValue(keyVaultSecretName, config) {
         return cachedSecret.value;
     }
 
-    const secretValue = (await getKeyVaultSecretClient(config).getSecret(keyVaultSecretName)).value || '';
+    const secretValue = (await getKeyVaultSecretClient(config).getSecret(keyVaultSecretName, options)).value || '';
 
     secretCache.set(cacheKey, {
         value: secretValue,
@@ -194,17 +196,39 @@ async function resolveSecretValue(keyVaultSecretName, config) {
     return secretValue;
 }
 
-async function resolveProviderCredential(authConfiguration = {}, config) {
-    const { mode = 'apiKey' } = authConfiguration;
-    if (mode !== 'apiKey') throw new Error('unsupported provider authentication');
+const providerTokenAcquirer = new ProviderTokenAcquirer({ resolveSecretValue });
 
-    const [secret, identity] = await Promise.all([
-        resolveSecretValue(authConfiguration.keyVaultSecretName, config),
-        authConfiguration.identityKeyVaultSecretName
-            ? resolveSecretValue(authConfiguration.identityKeyVaultSecretName, config)
-            : Promise.resolve(''),
-    ]);
-    return { mode: 'apiKey', secret, identity };
+async function resolveProviderCredential(manifest, config) {
+    const { providerAuthMode: mode = 'apiKey', providerJwtEnabled: jwtEnabled = false } = config;
+    if (!['apiKey', 'oauth2'].includes(mode) || typeof jwtEnabled !== 'boolean'
+        || (mode === 'oauth2' && !jwtEnabled) || (jwtEnabled && manifest.supportsOAuth !== true)) {
+        throw new Error('unsupported provider authentication');
+    }
+
+    const credential = { mode, secret: '', identity: '', token: null };
+    if (mode === 'apiKey') {
+        const auth = manifest.auth || {};
+        [credential.secret, credential.identity] = await Promise.all([
+            resolveSecretValue(auth.keyVaultSecretName, config),
+            resolveSecretValue(auth.identityKeyVaultSecretName, config),
+        ]);
+        const isValidCredential = manifest.supportsOAuth === true ? isSafeBearerToken : Boolean;
+        if (!isValidCredential(credential.secret)
+            || (auth.identityKeyVaultSecretName && !isValidCredential(credential.identity))) {
+            throw new Error('provider credential unavailable');
+        }
+    }
+    if (jwtEnabled) {
+        try {
+            const token = await providerTokenAcquirer.acquire(config);
+            if (!isSafeBearerToken(token)) throw new Error('provider token unavailable');
+            credential.token = token;
+        } catch (error) {
+            if (mode === 'oauth2') throw error;
+            // API-key authentication remains usable; never log token acquisition failures.
+        }
+    }
+    return credential;
 }
 
 // Status mappings may restrict HTTP success, but cannot turn failed HTTP into Continue.
@@ -238,14 +262,6 @@ function outcomeToHttpStatus(outcome, providerHttpStatus) {
         default:
             return 502;
     }
-}
-
-// App settings use one grammar: trimmed ASCII decimal digits, no sign, exponent, or hex.
-function parseProviderTimeout(value) {
-    const text = typeof value === 'string' ? value.trim() : '';
-    if (!text || [...text].some((character) => character < '0' || character > '9')) return 1500;
-    const milliseconds = Number(text);
-    return milliseconds > 0 ? Math.min(milliseconds, 2500) : 1500;
 }
 
 function isValidProviderUrl(value) {
@@ -306,31 +322,27 @@ async function sendViaProvider(providerEntry, dispatch, options) {
         return { httpStatus: 400, body: { status: 'error', reason: 'unsupported channel', requestId } };
     }
 
+    if (channel === 'voice' && manifest.requiresTextToVoice === true
+        && (!(dispatch.textToVoice instanceof TextToVoice) || !dispatch.textToVoice.isComplete)) {
+        return { httpStatus: 400, body: failBody(providerId, channel, 'incomplete voice context', dispatch, requestId) };
+    }
+
     const endpointBaseUrl = config.providerEndpoint;
     if (!isValidProviderUrl(endpointBaseUrl)) {
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider endpoint missing or invalid', dispatch, requestId) };
     }
 
-    let credential = null;
+    let providerRequest;
     try {
-        credential = await resolveProviderCredential(manifest.auth, config);
-    } catch {
+        const credential = await resolveProviderCredential(manifest, config);
+        providerRequest = adapter.buildRequest({ channel, endpoint: endpointBaseUrl, dispatch, credential, env: config.env });
+    } catch (error) {
+        if (config.providerAuthMode === 'oauth2' && error?.name === 'TimeoutError') {
+            return { httpStatus: 504, body: failBody(providerId, channel, 'provider authentication timed out', dispatch, requestId) };
+        }
         // Configuration and secret lookup failures share a generic failure response.
-    }
-    const identityRequired = !!manifest.auth?.identityKeyVaultSecretName;
-    const credentialUnavailable = !credential || !credential.secret
-        || (identityRequired && !credential.identity);
-    if (credentialUnavailable) {
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider credential unavailable', dispatch, requestId) };
     }
-
-    const providerRequest = adapter.buildRequest({
-        channel,
-        endpoint: endpointBaseUrl,
-        dispatch,
-        credential,
-        env: config.env,
-    });
 
     if (!isValidProviderUrl(providerRequest.url)) {
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider request URL invalid', dispatch, requestId) };

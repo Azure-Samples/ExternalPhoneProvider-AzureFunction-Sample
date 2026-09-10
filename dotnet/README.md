@@ -3,6 +3,9 @@
 Implements the shared [contract](../docs/CONTRACT.md) with one dispatch engine and one selected
 provider per deployment. Target: .NET 8 isolated worker, Azure Functions v4.
 
+See the [auth gates](../docs/CONTRACT.md#provider-authentication-gates) and
+[voice setup](../docs/ONBOARDING.md#structured-voice-input). API keys remain the default; JWT lookup is off.
+
 ## Setup and deployment
 
 1. Follow [customer onboarding](../docs/ONBOARDING.md). Set `EPP_PROVIDER_NAME` to the selected
@@ -57,6 +60,7 @@ Restart the host after edits. Configure local host storage other than Azurite se
 the emulator connection into Azure. Core Tools does not resolve Key Vault references locally; supply
 the local test PEM or base64 PEM directly. The [project](dotnet.csproj) excludes private local settings
 from publish output.
+For HTTP-only local execution, the emulator storage setting can be omitted; offline tests do not use it.
 
 For Azure, configure the same application variables on the serving app/slot's **Environment variables
 → App settings** page and resolve the private PEM through a Key Vault reference. Key Vault provider
@@ -74,8 +78,9 @@ authenticate SAS: anyone with the public key can encrypt a request, and a fixed 
 Use incoming `mode: 2` or `mode: "evaluation"` as the generic shutter for every provider: platform
 authentication on Azure, handler validation and decryption run, but provider lookup, provider Key Vault
 reads and provider HTTP do not. No provider configuration or diagnostic environment flag is required.
-Live requests forward the rendered message unchanged using the configured provider's API key and
-await acceptance before returning the nonce; failures omit it. Acceptance is not handset delivery.
+Live requests preserve caller-provided message/structured voice fields using the configured provider's
+API key, or an SDK-acquired provider token when explicitly supported and enabled. They await acceptance
+before returning the nonce; failures omit it. Acceptance is not handset delivery.
 Platform/key prerequisites and HTTP outcomes are defined in the
 [contract](../docs/CONTRACT.md#evaluation-generic-shutter).
 
@@ -90,6 +95,7 @@ Platform/key prerequisites and HTTP outcomes are defined in the
 | [Src/ProviderRegistry.cs](Src/ProviderRegistry.cs), [Src/IProviderAdapter.cs](Src/IProviderAdapter.cs) | Adapter lookup and contract |
 | [Src/Providers/](Src/Providers/) | Adapter manifests and API-specific implementations |
 | [Src/SecretResolver.cs](Src/SecretResolver.cs) | Cached Key Vault access via managed identity |
+| [Src/ProviderTokenAcquirer.cs](Src/ProviderTokenAcquirer.cs) | Opt-in Entra provider-token acquisition; never inbound token validation |
 | [Src/OutcomeMapper.cs](Src/OutcomeMapper.cs), [Src/Models.cs](Src/Models.cs) | Outcomes and shared records |
 
 Implement `IProviderAdapter` and register it in [Program.cs](Program.cs) without adding provider-specific

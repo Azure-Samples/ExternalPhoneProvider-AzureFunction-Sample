@@ -1,3 +1,4 @@
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -6,6 +7,7 @@ from urllib3.exceptions import ReadTimeoutError
 import src.dispatch as dispatch_module
 from src.config import AppConfig, read_config
 from src.dispatch import DispatchEngine, DispatchRequest, ProviderRegistry
+from src.models import TextToVoice
 from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
 
@@ -23,11 +25,35 @@ def engine(monkeypatch):
 
 
 def test_missing_key_or_identity_never_sends(engine):
-    for missing in ("soprano-api-key", "soprano-api-id"):
-        engine.secrets.resolve.side_effect = lambda name: None if name == missing else "test-key"
+    engine.token_acquirer = Mock()
+    for flag in ("false", "true"):
+        engine.env.update(EPP_PROVIDER_JWT_ENABLED=flag, EPP_PROVIDER_TENANT_ID="tenant-id",
+                          EPP_PROVIDER_CLIENT_ID="client-id", EPP_PROVIDER_SCOPE="api://provider/.default",
+                          EPP_PROVIDER_MI_CLIENT_ID="mi-id")
+        for missing in ("soprano-api-key", "soprano-api-id"):
+            for value in ((None, "", " ", "key\r\n", "key\x01", 123) if flag == "true" else (None, "")):
+                engine.secrets.resolve.side_effect = lambda name: value if name == missing else "test-key"
+                status, body = engine.dispatch(_request(), "r")
+                assert status == 502 and body["reason"] == "provider credential unavailable"
+        engine.secrets.resolve.side_effect = RuntimeError("PRIVATE-VAULT-DETAILS")
         status, body = engine.dispatch(_request(), "r")
         assert status == 502 and body["reason"] == "provider credential unavailable"
+    engine.token_acquirer.acquire.assert_not_called()
     dispatch_module.requests.request.assert_not_called()
+
+
+def test_other_channels_and_providers_ignore_incomplete_voice_metadata(engine):
+    # The real-JWE handler test covers Soprano voice rejection before any credential work.
+    dispatch_module.requests.request.return_value = Mock(status_code=201, json=Mock(return_value={"status": "ENROUTE"}))
+    for provider, channel in (("soprano", "sms"), ("sinch", "voice")):
+        engine.env["EPP_PROVIDER_NAME"] = provider
+        request = _request(channel)
+        request.text_to_voice = TextToVoice(None, None, None)
+        assert engine.dispatch(request, "r")[0] == 200
+        wire = json.loads(dispatch_module.requests.request.call_args.kwargs["data"])
+        assert "voice" not in wire
+        assert (wire["text"] if channel == "sms" else wire["ttsCallout"]["text"]) == request.message
+    assert dispatch_module.requests.request.call_count == 2
 
 
 def test_base_and_sinch_voice_final_url_guards(engine):

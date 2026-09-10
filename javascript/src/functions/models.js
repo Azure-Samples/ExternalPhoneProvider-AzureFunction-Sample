@@ -23,21 +23,46 @@ const { inspect } = require('node:util');
  * @property {string} messageId
  * @property {*} correlationId
  * @property {*} locale
+ * @property {TextToVoice|null} [textToVoice]
  */
 
+class TextToVoice {
+    constructor({ beforePasswordText, password, language }) {
+        this.beforePasswordText = typeof beforePasswordText === 'string' ? beforePasswordText : null;
+        this.password = typeof password === 'string' ? password : null;
+        this.language = typeof language === 'string' ? language : null;
+    }
+
+    static fromPayload(payload) {
+        return payload && typeof payload === 'object' && !Array.isArray(payload)
+            ? new TextToVoice(payload) : null;
+    }
+
+    get isComplete() {
+        return typeof this.beforePasswordText === 'string'
+            && [this.password, this.language].every(value => typeof value === 'string' && value.trim().length > 0);
+    }
+
+    [inspect.custom]() { return '[TextToVoice]'; }
+}
+
 class DeliveryContext {
-    constructor({ nonce, phoneNumber, message, extension, locale, riskContext }) {
+    constructor({ nonce, phoneNumber, message, extension, locale, riskContext, textToVoice = null }) {
         this.nonce = nonce;
         this.phoneNumber = phoneNumber;
         this.message = message;
         this.extension = extension;
         this.locale = locale;
         this.riskContext = riskContext;
+        this.textToVoice = textToVoice;
     }
 
     static fromPayload(payload) {
-        return payload && typeof payload === 'object' && !Array.isArray(payload)
-            ? new DeliveryContext(payload) : null;
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+        const voice = payload.voice;
+        const textToVoice = voice && typeof voice === 'object' && !Array.isArray(voice)
+            ? TextToVoice.fromPayload(voice.text2voice) : null;
+        return new DeliveryContext({ ...payload, textToVoice });
     }
 
     get isComplete() {
@@ -72,4 +97,4 @@ class ParsedResponse {
     [inspect.custom]() { return '[ParsedResponse]'; }
 }
 
-module.exports = { DeliveryContext, ParsedResponse };
+module.exports = { DeliveryContext, TextToVoice, ParsedResponse };

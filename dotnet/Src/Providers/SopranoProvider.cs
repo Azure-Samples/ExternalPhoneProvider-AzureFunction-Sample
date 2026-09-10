@@ -6,7 +6,7 @@ public sealed class SopranoProvider : IProviderAdapter
 {
     public ProviderManifest Manifest { get; } = new(
         Id: "soprano",
-        Auth: new AuthConfig("apiKey", KeyVaultSecretName: "soprano-api-key", IdentityKeyVaultSecretName: "soprano-api-id"),
+        Auth: new AuthConfig("apiKey", KeyVaultSecretName: "soprano-api-key", IdentityKeyVaultSecretName: "soprano-api-id", SupportsOAuth: true),
         ResponseMapping: new Dictionary<string, Outcome>
         {
             ["ENROUTE"] = Outcome.Continue,
@@ -20,7 +20,8 @@ public sealed class SopranoProvider : IProviderAdapter
             ["FILTERED"] = Outcome.Fail,
             ["BLOCKED"] = Outcome.Block,
             ["default"] = Outcome.Fail,
-        });
+        },
+        RequiresTextToVoice: true);
 
     public ProviderHttpRequest BuildRequest(string channel, string endpoint, DispatchRequest dispatch, ProviderCredential credential, IEnv env)
     {
@@ -28,17 +29,43 @@ public sealed class SopranoProvider : IProviderAdapter
         {
             ["Content-Type"] = "application/json",
             ["Accept"] = "application/json",
-            ["X-MEMS-API-ID"] = credential.Identity ?? string.Empty,
-            ["X-MEMS-API-Key"] = credential.Secret ?? string.Empty,
         };
-        var body = new
+        var jwtRequired = string.Equals(credential.Mode, "oauth2", StringComparison.OrdinalIgnoreCase);
+        if (string.Equals(credential.Mode, "apiKey", StringComparison.OrdinalIgnoreCase))
         {
-            text = dispatch.Message,
-            destination = dispatch.Destination.TrimStart('+'),
-            messageTypes = new[] { channel == "voice" ? "voice" : "sms" },
-            correlationId = dispatch.CorrelationId ?? dispatch.MessageId,
-            shutterMode = false,
+            if (!ProviderCredential.IsHeaderSafeToken(credential.Identity) || !ProviderCredential.IsHeaderSafeToken(credential.Secret))
+                throw new InvalidOperationException("provider credential unavailable");
+            headers["X-MEMS-API-ID"] = credential.Identity!;
+            headers["X-MEMS-API-Key"] = credential.Secret!;
+        }
+        else if (!jwtRequired)
+        {
+            throw new InvalidOperationException("unsupported provider auth mode");
+        }
+        if (ProviderCredential.IsHeaderSafeToken(credential.Token))
+            headers["Authorization"] = "Bearer " + credential.Token;
+        else if (jwtRequired)
+            throw new InvalidOperationException("provider token unavailable");
+
+        var body = new Dictionary<string, object?>
+        {
+            ["destination"] = dispatch.Destination.TrimStart('+'),
+            ["messageTypes"] = new[] { channel == "voice" ? "voice" : "sms" },
+            ["correlationId"] = dispatch.CorrelationId ?? dispatch.MessageId,
+            ["shutterMode"] = false,
         };
+        if (channel == "voice")
+        {
+            var voice = dispatch.TextToVoice;
+            if (voice?.IsComplete != true) throw new InvalidOperationException("incomplete voice context");
+            body["voice"] = new { text2voice = new {
+                beforePasswordText = voice.BeforePasswordText, password = voice.Password, language = voice.Language,
+            } };
+        }
+        else
+        {
+            body["text"] = dispatch.Message;
+        }
 
         return new ProviderHttpRequest($"{endpoint.TrimEnd('/')}/messages/omnimsg", "POST", headers, JsonSerializer.Serialize(body));
     }

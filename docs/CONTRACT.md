@@ -5,7 +5,8 @@ This defines the shared contract for [JavaScript](../javascript/), [Python](../p
 
 > **Naming.** EPP means **External Phone Provider**. App settings use the `EPP_` prefix; the
 > request and delivery models are `Envelope`, `DeliveryContext` and `DispatchRequest`.
-> Documentation names do not change the external JSON fields or `microsoft.mfa.otpDeliver.v1` version.
+> Existing JSON fields and `microsoft.mfa.otpDeliver.v1` stay unchanged. This branch adds an opt-in
+> encrypted `voice.text2voice` extension requiring upstream caller support; see below.
 
 The design is **one dispatch engine + registered provider adapters**, with one selected provider per
 deployment. API-specific paths, headers, payloads and status rules belong in adapters, not this guide.
@@ -76,12 +77,19 @@ runs once per language. Tag tampering and original-header-byte tests remain.
 |-------|----------|-------|
 | `nonce` | yes | value the endpoint MUST echo to prove decryption |
 | `phoneNumber` | yes | caller supplies an E.164 string; full E.164 validation is an implementation gap |
-| `message` | yes | fully rendered, localized text containing the passcode; forward unchanged, including caller-supplied voice digit spacing. Do not extract, infer or guess a passcode |
+| `message` | yes | fully rendered, localized text containing the passcode; forward unchanged where used. Structured-voice adapters use the explicit voice fields instead. Do not extract, infer or guess a passcode |
 | `extension` | no | office-voice contract field; not currently forwarded by the shared dispatch model |
 | `locale` | no | voice selection input where supported by the selected adapter |
 | `riskContext` | no | contextual request data; no risk-policy evaluation is implemented here |
+| `voice.text2voice` | adapter-dependent | opt-in encrypted object with string `beforePasswordText`, nonblank string `password`, and nonblank string `language`; required for live voice by adapters declaring `requiresTextToVoice` |
 
 Decryption failure → `400`. Missing `nonce` / `phoneNumber` / `message` → `400`.
+
+`voice.text2voice` comes only from the JWE and maps to a redacted `TextToVoice` model. Strings and
+leading zeroes are preserved; an empty prefix is allowed. Missing fields for a supporting live-voice
+adapter return `400 provider_delivery_failed` without a nonce, before credential/provider I/O.
+SMS, other adapters and evaluation ignore it. Confirm upstream caller support for this opt-in
+extension; see the [voice example](ONBOARDING.md#structured-voice-input).
 
 JWE provides payload confidentiality and integrity, **not SAS caller authentication**. Anyone with the
 public key can encrypt a request. The nonce acknowledges decryption; it is not an authentication
@@ -116,7 +124,7 @@ return `error: "decryption_failed"` without a cryptographic reason or nonce.
 The only shared non-delivery control is the existing incoming `mode: 2` or `mode: "evaluation"`,
 for every provider and language. On Azure, Easy Auth still authenticates the caller before the
 handler validates the envelope and decrypts the JWE with integrity checks. Provider lookup, provider
-Key Vault reads and outbound provider HTTP are skipped. No provider name, endpoint or credentials
+Key Vault reads, provider-token acquisition and outbound provider HTTP are skipped. No provider name, endpoint or credentials
 are needed. Platform authentication and resolution of the decryption-key reference may still require
 network access. Core Tools has no Easy Auth; local evaluation must remain loopback-only, without tunnels.
 
@@ -152,12 +160,19 @@ Each provider is one unit exposing three things:
 
 - **`manifest`** — protocol facts only:
   - `id` — provider id selected by `EPP_PROVIDER_NAME`; its base URL is `EPP_PROVIDER_ENDPOINT`
-  - `auth` — `{ mode: 'apiKey', keyVaultSecretName, identityKeyVaultSecretName? }`; other modes fail closed
+  - `auth` — `{ mode: 'apiKey', keyVaultSecretName, identityKeyVaultSecretName? }`
+  - OAuth capability — `supportsOAuth` on the JavaScript manifest, `auth.supports_oauth` in Python,
+    `Auth.SupportsOAuth` in .NET; the JWT gate requires explicit adapter support
+  - `requiresTextToVoice` — optional capability for explicit structured live-voice input (snake_case in Python)
   - `responseMapping` — map of provider status → `Continue` | `Fail` | `Block` | `StepUp` (+ `default`)
 - **`buildRequest({ channel, endpoint, dispatch, credential, env })`** → `{ url, method, headers, body }`
 - **`parseResponse({ httpStatus, ok, json })`** → `ParsedResponse`, containing `success`,
   `providerHttpStatus`, optional `providerMessageId`, `providerStatusName`, `providerStatusCode`
   and `providerStatusDescription` (snake_case attributes in Python, PascalCase in .NET).
+
+Resolved credentials contain a selected `mode`, API-key `secret`/`identity` when required, and an
+optional `token`. API-key mode retains its headers even when a JWT is attached; OAuth mode uses only
+the required token. Token acquisition stays outside request builders.
 
 The adapter reads its API-specific JSON and constructs a normalized `ParsedResponse` object:
 [JavaScript](../javascript/src/functions/models.js), [Python](../python/src/models.py),
@@ -175,7 +190,7 @@ class hierarchy is required.
 Adapters require registration in the chosen runtime. Consult the selected adapter and its manifest
 for required credentials and options: the manifest declares secret names and protocol mappings;
 the implementation reads adapter-specific options from app settings. Do not duplicate individual
-API contracts or credential catalogs in shared onboarding documentation.
+API contracts or credential catalogs; onboarding examples cover only the integration-specific additions.
 
 ---
 
@@ -187,6 +202,8 @@ Set by provisioning. **Identical names across all languages.**
 |-----|---------|
 | `EPP_PROVIDER_NAME` | registered id of the selected provider; `<adapter-id>` is a placeholder, not a bundled default |
 | `EPP_PROVIDER_ENDPOINT` | absolute HTTPS base URL with a hostname, port 1–65535, and no userinfo or fragment; the final adapter URL is also validated; redirects are not followed |
+| `EPP_PROVIDER_AUTH_MODE` | `apiKey` by default, or `oauth2` for required provider JWT authentication; trimmed and case-insensitive |
+| `EPP_PROVIDER_JWT_ENABLED` | `false` by default; trimmed, case-insensitive `true`/`false` only. Enables provider-token acquisition for supporting adapters |
 | `EPP_PROVIDER_ACCOUNT_NAME` | sender/source only when required by the selected adapter |
 | `EPP_PROVIDER_TIMEOUT_MS` | trimmed ASCII decimal milliseconds; default 1500 for missing/invalid/nonpositive values; capped at 2500. Not a whole-invocation deadline |
 | `EPP_DECRYPTION_KEY_PEM` | single RSA private key for JWE decryption, PEM or base64-encoded PEM; use a Key Vault secret reference in Azure, not a plaintext private key in shared settings |
@@ -194,10 +211,31 @@ Set by provisioning. **Identical names across all languages.**
 | `KEY_VAULT_URL` | Key Vault URI (provider API keys) |
 | `AZURE_CLIENT_ID` | set for a user-assigned managed identity |
 
-Provider credential values live in **Key Vault**, under the names in the selected adapter's manifest,
-and are fetched via **managed identity** with the *Key Vault Secrets User* role. Do not put credential
-values in code or app settings. No additional customer-private configuration or new environment
-variable is needed for this guidance.
+Provider API credential values live in **Key Vault**, under the names in the selected adapter's
+manifest, and are fetched via **managed identity** with the *Key Vault Secrets User* role.
+Do not put credential values in code or app settings.
+
+### Provider authentication gates
+
+| `EPP_PROVIDER_AUTH_MODE` | `EPP_PROVIDER_JWT_ENABLED` | Live behavior |
+|---|---|---|
+| `apiKey` (default) | `false` (default) | API credentials only; no token lookup or OAuth configuration validation |
+| `apiKey` | `true` | Validate API credentials first; attach a JWT when available. Token configuration/acquisition failures leave API-key-only delivery usable |
+| `oauth2` | `true` | JWT required; no API-key lookup or headers. Missing/invalid token fails before delivery |
+| `oauth2` | `false` | Configuration error (`502`), with no credential lookup or delivery |
+
+Invalid gates/modes or an unsupported adapter fail before credential I/O; evaluation skips these
+checks. A JWT never replaces missing API keys. **One provider send only:** no retry after rejection
+or automatic provider failover. Combined-header authentication precedence is controlled by the provider,
+not the local auth-mode setting; keep optional JWT disabled until that behavior is confirmed.
+
+Azure Identity reuses one credential/cache, replaced on configuration or resolved-secret changes.
+Tokens stay in memory, never logs/responses or inbound-token forwarding. See [setup](ONBOARDING.md#provider-jwt-setup).
+
+Authentication and sending use separate `EPP_PROVIDER_TIMEOUT_MS` limits. JavaScript/.NET bound the
+authentication wait; Python bounds lock wait and connect/read inactivity, not total time. Cold SDK
+and secret operations can add latency even for optional JWT. Required-token timeouts return `504`
+when recognized; other failures return `502`, without sending. Optional-token failures retain API keys.
 
 Caller trust is configured in **Easy Auth**, not application environment variables: pin the trusted
 tenant issuer, the endpoint-app audience and the authorized SAS caller application ID. Incoming
@@ -232,7 +270,8 @@ subscription activation and changing tenant policy belong to provisioning, not t
 
 - **Fail-closed** — only `Continue` → `200 accepted`; unknown status → `Fail`.
 - **Managed identity** — Key Vault access via managed identity only (user-assigned if `AZURE_CLIENT_ID`
-  set, else system-assigned). No static credentials.
+  set, else system-assigned). Outbound OAuth optionally uses a Key Vault-backed client secret or
+  federated user-assigned identity; no plaintext credential app settings or caller-token forwarding.
 - **Privacy** — never log phone numbers, passcodes, nonce values, bearer tokens, API keys, JWE headers/payloads,
   raw exceptions or provider responses. There is no plaintext diagnostic override. Each handler
   writes one summary with a generated request ID, the first 16 lowercase hex characters of the
@@ -262,7 +301,8 @@ subscription activation and changing tenant policy belong to provisioning, not t
 
 Each language keeps lightweight offline tests covering representative application checks for:
 
-- Bundled adapter request formats and static provider credentials.
+- Bundled adapter request formats, API-key headers and opt-in provider-token credential flows.
+- Explicit encrypted text-to-voice fields and missing-field rejection before provider I/O.
 - Fail-closed outcomes, missing credentials, HTTPS guards and timeouts.
 - Envelope validation and real JWE decryption/tamper rejection.
 - Evaluation without provider I/O.
@@ -287,8 +327,11 @@ not prove handset delivery or support for every provider feature.
   timing architecture merely because the setup script deploys it.
 - The outbound timeout is not an end-to-end deadline. Cold starts, platform authentication and Key
   Vault access can exceed the caller's budget; Python uses connect/read inactivity timeouts.
-- Voice text is forwarded unchanged. Digit-by-digit rendering required by the setup guide must be
-  verified for the chosen voice integration; unspaced numeric text is not guaranteed to be spoken correctly.
+- Caller-provided message/voice strings are preserved. Structured-voice delivery requires upstream
+  caller support for the opt-in encrypted fields. Actual playback, language support and digit-by-digit
+  pronunciation must be verified with the provider; an accepted request does not prove correct speech.
+- QA4 accepted client-secret-issued provider JWTs for SMS and voice. Federation, combined-header
+  authentication precedence, production provisioning and handset playback still need separate validation.
 - Full body-size/content-type and E.164 validation, subscription provisioning, certification,
   least-cost routing and voice-callback workflows are outside this sample. Native fallback belongs
   to the caller, not this Function.

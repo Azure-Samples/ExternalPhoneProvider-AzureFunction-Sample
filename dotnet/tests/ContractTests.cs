@@ -15,7 +15,10 @@ public class ContractTests
     [InlineData("voice")]
     public void SopranoUsesExactOmnimsgContract(string channel)
     {
-        var request = new SopranoProvider().BuildRequest(channel, "https://provider.example/cgpapi///", Request(channel),
+        var voice = new TextToVoice("  Your code is \n", "012345", "en-GB");
+        var dispatch = Request(channel) with { TextToVoice = voice };
+        Assert.True(new SopranoProvider().Manifest.RequiresTextToVoice);
+        var request = new SopranoProvider().BuildRequest(channel, "https://provider.example/cgpapi///", dispatch,
             new ProviderCredential("apiKey", "test-key", "test-id"), new TestEnv());
         Assert.Equal("https://provider.example/cgpapi/messages/omnimsg", request.Url);
         Assert.Equal("POST", request.Method);
@@ -24,15 +27,30 @@ public class ContractTests
         Assert.Equal("test-key", request.Headers["X-MEMS-API-Key"]);
         Assert.Equal("application/json", request.Headers["Accept"]);
         Assert.Equal("application/json", request.Headers["Content-Type"]);
-        var expected = new
+        var expected = new Dictionary<string, object?>
         {
-            text = Request().Message,
-            destination = "15551234567",
-            messageTypes = new[] { channel },
-            correlationId = "correlation-id",
-            shutterMode = false,
+            ["destination"] = "15551234567",
+            ["messageTypes"] = new[] { channel },
+            ["correlationId"] = "correlation-id",
+            ["shutterMode"] = false,
         };
+        if (channel == "voice")
+            expected["voice"] = new { text2voice = new { beforePasswordText = voice.BeforePasswordText,
+                password = voice.Password, language = voice.Language } };
+        else expected["text"] = dispatch.Message;
         Assert.Equal(JsonSerializer.Serialize(expected), request.Body);
+
+        // Header combinations run through the real handler; retain the adapter's direct safety guard.
+        foreach (var token in new string?[] { null, "token\r\nInjected: value" })
+        {
+            Assert.Throws<InvalidOperationException>(() => new SopranoProvider().BuildRequest(channel,
+                "https://provider.example", dispatch, new ProviderCredential("oauth2", Token: token), new TestEnv()));
+            var optional = new SopranoProvider().BuildRequest(channel, "https://provider.example", dispatch,
+                new ProviderCredential("apiKey", "key", "id", token), new TestEnv());
+            Assert.Equal(4, optional.Headers.Count);
+            Assert.DoesNotContain("Authorization", optional.Headers.Keys);
+        }
+        Assert.Equal(nameof(ProviderCredential), new ProviderCredential("oauth2", "key", "id", "token").ToString());
     }
 
     [Fact]

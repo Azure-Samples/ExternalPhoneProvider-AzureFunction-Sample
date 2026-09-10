@@ -1,17 +1,19 @@
 import base64
 import json
+from pathlib import Path
 from urllib.parse import parse_qs
 
 import pytest
 
 from src.dispatch import DispatchRequest, ProviderRegistry, context_to_dispatch, parse_envelope
-from src.models import DeliveryContext, Envelope, ParsedResponse
+from src.models import DeliveryContext, Envelope, ParsedResponse, TextToVoice
 from src.providers.infobip import InfobipProvider
 from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
 from src.providers.telesign import TelesignProvider
 
-MESSAGE = "  Use 918273; then 1234.\nDo not rewrite + or café.  "
+MESSAGE = "  Use 918273; then 1 2 3 4.\nDo not rewrite + or café.  "
+FIXTURES = json.loads((Path(__file__).resolve().parents[2] / "tests/fixtures/contract.json").read_text(encoding="utf-8"))
 
 
 def _dispatch(channel="sms"):
@@ -20,8 +22,11 @@ def _dispatch(channel="sms"):
 
 @pytest.mark.parametrize("channel", ["sms", "voice"])
 def test_soprano_exact_sms_and_voice_contract(channel):
+    dispatch = _dispatch(channel)
+    dispatch.text_to_voice = TextToVoice.from_payload(FIXTURES["textToVoice"])
+    assert SopranoProvider.manifest["requires_text_to_voice"] is True
     request = ProviderRegistry([SopranoProvider()]).get("SOPRANO").build_request(
-        channel, "https://qa4.example/cgpapi///", _dispatch(channel),
+        channel, "https://qa4.example/cgpapi///", dispatch,
         {"mode": "apiKey", "identity": "test-id", "secret": "test-key"},
         {},
     )
@@ -31,9 +36,19 @@ def test_soprano_exact_sms_and_voice_contract(channel):
         "Content-Type": "application/json", "Accept": "application/json",
     }
     assert json.loads(request["body"]) == {
-        "text": MESSAGE, "destination": "15551234567", "messageTypes": [channel],
+        **({"voice": {"text2voice": FIXTURES["textToVoice"]}} if channel == "voice" else {"text": MESSAGE}),
+        "destination": "15551234567", "messageTypes": [channel],
         "correlationId": "correlation-id", "shutterMode": False,
     }
+    # Successful JWT-only and dual-header SMS/voice requests are covered by the handler matrix.
+    assert SopranoProvider().build_request(
+        channel, "https://qa4.example/cgpapi///", dispatch,
+        {"mode": "apiKey", "token": "invalid\r\n", "identity": "test-id", "secret": "test-key"}, {},
+    ) == request
+    for credential in ({"mode": "unknown", "secret": "key"}, {"mode": "oauth2"},
+                       *({"mode": "oauth2", "token": token} for token in ("", " ", "two tokens", "token\r\n"))):
+        with pytest.raises(ValueError, match="unsupported provider credential"):
+            SopranoProvider().build_request(channel, "https://provider.example", _dispatch(channel), credential, {})
     response = SopranoProvider().parse_response(201, True, {"id": 123, "status": "ENROUTE"})
     assert response == ParsedResponse(True, 201, provider_message_id="123", provider_status_name="ENROUTE")
     assert "ENROUTE" not in repr(response)
@@ -111,3 +126,19 @@ def test_request_models_preserve_content_and_accept_valid_routing_and_ttl():
     assert MESSAGE not in repr(context) + repr(dispatch)
     assert "encrypted_delivery_context" not in repr(envelope)
     assert DeliveryContext.from_payload(None) is None
+    assert context.text_to_voice is None and dispatch.text_to_voice is None
+    payload = {"nonce": "nonce", "phoneNumber": "+15551234567", "message": MESSAGE}
+    voice_context = DeliveryContext.from_payload({**payload, "voice": {"text2voice": FIXTURES["textToVoice"]}})
+    voice = voice_context.text_to_voice
+    assert isinstance(voice, TextToVoice) and voice.is_complete
+    assert (voice.before_password_text, voice.password, voice.language) == tuple(FIXTURES["textToVoice"].values())
+    assert context_to_dispatch(voice_context, envelope, "message-id").text_to_voice is voice
+    for value in FIXTURES["textToVoice"].values():
+        assert value not in repr(voice)
+    for changes in FIXTURES["incompleteVoiceContexts"]:
+        invalid = DeliveryContext.from_payload({**payload, **changes})
+        assert invalid.is_complete
+        assert invalid.text_to_voice is None or not invalid.text_to_voice.is_complete
+    assert TextToVoice.from_payload({**FIXTURES["textToVoice"], "password": 12345}).password is None
+    for prefix in ("", " " * 1601):
+        assert TextToVoice(prefix, "012345", "en-GB").is_complete
