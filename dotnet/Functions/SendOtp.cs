@@ -84,7 +84,8 @@ public sealed class SendOtp
                 Channel: channel,
                 MessageId: clientRequestId,
                 CorrelationId: correlationId,
-                Locale: context.Locale);
+                Locale: context.Locale,
+                TextToVoice: context.TextToVoice);
 
             // A nonce acknowledges delivery, not just decryption. Wait for the bounded provider call.
             var result = await _engine.DispatchAsync(dispatch, requestId);

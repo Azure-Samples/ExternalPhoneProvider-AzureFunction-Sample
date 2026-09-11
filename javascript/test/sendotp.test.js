@@ -155,23 +155,34 @@ test('evaluation decrypts without provider config or I/O and checks the advisory
 
 test('SMS/voice preserve content and correlation without reflecting headers or logging PII', async () => {
     const correlationId = 'PRIVATE-CORRELATION';
+    const textToVoice = { beforePasswordText: ' PRIVATE-PROMPT ', password: '001234', language: 'en' };
     const forgedHeaders = { authorization: 'Bearer FORGED-BEARER',
         'x-ms-client-principal': Buffer.from(JSON.stringify({
             claims: [{ typ: 'appid', val: 'FORGED-CALLER' }],
         })).toString('base64') };
     for (const [channel, name] of [[1, 'sms'], [2, 'voice']]) {
         const headers = channel === 1 ? {} : forgedHeaders;
-        const result = await invoke(await envelope({ channel, correlationId, provider: 'unknown' }), headers);
+        const result = await invoke(await envelope({ channel, correlationId, provider: 'unknown' },
+            { ...delivery, textToVoice }), headers);
         assert.equal(result.status, 200);
         assert.deepEqual(result.jsonBody, { nonce: delivery.nonce, correlationId, providerStatus: 'accepted' });
         const init = fetchMock.mock.calls.at(-1).arguments[1];
         const sent = JSON.parse(init.body);
-        assert.deepEqual([sent.text, sent.messageTypes, sent.correlationId], [delivery.message, [name], correlationId]);
+        assert.deepEqual([sent.messageTypes, sent.correlationId], [[name], correlationId]);
+        if (channel === 2) {
+            assert.deepEqual(sent.voice, { text2voice: textToVoice });
+            assert.equal(sent.text, undefined);
+        } else {
+            assert.equal(sent.text, delivery.message);
+            assert.equal(sent.voice, undefined);
+        }
+        assert.deepEqual(init.headers, { 'Content-Type': 'application/json', Accept: 'application/json',
+            'X-MEMS-API-ID': 'PRIVATE-API-KEY', 'X-MEMS-API-Key': 'PRIVATE-API-KEY' });
         assert.equal(init.redirect, 'manual');
         assert.equal(logs.length, 1);
         assert.deepEqual(Object.keys(logs[0]).sort(), ['correlationId', 'elapsedMs', 'evaluation', 'httpStatus', 'requestId']);
         assert.equal(logs[0].correlationId, crypto.createHash('sha256').update(correlationId).digest('hex').slice(0, 16));
-        assert.doesNotMatch(JSON.stringify(logs), /PRIVATE|918273|15551234567/);
+        assert.doesNotMatch(JSON.stringify(logs), /PRIVATE|918273|001234|15551234567/);
         const output = JSON.stringify([result.jsonBody, logs, warnings]);
         assert.doesNotMatch(output, /FORGED/);
         for (const value of Object.values(forgedHeaders)) assert.equal(output.includes(value), false);

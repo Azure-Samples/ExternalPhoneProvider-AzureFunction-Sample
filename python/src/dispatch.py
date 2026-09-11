@@ -9,7 +9,7 @@ from jwcrypto import jwk
 from urllib3.exceptions import ReadTimeoutError
 
 from .config import read_config
-from .models import DeliveryContext, DispatchRequest, Envelope, ParsedResponse
+from .models import DeliveryContext, DispatchRequest, Envelope, ParsedResponse, TextToVoice
 
 DEFAULT_TIMEOUT_MS = 1500
 DEFAULT_CHANNELS = ["sms", "voice"]
@@ -179,6 +179,7 @@ def context_to_dispatch(context, envelope, message_id):
         message_id=message_id,
         correlation_id=envelope.correlation_id,
         locale=context.locale,
+        text_to_voice=context.text_to_voice,
     )
 
 
@@ -256,6 +257,11 @@ class DispatchEngine:
 
         if channel not in DEFAULT_CHANNELS:
             return 400, {"status": "error", "provider": provider_id, "reason": "unsupported channel", "requestId": request_id}
+
+        if channel == "voice" and manifest.get("requires_text_to_voice") and (
+            not isinstance(dispatch.text_to_voice, TextToVoice) or not dispatch.text_to_voice.is_complete
+        ):
+            return 400, self._fail_body(provider_id, channel, "incomplete voice context", dispatch, request_id)
 
         auth = manifest["auth"]
         if auth.get("mode") != "apiKey":

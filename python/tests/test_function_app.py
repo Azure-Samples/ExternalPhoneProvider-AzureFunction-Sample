@@ -160,8 +160,10 @@ def test_live_acceptance_waits_and_preserves_wire_data_but_not_plaintext_logs(mo
 
     send = Mock(side_effect=wait_for_acceptance)
     monkeypatch.setattr(dispatch_module.requests, "request", send)
+    speech = {"beforePasswordText": "Your code is", "password": "001234", "language": "en"}
     with ThreadPoolExecutor(max_workers=1) as executor:
-        request = _request(_envelope(channel=2), {"x-ms-client-request-id": "wire-message"})
+        request = _request(_envelope(channel=2, encryptedDeliveryContext=_encrypt(
+            context={**_CONTEXT, "textToVoice": speech})), {"x-ms-client-request-id": "wire-message"})
         pending = executor.submit(_HANDLER, request)
         try:
             assert entered.wait(5), "handler did not reach provider"
@@ -176,12 +178,13 @@ def test_live_acceptance_waits_and_preserves_wire_data_but_not_plaintext_logs(mo
     send.assert_called_once()
     upstream.close.assert_called_once()
     wire = json.loads(send.call_args.kwargs["data"])
-    assert wire["text"] == _MESSAGE and wire["messageTypes"] == ["voice"] and wire["correlationId"] == _CORRELATION
+    assert wire["voice"] == {"text2voice": speech}
+    assert "text" not in wire and wire["messageTypes"] == ["voice"] and wire["correlationId"] == _CORRELATION
     summary = json.loads(caplog.records[-1].getMessage().removeprefix("[EPP] result "))
     assert len(caplog.records) == 1
     assert set(summary) == {"requestId", "correlationId", "httpStatus", "elapsedMs", "evaluation"}
     assert summary["correlationId"] == hashlib.sha256(_CORRELATION.encode()).hexdigest()[:16]
-    for private in (_NONCE, _PHONE, _MESSAGE, "123456", _CORRELATION, "wire-message", "test-key"):
+    for private in (_NONCE, _PHONE, _MESSAGE, "123456", "001234", _CORRELATION, "wire-message", "test-key"):
         assert private not in caplog.text
 
 

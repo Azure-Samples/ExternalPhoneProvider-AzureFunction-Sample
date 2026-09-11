@@ -4,12 +4,12 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { AppConfig, readConfig } = require('../src/functions/config');
-const { DeliveryContext, ParsedResponse } = require('../src/functions/models');
+const { DeliveryContext, TextToVoice, ParsedResponse } = require('../src/functions/models');
 const fixtures = require('../../tests/fixtures/contract.json');
 const { inspect } = require('node:util');
 const {
     dispatchOtp, getProvider, resolveOutcome, outcomeToHttpStatus,
-    parseEnvelope, parseProviderTimeout, isValidProviderUrl,
+    parseEnvelope, parseProviderTimeout, isValidProviderUrl, contextToDispatch,
 } = require('../src/functions/dispatch');
 const dispatch = { destination: '+15551234567', message: '  Your code is 918273.\n',
     channel: 'sms', messageId: 'message-id', correlationId: 'correlation-id' };
@@ -93,6 +93,39 @@ test('omnimsg preserves its API-key request and normalizes acceptance', () => {
     assert.deepEqual(response, new ParsedResponse({ success: true, providerHttpStatus: 201,
         providerMessageId: '123', providerStatusName: 'ENROUTE' }));
     assert.equal(inspect(response), '[ParsedResponse]');
+});
+
+test('Soprano Voice sends structured speech with API-key headers only', () => {
+    const textToVoice = new TextToVoice({ beforePasswordText: ' Your code is ', password: '001234', language: 'en' });
+    const request = getProvider('soprano').adapter.buildRequest({ ...input, channel: 'voice',
+        dispatch: { ...dispatch, textToVoice }, credential: { ...input.credential, token: 'ignored-token' } });
+    assert.equal(request.url, `${input.endpoint}/messages/omnimsg`);
+    assert.deepEqual(request.headers, { 'Content-Type': 'application/json', Accept: 'application/json',
+        'X-MEMS-API-ID': 'id', 'X-MEMS-API-Key': 'key' });
+    assert.deepEqual(JSON.parse(request.body), { destination: '15551234567', messageTypes: ['voice'],
+        correlationId: 'correlation-id', shutterMode: false,
+        voice: { text2voice: { beforePasswordText: ' Your code is ', password: '001234', language: 'en' } } });
+    assert.equal(inspect(textToVoice), '[TextToVoice]');
+    assert.throws(() => getProvider('soprano').adapter.buildRequest({ ...input, channel: 'voice' }),
+        /incomplete voice context/);
+});
+
+test('Soprano Voice validates decrypted speech before secret lookup or HTTP', async (t) => {
+    const getSecret = t.mock.method(SecretClient.prototype, 'getSecret', () => assert.fail('unexpected secret lookup'));
+    const fetchMock = t.mock.method(global, 'fetch', () => assert.fail('unexpected HTTP'));
+    const config = readConfig({ EPP_PROVIDER_NAME: 'soprano', EPP_PROVIDER_ENDPOINT: input.endpoint });
+    for (const textToVoice of [null, [], 'text', {}, { beforePasswordText: '', password: 123, language: 'en' },
+        { beforePasswordText: '', password: '001234', language: '' },
+        { beforePasswordText: null, password: '001234', language: 'en' }]) {
+        const context = DeliveryContext.fromPayload({ nonce: 'nonce', phoneNumber: dispatch.destination,
+            message: dispatch.message, textToVoice });
+        const result = await dispatchOtp(contextToDispatch(context, { channel: 2 }, 'message-id'), { config });
+        assert.deepEqual([result.httpStatus, result.body.reason], [400, 'incomplete voice context']);
+    }
+    const context = DeliveryContext.fromPayload({ textToVoice: { beforePasswordText: '', password: '001234', language: 'en' } });
+    assert.ok(contextToDispatch(context, { channel: 2 }, 'message-id').textToVoice.isComplete);
+    assert.equal(getSecret.mock.callCount(), 0);
+    assert.equal(fetchMock.mock.callCount(), 0);
 });
 
 test('App-auth SMS preserves its request and normalizes acceptance', () => {

@@ -76,12 +76,32 @@ runs once per language. Tag tampering and original-header-byte tests remain.
 |-------|----------|-------|
 | `nonce` | yes | value the endpoint MUST echo to prove decryption |
 | `phoneNumber` | yes | caller supplies an E.164 string; full E.164 validation is an implementation gap |
-| `message` | yes | fully rendered, localized text containing the passcode; forward unchanged, including caller-supplied voice digit spacing. Do not extract, infer or guess a passcode |
+| `message` | yes | fully rendered, localized text containing the passcode; forward unchanged when the adapter uses message text. Do not extract, infer or guess a passcode |
 | `extension` | no | office-voice contract field; not currently forwarded by the shared dispatch model |
 | `locale` | no | voice selection input where supported by the selected adapter |
 | `riskContext` | no | contextual request data; no risk-policy evaluation is implemented here |
+| `textToVoice` | for Soprano live voice | structured speech object supplied inside the encrypted context; see below |
 
 Decryption failure → `400`. Missing `nonce` / `phoneNumber` / `message` → `400`.
+
+For Soprano live voice, include `textToVoice` alongside the required delivery fields:
+
+```json
+"textToVoice": {
+  "beforePasswordText": "Your verification code is",
+  "password": "001234",
+  "language": "en"
+}
+```
+
+`beforePasswordText` must be a string (empty is allowed); `password` and `language` must be
+nonblank strings. Supply the password explicitly to preserve leading zeros; it is never extracted
+from `message`. These values are forwarded unchanged as `voice.text2voice`, without a top-level
+`text` field. Missing or invalid speech returns `400` before credential lookup or provider HTTP.
+SMS continues to use `message`, and evaluation continues to skip provider-specific validation and I/O.
+Soprano authentication remains API-key-only (`X-MEMS-API-ID` and `X-MEMS-API-Key`, resolved from
+`soprano-api-id` and `soprano-api-key` in Key Vault). No provider JWT, OAuth flow, token endpoint,
+or bearer-token forwarding is added. Existing platform caller authentication is unchanged.
 
 JWE provides payload confidentiality and integrity, **not SAS caller authentication**. Anyone with the
 public key can encrypt a request. The nonce acknowledges decryption; it is not an authentication

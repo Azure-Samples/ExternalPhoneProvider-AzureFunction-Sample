@@ -1,3 +1,4 @@
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -6,6 +7,7 @@ from urllib3.exceptions import ReadTimeoutError
 import src.dispatch as dispatch_module
 from src.config import AppConfig, read_config
 from src.dispatch import DispatchEngine, DispatchRequest, ProviderRegistry
+from src.models import DeliveryContext, Envelope, TextToVoice
 from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
 
@@ -27,6 +29,39 @@ def test_missing_key_or_identity_never_sends(engine):
         engine.secrets.resolve.side_effect = lambda name: None if name == missing else "test-key"
         status, body = engine.dispatch(_request(), "r")
         assert status == 502 and body["reason"] == "provider credential unavailable"
+    dispatch_module.requests.request.assert_not_called()
+
+
+def test_soprano_voice_payload_uses_api_key_only(engine):
+    speech = {"beforePasswordText": "Your code is", "password": "001234", "language": "en"}
+    context = DeliveryContext.from_payload({"nonce": "n", "phoneNumber": "+15551234567",
+                                            "message": "Your code is 001234", "textToVoice": speech})
+    envelope = Envelope("microsoft.mfa.otpDeliver.v1", "tenant", "correlation", 2, 1, None, "encrypted")
+    request = dispatch_module.context_to_dispatch(context, envelope, "message")
+    dispatch_module.requests.request.return_value = Mock(status_code=200, json=Mock(return_value={"status": "ACCEPTED"}))
+    status, body = engine.dispatch(request, "r")
+    assert status == 200 and body["outcome"] == "Continue"
+    sent = dispatch_module.requests.request.call_args.kwargs
+    payload = json.loads(sent["data"])
+    assert payload["voice"] == {"text2voice": speech}
+    assert payload["messageTypes"] == ["voice"] and payload["destination"] == "15551234567"
+    assert "text" not in payload
+    assert sent["headers"]["X-MEMS-API-Key"] == "test-key"
+    assert sent["headers"]["X-MEMS-API-ID"] == "test-key"
+    assert "Authorization" not in sent["headers"]
+    assert "001234" not in repr(request.text_to_voice)
+
+
+@pytest.mark.parametrize("speech", [None, {}, [], "invalid",
+    {"beforePasswordText": "Code", "password": 1234, "language": "en"},
+    {"beforePasswordText": "Code", "password": "1234", "language": " "},
+    {"password": "1234", "language": "en"}])
+def test_incomplete_soprano_voice_never_sends(engine, speech):
+    request = _request("voice")
+    request.text_to_voice = TextToVoice.from_payload(speech)
+    status, body = engine.dispatch(request, "r")
+    assert status == 400 and body["reason"] == "incomplete voice context"
+    engine.secrets.resolve.assert_not_called()
     dispatch_module.requests.request.assert_not_called()
 
 
