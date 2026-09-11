@@ -43,9 +43,7 @@ public sealed class SopranoProvider : IProviderAdapter
         {
             var voice = dispatch.TextToVoice;
             if (voice?.IsComplete != true) throw new InvalidOperationException("incomplete voice context");
-            body["voice"] = new { text2voice = new {
-                beforePasswordText = voice.BeforePasswordText, password = voice.Password, language = voice.Language,
-            } };
+            body["voice"] = new { text2voice = voice };
         }
         else
         {

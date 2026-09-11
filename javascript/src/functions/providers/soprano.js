@@ -49,11 +49,7 @@ function buildRequest({ channel, endpoint, dispatch, credential }) {
     if (channel === 'voice') {
         const voice = dispatch.textToVoice;
         if (!(voice instanceof TextToVoice) || !voice.isComplete) throw new Error('incomplete voice context');
-        body.voice = { text2voice: {
-            beforePasswordText: voice.beforePasswordText,
-            password: voice.password,
-            language: voice.language,
-        } };
+        body.voice = { text2voice: voice };
     } else {
         body.text = dispatch.message;
     }

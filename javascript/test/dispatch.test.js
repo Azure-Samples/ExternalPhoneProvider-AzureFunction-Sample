@@ -96,7 +96,8 @@ test('omnimsg preserves its API-key request and normalizes acceptance', () => {
 });
 
 test('Soprano Voice sends structured speech with API-key headers only', () => {
-    const textToVoice = new TextToVoice({ beforePasswordText: ' Your code is ', password: '001234', language: 'en' });
+    const textToVoice = TextToVoice.fromPayload({ beforePasswordText: ' Your code is ', password: '001234',
+        language: 'en', unexpected: 'must-not-be-forwarded' });
     const request = getProvider('soprano').adapter.buildRequest({ ...input, channel: 'voice',
         dispatch: { ...dispatch, textToVoice }, credential: { ...input.credential, token: 'ignored-token' } });
     assert.equal(request.url, `${input.endpoint}/messages/omnimsg`);
