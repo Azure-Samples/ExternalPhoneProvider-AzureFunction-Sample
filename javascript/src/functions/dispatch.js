@@ -324,13 +324,18 @@ async function sendViaProvider(providerEntry, dispatch, options) {
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider credential unavailable', dispatch, requestId) };
     }
 
-    const providerRequest = adapter.buildRequest({
-        channel,
-        endpoint: endpointBaseUrl,
-        dispatch,
-        credential,
-        env: config.env,
-    });
+    let providerRequest;
+    try {
+        providerRequest = adapter.buildRequest({
+            channel,
+            endpoint: endpointBaseUrl,
+            dispatch,
+            credential,
+            env: config.env,
+        });
+    } catch {
+        return { httpStatus: 502, body: failBody(providerId, channel, 'provider request failed', dispatch, requestId) };
+    }
 
     if (!isValidProviderUrl(providerRequest.url)) {
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider request URL invalid', dispatch, requestId) };
