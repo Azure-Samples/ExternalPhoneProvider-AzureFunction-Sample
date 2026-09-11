@@ -179,6 +179,53 @@ test('SMS/voice preserve content and correlation without reflecting headers or l
     assert.equal(fetchMock.mock.callCount(), 2);
 });
 
+test('Telesign EPP sends decrypted SMS and voice content with Basic auth and private logs', async () => {
+    process.env.EPP_PROVIDER_NAME = 'telesign';
+    process.env.EPP_PROVIDER_ENDPOINT = 'https://verify.telesign.com';
+    for (const [channel, name, code] of [[1, 'sms', 290], [2, 'voice', 100]]) {
+        fetchMock.mock.mockImplementation(async () => ({ ok: true, status: 200,
+            text: async () => JSON.stringify({ reference_id: 'PRIVATE-REFERENCE', correlation_id: 'provider-correlation',
+                status: { code, description: 'PRIVATE-STATUS' } }) }));
+        const result = await invoke(await envelope({ channel }), { authorization: 'Bearer FORGED-TOKEN', 'x-shutter-mode': 'true' });
+        assert.deepEqual(result.jsonBody, { nonce: delivery.nonce, correlationId: 'correlation-id', providerStatus: 'accepted' });
+        assert.equal(result.status, 200);
+        const [url, init] = fetchMock.mock.calls.at(-1).arguments;
+        assert.equal(url, 'https://verify.telesign.com/integration/msft/cyot');
+        assert.deepEqual(JSON.parse(init.body), { recipient: { phone_number: delivery.phoneNumber },
+            message: { text: delivery.message, language: delivery.locale }, channels: [{ channel: name }], correlation_id: 'correlation-id' });
+        assert.deepEqual(init.headers, { Authorization: `Basic ${Buffer.from('PRIVATE-API-KEY:PRIVATE-API-KEY').toString('base64')}`,
+            'Content-Type': 'application/json', Accept: 'application/json' });
+        assert.equal(init.redirect, 'manual');
+        assert.doesNotMatch(JSON.stringify(logs), /PRIVATE|918273|15551234567|FORGED/);
+        assert.equal(result.jsonBody.reference_id, undefined);
+    }
+    assert.equal(fetchMock.mock.callCount(), 2);
+});
+
+test('Telesign evaluation never sends and invalid recipients never reach HTTP', async () => {
+    process.env.EPP_PROVIDER_NAME = 'telesign';
+    process.env.EPP_PROVIDER_ENDPOINT = 'https://verify.telesign.com';
+    for (const channel of [1, 2]) {
+        const result = await invoke(await envelope({ channel, mode: 2 }));
+        assert.equal(result.status, 200);
+        assert.equal(result.jsonBody.nonce, delivery.nonce);
+    }
+    assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
+    assertFailure(await invoke(await envelope({}, { ...delivery, phoneNumber: '15551234567' })), 502);
+    assert.equal(fetchMock.mock.callCount(), 0);
+});
+
+test('Telesign missing status or upstream failure never acknowledges delivery', async () => {
+    process.env.EPP_PROVIDER_NAME = 'telesign';
+    process.env.EPP_PROVIDER_ENDPOINT = 'https://verify.telesign.com';
+    for (const [status, payload, expected] of [[200, {}, 502], [500, { status: { code: 290 } }, 502],
+        [429, { status: { code: 290 } }, 429]]) {
+        fetchMock.mock.mockImplementation(async () => ({ ok: status === 200, status, text: async () => JSON.stringify(payload) }));
+        assertFailure(await invoke(await envelope()), expected);
+    }
+    assert.equal(fetchMock.mock.callCount(), 3);
+});
+
 test('handler awaits the provider body and returns 502/429 without a nonce or retries', async () => {
     for (const status of [500, 429]) {
         let release;
