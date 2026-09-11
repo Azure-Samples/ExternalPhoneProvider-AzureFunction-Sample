@@ -22,6 +22,9 @@ Choose one language and configure the adapter for your provider. No provider is 
 by default. Deploy each language separately, not all three to the same Function App. See the
 [shared configuration](docs/CONTRACT.md#default-provider-and-configuration-readers).
 
+**Using one provider?** Only that provider needs settings and credentials. Keeping the other adapter
+files is harmless. To omit them from a deployment, follow the [single-provider setup](docs/ONBOARDING.md#single-provider-deployments).
+
 New here? Start with **[docs/ONBOARDING.md](docs/ONBOARDING.md)** — setup, config, running, securing,
 and deploying, step by step.
 

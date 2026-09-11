@@ -38,13 +38,16 @@ class SinchProvider:
         return {"url": f"{endpoint}/xms/v1/{service_plan_id}/batches", "method": "POST", "headers": headers, "body": json.dumps(body)}
 
     def parse_response(self, http_status, ok, json_body):
-        identifier = None
-        if isinstance(json_body, dict):
-            identifier = json_body.get("id") or json_body.get("callId")
+        payload = json_body if isinstance(json_body, dict) else {}
+        links = payload.get("_links")
+        self_link = links.get("self") if isinstance(links, dict) else None
+        link = self_link.get("href") if isinstance(self_link, dict) else self_link
+        identifier = next((value for value in (payload.get("id"), payload.get("callId"), link)
+                           if isinstance(value, str) and value.strip()), None)
         return ParsedResponse(
             success=ok,
             provider_http_status=http_status,
-            provider_message_id=str(identifier) if identifier is not None else None,
-            provider_status_name="Dispatched" if ok else None,
+            provider_message_id=identifier,
+            provider_status_name="Dispatched" if ok and identifier else "UNKNOWN",
             provider_status_description=json_body.get("text") if isinstance(json_body, dict) else None,
         )

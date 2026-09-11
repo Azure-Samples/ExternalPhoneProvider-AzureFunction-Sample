@@ -145,20 +145,18 @@ const OUTCOME = Object.freeze({
 
 const SECRET_CACHE_TIME_TO_LIVE_MILLISECONDS = 5 * 60 * 1000; // rotated secrets picked up within this window
 
-const providerRegistry = new Map(
-    [
-        require('./providers/infobip'),
-        require('./providers/sinch'),
-        require('./providers/soprano'),
-        require('./providers/telesign'),
-    ].map((providerModule) => [
-        providerModule.manifest.id.toLowerCase(),
-        { manifest: providerModule.manifest, adapter: providerModule },
-    ]),
-);
+const providerRegistry = new Map([
+    ['infobip', () => require('./providers/infobip')],
+    ['sinch', () => require('./providers/sinch')],
+    ['soprano', () => require('./providers/soprano')],
+    ['telesign', () => require('./providers/telesign')],
+]);
 
 function getProvider(providerId) {
-    return providerId ? providerRegistry.get(String(providerId).trim().toLowerCase()) || null : null;
+    const load = providerId ? providerRegistry.get(String(providerId).trim().toLowerCase()) : null;
+    if (!load) return null;
+    const adapter = load();
+    return { manifest: adapter.manifest, adapter };
 }
 
 let keyVaultSecretClient = null;
@@ -346,6 +344,9 @@ async function sendViaProvider(providerEntry, dispatch, options) {
     try {
         responseJson = JSON.parse(responseText);
     } catch {
+        if (providerResponse.ok) {
+            return { httpStatus: 502, body: failBody(providerId, channel, 'invalid provider response', dispatch, requestId) };
+        }
         responseJson = {};
     }
 
@@ -372,7 +373,12 @@ async function sendViaProvider(providerEntry, dispatch, options) {
 }
 
 async function dispatchOtp(dispatch, { config = readConfig(), requestId } = {}) {
-    const providerEntry = getProvider(config.providerName);
+    let providerEntry;
+    try {
+        providerEntry = getProvider(config.providerName);
+    } catch {
+        return { httpStatus: 502, body: { status: 'error', reason: 'provider unavailable', requestId } };
+    }
     if (!providerEntry) {
         return {
             httpStatus: 400,

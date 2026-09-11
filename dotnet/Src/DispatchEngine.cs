@@ -276,8 +276,14 @@ public sealed class DispatchEngine
 
             var (providerHttpStatus, success, body) = await SendAsync(req, timeoutMs);
             JsonElement json;
-            try { using var responseDocument = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body); json = responseDocument.RootElement.Clone(); }
-            catch { using var emptyDocument = JsonDocument.Parse("{}"); json = emptyDocument.RootElement.Clone(); }
+            try { using var responseDocument = JsonDocument.Parse(body); json = responseDocument.RootElement.Clone(); }
+            catch (JsonException)
+            {
+                if (success)
+                    return new DispatchResult(502, FailBody(providerId, channel, "invalid provider response", dispatch, requestId));
+                using var emptyDocument = JsonDocument.Parse("{}");
+                json = emptyDocument.RootElement.Clone();
+            }
 
             var parsed = adapter.ParseResponse(providerHttpStatus, success, json);
             var outcome = OutcomeMapper.ResolveOutcome(manifest, parsed);

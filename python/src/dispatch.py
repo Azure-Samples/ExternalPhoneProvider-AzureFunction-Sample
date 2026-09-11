@@ -11,6 +11,7 @@ from urllib3.exceptions import ReadTimeoutError
 from .config import read_config
 from .models import DeliveryContext, DispatchRequest, Envelope, ParsedResponse, TextToVoice
 from .provider_tokens import ProviderTokenConfig, ProviderTokenError, default_token_acquirer, valid_bearer_token
+from .providers import load_provider
 
 DEFAULT_TIMEOUT_MS = 1500
 DEFAULT_CHANNELS = ["sms", "voice"]
@@ -49,12 +50,14 @@ def to_http_status(outcome, provider_http_status):
 
 
 class ProviderRegistry:
-    def __init__(self, adapters):
-        self._by_id = {adapter.manifest["id"].lower(): adapter for adapter in adapters}
+    def __init__(self, adapters=None):
+        self._by_id = None if adapters is None else {adapter.manifest["id"].lower(): adapter for adapter in adapters}
 
     def get(self, provider_id):
         if not provider_id:
             return None
+        if self._by_id is None:
+            return load_provider(provider_id.lower())
         return self._by_id.get(provider_id.lower())
 
 
@@ -246,7 +249,10 @@ class DispatchEngine:
 
     def dispatch(self, dispatch, request_id):
         config = read_config(self.env)
-        adapter = self.registry.get(config.provider_name)
+        try:
+            adapter = self.registry.get(config.provider_name)
+        except Exception:
+            return 502, self._fail_body(config.provider_name, dispatch.channel, "provider unavailable", dispatch, request_id)
         if adapter is None:
             return 400, {"status": "error", "reason": "unknown provider", "requestId": request_id}
 
@@ -300,12 +306,17 @@ class DispatchEngine:
                 stream=True,  # Own the response for cleanup if body reading fails.
             )
 
+            ok = 200 <= response.status_code < 300
             try:
-                body_json = response.json()
+                def reject_constant(_value):
+                    raise ValueError("invalid JSON constant")
+
+                body_json = response.json(parse_constant=reject_constant)
             except ValueError:
+                if ok:
+                    return 502, self._fail_body(provider_id, channel, "invalid provider response", dispatch, request_id)
                 body_json = {}
 
-            ok = 200 <= response.status_code < 300
             parsed = adapter.parse_response(response.status_code, ok, body_json)
             outcome = resolve_outcome(manifest, parsed)
             http_status = to_http_status(outcome, parsed.provider_http_status or response.status_code)

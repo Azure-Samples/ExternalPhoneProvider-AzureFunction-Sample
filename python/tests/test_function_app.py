@@ -268,6 +268,67 @@ def test_provider_failure_preserves_status_without_retry_or_nonce(monkeypatch):
     send.assert_not_called()
 
 
+def test_all_providers_require_acceptance_evidence_and_preserve_failed_http(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    cases = [
+        ("infobip", [
+            {"messages": [{"status": {"groupName": "PENDING"}}]},
+            {"messages": [{"status": {"name": "ACCEPTED"}}]},
+            {"messages": [{"status": {"groupName": None, "name": "DELIVERED"}}]},
+        ], [
+            {"messages": {"0": {"status": {"groupName": "PENDING"}}}}, {"messages": [None]},
+            {"messages": [{"status": []}]}, {"messages": [{"status": {"name": 123}}]},
+            *({"messages": [{"status": {"groupName": value, "name": "PENDING"}}]} for value in (False, [], "", " ")),
+        ]),
+        ("telesign", [{"status": {"code": code}} for code in (290, "290", 100, "100")], [
+            {"status": {}}, {"status": []},
+            *({"status": {"code": code}} for code in (True, [290], {}, "")),
+        ]),
+        ("sinch", [{"id": "batch-id"}, {"callId": "call-id"},
+                   {"_links": {"self": "/batches/batch-id"}}, {"_links": {"self": {"href": "/calls/call-id"}}}], [
+            {"id": " "}, {"callId": 123}, {"id": {"href": "/not-an-id"}},
+            {"_links": {"self": {"href": 123}}}, {"_links": {"self": " "}}, {"status": "Dispatched"},
+        ]),
+        ("soprano", [{"status": "ENROUTE"}, [{"state": "ACCEPTED"}]],
+         [{"status": False, "state": "ACCEPTED"}, {"status": {}, "state": "ACCEPTED"}]),
+    ]
+    request = _request(_envelope())
+    for provider, accepted, malformed in cases:
+        monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
+        function_app._engine.env["EPP_PROVIDER_NAME"] = provider
+        adapter = function_app._registry.get(provider)
+        rejected = [{}, None, [], *malformed, *([] if provider == "soprano" else [[accepted[0]]])]
+        for payload in rejected:
+            parsed = adapter.parse_response(200, True, payload)
+            assert parsed.success is True  # Transport success is not acceptance.
+            if provider != "soprano":
+                assert (parsed.provider_status_name or parsed.provider_status_code) == "UNKNOWN"
+            assert dispatch_module.resolve_outcome(adapter.manifest, parsed) == "Fail", (provider, payload)
+        responses = [
+            *((200, raw, 502) for raw in ("<html>PRIVATE-UPSTREAM</html>", "", "{", *(json.dumps(p) for p in rejected))),
+            (200, json.dumps(accepted[0])[:-1] + ',"invalid":NaN}', 502),
+            *((201, json.dumps(payload), 200) for payload in accepted),
+            *((status, raw, 401 if status == 403 else 502 if status == 500 else status)
+              for status in (401, 403, 429, 500)
+              for raw in (json.dumps(accepted[0]), "<html>PRIVATE-UPSTREAM</html>")),
+        ]
+        for status, raw, expected in responses:
+            upstream = Mock(status_code=status, json=Mock(side_effect=lambda **options: json.loads(raw, **options)))
+            send = dispatch_module.requests.request
+            send.reset_mock()
+            send.return_value = upstream
+            response = _HANDLER(request)
+            body = json.loads(response.get_body())
+            assert response.status_code == expected, (provider, status, raw)
+            if expected == 200:
+                assert body["nonce"] == _NONCE
+            else:
+                assert body["error"] == "provider_delivery_failed" and "nonce" not in body
+            send.assert_called_once()
+            upstream.close.assert_called_once()
+            assert "PRIVATE-UPSTREAM" not in response.get_body().decode() + caplog.text
+
+
 def test_unexpected_handler_error_is_generic_and_does_not_send(monkeypatch, caplog):
     monkeypatch.setattr(function_app, "read_config", Mock(side_effect=RuntimeError("PRIVATE-ERROR")))
     response = _HANDLER(_request({}))

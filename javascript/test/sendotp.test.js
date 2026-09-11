@@ -7,6 +7,7 @@ const Module = require('node:module');
 const { CompactEncrypt } = require('jose');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { ProviderTokenAcquirer } = require('../src/functions/providerToken');
+const { getProvider, resolveOutcome } = require('../src/functions/dispatch');
 const fixtures = require('../../tests/fixtures/contract.json');
 
 // Capture the real handler; keys stay in memory and all external I/O is mocked.
@@ -260,6 +261,62 @@ test('handler awaits the provider body and returns failures without a nonce or r
     }
     assert.equal(fetchMock.mock.callCount(), 3);
     assert.equal(getToken.mock.callCount(), 3);
+});
+
+test('all providers require acceptance evidence and preserve failed HTTP without a nonce', async () => {
+    const cases = [
+        ['infobip', [
+            '{"messages":[{"status":{"groupName":"PENDING"}}]}',
+            '{"messages":[{"status":{"name":"ACCEPTED"}}]}',
+            '{"messages":[{"status":{"groupName":null,"name":"DELIVERED"}}]}',
+        ], [
+            '{"messages":{"0":{"status":{"groupName":"PENDING"}}}}', '{"messages":[null]}',
+            '{"messages":[{"status":[]}]}', '{"messages":[{"status":{"name":123}}]}',
+            ...[false, [], '', ' '].map(groupName => JSON.stringify({ messages: [{ status: { groupName, name: 'PENDING' } }] })),
+        ]],
+        ['telesign', [290, '290', 100, '100'].map(code => JSON.stringify({ status: { code } })), [
+            '{"status":{}}', '{"status":[]}',
+            ...[true, [290], {}, ''].map(code => JSON.stringify({ status: { code } })),
+        ]],
+        ['sinch', ['{"id":"batch-id"}', '{"callId":"call-id"}',
+            '{"_links":{"self":"/batches/batch-id"}}', '{"_links":{"self":{"href":"/calls/call-id"}}}'], [
+            '{"id":" "}', '{"callId":123}', '{"id":{"href":"/not-an-id"}}',
+            '{"_links":{"self":{"href":123}}}', '{"_links":{"self":" "}}', '{"status":"Dispatched"}',
+        ]],
+        ['soprano', ['{"status":"ENROUTE"}', '[{"state":"ACCEPTED"}]'],
+            ['{"status":false,"state":"ACCEPTED"}', '{"status":{},"state":"ACCEPTED"}']],
+    ];
+    const request = await envelope();
+    for (const [provider, accepted, malformed] of cases) {
+        process.env.EPP_PROVIDER_NAME = provider;
+        const { adapter, manifest } = getProvider(provider);
+        const rejectedJson = ['{}', 'null', '[]', ...malformed,
+            ...(provider === 'soprano' ? [] : [`[${accepted[0]}]`])];
+        for (const raw of rejectedJson) {
+            const parsed = adapter.parseResponse({ httpStatus: 200, ok: true, json: JSON.parse(raw) });
+            assert.equal(parsed.success, true); // Transport success is not acceptance.
+            if (provider !== 'soprano') assert.equal(parsed.providerStatusName || parsed.providerStatusCode, 'UNKNOWN');
+            assert.equal(resolveOutcome(manifest, parsed), 'Fail', `${provider}: ${raw}`);
+        }
+        const responses = [
+            ...['<html>PRIVATE-UPSTREAM</html>', '', '{', ...rejectedJson].map(raw => [200, raw, 502]),
+            [200, accepted[0].slice(0, -1) + ',"invalid":NaN}', 502],
+            ...accepted.map(raw => [201, raw, 200]),
+            ...[401, 403, 429, 500].flatMap(status => [accepted[0], '<html>PRIVATE-UPSTREAM</html>']
+                .map(raw => [status, raw, status === 403 ? 401 : status === 500 ? 502 : status])),
+        ];
+        for (const [status, raw, expected] of responses) {
+            const calls = fetchMock.mock.callCount();
+            fetchMock.mock.mockImplementation(async () => ({ ok: status < 300, status, text: async () => raw }));
+            const result = await invoke(request);
+            if (expected === 200) {
+                assert.equal(result.status, 200);
+                assert.equal(result.jsonBody.nonce, delivery.nonce);
+            } else assertFailure(result, expected);
+            assert.equal(fetchMock.mock.callCount(), calls + 1);
+            assert.equal(JSON.stringify([result.jsonBody, logs, warnings]).includes('PRIVATE-UPSTREAM'), false);
+        }
+    }
 });
 
 test('the real abort timer covers response-body reading: 504, no retry and no nonce', async () => {

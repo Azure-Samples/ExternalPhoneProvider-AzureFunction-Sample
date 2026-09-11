@@ -140,6 +140,11 @@ an HTTP status. **Fail-closed:** an unknown/unmapped status is treated as `Fail`
 An unsuccessful provider HTTP response cannot become `Continue` because its body contains a
 success-looking status. Explicit `Block`/`StepUp` outcomes remain non-success responses.
 
+Malformed JSON in a successful HTTP response returns `502`, not acceptance. Bundled status-based
+adapters require a recognized, correctly typed status; ID-based adapters require a nonblank message
+or call identifier. An empty body/object or an HTML success page is not submission evidence. Failed
+HTTP responses retain their existing status mapping even when their bodies cannot be parsed.
+
 | Outcome | HTTP | When |
 |---------|------|------|
 | `Continue` | `200` | recognized success status |
@@ -247,6 +252,10 @@ guard or backup token validation. See [platform onboarding](ONBOARDING.md#2-prov
 Provision `EPP_PROVIDER_NAME` with the customer's selected provider, plus that account's
 `EPP_PROVIDER_ENDPOINT` and Key Vault credentials. A missing or unknown provider fails closed;
 there is no implicit default or automatic failover. Request-body provider fields are not used.
+
+JavaScript/Python defer adapter imports until live selection; a missing/broken selected module returns
+`502` before credential or provider HTTP work. Unused modules are never imported. .NET uses explicit
+compile-time registrations. See [single-provider setup](ONBOARDING.md#single-provider-deployments).
 
 The shared configuration readers are [JavaScript `readConfig`](../javascript/src/functions/config.js),
 [Python `read_config`](../python/src/config.py), and [.NET `AppConfig.Read`](../dotnet/Src/AppConfig.cs).

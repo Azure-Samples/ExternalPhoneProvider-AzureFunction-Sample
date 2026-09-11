@@ -43,9 +43,14 @@ class InfobipProvider:
 
     def parse_response(self, http_status, ok, json_body):
         messages = json_body.get("messages") if isinstance(json_body, dict) else None
-        first_message = messages[0] if messages else {}
-        status = first_message.get("status") or {}
-        status_name = (status.get("groupName") or status.get("name") or "").upper() or None
+        first_message = messages[0] if isinstance(messages, list) and messages else {}
+        first_message = first_message if isinstance(first_message, dict) else {}
+        status = first_message.get("status")
+        status = status if isinstance(status, dict) else {}
+        value = status.get("groupName")
+        if value is None:
+            value = status.get("name")
+        status_name = value.upper() if isinstance(value, str) and value.strip() else "UNKNOWN"
         return ParsedResponse(
             success=ok,
             provider_http_status=http_status,

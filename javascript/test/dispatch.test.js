@@ -2,6 +2,10 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { AppConfig, readConfig } = require('../src/functions/config');
 const { DeliveryContext, ParsedResponse, TextToVoice } = require('../src/functions/models');
@@ -42,6 +46,101 @@ test('config uses the deployment provider, with no hardcoded fallback', async (t
     const [url, init] = fetchMock.mock.calls[0].arguments;
     assert.equal(url, `${input.endpoint}/xms/v1/custom-plan/batches`);
     assert.equal(JSON.parse(init.body).body, dispatch.message);
+});
+
+test('isolated packages load only the selected adapter and fail closed when it cannot load', () => {
+    const run = async function () {
+        const assert = require('node:assert/strict');
+        const Module = require('node:module');
+        const path = require('node:path');
+        const { CompactEncrypt } = require('jose');
+        const [root, scenario] = process.argv.slice(1);
+        let handler, secrets = 0, sends = 0;
+        const loads = [], logs = [];
+        const originalLoad = Module._load;
+        Module._load = function (name, parent, ...args) {
+            if (name === '@azure/functions') return { app: { http: (_name, options) => { handler = options.handler; } } };
+            if (name === '@azure/identity') return { ManagedIdentityCredential: class {} };
+            if (name === '@azure/keyvault-secrets') return { SecretClient: class {
+                async getSecret() { secrets++; return { value: 'fixture-key' }; }
+            } };
+            if (name.includes('/providers/')) loads.push(name);
+            if (scenario === 'broken' && parent?.filename === path.join(root, 'providers', 'soprano.js')
+                && name === '../providerToken') {
+                throw Object.assign(new Error('PRIVATE-selected-dependency'), { code: 'MODULE_NOT_FOUND' });
+            }
+            return originalLoad.call(this, name, parent, ...args);
+        };
+        global.fetch = async () => { sends++; return { ok: true, status: 201,
+            text: async () => JSON.stringify({ status: 'ENROUTE' }) }; };
+        for (const key of Object.keys(process.env)) {
+            if (key.startsWith('EPP_') || ['AZURE_CLIENT_ID', 'KEY_VAULT_URL'].includes(key)) delete process.env[key];
+        }
+        const { publicKey, privateKey } = require('node:crypto').generateKeyPairSync('rsa', { modulusLength: 2048 });
+        Object.assign(process.env, { EPP_PROVIDER_NAME: ' SoPrAnO ', EPP_PROVIDER_ENDPOINT: 'https://provider.example',
+            KEY_VAULT_URL: 'https://fixture.vault.azure.net',
+            EPP_DECRYPTION_KEY_PEM: privateKey.export({ type: 'pkcs8', format: 'pem' }) });
+        require(path.join(root, 'SendOtp.js'));
+        assert.equal(typeof handler, 'function');
+        assert.deepEqual(loads, []);
+        const { dispatchOtp, getProvider } = require(path.join(root, 'dispatch.js'));
+        const config = require(path.join(root, 'config.js')).readConfig();
+        const delivery = { nonce: 'fixture-nonce', phoneNumber: '+15551234567', message: 'fixture-message' };
+        const encryptedDeliveryContext = await new CompactEncrypt(Buffer.from(JSON.stringify(delivery)))
+            .setProtectedHeader({ alg: 'RSA-OAEP-256', enc: 'A256GCM' }).encrypt(publicKey);
+        const invoke = (mode) => handler({ headers: { get: () => null }, text: async () => JSON.stringify({
+            type: 'microsoft.mfa.otpDeliver.v1', channel: 1, mode, encryptedDeliveryContext }) },
+        { log: (value) => logs.push(value), warn: (value) => logs.push(value) });
+        const evaluation = await invoke(2);
+        assert.equal(evaluation.status, 200);
+        assert.equal(evaluation.jsonBody.nonce, delivery.nonce);
+        const request = { destination: delivery.phoneNumber, message: delivery.message, channel: 'sms' };
+        for (const providerName of [undefined, '', 'unknown', '../models']) {
+            assert.equal(getProvider(providerName), null);
+            const result = await dispatchOtp(request, { config: { ...config, providerName } });
+            assert.deepEqual([result.httpStatus, result.body.reason], [400, 'unknown provider']);
+        }
+        assert.deepEqual([loads, secrets, sends], [[], 0, 0]);
+        const result = await dispatchOtp(request, { config: { ...config, providerName: ' SoPrAnO ' } });
+        const response = await invoke(1);
+        if (scenario === 'soprano') {
+            assert.equal(result.httpStatus, 200);
+            assert.equal(response.status, 200);
+            assert.equal(response.jsonBody.nonce, delivery.nonce);
+            assert.equal(getProvider(' SoPrAnO ').adapter, getProvider('soprano').adapter);
+            assert.deepEqual([secrets, sends], [2, 2]);
+        } else {
+            assert.deepEqual(result, { httpStatus: 502,
+                body: { status: 'error', reason: 'provider unavailable', requestId: undefined } });
+            assert.equal(response.status, 502);
+            assert.equal(response.jsonBody.error, 'provider_delivery_failed');
+            assert.equal(response.jsonBody.nonce, undefined);
+            assert.throws(() => getProvider('soprano'), { code: 'MODULE_NOT_FOUND' });
+            assert.deepEqual([secrets, sends], [0, 0]);
+        }
+        assert.ok(loads.length > 0 && loads.every((name) => name === './providers/soprano'));
+        for (const value of ['PRIVATE', 'MODULE_NOT_FOUND', root, delivery.phoneNumber, delivery.message]) {
+            assert.equal(JSON.stringify([result, response, logs]).includes(value), false);
+        }
+    };
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'epp-provider-'));
+    try {
+        const source = path.join(__dirname, '../src/functions');
+        for (const scenario of ['soprano', 'missing', 'broken']) {
+            const root = path.join(temp, scenario);
+            fs.cpSync(source, root, { recursive: true, filter: (file) => path.basename(file) !== 'providers' });
+            fs.mkdirSync(path.join(root, 'providers'));
+            if (scenario !== 'missing') fs.copyFileSync(path.join(source, 'providers/soprano.js'), path.join(root, 'providers/soprano.js'));
+            assert.deepEqual(fs.readdirSync(path.join(root, 'providers')), scenario === 'missing' ? [] : ['soprano.js']);
+            const child = spawnSync(process.execPath, ['-e', `(${run})().catch(error => { console.error(error); process.exitCode = 1; });`, root, scenario], {
+                cwd: root, encoding: 'utf8', timeout: 20000,
+                env: { ...process.env, NODE_PATH: require.resolve.paths('jose').join(path.delimiter) },
+            });
+            assert.equal(child.status, 0, `${scenario}: ${child.error || child.stderr || child.stdout}`);
+        }
+    } finally {
+        fs.rmSync(temp, { recursive: true, force: true });
+    }
 });
 
 test('request models preserve content and accept valid TTL boundaries', () => {

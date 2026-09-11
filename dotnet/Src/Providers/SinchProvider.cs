@@ -57,13 +57,18 @@ public sealed class SinchProvider : IProviderAdapter
 
     public ParsedResponse ParseResponse(int httpStatus, bool ok, JsonElement json)
     {
+        static string? ReadString(JsonElement payload, string name) =>
+            payload.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(value.GetString()) ? value.GetString() : null;
         string? id = null, desc = null;
         if (json.ValueKind == JsonValueKind.Object)
         {
-            if (json.TryGetProperty("id", out var idElement)) id = idElement.ToString();
-            else if (json.TryGetProperty("callId", out var callIdElement)) id = callIdElement.ToString();
-            if (json.TryGetProperty("text", out var textElement)) desc = textElement.GetString();
+            id = ReadString(json, "id") ?? ReadString(json, "callId");
+            if (id is null && json.TryGetProperty("_links", out var links) && links.ValueKind == JsonValueKind.Object
+                && links.TryGetProperty("self", out var self))
+                id = self.ValueKind == JsonValueKind.Object ? ReadString(self, "href") : ReadString(links, "self");
+            desc = ReadString(json, "text");
         }
-        return new ParsedResponse(ok, httpStatus, id, ok ? "Dispatched" : null, null, desc);
+        return new ParsedResponse(ok, httpStatus, id, ok && id is not null ? "Dispatched" : "UNKNOWN", null, desc);
     }
 }

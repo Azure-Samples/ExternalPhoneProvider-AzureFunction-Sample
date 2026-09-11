@@ -100,3 +100,7 @@ Platform/key prerequisites and HTTP outcomes are defined in the
 
 Implement `IProviderAdapter` and register it in [Program.cs](Program.cs) without adding provider-specific
 branches to the shared pipeline. See [production limitations](../docs/CONTRACT.md#production-limitations) before production use.
+
+Only the selected provider needs credentials. If you remove unused adapter source files, also remove
+their registrations in [Program.cs](Program.cs) and any tests importing those types. Keeping the files
+is simpler; see [single-provider setup](../docs/ONBOARDING.md#single-provider-deployments).

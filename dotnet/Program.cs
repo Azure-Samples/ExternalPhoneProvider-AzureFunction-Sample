@@ -20,6 +20,7 @@ builder.Services.AddSingleton<IProviderTokenAcquirer, ProviderTokenAcquirer>();
 builder.Services.AddSingleton<IJweKeyProvider, EnvJweKeyProvider>();
 builder.Services.AddSingleton<JweDecryptor>();
 
+// Keep these registrations aligned with the adapter source files included in the project.
 builder.Services.AddSingleton<IProviderAdapter, InfobipProvider>();
 builder.Services.AddSingleton<IProviderAdapter, TelesignProvider>();
 builder.Services.AddSingleton<IProviderAdapter, SopranoProvider>();

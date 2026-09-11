@@ -69,12 +69,14 @@ function buildRequest({ channel, endpoint, dispatch, credential, env }) {
 }
 
 function parseResponse({ httpStatus, ok, json }) {
-    const status = (json && json.status) || {};
+    const payload = json && typeof json === 'object' && !Array.isArray(json) ? json : {};
+    const status = payload.status && typeof payload.status === 'object' && !Array.isArray(payload.status) ? payload.status : {};
+    const code = status.code;
     return new ParsedResponse({
         success: ok,
         providerHttpStatus: httpStatus,
-        providerMessageId: (json && json.reference_id) || null,
-        providerStatusCode: status.code != null ? String(status.code) : null,
+        providerMessageId: payload.reference_id || null,
+        providerStatusCode: typeof code === 'number' || (typeof code === 'string' && code.trim()) ? String(code) : 'UNKNOWN',
     });
 }
 

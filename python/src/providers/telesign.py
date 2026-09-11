@@ -48,12 +48,13 @@ class TelesignProvider:
         return {"url": f"{endpoint}{path}", "method": "POST", "headers": headers, "body": urllib.parse.urlencode(form)}
 
     def parse_response(self, http_status, ok, json_body):
-        status = json_body.get("status") or {} if isinstance(json_body, dict) else {}
+        status = json_body.get("status") if isinstance(json_body, dict) else None
+        status = status if isinstance(status, dict) else {}
         code = status.get("code")
         return ParsedResponse(
             success=ok,
             provider_http_status=http_status,
             provider_message_id=json_body.get("reference_id") if isinstance(json_body, dict) else None,
-            provider_status_code=str(code) if code is not None else None,
+            provider_status_code=str(code) if type(code) in (int, float) or (isinstance(code, str) and code.strip()) else "UNKNOWN",
             provider_status_description=status.get("description"),
         )

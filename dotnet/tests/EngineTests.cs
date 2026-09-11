@@ -72,6 +72,65 @@ public class EngineTests
     }
 
     [Fact]
+    public async Task AllProvidersRequireAcceptanceEvidenceAndPreserveFailedHttp()
+    {
+        var cases = new (IProviderAdapter Adapter, string[] Accepted, string[] Malformed)[]
+        {
+            (new InfobipProvider(), new[] {
+                "{\"messages\":[{\"status\":{\"groupName\":\"PENDING\"}}]}",
+                "{\"messages\":[{\"status\":{\"name\":\"ACCEPTED\"}}]}",
+                "{\"messages\":[{\"status\":{\"groupName\":null,\"name\":\"DELIVERED\"}}]}",
+            }, new[] {
+                "{\"messages\":{\"0\":{\"status\":{\"groupName\":\"PENDING\"}}}}", "{\"messages\":[null]}",
+                "{\"messages\":[{\"status\":[]}]}", "{\"messages\":[{\"status\":{\"name\":123}}]}",
+            }.Concat(new object[] { false, Array.Empty<object>(), "", " " }.Select(groupName =>
+                JsonSerializer.Serialize(new { messages = new[] { new { status = new { groupName, name = "PENDING" } } } }))).ToArray()),
+            (new TelesignProvider(), new object[] { 290, "290", 100, "100" }.Select(code =>
+                JsonSerializer.Serialize(new { status = new { code } })).ToArray(),
+                new[] { "{\"status\":{}}", "{\"status\":[]}" }.Concat(new object[] { true, new[] { 290 }, new { }, "" }
+                    .Select(code => JsonSerializer.Serialize(new { status = new { code } }))).ToArray()),
+            (new SinchProvider(), new[] { "{\"id\":\"batch-id\"}", "{\"callId\":\"call-id\"}",
+                "{\"_links\":{\"self\":\"/batches/batch-id\"}}", "{\"_links\":{\"self\":{\"href\":\"/calls/call-id\"}}}" }, new[] {
+                "{\"id\":\" \"}", "{\"callId\":123}", "{\"id\":{\"href\":\"/not-an-id\"}}",
+                "{\"_links\":{\"self\":{\"href\":123}}}", "{\"_links\":{\"self\":\" \"}}", "{\"status\":\"Dispatched\"}",
+            }),
+            (new SopranoProvider(), new[] { "{\"status\":\"ENROUTE\"}", "[{\"state\":\"ACCEPTED\"}]" },
+                new[] { "{\"status\":false,\"state\":\"ACCEPTED\"}", "{\"status\":{},\"state\":\"ACCEPTED\"}" }),
+        };
+        using var rig = new HandlerRig();
+        foreach (var (adapter, accepted, malformed) in cases)
+        {
+            var provider = adapter.Manifest.Id;
+            rig.Env["EPP_PROVIDER_NAME"] = provider;
+            var rejected = new[] { "{}", "null", "[]" }.Concat(malformed)
+                .Concat(provider == "soprano" ? Array.Empty<string>() : new[] { "[" + accepted[0] + "]" }).ToArray();
+            foreach (var raw in rejected)
+            {
+                using var json = JsonDocument.Parse(raw);
+                var parsed = adapter.ParseResponse(200, true, json.RootElement);
+                Assert.True(parsed.Success); // Transport success is not acceptance.
+                if (provider != "soprano") Assert.Equal("UNKNOWN", parsed.ProviderStatusName ?? parsed.ProviderStatusCode);
+                Assert.Equal(Outcome.Fail, OutcomeMapper.ResolveOutcome(adapter.Manifest, parsed));
+            }
+            var responses = new[] { "<html>PRIVATE-UPSTREAM</html>", "", "{" }.Concat(rejected).Select(raw => (200, raw, 502))
+                .Append((200, accepted[0][..^1] + ",\"invalid\":NaN}", 502))
+                .Concat(accepted.Select(raw => (201, raw, 200)))
+                .Concat(new[] { 401, 403, 429, 500 }.SelectMany(status => new[] { accepted[0], "<html>PRIVATE-UPSTREAM</html>" }
+                    .Select(raw => (status, raw, status == 403 ? 401 : status == 500 ? 502 : status))));
+            foreach (var (status, raw, expected) in responses)
+            {
+                var calls = rig.Http.Calls;
+                rig.Http.Respond = _ => Task.FromResult(Json(status, raw));
+                var result = await rig.Invoke();
+                if (expected == 200) AssertAccepted(result);
+                else AssertFailure(rig, result, expected);
+                Assert.Equal(calls + 1, rig.Http.Calls);
+                Assert.DoesNotContain("PRIVATE-UPSTREAM", JsonSerializer.Serialize(result.Value) + string.Join("\n", rig.Log.Messages));
+            }
+        }
+    }
+
+    [Fact]
     public async Task ResponseBodyTimeoutCancelsWithoutRetryOrSuccessNonce()
     {
         using var rig = new HandlerRig();
@@ -218,6 +277,7 @@ public class EngineTests
         foreach (var (provider, channel) in new[] { ("soprano", "sms"), ("sinch", "voice") })
         {
             rig.Env["EPP_PROVIDER_NAME"] = provider;
+            rig.Http.Respond = _ => Task.FromResult(Json(201, "{\"status\":\"ACCEPTED\",\"callId\":\"call-id\"}"));
             AssertAccepted(await rig.Invoke(channel: channel, deliveryOverrides: invalid));
             var body = JsonSerializer.Deserialize<JsonElement>(rig.Http.Body!);
             Assert.False(body.TryGetProperty("voice", out _));

@@ -65,16 +65,21 @@ public sealed class InfobipProvider : IProviderAdapter
 
     public ParsedResponse ParseResponse(int httpStatus, bool ok, JsonElement json)
     {
-        string? messageId = null, statusName = null, statusDesc = null;
-        if (json.ValueKind == JsonValueKind.Object && json.TryGetProperty("messages", out var messages) && messages.ValueKind == JsonValueKind.Array && messages.GetArrayLength() > 0)
+        string? messageId = null, statusName = "UNKNOWN", statusDesc = null;
+        if (json.ValueKind == JsonValueKind.Object && json.TryGetProperty("messages", out var messages)
+            && messages.ValueKind == JsonValueKind.Array && messages.GetArrayLength() > 0
+            && messages[0].ValueKind == JsonValueKind.Object)
         {
             var firstMessage = messages[0];
             if (firstMessage.TryGetProperty("messageId", out var messageIdElement)) messageId = messageIdElement.ToString();
             if (firstMessage.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.Object)
             {
-                if (status.TryGetProperty("groupName", out var groupName)) statusName = groupName.GetString()?.ToUpperInvariant();
-                else if (status.TryGetProperty("name", out var name)) statusName = name.GetString()?.ToUpperInvariant();
-                if (status.TryGetProperty("description", out var description)) statusDesc = description.GetString();
+                if (!status.TryGetProperty("groupName", out var value) || value.ValueKind == JsonValueKind.Null)
+                    status.TryGetProperty("name", out value);
+                if (value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString()))
+                    statusName = value.GetString()!.ToUpperInvariant();
+                if (status.TryGetProperty("description", out var description) && description.ValueKind == JsonValueKind.String)
+                    statusDesc = description.GetString();
             }
         }
         return new ParsedResponse(ok, httpStatus, messageId, statusName, null, statusDesc);

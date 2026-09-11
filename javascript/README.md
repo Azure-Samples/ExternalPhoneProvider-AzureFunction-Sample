@@ -113,3 +113,6 @@ register it in [src/functions/dispatch.js](src/functions/dispatch.js). Return a 
 `parseResponse`; raw API-specific JSON stays inside that adapter. Keep credentials, options and
 status mapping with that adapter; the shared pipeline needs no provider-specific branches. See
 [production limitations](../docs/CONTRACT.md#production-limitations) before production use.
+
+The registry contains explicit lazy loaders, not eager imports. Only the selected adapter is loaded;
+unused files can be omitted from deployment. See [single-provider setup](../docs/ONBOARDING.md#single-provider-deployments).

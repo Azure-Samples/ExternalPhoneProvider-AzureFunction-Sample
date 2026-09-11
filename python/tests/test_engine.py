@@ -44,7 +44,7 @@ def test_missing_key_or_identity_never_sends(engine):
 
 def test_other_channels_and_providers_ignore_incomplete_voice_metadata(engine):
     # The real-JWE handler test covers Soprano voice rejection before any credential work.
-    dispatch_module.requests.request.return_value = Mock(status_code=201, json=Mock(return_value={"status": "ENROUTE"}))
+    dispatch_module.requests.request.return_value = Mock(status_code=201, json=Mock(return_value={"status": "ENROUTE", "callId": "call-id"}))
     for provider, channel in (("soprano", "sms"), ("sinch", "voice")):
         engine.env["EPP_PROVIDER_NAME"] = provider
         request = _request(channel)

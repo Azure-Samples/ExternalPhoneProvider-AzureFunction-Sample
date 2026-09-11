@@ -17,6 +17,23 @@ in code or app settings. Grant the Function's managed identity *Key Vault Secret
 appropriate secret or vault scope. Confirm that the endpoint and credentials belong to the same
 account and environment. Individual API contracts stay in the adapters.
 
+### Single-provider deployments
+
+Configure only `EPP_PROVIDER_NAME`, its matching `EPP_PROVIDER_ENDPOINT`, and the selected adapter's
+credentials/options. Unused adapters do not require secrets, subscriptions or endpoints. Keeping the
+bundled files is the simplest option; there is no automatic failover to them.
+
+- **JavaScript/Python:** only the selected adapter is imported for live delivery. You may omit unused
+	adapter files without changing the loader's fixed provider-ID mapping. Keep the shared modules and
+	declared dependencies (and Python's provider package initializer). Missing/broken selected modules
+	return a sanitized `502`; unknown provider IDs return `400`. Evaluation loads no provider modules.
+- **.NET:** keep the selected adapter source and remove registrations for omitted types in
+	[Program.cs](../dotnet/Program.cs). Deleting source without removing its registration fails compilation;
+	a missing registration fails closed at dispatch. No reflection or dynamic assembly loading is used.
+- Bundled tests cover all adapters: run them in the complete repository, or remove the corresponding
+	adapter-specific tests/imports when maintaining a permanently trimmed source fork. Merely selecting
+	one provider does not require deleting anything.
+
 ### Setup script compatibility
 
 The Preview 1 setup script creates the encryption-key secret, not the selected provider's API

@@ -88,15 +88,18 @@ Platform/key prerequisites and HTTP outcomes are defined in the
 
 | Source | Purpose |
 |---|---|
-| [function_app.py](function_app.py) | HTTP handler and adapter registration |
+| [function_app.py](function_app.py) | HTTP handler and engine setup |
 | [src/config.py](src/config.py) | Shared deployment settings |
 | [src/models.py](src/models.py) | Envelope, delivery-context, dispatch and normalized `ParsedResponse` dataclasses |
 | [src/dispatch.py](src/dispatch.py) | Boundary validation, JWE, provider registry and outcome mapping |
 | [src/providers/](src/providers/) | Adapter manifests and API-specific implementations |
+| [src/providers/__init__.py](src/providers/__init__.py) | Fixed provider-ID mapping; imports only the selected adapter |
 | [src/secrets.py](src/secrets.py) | Cached Key Vault access via managed identity |
 | [src/provider_tokens.py](src/provider_tokens.py) | Opt-in Entra provider-token acquisition; never inbound token validation |
 
-Add and register an adapter without adding provider-specific branches to the shared pipeline.
+Add an adapter and its module/class mapping in [src/providers/__init__.py](src/providers/__init__.py)
+without adding provider-specific branches to the shared pipeline. Unused adapter files need not be
+deployed; see [single-provider setup](../docs/ONBOARDING.md#single-provider-deployments).
 Return `ParsedResponse` from `parse_response` using named fields; the engine reads attributes such as
 `parsed.provider_status_name`. Raw provider JSON remains local to the adapter, not a shared model hierarchy.
 See [production limitations](../docs/CONTRACT.md#production-limitations) before production use.

@@ -17,17 +17,13 @@ from src.dispatch import (
     make_key_provider,
     parse_envelope,
 )
-from src.providers.infobip import InfobipProvider
-from src.providers.sinch import SinchProvider
-from src.providers.soprano import SopranoProvider
-from src.providers.telesign import TelesignProvider
 from src.secrets import SecretResolver
 
 TAG = "[EPP]"
 
 app = func.FunctionApp()
 
-_registry = ProviderRegistry([InfobipProvider(), TelesignProvider(), SopranoProvider(), SinchProvider()])
+_registry = ProviderRegistry()
 _secrets = SecretResolver()
 _engine = DispatchEngine(_registry, _secrets)
 _key_provider = make_key_provider(os.environ)

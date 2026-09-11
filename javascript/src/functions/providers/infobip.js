@@ -55,13 +55,17 @@ function buildRequest({ channel, endpoint, dispatch, credential, env }) {
 }
 
 function parseResponse({ httpStatus, ok, json }) {
-    const firstMessage = json && json.messages && json.messages[0];
-    const status = (firstMessage && firstMessage.status) || {};
+    const messages = json && !Array.isArray(json) && json.messages;
+    const first = Array.isArray(messages) ? messages[0] : null;
+    const firstMessage = first && typeof first === 'object' && !Array.isArray(first) ? first : {};
+    const status = firstMessage.status && typeof firstMessage.status === 'object' && !Array.isArray(firstMessage.status)
+        ? firstMessage.status : {};
+    const value = status.groupName ?? status.name;
     return new ParsedResponse({
         success: ok,
         providerHttpStatus: httpStatus,
-        providerMessageId: (firstMessage && firstMessage.messageId) || null,
-        providerStatusName: (status.groupName || status.name || '').toUpperCase() || null,
+        providerMessageId: firstMessage.messageId || null,
+        providerStatusName: typeof value === 'string' && value.trim() ? value.toUpperCase() : 'UNKNOWN',
     });
 }
 

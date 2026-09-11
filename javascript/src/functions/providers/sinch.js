@@ -55,12 +55,15 @@ function buildRequest({ channel, endpoint, dispatch, credential, env }) {
 }
 
 function parseResponse({ httpStatus, ok, json }) {
-    const messageOrCallId = (json && (json.id || json.callId || json._links && json._links.self)) || null;
+    const payload = json && typeof json === 'object' && !Array.isArray(json) ? json : {};
+    const self = payload._links && !Array.isArray(payload._links) ? payload._links.self : null;
+    const link = self && typeof self === 'object' && !Array.isArray(self) ? self.href : self;
+    const identifier = [payload.id, payload.callId, link].find(value => typeof value === 'string' && value.trim()) || null;
     return new ParsedResponse({
         success: ok,
         providerHttpStatus: httpStatus,
-        providerMessageId: typeof messageOrCallId === 'string' ? messageOrCallId : (messageOrCallId && messageOrCallId.href) || null,
-        providerStatusName: ok ? 'Dispatched' : (json && (json.text || json.status)) || null,
+        providerMessageId: identifier,
+        providerStatusName: ok && identifier ? 'Dispatched' : 'UNKNOWN',
     });
 }
 

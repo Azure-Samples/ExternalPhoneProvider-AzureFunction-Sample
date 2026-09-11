@@ -61,14 +61,17 @@ public sealed class TelesignProvider : IProviderAdapter
 
     public ParsedResponse ParseResponse(int httpStatus, bool ok, JsonElement json)
     {
-        string? refId = null, statusCode = null, statusDesc = null;
+        string? refId = null, statusCode = "UNKNOWN", statusDesc = null;
         if (json.ValueKind == JsonValueKind.Object)
         {
-            if (json.TryGetProperty("reference_id", out var referenceId)) refId = referenceId.GetString();
+            if (json.TryGetProperty("reference_id", out var referenceId) && referenceId.ValueKind == JsonValueKind.String)
+                refId = referenceId.GetString();
             if (json.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.Object)
             {
-                if (status.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.Number) statusCode = code.GetInt32().ToString();
-                if (status.TryGetProperty("description", out var description)) statusDesc = description.GetString();
+                if (status.TryGetProperty("code", out var code) && code.ValueKind is JsonValueKind.String or JsonValueKind.Number
+                    && !string.IsNullOrWhiteSpace(code.ToString())) statusCode = code.ToString();
+                if (status.TryGetProperty("description", out var description) && description.ValueKind == JsonValueKind.String)
+                    statusDesc = description.GetString();
             }
         }
         return new ParsedResponse(ok, httpStatus, refId, null, statusCode, statusDesc);
