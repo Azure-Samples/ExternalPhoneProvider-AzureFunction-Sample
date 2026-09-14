@@ -149,6 +149,10 @@ digit spacing, without guessing a passcode. A timed-out send may already be acce
 
 ## 4. Package, deploy and verify
 
+Run the [root-level packaging script](../README.md#package-a-function) for your chosen language:
+`package-javascript.ps1`, `package-dotnet.ps1`, or `package-python.ps1`. Each writes a separate ZIP
+under `artifacts/`; none deploys it. The Python source ZIP requires Azure remote build on Linux.
+
 Build and publish only the chosen language folder, retaining runtime dependencies or using a supported
 remote build. Configure and verify Easy Auth before publishing; keep public ingress disabled until
 the required platform gate is in place. Verify managed identity access, encryption and platform
