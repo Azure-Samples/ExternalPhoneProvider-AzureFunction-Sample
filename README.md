@@ -25,9 +25,35 @@ by default. Deploy each language separately, not all three to the same Function 
 New here? Start with **[docs/ONBOARDING.md](docs/ONBOARDING.md)** — setup, config, running, securing,
 and deploying, step by step.
 
-## Package a Function
+## Download a Function ZIP
 
-Run the script for your chosen language from the repository root. These standalone scripts create
+Download the ZIP for your chosen language from the
+[preview release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/tag/epp-packages-preview-20260914):
+
+| Language | Download | Contents |
+|---|---|---|
+| JavaScript | [epp-javascript.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-preview-20260914/epp-javascript.zip) | Application and production dependencies |
+| .NET | [epp-dotnet.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-preview-20260914/epp-dotnet.zip) | Release publish output |
+| Python | [epp-python-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-preview-20260914/epp-python-source.zip) | Source for Azure remote build on Linux |
+
+Customers do not need PowerShell or a local build toolchain to download these files. Verify downloads
+against the release's `SHA256SUMS.txt`. Configure the target Function App's runtime, app settings,
+Key Vault access, and Easy Auth before deploying. Python requires remote build to install dependencies;
+its source ZIP cannot run directly as a run-from-package artifact. GitHub's **Code > Download ZIP**
+is the whole source repository, not a Function deployment package.
+
+After the packaging workflow is merged, each successful `main` build tests all three implementations,
+builds and inspects the ZIPs, and publishes a new versioned release. Get those builds from
+[Latest release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest).
+Older releases remain available; existing assets are not overwritten. Pull requests build downloadable
+workflow artifacts only and cannot publish releases. GitHub sign-in may be required for workflow
+artifacts, but public release downloads do not require a local build. Packaging does not deploy or
+verify live provider delivery. The current preview is built from the packaging branch, not a merged
+release of the separate provider feature branches.
+
+## Build ZIPs Locally
+
+For custom builds, run the script for your chosen language from the repository root. These standalone scripts create
 ZIPs locally; they do not sign in to Azure, upload code, or change app settings.
 
 | Language | Root-level script | Prerequisites | ZIP in `artifacts/` |
