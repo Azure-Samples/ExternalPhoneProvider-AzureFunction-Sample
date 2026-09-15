@@ -27,19 +27,19 @@ and deploying, step by step.
 
 ## Download a Function ZIP
 
-Download the ZIP for your chosen language from the
-[preview release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/tag/epp-packages-preview-20260914):
+Download the preview ZIP for your chosen language:
 
 | Language | Download | Contents |
 |---|---|---|
 | JavaScript | [epp-javascript.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-preview-20260914/epp-javascript.zip) | Application and production dependencies |
-| .NET | [epp-dotnet.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-preview-20260914/epp-dotnet.zip) | Release publish output |
+| .NET | [epp-dotnet-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-dotnet-source-preview-20260915/epp-dotnet-source.zip) | C# Function source and project file; build/publish before deployment |
 | Python | [epp-python-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-preview-20260914/epp-python-source.zip) | Source for Azure remote build on Linux |
 
 Customers do not need PowerShell or a local build toolchain to download these files. Verify downloads
-against the release's `SHA256SUMS.txt`. Configure the target Function App's runtime, app settings,
-Key Vault access, and Easy Auth before deploying. Python requires remote build to install dependencies;
-its source ZIP cannot run directly as a run-from-package artifact. GitHub's **Code > Download ZIP**
+against the corresponding release's `SHA256SUMS.txt`. Configure the target Function App's runtime, app settings,
+Key Vault access, and Easy Auth before deploying. .NET requires building/publishing the extracted
+project; Python requires remote build to install dependencies. Neither source ZIP can run directly
+as a run-from-package artifact. GitHub's **Code > Download ZIP**
 is the whole source repository, not a Function deployment package.
 
 After the packaging workflow is merged, each successful `main` build tests all three implementations,
@@ -59,7 +59,7 @@ ZIPs locally; they do not sign in to Azure, upload code, or change app settings.
 | Language | Root-level script | Prerequisites | ZIP in `artifacts/` |
 |---|---|---|---|
 | JavaScript | [package-javascript.ps1](package-javascript.ps1) | PowerShell 7+, Node.js 20 or 22 with npm, npm registry access | `epp-javascript.zip` |
-| .NET | [package-dotnet.ps1](package-dotnet.ps1) | PowerShell 7+, .NET 8 SDK, NuGet feed access | `epp-dotnet.zip` |
+| .NET | [package-dotnet.ps1](package-dotnet.ps1) | PowerShell 7+ to package; .NET 8 SDK and NuGet feed access when customers build | `epp-dotnet-source.zip` |
 | Python | [package-python.ps1](package-python.ps1) | PowerShell 7+; Azure remote build required when deploying | `epp-python-source.zip` |
 
 ```powershell
@@ -76,8 +76,15 @@ first-party tests are excluded. Generated ZIPs are ignored by Git.
 JavaScript installs production dependencies from the lockfile in a temporary folder; your working
 `node_modules` is not copied or modified. Dependency lifecycle scripts are disabled for this sample's
 JavaScript dependencies. If you add native dependencies or packages requiring install scripts,
-review packaging and build them for the target Azure OS. .NET packages fresh Release publish output,
-including `.azurefunctions`, rather than an old `bin/` directory.
+review packaging and build them for the target Azure OS.
+
+**.NET is a source ZIP, not compiled output.** It contains `dotnet.csproj`, `host.json`, `Program.cs`,
+and the C# files under `Functions/` and `Src/`. Packaging does not run restore, build, or publish,
+and needs no .NET SDK. It excludes `bin/`, `obj/`, tests, local settings, and compiled dependencies.
+Customers extract it and run `dotnet publish dotnet.csproj --configuration Release --output ../publish`
+with the .NET 8 SDK, or use a deployment pipeline that builds the project. Deploy the resulting
+publish output with `host.json` at its root, not the source ZIP directly. CI tests this customer
+build from an extracted copy; that temporary publish output is not included in the download.
 
 **Python is a source ZIP, not a ready-to-run package.** Deploy to a Linux Function App with remote
 build enabled in the deployment tool for your hosting plan, so Azure installs `requirements.txt`.

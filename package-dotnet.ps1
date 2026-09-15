@@ -1,33 +1,36 @@
 #Requires -Version 7.0
 [CmdletBinding()]
 param(
-    [string]$OutputPath = (Join-Path $PSScriptRoot 'artifacts/epp-dotnet.zip')
+    [string]$OutputPath = (Join-Path $PSScriptRoot 'artifacts/epp-dotnet-source.zip')
 )
 
 $ErrorActionPreference = 'Stop'
-$project = Join-Path $PSScriptRoot 'dotnet/dotnet.csproj'
+$source = Join-Path $PSScriptRoot 'dotnet'
 $archive = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
 if (Test-Path -LiteralPath $archive) { throw "Output already exists: $archive. Choose another -OutputPath." }
-$dotnet = (Get-Command dotnet -ErrorAction Stop).Source
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('epp-dotnet-' + [guid]::NewGuid().ToString('N'))
 $stage = Join-Path $temporary 'app'
 
 try {
-    & $dotnet publish $project --configuration Release --output $stage --verbosity minimal
-    if ($LASTEXITCODE -ne 0) { throw '.NET publish failed; no ZIP created.' }
-    foreach ($name in @('host.json', 'functions.metadata', 'worker.config.json', 'dotnet.dll', '.azurefunctions')) {
-        if (-not (Test-Path -LiteralPath (Join-Path $stage $name))) { throw "Missing published runtime file: $name" }
+    New-Item -ItemType Directory -Path $stage -Force | Out-Null
+    foreach ($name in @('host.json', 'dotnet.csproj', 'Program.cs')) {
+        Copy-Item -LiteralPath (Join-Path $source $name) -Destination $stage
     }
-    $unsafe = @(Get-ChildItem -LiteralPath $stage -Recurse -Force -File | Where-Object {
-        $_.Name -like 'local.settings*' -or $_.Name -like '.env*' -or
-        $_.Extension -in @('.pem', '.pfx', '.p12', '.key', '.publishsettings', '.pubxml') -or
-        [IO.Path]::GetRelativePath($stage, $_.FullName) -match '(^|[\\/])(tests?|scripts)([\\/]|$)'
-    })
-    if ($unsafe.Count) { throw 'Local settings, credentials, or test files found in publish output; no ZIP created.' }
+    foreach ($folder in @('Functions', 'Src')) {
+        foreach ($file in Get-ChildItem -LiteralPath (Join-Path $source $folder) -Recurse -File -Filter '*.cs') {
+            $relative = [IO.Path]::GetRelativePath($source, $file.FullName)
+            if ($relative -match '(^|[\\/])(tests?|bin|obj)([\\/]|$)') { continue }
+            $destination = Join-Path $stage $relative
+            New-Item -ItemType Directory -Path (Split-Path $destination) -Force | Out-Null
+            Copy-Item -LiteralPath $file.FullName -Destination $destination
+        }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $stage 'Functions/SendOtp.cs'))) { throw 'Missing .NET function source.' }
     $zip = Join-Path $temporary 'app.zip'
     [IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip)
     New-Item -ItemType Directory -Path (Split-Path $archive) -Force | Out-Null
     [IO.File]::Move($zip, $archive)
+    Write-Host '.NET source ZIP created. Build/publish the extracted project before deployment; not ready for direct run-from-package.'
     Get-Item -LiteralPath $archive | Select-Object FullName, Length
 } finally {
     if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Recurse -Force }

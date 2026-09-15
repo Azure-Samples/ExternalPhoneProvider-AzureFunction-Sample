@@ -151,8 +151,10 @@ digit spacing, without guessing a passcode. A timed-out send may already be acce
 
 Download your language's [Function ZIP](../README.md#download-a-function-zip) from GitHub Releases.
 No local packaging tools are required. For custom builds, use the
-[root-level packaging scripts](../README.md#build-zips-locally). The Python source ZIP requires Azure
-remote build on Linux. Downloading or building a ZIP does not deploy it.
+[root-level packaging scripts](../README.md#build-zips-locally). The .NET source ZIP must be extracted
+and built/published with the .NET 8 SDK or a build-enabled deployment pipeline. The Python source ZIP
+requires Azure remote build on Linux. Neither source ZIP is ready for direct run-from-package.
+Downloading or building a ZIP does not deploy it.
 
 Build and publish only the chosen language folder, retaining runtime dependencies or using a supported
 remote build. Configure and verify Easy Auth before publishing; keep public ingress disabled until
