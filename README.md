@@ -25,6 +25,12 @@ by default. Deploy each language separately, not all three to the same Function 
 New here? Start with **[docs/ONBOARDING.md](docs/ONBOARDING.md)** — setup, config, running, securing,
 and deploying, step by step.
 
+CYOT registration, provisioning and policy scripts are in **[setup/cyot/](setup/cyot/)**.
+Step 2 is one entry point that runs both JSON templates in its companion `arm` folder.
+Steps 1 and 3 remain independently runnable; no shared helper script is required. Read the
+[compatibility limitations](setup/cyot/README.md#compatibility-with-this-sample) before provisioning:
+the imported workflow is not yet a compatible end-to-end deployment path for these implementations.
+
 ## The design in one line
 
 SAS → Easy Auth → anonymous HTTP handler (`POST /api/SendOtp`, validate envelope + decrypt JWE) →
@@ -116,6 +122,7 @@ authentication; [separate deployed security checks](docs/ONBOARDING.md#4-package
 
 - **[docs/ONBOARDING.md](docs/ONBOARDING.md)** — customer setup / run / secure / deploy guide.
 - **[docs/CONTRACT.md](docs/CONTRACT.md)** — the language-agnostic contract every implementation follows.
+- **[setup/cyot/README.md](setup/cyot/README.md)** — standalone PowerShell stages, prerequisites and compatibility limits.
 
 ## Contributing a language or provider
 

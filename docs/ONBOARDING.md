@@ -19,8 +19,28 @@ account and environment. Individual API contracts stay in the adapters.
 
 ### Setup script compatibility
 
-The Preview 1 setup script creates the encryption-key secret, not the selected provider's API
-credentials. Before live delivery, complete these steps:
+The three [CYOT setup scripts](../setup/cyot/README.md) are separate stages for application registration,
+resource provisioning and policy activation. Step 2 is a small launcher for its two companion ARM JSON
+templates. The second template runs certificate/Graph/secret preparation in Azure under a separately
+pre-authorized deployment identity. Copy its `arm` folder with the script; you do not run the
+templates as separate manual steps. Steps 1 and 3 remain single-file scripts.
+Pass the same application client ID between stages.
+
+Supply the same customer `-TenantId` in each stage. Step 2 signs Azure CLI into that tenant and
+validates the explicitly supplied `-SubscriptionId`. Resource names, the application ID and provider
+settings are supplied through local parameter files. It never guesses from the previous CLI default.
+See [running Step 2](../setup/cyot/README.md#run-step-2) and its deployment-identity prerequisites.
+
+**Step 2 is not yet compatible with this sample unchanged.** It provisions outbound Entra OAuth
+settings and sets the application's `tokenEncryptionKeyId`, whereas the implementations here use
+provider API keys and require signed, unencrypted bearer tokens at Easy Auth. Importing the scripts
+does not add outbound OAuth or access-token decryption to any runtime. Review the
+[compatibility limits](../setup/cyot/README.md#compatibility-with-this-sample) before provisioning.
+Step 3 separately refuses a policy write unless the live Graph schema exposes its exact CYOT contract.
+
+Step 2 creates the encryption-key secret, not the selected provider's API credentials. For this
+sample's API-key configuration, the following are still required; they do not resolve the OAuth or
+access-token-encryption incompatibilities:
 
 1. Set `KEY_VAULT_URL` to the vault containing the provider credentials. When it is the vault created
 	by setup, use that vault's `vaultUri`; otherwise explicitly select the credential vault and grant
@@ -36,7 +56,8 @@ credentials. Before live delivery, complete these steps:
 4. Supply any additional options read by the selected adapter. Registering a provider does not make
 	every account option or channel automatically available.
 
-The script already writes the correct `EPP_` names; no variable-prefix translation is required.
+Shared settings already use the correct `EPP_` names; no variable-prefix translation is required.
+Additional settings do not enable behavior the application does not implement.
 
 | Setup value | Current application behavior |
 |---|---|
@@ -48,6 +69,7 @@ The script already writes the correct `EPP_` names; no variable-prefix translati
 | `EPP_DECRYPTION_KEY_PEM` | PEM or base64 PEM, usually resolved from a Key Vault secret reference. |
 | `EPP_ENCRYPTION_KEY_ID` | Advisory mismatch warning only; not overlapping-key selection. |
 | `EPP_EXPECTED_AUDIENCE`, `EPP_EXPECTED_ISSUER`, `EPP_EXPECTED_CLIENT_ID`, `EPP_TENANT_ID` | The script may write these, but this platform-authenticated application does not read them. The script's separate Easy Auth configuration enforces caller trust. |
+| `EPP_PROVIDER_AUTH_MODE`, `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE`, `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | Step 2 writes these for outbound OAuth. This sample does not consume them or perform the token exchange; it still requires the adapter's API-key secrets. |
 
 **Do not use the script's `-NoEasyAuth` option with this application.** There is no application token
 validator to take over. For the script's v1 registration, configure Easy Auth with the identifier URI
@@ -66,8 +88,11 @@ The script alone does not make this implementation conform to every Preview 1 re
 - The guide requires voice digits to be spoken separately. This implementation preserves the supplied
   message; verify the selected voice API's behavior rather than assuming unspaced digits are intelligible.
 
-The pasted script also needs its advertised 100-byte UTF-8 endpoint-URL check before deployment.
-A public-only certificate cannot supply the private key it later exports. Treat failed infrastructure
+Step 2 also lacks the required 100-byte UTF-8 endpoint-URL check before deployment.
+The Azure-hosted preparation requires an exportable RSA certificate and stores its private key in
+Key Vault. ARM what-if/approval precedes each deployment, but does not preview individual
+certificate or Graph operations inside deployment scripts. Code publishing and deployed endpoint
+verification are separate. Treat failed infrastructure
 role assignments as failures unless the exact assignment is verified as already present. Verify these
 script prerequisites separately; the application tests do not validate provisioning.
 
