@@ -176,7 +176,8 @@ test('Telesign EPP rejects invalid recipients and fails closed on unknown status
         const parsed = adapter.parseResponse({ httpStatus: 200, ok: true, json: { status: { code } } });
         assert.equal(resolveOutcome(manifest, parsed), 'Fail');
     }
-    for (const [code, ok, expected] of [[290, true, 'Continue'], [100, true, 'Continue'], [290, false, 'Fail']]) {
+    for (const [code, ok, expected] of [[290, true, 'Continue'], [100, true, 'Continue'], [290, false, 'Fail'],
+        [3001, true, 'Continue'], [3001, false, 'Fail']]) {
         const parsed = adapter.parseResponse({ httpStatus: ok ? 200 : 500, ok,
             json: { reference_id: 'reference', status: { code, description: 'status detail' } } });
         assert.equal(parsed.providerStatusDescription, 'status detail');

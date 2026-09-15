@@ -125,6 +125,8 @@ public class ContractTests
     [InlineData("{\"status\":{\"code\":290}}", false, Outcome.Fail)]
     [InlineData("{\"status\":{\"code\":290}}", true, Outcome.Continue)]
     [InlineData("{\"status\":{\"code\":100}}", true, Outcome.Continue)]
+    [InlineData("{\"status\":{\"code\":3001}}", true, Outcome.Continue)]
+    [InlineData("{\"status\":{\"code\":3001}}", false, Outcome.Fail)]
     public void TelesignStatusFailsClosed(string payload, bool ok, Outcome expected)
     {
         var adapter = new TelesignProvider();

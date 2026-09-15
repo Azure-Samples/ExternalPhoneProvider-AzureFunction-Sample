@@ -16,6 +16,7 @@ class TelesignProvider:
         "response_mapping": {
             "200": "Continue", "203": "Continue", "290": "Continue", "291": "Continue", "292": "Continue",
             "100": "Continue", "101": "Continue", "102": "Continue", "103": "Continue",
+            "3001": "Continue",
             "default": "Fail",
         },
     }

@@ -20,6 +20,7 @@ public sealed class TelesignProvider : IProviderAdapter
             ["101"] = Outcome.Continue,
             ["102"] = Outcome.Continue,
             ["103"] = Outcome.Continue,
+            ["3001"] = Outcome.Continue,
             ["default"] = Outcome.Fail,
         });
 

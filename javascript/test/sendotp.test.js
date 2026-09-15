@@ -193,7 +193,8 @@ test('SMS/voice preserve content and correlation without reflecting headers or l
 test('Telesign EPP sends decrypted SMS and voice content with Basic auth and private logs', async () => {
     process.env.EPP_PROVIDER_NAME = 'telesign';
     process.env.EPP_PROVIDER_ENDPOINT = 'https://verify.telesign.com';
-    for (const [channel, name, code] of [[1, 'sms', 290], [2, 'voice', 100]]) {
+    for (const [channel, name, code] of [[1, 'sms', 290], [2, 'voice', 100],
+        [1, 'sms', 3001], [2, 'voice', 3001]]) {
         fetchMock.mock.mockImplementation(async () => ({ ok: true, status: 200,
             text: async () => JSON.stringify({ reference_id: 'PRIVATE-REFERENCE', correlation_id: 'provider-correlation',
                 status: { code, description: 'PRIVATE-STATUS' } }) }));
@@ -210,7 +211,7 @@ test('Telesign EPP sends decrypted SMS and voice content with Basic auth and pri
         assert.doesNotMatch(JSON.stringify(logs), /PRIVATE|918273|15551234567|FORGED/);
         assert.equal(result.jsonBody.reference_id, undefined);
     }
-    assert.equal(fetchMock.mock.callCount(), 2);
+    assert.equal(fetchMock.mock.callCount(), 4);
 });
 
 test('Telesign evaluation never sends and invalid recipients never reach HTTP', async () => {
@@ -230,11 +231,12 @@ test('Telesign missing status or upstream failure never acknowledges delivery', 
     process.env.EPP_PROVIDER_NAME = 'telesign';
     process.env.EPP_PROVIDER_ENDPOINT = 'https://verify.telesign.com';
     for (const [status, payload, expected] of [[200, {}, 502], [500, { status: { code: 290 } }, 502],
-        [429, { status: { code: 290 } }, 429]]) {
+        [429, { status: { code: 290 } }, 429], [500, { status: { code: 3001 } }, 502],
+        [401, { status: { code: 3001 } }, 401], [429, { status: { code: 3001 } }, 429]]) {
         fetchMock.mock.mockImplementation(async () => ({ ok: status === 200, status, text: async () => JSON.stringify(payload) }));
         assertFailure(await invoke(await envelope()), expected);
     }
-    assert.equal(fetchMock.mock.callCount(), 3);
+    assert.equal(fetchMock.mock.callCount(), 6);
 });
 
 test('handler awaits the provider body and returns 502/429 without a nonce or retries', async () => {

@@ -211,6 +211,32 @@ in the adapters; the [onboarding credential naming table](ONBOARDING.md#provider
 lists the exact manifest secret names for provisioning and authorized local tests. Keep that table
 aligned with the manifests; never include secret values in documentation or the settings sample.
 
+### Telesign CYOT integration
+
+SMS and Voice both use `POST https://verify.telesign.com/integration/msft/cyot` with JSON. Configure
+the base URL as `https://verify.telesign.com`. The adapter supplies `recipient.phone_number`, the
+unchanged `message.text`, optional `message.language`, one selected `channels[].channel`, and
+`correlation_id`. Keep the leading `+` in the E.164 phone number; the guide's example `12345678`
+does not satisfy its own required phone-number pattern.
+
+Phase 1 supports Basic and Digest; this sample implements Basic only. Per
+[Telesign's authentication instructions](https://developer.telesign.com/enterprise/docs/authentication#basic-authentication),
+the header is `Authorization: Basic <base64(UTF8(customer-id:api-key))>`, using the raw Customer ID
+and API Key strings from Key Vault. Do not decode the API key first, send the API key alone, or
+substitute a key identifier. The guide's `Basic YOUR_API_KEY` is abbreviated, not the literal encoding.
+Provider-token authentication is described as Phase 2 and is not implemented for Telesign here.
+
+The optional `account_lifecycle_event` and `originating_ip` fields are reserved for future intelligence
+capabilities. They are omitted; do not infer an originating address from the Function or synthesize
+account events to fill them.
+
+Telesign's `X-Shutter-Mode: true` suppresses delivery at the provider while still calling its endpoint.
+It is appropriate for an explicitly authorized, direct provider diagnostic, not normal OTP delivery.
+The production adapter does not add or forward this header. Function evaluation mode remains separate:
+it validates/decrypts and skips all provider HTTP. A successful provider shutter probe is not evidence
+that an SMS was delivered or a Voice call was placed. Enabling the API globally also does not prove
+that a particular Customer ID/API Key pair is authorized for this integration.
+
 ---
 
 ## 4. Configuration (app settings / env)

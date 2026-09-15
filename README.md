@@ -212,9 +212,12 @@ lookup entirely, rather than invoking Telesign shutter mode.
 
 Responses normalize `reference_id` and `status.code`/`status.description` internally; provider
 metadata is not logged or exposed in the public nonce response. Existing numeric success codes
-are retained (SMS: 200, 203, 290-292; Voice: 100-103); the supplied EPP integration overview does not provide
-a replacement status-code catalog. Missing, malformed, or unknown codes fail closed, as do
-unsuccessful HTTP responses. Confirm these codes and account access with Telesign before production.
+are retained (SMS: 200, 203, 290-292; Voice: 100-103). CYOT code `3001` ("Message in progress"),
+observed for both channels, is also accepted on successful HTTP responses. This acknowledges
+provider acceptance, not handset receipt or completed audio playback. The supplied EPP integration
+overview does not provide a complete replacement status-code catalog. Missing, malformed, or
+unknown codes fail closed, as do unsuccessful HTTP responses. Confirm the status-code catalog and
+account access with Telesign before production.
 
 ## Security
 

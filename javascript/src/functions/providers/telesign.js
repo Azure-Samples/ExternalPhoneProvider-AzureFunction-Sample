@@ -24,6 +24,7 @@ const manifest = {
         101: 'Continue',
         102: 'Continue',
         103: 'Continue',
+        3001: 'Continue',
         default: 'Fail',
     },
 };

@@ -101,7 +101,8 @@ def test_telesign_epp_validates_recipients_and_status():
         assert json.loads(request["body"])["correlation_id"] == dispatch.message_id
     for payload in (None, {}, {"status": []}, {"status": {"code": True}}, {"status": {"code": "290"}}, {"status": {"code": 999}}):
         assert resolve_outcome(adapter.manifest, adapter.parse_response(200, True, payload)) == "Fail"
-    for code, ok, outcome in ((290, True, "Continue"), (100, True, "Continue"), (290, False, "Fail")):
+    for code, ok, outcome in ((290, True, "Continue"), (100, True, "Continue"), (290, False, "Fail"),
+                              (3001, True, "Continue"), (3001, False, "Fail")):
         parsed = adapter.parse_response(200 if ok else 500, ok, {"status": {"code": code, "description": "status detail"}})
         assert parsed.provider_status_description == "status detail"
         assert resolve_outcome(adapter.manifest, parsed) == outcome
