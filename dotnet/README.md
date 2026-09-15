@@ -1,4 +1,4 @@
-# External Phone Provider Function — C# (.NET isolated worker)
+# External Phone Provider Function: C# (.NET isolated worker)
 
 Implements the shared [contract](../docs/CONTRACT.md) with one dispatch engine and one selected
 provider per deployment. Target: .NET 8 isolated worker, Azure Functions v4.

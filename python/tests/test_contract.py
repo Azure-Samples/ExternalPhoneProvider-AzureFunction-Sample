@@ -1,11 +1,10 @@
 import base64
 import json
 from pathlib import Path
-from urllib.parse import parse_qs
 
 import pytest
 
-from src.dispatch import DispatchRequest, ProviderRegistry, context_to_dispatch, parse_envelope
+from src.dispatch import DispatchRequest, ProviderRegistry, context_to_dispatch, parse_envelope, resolve_outcome
 from src.models import DeliveryContext, Envelope, ParsedResponse, TextToVoice
 from src.providers.infobip import InfobipProvider
 from src.providers.sinch import SinchProvider
@@ -63,19 +62,50 @@ def test_infobip_sms_request_and_response_contract():
     assert response == ParsedResponse(True, 200, provider_message_id="message-id", provider_status_name="PENDING")
 
 
-def test_telesign_sms_request_and_response_contract():
+@pytest.mark.parametrize("channel,locale", [
+    ("sms", "en"), ("voice", "en"), ("sms", None), ("sms", ""), ("sms", {"untrusted": True}),
+])
+def test_telesign_epp_request_contract(channel, locale):
+    dispatch = _dispatch(channel)
+    dispatch.locale = locale
     request = TelesignProvider().build_request(
-        "sms", "https://telesign.example", _dispatch(),
+        channel, "https://verify.telesign.com///", dispatch,
         {"mode": "apiKey", "secret": "key", "identity": "customer"}, {},
     )
-    assert request["method"] == "POST" and request["url"] == "https://telesign.example/v1/messaging"
-    assert request["headers"]["Authorization"] == "Basic " + base64.b64encode(b"customer:key").decode()
-    assert request["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
-    form = parse_qs(request["body"])
-    assert form["phone_number"] == ["+15551234567"] and form["message"] == [MESSAGE]
-    assert form["message_type"] == ["OTP"] and form["external_id"] == ["correlation-id"]
-    response = TelesignProvider().parse_response(200, True, {"reference_id": "message-id", "status": {"code": 290}})
+    assert request["method"] == "POST" and request["url"] == "https://verify.telesign.com/integration/msft/cyot"
+    assert request["headers"] == {"Authorization": "Basic " + base64.b64encode(b"customer:key").decode(),
+                                  "Content-Type": "application/json", "Accept": "application/json"}
+    assert json.loads(request["body"]) == {
+        "recipient": {"phone_number": "+15551234567"},
+        "message": {"text": MESSAGE, "language": "en"} if locale == "en" else {"text": MESSAGE},
+        "channels": [{"channel": channel}], "correlation_id": "correlation-id",
+    }
+
+
+def test_telesign_epp_validates_recipients_and_status():
+    adapter = TelesignProvider()
+    response = adapter.parse_response(200, True, {"reference_id": "message-id", "status": {"code": 290}})
     assert response == ParsedResponse(True, 200, provider_message_id="message-id", provider_status_code="290")
+    credential = {"identity": "customer", "secret": "key"}
+    for destination in ("15551234567", "+0123", "+1", "+1234567890123456", "+123\n", "+123\r", "+12 34", None):
+        dispatch = _dispatch()
+        dispatch.destination = destination
+        with pytest.raises(ValueError, match="invalid recipient"):
+            adapter.build_request("sms", "https://verify.telesign.com", dispatch, credential, {})
+    with pytest.raises(ValueError, match="unsupported channel"):
+        adapter.build_request("email", "https://verify.telesign.com", _dispatch(), credential, {})
+    dispatch = _dispatch()
+    for correlation_id in (None, "", 123, True, [], {"invalid": True}):
+        dispatch.correlation_id = correlation_id
+        request = adapter.build_request("sms", "https://verify.telesign.com", dispatch, credential, {})
+        assert json.loads(request["body"])["correlation_id"] == dispatch.message_id
+    for payload in (None, {}, {"status": []}, {"status": {"code": True}}, {"status": {"code": "290"}}, {"status": {"code": 999}}):
+        assert resolve_outcome(adapter.manifest, adapter.parse_response(200, True, payload)) == "Fail"
+    for code, ok, outcome in ((290, True, "Continue"), (100, True, "Continue"), (290, False, "Fail"),
+                              (3001, True, "Continue"), (3001, False, "Fail")):
+        parsed = adapter.parse_response(200 if ok else 500, ok, {"status": {"code": code, "description": "status detail"}})
+        assert parsed.provider_status_description == "status detail"
+        assert resolve_outcome(adapter.manifest, parsed) == outcome
 
 
 def test_sinch_sms_request_and_response_contract():

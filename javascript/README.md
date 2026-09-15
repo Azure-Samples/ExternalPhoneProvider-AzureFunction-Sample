@@ -1,4 +1,4 @@
-# External Phone Provider Function — JavaScript
+# External Phone Provider Function: JavaScript
 
 A Node.js Azure Function implementing the shared [contract](../docs/CONTRACT.md): one dispatch
 engine and one selected provider per deployment. API-specific behavior stays in registered adapters.

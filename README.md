@@ -1,8 +1,8 @@
-# External Phone Provider — Azure Function Sample
+# External Phone Provider: Azure Function Sample
 
 A provider-agnostic **OTP-delivery Azure Function** sample, implemented across multiple languages.
 Each language folder is a self-contained implementation of the **same design and the same
-[contract](docs/CONTRACT.md)** — one engine, drop-in provider adapters, env-provisioned config, and
+[contract](docs/CONTRACT.md)**: one engine, drop-in provider adapters, env-provisioned config, and
 secrets in Key Vault.
 
 ## Implementations
@@ -14,7 +14,7 @@ secrets in Key Vault.
 | Python (v2 model) | Available | [python/](python/) |
 
 All implementations conform to the **language-agnostic contract** in
-[docs/CONTRACT.md](docs/CONTRACT.md) — identical HTTP API, provider-adapter shape, config/env var
+[docs/CONTRACT.md](docs/CONTRACT.md): identical HTTP API, provider-adapter shape, config/env var
 names, Key Vault secret names, and behaviors (fail-closed, managed identity, privacy). Pick any folder
 and follow its README.
 
@@ -22,7 +22,7 @@ Choose one language and configure the adapter for your provider. No provider is 
 by default. Deploy each language separately, not all three to the same Function App. See the
 [shared configuration](docs/CONTRACT.md#default-provider-and-configuration-readers).
 
-New here? Start with **[docs/ONBOARDING.md](docs/ONBOARDING.md)** — setup, config, running, securing,
+New here? Start with **[docs/ONBOARDING.md](docs/ONBOARDING.md)** for setup, config, running, securing,
 and deploying, step by step.
 
 ## Download a Function ZIP
@@ -142,7 +142,7 @@ how code accesses configuration, not the environment-variable names.
 | Variable | When needed | Value |
 |---|---|---|
 | `AzureWebJobsStorage` | Functions host storage | Local sample: `UseDevelopmentStorage=true` with Azurite running. Configure Azure host storage separately for the selected plan. |
-| `FUNCTIONS_WORKER_RUNTIME` | Functions host | `node`, `python`, or `dotnet-isolated`—exactly one value matching the chosen implementation. |
+| `FUNCTIONS_WORKER_RUNTIME` | Functions host | `node`, `python`, or `dotnet-isolated`. Choose the value matching your implementation. |
 | `EPP_DECRYPTION_KEY_PEM` | Every request | Local test PEM or base64 PEM. In Azure, use a Key Vault reference resolving to the private-key secret. |
 | `EPP_ENCRYPTION_KEY_ID` | Optional | Expected encryption key ID; mismatch only produces an advisory warning. |
 | `EPP_PROVIDER_NAME` | Live delivery | Selected adapter's manifest ID. No default provider. |
@@ -166,6 +166,8 @@ how code accesses configuration, not the environment-variable names.
 3. Store provider API keys and any required identity secrets in Key Vault using the **exact names in
   the adapter manifest**. Grant that app/slot's managed identity *Key Vault Secrets User* on those
   secrets. An API key in a local environment variable is not a supported replacement for the resolver.
+  See the [provider credential naming table](docs/ONBOARDING.md#provider-credential-names) and
+  [local use of existing cloud secrets](docs/ONBOARDING.md#local-settings-and-cloud-secrets).
 
 Evaluation requests do not need provider variables or provider secrets. They still need the decryption
 key. The default credential resolvers use `ManagedIdentityCredential`, **not** the developer's CLI
@@ -267,6 +269,52 @@ in historical reports and are not evidence for this federated flow. Subsequent s
 to SDK log privacy have offline regression coverage, but are not included
 in this live result until redeployed and verified.
 
+## Telesign EPP
+
+The `telesign` adapter uses `POST https://verify.telesign.com/integration/msft/cyot`
+for both SMS and Voice. Set `EPP_PROVIDER_NAME=telesign` and
+`EPP_PROVIDER_ENDPOINT=https://verify.telesign.com` (the base URL, without the route).
+This replaces the legacy `/v1/messaging` and `/v1/voice` integrations in all three languages.
+
+Basic authentication uses `base64(customer-id:api-key)`, with the existing Key Vault secrets
+`telesign-customer-id` and `telesign-api-key`. Digest and Phase 2 token authentication are not
+implemented. The incoming caller's Authorization header is never forwarded.
+
+The adapter builds the following JSON from the decrypted delivery context and envelope:
+
+```json
+{
+  "recipient": { "phone_number": "+1234567890" },
+  "message": { "text": "Your verification code is 4821", "language": "en" },
+  "channels": [{ "channel": "voice" }],
+  "correlation_id": "unique-string-123"
+}
+```
+
+`phoneNumber` must match `^\+[1-9][0-9]{1,14}$`; the leading `+` is preserved. The complete
+`message` is passed unchanged as `message.text`, including whitespace and OTP digit spacing.
+Telesign performs text-to-speech for Voice; no separate speech object or OTP extraction is needed.
+A nonblank string `locale` becomes `message.language`; otherwise language is omitted. The envelope
+channel selects the single `sms` or `voice` entry. `correlation_id` uses a nonempty string request
+correlation ID, falling back to the message ID for absent, empty, or non-string values. Reserved
+`account_lifecycle_event` and `originating_ip` fields are
+not sent; no client-IP inference or account-event default is applied. `TELESIGN_VOICE` and the
+legacy sender/form fields no longer affect this adapter.
+
+Telesign's API supports `X-Shutter-Mode: true` for direct provider tests. The Function deliberately
+omits that header on live sends and does not forward it from incoming requests. Use the existing
+`mode: 2` evaluation path for Function tests without delivery: it skips provider HTTP and credential
+lookup entirely, rather than invoking Telesign shutter mode.
+
+Responses normalize `reference_id` and `status.code`/`status.description` internally; provider
+metadata is not logged or exposed in the public nonce response. Existing numeric success codes
+are retained (SMS: 200, 203, 290-292; Voice: 100-103). CYOT code `3001` ("Message in progress"),
+observed for both channels, is also accepted on successful HTTP responses. This acknowledges
+provider acceptance, not handset receipt or completed audio playback. The supplied EPP integration
+overview does not provide a complete replacement status-code catalog. Missing, malformed, or
+unknown codes fail closed, as do unsuccessful HTTP responses. Confirm the status-code catalog and
+account access with Telesign before production.
+
 ## Security
 
 **Easy Auth (App Service Authentication) is the only caller-authentication gate, before the anonymous
@@ -288,13 +336,13 @@ authentication; [separate deployed security checks](docs/ONBOARDING.md#4-package
 
 ## Docs
 
-- **[docs/ONBOARDING.md](docs/ONBOARDING.md)** — customer setup / run / secure / deploy guide.
-- **[docs/CONTRACT.md](docs/CONTRACT.md)** — the language-agnostic contract every implementation follows.
+- **[docs/ONBOARDING.md](docs/ONBOARDING.md)**: customer setup, security, deployment, and validation.
+- **[docs/CONTRACT.md](docs/CONTRACT.md)**: the language-agnostic contract every implementation follows.
 
 ## Contributing a language or provider
 
 - **New provider** (in any language): add one adapter file exposing `manifest` + `buildRequest` +
-  `parseResponse` — no engine changes. See the language folder's README.
+  `parseResponse`; no engine changes. See the language folder's README.
 - **New language**: mirror the folder structure, implement the contract, add the same test scenarios,
   and wire it into [.github/workflows/ci.yml](.github/workflows/ci.yml).
 

@@ -24,47 +24,36 @@ const manifest = {
         101: 'Continue',
         102: 'Continue',
         103: 'Continue',
+        3001: 'Continue',
         default: 'Fail',
     },
 };
 
-function buildRequest({ channel, endpoint, dispatch, credential, env }) {
-    const base = endpoint;
-    const contentType = 'application/x-www-form-urlencoded';
-    const authorization = `Basic ${Buffer.from(`${credential.identity}:${credential.secret}`).toString('base64')}`;
-
-    let path;
-    let params;
-    if (channel === 'voice') {
-        path = '/v1/voice';
-        params = new URLSearchParams({
-            phone_number: dispatch.destination,
-            message: dispatch.message,
-            message_type: 'OTP',
-            voice: env.TELESIGN_VOICE || 'f-en-US',
-            external_id: dispatch.correlationId || dispatch.messageId,
-        });
-    } else {
-        path = '/v1/messaging';
-        params = new URLSearchParams({
-            phone_number: dispatch.destination,
-            message: dispatch.message,
-            sender_id: env.EPP_PROVIDER_ACCOUNT_NAME || '',
-            message_type: 'OTP',
-            external_id: dispatch.correlationId || dispatch.messageId,
-            is_primary: 'true',
-        });
+function buildRequest({ channel, endpoint, dispatch, credential }) {
+    if (!['sms', 'voice'].includes(channel)) throw new Error('unsupported channel');
+    if (typeof dispatch.destination !== 'string' || !/^\+[1-9][0-9]{1,14}$/.test(dispatch.destination)
+        || dispatch.destination.trim() !== dispatch.destination) {
+        throw new Error('invalid recipient');
     }
-
+    const authorization = `Basic ${Buffer.from(`${credential.identity}:${credential.secret}`).toString('base64')}`;
+    const correlationId = typeof dispatch.correlationId === 'string' && dispatch.correlationId
+        ? dispatch.correlationId : dispatch.messageId;
+    const message = { text: dispatch.message };
+    if (typeof dispatch.locale === 'string' && dispatch.locale.trim()) message.language = dispatch.locale;
     return {
-        url: `${base}${path}`,
+        url: `${endpoint.replace(/\/+$/, '')}/integration/msft/cyot`,
         method: 'POST',
         headers: {
             Authorization: authorization,
-            'Content-Type': contentType,
+            'Content-Type': 'application/json',
             Accept: 'application/json',
         },
-        body: params.toString(),
+        body: JSON.stringify({
+            recipient: { phone_number: dispatch.destination },
+            message,
+            channels: [{ channel }],
+            correlation_id: correlationId,
+        }),
     };
 }
 
@@ -73,8 +62,9 @@ function parseResponse({ httpStatus, ok, json }) {
     return new ParsedResponse({
         success: ok,
         providerHttpStatus: httpStatus,
-        providerMessageId: (json && json.reference_id) || null,
-        providerStatusCode: status.code != null ? String(status.code) : null,
+        providerMessageId: typeof json?.reference_id === 'string' ? json.reference_id : null,
+        providerStatusCode: Number.isInteger(status.code) ? String(status.code) : 'UNKNOWN',
+        providerStatusDescription: typeof status.description === 'string' ? status.description : null,
     });
 }
 

@@ -1,4 +1,4 @@
-# External Phone Provider Function — Python (v2 model)
+# External Phone Provider Function: Python (v2 model)
 
 Implements the shared [contract](../docs/CONTRACT.md) with one dispatch engine and one selected
 provider per deployment. Target: Python 3.11, Azure Functions v4, Python v2 programming model.
