@@ -106,12 +106,22 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
 	 change signing keys; request a fresh token afterward. This does **not** disable the required
 	 JWE encryption of `encryptedDeliveryContext` or remove `EPP_DECRYPTION_KEY_PEM`.
 
+	 Download the selected language's [Function ZIP](../README.md#download-a-function-zip) from GitHub
+	 Releases, or use the [root-level packaging scripts](../README.md#build-zips-locally) for custom builds.
+	 The .NET source ZIP must be extracted and built/published with the .NET 8 SDK or a build-enabled
+	 deployment pipeline. The Python source ZIP requires Azure remote build on Linux. Neither source
+	 ZIP is ready for direct run-from-package. Downloading or building a ZIP does not deploy it.
+
 	 Build and publish only the selected language folder with its runtime dependencies, not the
 	 repository root or stale output. Inspect the package: exclude local settings, private keys,
 	 credentials, tests, and diagnostic scripts using the runtime's `.funcignore` and publish rules.
 	 Apply the settings from step 3 to the Function App's Azure environment; local settings are not
 	 published automatically. Verify managed identity access and keep public ingress disabled
 	 until authentication is configured. Source changes do not update an existing deployment.
+
+	 The root [.gitignore](../.gitignore) covers all runtimes; publishing uses separate exclusions in
+	 [JavaScript](../javascript/.funcignore), [Python](../python/.funcignore), and [.NET](../dotnet/.funcignore).
+	 The [.NET project](../dotnet/dotnet.csproj) also excludes local settings from publish output.
 
 5. **Validate.**
 

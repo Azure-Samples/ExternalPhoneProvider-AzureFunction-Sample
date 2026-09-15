@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from src.dispatch import DispatchRequest, ProviderRegistry, context_to_dispatch, parse_envelope, resolve_outcome
-from src.models import DeliveryContext, Envelope, ParsedResponse
+from src.models import DeliveryContext, Envelope, ParsedResponse, TextToVoice
 from src.providers.infobip import InfobipProvider
 from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
@@ -15,7 +15,8 @@ MESSAGE = "  Use 918273; then 1234.\nDo not rewrite + or café.  "
 
 
 def _dispatch(channel="sms"):
-    return DispatchRequest("+15551234567", MESSAGE, channel, "message-id", "correlation-id", "en-US")
+    return DispatchRequest("+15551234567", MESSAGE, channel, "message-id", "correlation-id", "en-US",
+                           TextToVoice("Your code is", "001234", "en-US") if channel == "voice" else None)
 
 
 @pytest.mark.parametrize("channel", ["sms", "voice"])
@@ -30,10 +31,15 @@ def test_soprano_exact_sms_and_voice_contract(channel):
         "X-MEMS-API-ID": "test-id", "X-MEMS-API-Key": "test-key",
         "Content-Type": "application/json", "Accept": "application/json",
     }
-    assert json.loads(request["body"]) == {
-        "text": MESSAGE, "destination": "15551234567", "messageTypes": [channel],
+    expected = {
+        "destination": "15551234567", "messageTypes": [channel],
         "correlationId": "correlation-id", "shutterMode": False,
     }
+    if channel == "voice":
+        expected["voice"] = {"text2voice": {"beforePasswordText": "Your code is", "password": "001234", "language": "en-US"}}
+    else:
+        expected["text"] = MESSAGE
+    assert json.loads(request["body"]) == expected
     response = SopranoProvider().parse_response(201, True, {"id": 123, "status": "ENROUTE"})
     assert response == ParsedResponse(True, 201, provider_message_id="123", provider_status_name="ENROUTE")
     assert "ENROUTE" not in repr(response)

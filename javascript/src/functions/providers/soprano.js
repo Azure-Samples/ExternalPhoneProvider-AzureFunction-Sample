@@ -4,10 +4,11 @@
 
 'use strict';
 
-const { ParsedResponse } = require('../models');
+const { ParsedResponse, TextToVoice } = require('../models');
 
 const manifest = {
     id: 'soprano',
+    requiresTextToVoice: true,
     auth: {
         mode: 'apiKey',
         keyVaultSecretName: 'soprano-api-key',
@@ -40,12 +41,18 @@ function buildRequest({ channel, endpoint, dispatch, credential }) {
     let destination = String(dispatch.destination || '');
     while (destination.startsWith('+')) destination = destination.slice(1);
     const body = {
-        text: dispatch.message,
         destination,
         messageTypes: [channel === 'voice' ? 'voice' : 'sms'],
         correlationId: dispatch.correlationId || dispatch.messageId,
         shutterMode: false,
     };
+    if (channel === 'voice') {
+        const voice = dispatch.textToVoice;
+        if (!(voice instanceof TextToVoice) || !voice.isComplete) throw new Error('incomplete voice context');
+        body.voice = { text2voice: voice };
+    } else {
+        body.text = dispatch.message;
+    }
     return { url: `${base}/messages/omnimsg`, method: 'POST', headers, body: JSON.stringify(body) };
 }
 

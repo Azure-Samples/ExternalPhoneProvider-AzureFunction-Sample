@@ -31,7 +31,8 @@ public class EngineTests
             entered.TrySetResult();
             return release.Task.WaitAsync(cancellation);
         };
-        var pending = rig.Invoke(channel: "voice");
+        var voice = new { beforePasswordText = " Your code is ", password = "001234", language = "en-US" };
+        var pending = rig.Invoke(channel: "voice", deliveryOverrides: JsonSerializer.SerializeToElement(new { textToVoice = voice }));
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -43,13 +44,41 @@ public class EngineTests
         }
         AssertAccepted(await pending);
         using var body = JsonDocument.Parse(rig.Http.Body!);
-        Assert.Equal(Message, body.RootElement.GetProperty("text").GetString());
+        Assert.False(body.RootElement.TryGetProperty("text", out _));
+        Assert.Equal(JsonSerializer.Serialize(voice), body.RootElement.GetProperty("voice").GetProperty("text2voice").GetRawText());
+        Assert.Equal("voice", body.RootElement.GetProperty("messageTypes")[0].GetString());
+        Assert.Equal("private-api-id", rig.Http.Headers["X-MEMS-API-ID"]);
+        Assert.Equal("private-api-key", rig.Http.Headers["X-MEMS-API-Key"]);
+        Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
         Assert.Equal(1, rig.Http.Calls);
         var log = Assert.Single(rig.Log.Messages);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Correlation)))[..16].ToLowerInvariant();
         Assert.Contains("CorrelationId=" + hash, log);
-        foreach (var value in new[] { Phone, "918273", Nonce, Correlation, "private-api-key", "private-api-id" })
+        foreach (var value in new[] { Phone, "918273", "001234", Nonce, Correlation, "private-api-key", "private-api-id" })
             Assert.DoesNotContain(value, log);
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("[]")]
+    [InlineData("{}")]
+    [InlineData("{\"beforePasswordText\":\"\",\"password\":123,\"language\":\"en\"}")]
+    [InlineData("{\"beforePasswordText\":null,\"password\":\"001234\",\"language\":\"en\"}")]
+    [InlineData("{\"beforePasswordText\":\"\",\"password\":\"001234\",\"language\":\" \"}")]
+    public async Task IncompleteVoiceFailsBeforeSecretsOrHttp(string speech)
+    {
+        using var rig = new HandlerRig();
+        var overrides = JsonSerializer.SerializeToElement(new { textToVoice = JsonSerializer.Deserialize<JsonElement>(speech) });
+        AssertFailure(rig, await rig.Invoke(channel: "voice", deliveryOverrides: overrides), 400);
+        Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
+    }
+
+    [Fact]
+    public void VoiceAllowsEmptyIntroAndKeepsDebugOutputPrivate()
+    {
+        var voice = new TextToVoice("", "001234", "en-US");
+        Assert.True(voice.IsComplete);
+        Assert.Equal("TextToVoice", voice.ToString());
     }
 
     [Fact]
@@ -293,6 +322,7 @@ public class EngineTests
     {
         public int Calls { get; private set; }
         public string? Body { get; private set; }
+        public Dictionary<string, string> Headers { get; private set; } = new(StringComparer.OrdinalIgnoreCase);
         public Func<CancellationToken, Task<HttpResponseMessage>> Respond { get; set; } =
             _ => Task.FromResult(Json(201, "{\"status\":\"ACCEPTED\"}"));
         public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
@@ -300,6 +330,7 @@ public class EngineTests
         {
             Calls++;
             Body = await request.Content!.ReadAsStringAsync(cancellationToken);
+            Headers = request.Headers.ToDictionary(header => header.Key, header => string.Join(",", header.Value), StringComparer.OrdinalIgnoreCase);
             return await Respond(cancellationToken);
         }
     }

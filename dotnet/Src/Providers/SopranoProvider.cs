@@ -20,7 +20,8 @@ public sealed class SopranoProvider : IProviderAdapter
             ["FILTERED"] = Outcome.Fail,
             ["BLOCKED"] = Outcome.Block,
             ["default"] = Outcome.Fail,
-        });
+        },
+        RequiresTextToVoice: true);
 
     public ProviderHttpRequest BuildRequest(string channel, string endpoint, DispatchRequest dispatch, ProviderCredential credential, IEnv env)
     {
@@ -31,14 +32,23 @@ public sealed class SopranoProvider : IProviderAdapter
             ["X-MEMS-API-ID"] = credential.Identity ?? string.Empty,
             ["X-MEMS-API-Key"] = credential.Secret ?? string.Empty,
         };
-        var body = new
+        var body = new Dictionary<string, object?>
         {
-            text = dispatch.Message,
-            destination = dispatch.Destination.TrimStart('+'),
-            messageTypes = new[] { channel == "voice" ? "voice" : "sms" },
-            correlationId = dispatch.CorrelationId ?? dispatch.MessageId,
-            shutterMode = false,
+            ["destination"] = dispatch.Destination.TrimStart('+'),
+            ["messageTypes"] = new[] { channel == "voice" ? "voice" : "sms" },
+            ["correlationId"] = dispatch.CorrelationId ?? dispatch.MessageId,
+            ["shutterMode"] = false,
         };
+        if (channel == "voice")
+        {
+            var voice = dispatch.TextToVoice;
+            if (voice?.IsComplete != true) throw new InvalidOperationException("incomplete voice context");
+            body["voice"] = new { text2voice = voice };
+        }
+        else
+        {
+            body["text"] = dispatch.Message;
+        }
 
         return new ProviderHttpRequest($"{endpoint.TrimEnd('/')}/messages/omnimsg", "POST", headers, JsonSerializer.Serialize(body));
     }

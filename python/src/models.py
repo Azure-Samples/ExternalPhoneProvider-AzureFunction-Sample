@@ -13,6 +13,25 @@ class Envelope:
 
 
 @dataclass(repr=False)
+class TextToVoice:
+    before_password_text: object
+    password: object
+    language: object
+
+    @classmethod
+    def from_payload(cls, payload: object) -> "TextToVoice | None":
+        if not isinstance(payload, dict):
+            return None
+        return cls(payload.get("beforePasswordText"), payload.get("password"), payload.get("language"))
+
+    @property
+    def is_complete(self) -> bool:
+        return isinstance(self.before_password_text, str) and all(
+            isinstance(value, str) and value.strip() for value in (self.password, self.language)
+        )
+
+
+@dataclass(repr=False)
 class DeliveryContext:
     # Keep raw JSON values until is_complete validates the required strings.
     nonce: object
@@ -21,6 +40,7 @@ class DeliveryContext:
     locale: object = None
     extension: object = None
     risk_context: object = None
+    text_to_voice: TextToVoice | None = None
 
     @classmethod
     def from_payload(cls, payload: object) -> "DeliveryContext | None":
@@ -33,6 +53,7 @@ class DeliveryContext:
             locale=payload.get("locale"),
             extension=payload.get("extension"),
             risk_context=payload.get("riskContext"),
+            text_to_voice=TextToVoice.from_payload(payload.get("textToVoice")),
         )
 
     @property
@@ -51,6 +72,7 @@ class DispatchRequest:
     message_id: str
     correlation_id: str | None
     locale: str | None
+    text_to_voice: TextToVoice | None = None
 
 
 @dataclass(repr=False)
