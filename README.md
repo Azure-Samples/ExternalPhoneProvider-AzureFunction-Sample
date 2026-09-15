@@ -25,6 +25,84 @@ by default. Deploy each language separately, not all three to the same Function 
 New here? Start with **[docs/ONBOARDING.md](docs/ONBOARDING.md)** — setup, config, running, securing,
 and deploying, step by step.
 
+## Download a Function ZIP
+
+Download the preview ZIP for your chosen language:
+
+| Language | Download | Contents |
+|---|---|---|
+| JavaScript | [epp-javascript.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-preview-20260914/epp-javascript.zip) | Application and production dependencies |
+| .NET | [epp-dotnet-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-dotnet-source-preview-20260915/epp-dotnet-source.zip) | C# Function source and project file; build/publish before deployment |
+| Python | [epp-python-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-preview-20260914/epp-python-source.zip) | Source for Azure remote build on Linux |
+
+Customers do not need PowerShell or a local build toolchain to download these files. Verify downloads
+against the corresponding release's `SHA256SUMS.txt`. Configure the target Function App's runtime, app settings,
+Key Vault access, and Easy Auth before deploying. .NET requires building/publishing the extracted
+project; Python requires remote build to install dependencies. Neither source ZIP can run directly
+as a run-from-package artifact. GitHub's **Code > Download ZIP**
+is the whole source repository, not a Function deployment package.
+
+After the packaging workflow is merged, each successful `main` build tests all three implementations,
+builds and inspects the ZIPs, and publishes a new versioned release. Get those builds from
+[Latest release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest).
+Older releases remain available; existing assets are not overwritten. Pull requests build downloadable
+workflow artifacts only and cannot publish releases. GitHub sign-in may be required for workflow
+artifacts, but public release downloads do not require a local build. Packaging does not deploy or
+verify live provider delivery. The current preview is built from the packaging branch, not a merged
+release of the separate provider feature branches.
+
+## Build ZIPs Locally
+
+For custom builds, run the script for your chosen language from the repository root. These standalone scripts create
+ZIPs locally; they do not sign in to Azure, upload code, or change app settings.
+
+| Language | Root-level script | Prerequisites | ZIP in `artifacts/` |
+|---|---|---|---|
+| JavaScript | [package-javascript.ps1](package-javascript.ps1) | PowerShell 7+, Node.js 20 or 22 with npm, npm registry access | `epp-javascript.zip` |
+| .NET | [package-dotnet.ps1](package-dotnet.ps1) | PowerShell 7+ to package; .NET 8 SDK and NuGet feed access when customers build | `epp-dotnet-source.zip` |
+| Python | [package-python.ps1](package-python.ps1) | PowerShell 7+; Azure remote build required when deploying | `epp-python-source.zip` |
+
+```powershell
+pwsh -File ./package-javascript.ps1
+pwsh -File ./package-dotnet.ps1
+pwsh -File ./package-python.ps1
+```
+
+Choose one command; each packages only its language. The scripts locate source relative to their
+own location, so invoking an absolute script path also works from another directory. Each ZIP has
+`host.json` at its root, with no enclosing language folder. Local settings, credential files, and
+first-party tests are excluded. Generated ZIPs are ignored by Git.
+
+JavaScript installs production dependencies from the lockfile in a temporary folder; your working
+`node_modules` is not copied or modified. Dependency lifecycle scripts are disabled for this sample's
+JavaScript dependencies. If you add native dependencies or packages requiring install scripts,
+review packaging and build them for the target Azure OS.
+
+**.NET is a source ZIP, not compiled output.** It contains `dotnet.csproj`, `host.json`, `Program.cs`,
+and the C# files under `Functions/` and `Src/`. Packaging does not run restore, build, or publish,
+and needs no .NET SDK. It excludes `bin/`, `obj/`, tests, local settings, and compiled dependencies.
+Customers extract it and run `dotnet publish dotnet.csproj --configuration Release --output ../publish`
+with the .NET 8 SDK, or use a deployment pipeline that builds the project. Deploy the resulting
+publish output with `host.json` at its root, not the source ZIP directly. CI tests this customer
+build from an extracted copy; that temporary publish output is not included in the download.
+
+**Python is a source ZIP, not a ready-to-run package.** Deploy to a Linux Function App with remote
+build enabled in the deployment tool for your hosting plan, so Azure installs `requirements.txt`.
+Do not use this source ZIP directly with run-from-package or copy Windows-installed Python dependencies
+to Azure. The script deliberately does not invoke pip or include a local virtual environment.
+
+Existing archives are never overwritten. For another build, specify a new path:
+
+```powershell
+pwsh -File ./package-javascript.ps1 -OutputPath ./artifacts/epp-javascript-v2.zip
+```
+
+The same `-OutputPath` option works for all three scripts. Configure the destination app's runtime,
+app settings, Key Vault access, and Easy Auth separately before deployment. See
+[deployment and validation](docs/ONBOARDING.md#4-package-deploy-and-verify). Packaging success does
+not verify cloud configuration or provider delivery. File selection is tailored to this sample;
+extend it deliberately if you add runtime assets, and never put secrets in application source.
+
 ## The design in one line
 
 SAS → Easy Auth → anonymous HTTP handler (`POST /api/SendOtp`, validate envelope + decrypt JWE) →
