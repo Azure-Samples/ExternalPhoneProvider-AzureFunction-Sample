@@ -1,11 +1,12 @@
 import json
 
-from ..models import ParsedResponse
+from ..models import ParsedResponse, TextToVoice
 
 
 class SopranoProvider:
     manifest = {
         "id": "soprano",
+        "requires_text_to_voice": True,
         "auth": {
             "mode": "apiKey",
             "key_vault_secret_name": "soprano-api-key",
@@ -27,12 +28,22 @@ class SopranoProvider:
             "Accept": "application/json",
         }
         body = {
-            "text": dispatch.message,
             "destination": str(dispatch.destination).lstrip("+"),
             "messageTypes": [message_type],
             "correlationId": dispatch.correlation_id or dispatch.message_id,
             "shutterMode": False,
         }
+        if channel == "voice":
+            voice = dispatch.text_to_voice
+            if not isinstance(voice, TextToVoice) or not voice.is_complete:
+                raise ValueError("incomplete voice context")
+            body["voice"] = {"text2voice": {
+                "beforePasswordText": voice.before_password_text,
+                "password": voice.password,
+                "language": voice.language,
+            }}
+        else:
+            body["text"] = dispatch.message
         return {"url": f"{endpoint.rstrip('/')}/messages/omnimsg", "method": "POST", "headers": headers, "body": json.dumps(body)}
 
     def parse_response(self, http_status, ok, json_body):

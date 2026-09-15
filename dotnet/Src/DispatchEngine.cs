@@ -103,6 +103,7 @@ public sealed class DeliveryContext
     [JsonPropertyName("locale")] public string? Locale { get; set; }
     [JsonPropertyName("message")] public string? Message { get; set; }
     [JsonPropertyName("riskContext")] public JsonElement? RiskContext { get; set; }
+    [JsonPropertyName("textToVoice")] public TextToVoice? TextToVoice { get; set; }
 
     [JsonIgnore]
     public bool IsComplete => !string.IsNullOrWhiteSpace(Nonce)
@@ -114,6 +115,13 @@ public sealed class DeliveryContext
         if (payload.ValueKind != JsonValueKind.Object) return new();
         string? ReadString(string name) => payload.TryGetProperty(name, out var value)
             && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        TextToVoice? voice = null;
+        if (payload.TryGetProperty("textToVoice", out var speech) && speech.ValueKind == JsonValueKind.Object)
+        {
+            string? ReadVoiceString(string name) => speech.TryGetProperty(name, out var value)
+                && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+            voice = new TextToVoice(ReadVoiceString("beforePasswordText"), ReadVoiceString("password"), ReadVoiceString("language"));
+        }
         return new()
         {
             Nonce = ReadString("nonce"),
@@ -122,6 +130,7 @@ public sealed class DeliveryContext
             Extension = ReadString("extension"),
             Locale = ReadString("locale"),
             RiskContext = payload.TryGetProperty("riskContext", out var risk) ? risk.Clone() : null,
+            TextToVoice = voice,
         };
     }
 }
@@ -229,6 +238,9 @@ public sealed class DispatchEngine
 
         if (!OutcomeMapper.DefaultChannels.Contains(channel))
             return new DispatchResult(400, new { status = "error", provider = providerId, reason = "unsupported channel", requestId });
+
+        if (channel == "voice" && manifest.RequiresTextToVoice && dispatch.TextToVoice?.IsComplete != true)
+            return new DispatchResult(400, FailBody(providerId, channel, "incomplete voice context", dispatch, requestId));
 
         if (manifest.Auth.Mode != "apiKey")
             return new DispatchResult(502, FailBody(providerId, channel, "unsupported provider auth mode", dispatch, requestId));

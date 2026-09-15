@@ -9,7 +9,7 @@ const { compactDecrypt } = require('jose');
 const { ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { readConfig } = require('./config');
-const { DeliveryContext } = require('./models');
+const { DeliveryContext, TextToVoice } = require('./models');
 
 const CHANNEL_BY_CODE = Object.freeze({ 1: 'sms', 2: 'voice' });
 const CHANNEL_BY_NAME = Object.freeze({ sms: 1, voice: 2 });
@@ -131,6 +131,7 @@ function contextToDispatch(context, envelope, messageId) {
         messageId,
         correlationId: envelope.correlationId,
         locale: context.locale || undefined,
+        textToVoice: context.textToVoice,
     };
 }
 
@@ -304,6 +305,11 @@ async function sendViaProvider(providerEntry, dispatch, options) {
 
     if (!['sms', 'voice'].includes(channel)) {
         return { httpStatus: 400, body: { status: 'error', reason: 'unsupported channel', requestId } };
+    }
+
+    if (channel === 'voice' && manifest.requiresTextToVoice
+        && (!(dispatch.textToVoice instanceof TextToVoice) || !dispatch.textToVoice.isComplete)) {
+        return { httpStatus: 400, body: failBody(providerId, channel, 'incomplete voice context', dispatch, requestId) };
     }
 
     const endpointBaseUrl = config.providerEndpoint;

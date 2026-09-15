@@ -15,7 +15,8 @@ public class ContractTests
     [InlineData("voice")]
     public void SopranoUsesExactOmnimsgContract(string channel)
     {
-        var request = new SopranoProvider().BuildRequest(channel, "https://provider.example/cgpapi///", Request(channel),
+        var dispatch = Request(channel) with { TextToVoice = new TextToVoice("Your code is", "001234", "en-US") };
+        var request = new SopranoProvider().BuildRequest(channel, "https://provider.example/cgpapi///", dispatch,
             new ProviderCredential("apiKey", "test-key", "test-id"), new TestEnv());
         Assert.Equal("https://provider.example/cgpapi/messages/omnimsg", request.Url);
         Assert.Equal("POST", request.Method);
@@ -24,14 +25,17 @@ public class ContractTests
         Assert.Equal("test-key", request.Headers["X-MEMS-API-Key"]);
         Assert.Equal("application/json", request.Headers["Accept"]);
         Assert.Equal("application/json", request.Headers["Content-Type"]);
-        var expected = new
+        var expected = new Dictionary<string, object?>
         {
-            text = Request().Message,
-            destination = "15551234567",
-            messageTypes = new[] { channel },
-            correlationId = "correlation-id",
-            shutterMode = false,
+            ["destination"] = "15551234567",
+            ["messageTypes"] = new[] { channel },
+            ["correlationId"] = "correlation-id",
+            ["shutterMode"] = false,
         };
+        if (channel == "voice")
+            expected["voice"] = new { text2voice = new { beforePasswordText = "Your code is", password = "001234", language = "en-US" } };
+        else
+            expected["text"] = Request().Message;
         Assert.Equal(JsonSerializer.Serialize(expected), request.Body);
     }
 
