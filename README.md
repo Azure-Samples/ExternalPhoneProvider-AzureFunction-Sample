@@ -25,6 +25,13 @@ by default. Deploy each language separately, not all three to the same Function 
 New here? Start with **[docs/ONBOARDING.md](docs/ONBOARDING.md)** — setup, config, running, securing,
 and deploying, step by step.
 
+## Guided CYOT setup
+
+Use **[CYOT-Setup](CYOT-Setup/docs/README.md)** for a PowerShell-guided setup that registers the
+customer application, provisions or connects an External Phone Provider endpoint, validates the
+configuration, and activates the CYOT policy only after explicit approval. The setup supports Bicep
+or Azure CLI provisioning, redacted logs, diagnostics, and resumable stages.
+
 ## Download a Function ZIP
 
 Download the preview ZIP for your chosen language:

@@ -1,0 +1,6 @@
+logs/*
+!logs/.gitkeep
+state/*
+!state/.gitkeep
+policy-backups/*
+!policy-backups/.gitkeep
