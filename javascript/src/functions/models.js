@@ -25,14 +25,35 @@ const { inspect } = require('node:util');
  * @property {*} locale
  */
 
+class TextToVoice {
+    constructor({ beforePasswordText, password, language }) {
+        this.beforePasswordText = beforePasswordText;
+        this.password = password;
+        this.language = language;
+    }
+
+    static fromPayload(payload) {
+        return payload && typeof payload === 'object' && !Array.isArray(payload)
+            ? new TextToVoice(payload) : null;
+    }
+
+    get isComplete() {
+        return typeof this.beforePasswordText === 'string'
+            && [this.password, this.language].every(value => typeof value === 'string' && value.trim().length > 0);
+    }
+
+    [inspect.custom]() { return '[TextToVoice]'; }
+}
+
 class DeliveryContext {
-    constructor({ nonce, phoneNumber, message, extension, locale, riskContext }) {
+    constructor({ nonce, phoneNumber, message, extension, locale, riskContext, textToVoice = null }) {
         this.nonce = nonce;
         this.phoneNumber = phoneNumber;
         this.message = message;
         this.extension = extension;
         this.locale = locale;
         this.riskContext = riskContext;
+        this.textToVoice = TextToVoice.fromPayload(textToVoice);
     }
 
     static fromPayload(payload) {
@@ -72,4 +93,4 @@ class ParsedResponse {
     [inspect.custom]() { return '[ParsedResponse]'; }
 }
 
-module.exports = { DeliveryContext, ParsedResponse };
+module.exports = { DeliveryContext, TextToVoice, ParsedResponse };

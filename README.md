@@ -1,8 +1,8 @@
-# External Phone Provider — Azure Function Sample
+# External Phone Provider: Azure Function Sample
 
 A provider-agnostic **OTP-delivery Azure Function** sample, implemented across multiple languages.
 Each language folder is a self-contained implementation of the **same design and the same
-[contract](docs/CONTRACT.md)** — one engine, drop-in provider adapters, env-provisioned config, and
+[contract](docs/CONTRACT.md)**: one engine, drop-in provider adapters, env-provisioned config, and
 secrets in Key Vault.
 
 ## Implementations
@@ -14,7 +14,7 @@ secrets in Key Vault.
 | Python (v2 model) | Available | [python/](python/) |
 
 All implementations conform to the **language-agnostic contract** in
-[docs/CONTRACT.md](docs/CONTRACT.md) — identical HTTP API, provider-adapter shape, config/env var
+[docs/CONTRACT.md](docs/CONTRACT.md): identical HTTP API, provider-adapter shape, config/env var
 names, Key Vault secret names, and behaviors (fail-closed, managed identity, privacy). Pick any folder
 and follow its README.
 
@@ -22,8 +22,86 @@ Choose one language and configure the adapter for your provider. No provider is 
 by default. Deploy each language separately, not all three to the same Function App. See the
 [shared configuration](docs/CONTRACT.md#default-provider-and-configuration-readers).
 
-New here? Start with **[docs/ONBOARDING.md](docs/ONBOARDING.md)** — setup, config, running, securing,
+New here? Start with **[docs/ONBOARDING.md](docs/ONBOARDING.md)** for setup, config, running, securing,
 and deploying, step by step.
+
+## Download a Function ZIP
+
+Download the preview ZIP for your chosen language:
+
+| Language | Download | Contents |
+|---|---|---|
+| JavaScript | [epp-javascript.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-preview-20260914/epp-javascript.zip) | Application and production dependencies |
+| .NET | [epp-dotnet-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-dotnet-source-preview-20260915/epp-dotnet-source.zip) | C# Function source and project file; build/publish before deployment |
+| Python | [epp-python-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-preview-20260914/epp-python-source.zip) | Source for Azure remote build on Linux |
+
+Customers do not need PowerShell or a local build toolchain to download these files. Verify downloads
+against the corresponding release's `SHA256SUMS.txt`. Configure the target Function App's runtime, app settings,
+Key Vault access, and Easy Auth before deploying. .NET requires building/publishing the extracted
+project; Python requires remote build to install dependencies. Neither source ZIP can run directly
+as a run-from-package artifact. GitHub's **Code > Download ZIP**
+is the whole source repository, not a Function deployment package.
+
+After the packaging workflow is merged, each successful `main` build tests all three implementations,
+builds and inspects the ZIPs, and publishes a new versioned release. Get those builds from
+[Latest release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest).
+Older releases remain available; existing assets are not overwritten. Pull requests build downloadable
+workflow artifacts only and cannot publish releases. GitHub sign-in may be required for workflow
+artifacts, but public release downloads do not require a local build. Packaging does not deploy or
+verify live provider delivery. The current preview is built from the packaging branch, not a merged
+release of the separate provider feature branches.
+
+## Build ZIPs Locally
+
+For custom builds, run the script for your chosen language from the repository root. These standalone scripts create
+ZIPs locally; they do not sign in to Azure, upload code, or change app settings.
+
+| Language | Root-level script | Prerequisites | ZIP in `artifacts/` |
+|---|---|---|---|
+| JavaScript | [package-javascript.ps1](package-javascript.ps1) | PowerShell 7+, Node.js 20 or 22 with npm, npm registry access | `epp-javascript.zip` |
+| .NET | [package-dotnet.ps1](package-dotnet.ps1) | PowerShell 7+ to package; .NET 8 SDK and NuGet feed access when customers build | `epp-dotnet-source.zip` |
+| Python | [package-python.ps1](package-python.ps1) | PowerShell 7+; Azure remote build required when deploying | `epp-python-source.zip` |
+
+```powershell
+pwsh -File ./package-javascript.ps1
+pwsh -File ./package-dotnet.ps1
+pwsh -File ./package-python.ps1
+```
+
+Choose one command; each packages only its language. The scripts locate source relative to their
+own location, so invoking an absolute script path also works from another directory. Each ZIP has
+`host.json` at its root, with no enclosing language folder. Local settings, credential files, and
+first-party tests are excluded. Generated ZIPs are ignored by Git.
+
+JavaScript installs production dependencies from the lockfile in a temporary folder; your working
+`node_modules` is not copied or modified. Dependency lifecycle scripts are disabled for this sample's
+JavaScript dependencies. If you add native dependencies or packages requiring install scripts,
+review packaging and build them for the target Azure OS.
+
+**.NET is a source ZIP, not compiled output.** It contains `dotnet.csproj`, `host.json`, `Program.cs`,
+and the C# files under `Functions/` and `Src/`. Packaging does not run restore, build, or publish,
+and needs no .NET SDK. It excludes `bin/`, `obj/`, tests, local settings, and compiled dependencies.
+Customers extract it and run `dotnet publish dotnet.csproj --configuration Release --output ../publish`
+with the .NET 8 SDK, or use a deployment pipeline that builds the project. Deploy the resulting
+publish output with `host.json` at its root, not the source ZIP directly. CI tests this customer
+build from an extracted copy; that temporary publish output is not included in the download.
+
+**Python is a source ZIP, not a ready-to-run package.** Deploy to a Linux Function App with remote
+build enabled in the deployment tool for your hosting plan, so Azure installs `requirements.txt`.
+Do not use this source ZIP directly with run-from-package or copy Windows-installed Python dependencies
+to Azure. The script deliberately does not invoke pip or include a local virtual environment.
+
+Existing archives are never overwritten. For another build, specify a new path:
+
+```powershell
+pwsh -File ./package-javascript.ps1 -OutputPath ./artifacts/epp-javascript-v2.zip
+```
+
+The same `-OutputPath` option works for all three scripts. Configure the destination app's runtime,
+app settings, Key Vault access, and Easy Auth separately before deployment. See
+[deployment and validation](docs/ONBOARDING.md#4-package-deploy-and-verify). Packaging success does
+not verify cloud configuration or provider delivery. File selection is tailored to this sample;
+extend it deliberately if you add runtime assets, and never put secrets in application source.
 
 ## The design in one line
 
@@ -59,7 +137,7 @@ how code accesses configuration, not the environment-variable names.
 | Variable | When needed | Value |
 |---|---|---|
 | `AzureWebJobsStorage` | Functions host storage | Local sample: `UseDevelopmentStorage=true` with Azurite running. Configure Azure host storage separately for the selected plan. |
-| `FUNCTIONS_WORKER_RUNTIME` | Functions host | `node`, `python`, or `dotnet-isolated`—exactly one value matching the chosen implementation. |
+| `FUNCTIONS_WORKER_RUNTIME` | Functions host | `node`, `python`, or `dotnet-isolated`. Choose the value matching your implementation. |
 | `EPP_DECRYPTION_KEY_PEM` | Every request | Local test PEM or base64 PEM. In Azure, use a Key Vault reference resolving to the private-key secret. |
 | `EPP_ENCRYPTION_KEY_ID` | Optional | Expected encryption key ID; mismatch only produces an advisory warning. |
 | `EPP_PROVIDER_NAME` | Live delivery | Selected adapter's manifest ID. No default provider. |
@@ -78,6 +156,8 @@ how code accesses configuration, not the environment-variable names.
 3. Store provider API keys and any required identity secrets in Key Vault using the **exact names in
   the adapter manifest**. Grant that app/slot's managed identity *Key Vault Secrets User* on those
   secrets. An API key in a local environment variable is not a supported replacement for the resolver.
+  See the [provider credential naming table](docs/ONBOARDING.md#provider-credential-names) and
+  [local use of existing cloud secrets](docs/ONBOARDING.md#local-settings-and-cloud-secrets).
 
 Evaluation requests do not need provider variables or provider secrets. They still need the decryption
 key. The default credential resolvers use `ManagedIdentityCredential`, **not** the developer's CLI
@@ -92,6 +172,52 @@ for `EPP_DECRYPTION_KEY_PEM` in Azure app settings, where the platform resolves 
 Configure inbound issuer/audience/caller trust in **Easy Auth**, not these application variables.
 Incoming `tenantId`, `channel`, `mode` and `ttlSeconds` are request data. No outbound OAuth settings
 are supported by this main-based implementation.
+
+## Telesign EPP
+
+The `telesign` adapter uses `POST https://verify.telesign.com/integration/msft/cyot`
+for both SMS and Voice. Set `EPP_PROVIDER_NAME=telesign` and
+`EPP_PROVIDER_ENDPOINT=https://verify.telesign.com` (the base URL, without the route).
+This replaces the legacy `/v1/messaging` and `/v1/voice` integrations in all three languages.
+
+Basic authentication uses `base64(customer-id:api-key)`, with the existing Key Vault secrets
+`telesign-customer-id` and `telesign-api-key`. Digest and Phase 2 token authentication are not
+implemented. The incoming caller's Authorization header is never forwarded.
+
+The adapter builds the following JSON from the decrypted delivery context and envelope:
+
+```json
+{
+  "recipient": { "phone_number": "+1234567890" },
+  "message": { "text": "Your verification code is 4821", "language": "en" },
+  "channels": [{ "channel": "voice" }],
+  "correlation_id": "unique-string-123"
+}
+```
+
+`phoneNumber` must match `^\+[1-9][0-9]{1,14}$`; the leading `+` is preserved. The complete
+`message` is passed unchanged as `message.text`, including whitespace and OTP digit spacing.
+Telesign performs text-to-speech for Voice; no separate speech object or OTP extraction is needed.
+A nonblank string `locale` becomes `message.language`; otherwise language is omitted. The envelope
+channel selects the single `sms` or `voice` entry. `correlation_id` uses a nonempty string request
+correlation ID, falling back to the message ID for absent, empty, or non-string values. Reserved
+`account_lifecycle_event` and `originating_ip` fields are
+not sent; no client-IP inference or account-event default is applied. `TELESIGN_VOICE` and the
+legacy sender/form fields no longer affect this adapter.
+
+Telesign's API supports `X-Shutter-Mode: true` for direct provider tests. The Function deliberately
+omits that header on live sends and does not forward it from incoming requests. Use the existing
+`mode: 2` evaluation path for Function tests without delivery: it skips provider HTTP and credential
+lookup entirely, rather than invoking Telesign shutter mode.
+
+Responses normalize `reference_id` and `status.code`/`status.description` internally; provider
+metadata is not logged or exposed in the public nonce response. Existing numeric success codes
+are retained (SMS: 200, 203, 290-292; Voice: 100-103). CYOT code `3001` ("Message in progress"),
+observed for both channels, is also accepted on successful HTTP responses. This acknowledges
+provider acceptance, not handset receipt or completed audio playback. The supplied EPP integration
+overview does not provide a complete replacement status-code catalog. Missing, malformed, or
+unknown codes fail closed, as do unsuccessful HTTP responses. Confirm the status-code catalog and
+account access with Telesign before production.
 
 ## Security
 
@@ -114,13 +240,13 @@ authentication; [separate deployed security checks](docs/ONBOARDING.md#4-package
 
 ## Docs
 
-- **[docs/ONBOARDING.md](docs/ONBOARDING.md)** — customer setup / run / secure / deploy guide.
-- **[docs/CONTRACT.md](docs/CONTRACT.md)** — the language-agnostic contract every implementation follows.
+- **[docs/ONBOARDING.md](docs/ONBOARDING.md)**: customer setup, security, deployment, and validation.
+- **[docs/CONTRACT.md](docs/CONTRACT.md)**: the language-agnostic contract every implementation follows.
 
 ## Contributing a language or provider
 
 - **New provider** (in any language): add one adapter file exposing `manifest` + `buildRequest` +
-  `parseResponse` — no engine changes. See the language folder's README.
+  `parseResponse`; no engine changes. See the language folder's README.
 - **New language**: mirror the folder structure, implement the contract, add the same test scenarios,
   and wire it into [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
