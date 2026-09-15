@@ -33,7 +33,7 @@ def test_missing_key_or_identity_never_sends(engine):
 
 
 def test_soprano_voice_payload_uses_api_key_only(engine):
-    speech = {"beforePasswordText": "Your code is", "password": "001234", "language": "en"}
+    speech = {"beforePasswordText": "Your code is", "password": "001234", "language": "en-US"}
     context = DeliveryContext.from_payload({"nonce": "n", "phoneNumber": "+15551234567",
                                             "message": "Your code is 001234", "textToVoice": speech})
     envelope = Envelope("microsoft.mfa.otpDeliver.v1", "tenant", "correlation", 2, 1, None, "encrypted")

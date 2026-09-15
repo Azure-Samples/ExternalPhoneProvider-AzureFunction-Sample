@@ -160,7 +160,7 @@ def test_live_acceptance_waits_and_preserves_wire_data_but_not_plaintext_logs(mo
 
     send = Mock(side_effect=wait_for_acceptance)
     monkeypatch.setattr(dispatch_module.requests, "request", send)
-    speech = {"beforePasswordText": "Your code is", "password": "001234", "language": "en"}
+    speech = {"beforePasswordText": "Your code is", "password": "001234", "language": "en-US"}
     with ThreadPoolExecutor(max_workers=1) as executor:
         request = _request(_envelope(channel=2, encryptedDeliveryContext=_encrypt(
             context={**_CONTEXT, "textToVoice": speech})), {"x-ms-client-request-id": "wire-message"})

@@ -155,7 +155,7 @@ test('evaluation decrypts without provider config or I/O and checks the advisory
 
 test('SMS/voice preserve content and correlation without reflecting headers or logging PII', async () => {
     const correlationId = 'PRIVATE-CORRELATION';
-    const textToVoice = { beforePasswordText: ' PRIVATE-PROMPT ', password: '001234', language: 'en' };
+    const textToVoice = { beforePasswordText: ' PRIVATE-PROMPT ', password: '001234', language: 'en-US' };
     const forgedHeaders = { authorization: 'Bearer FORGED-BEARER',
         'x-ms-client-principal': Buffer.from(JSON.stringify({
             claims: [{ typ: 'appid', val: 'FORGED-CALLER' }],

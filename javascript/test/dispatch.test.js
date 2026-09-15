@@ -97,7 +97,7 @@ test('omnimsg preserves its API-key request and normalizes acceptance', () => {
 
 test('Soprano Voice sends structured speech with API-key headers only', () => {
     const textToVoice = TextToVoice.fromPayload({ beforePasswordText: ' Your code is ', password: '001234',
-        language: 'en', unexpected: 'must-not-be-forwarded' });
+        language: 'en-US', unexpected: 'must-not-be-forwarded' });
     const request = getProvider('soprano').adapter.buildRequest({ ...input, channel: 'voice',
         dispatch: { ...dispatch, textToVoice }, credential: { ...input.credential, token: 'ignored-token' } });
     assert.equal(request.url, `${input.endpoint}/messages/omnimsg`);
@@ -105,7 +105,7 @@ test('Soprano Voice sends structured speech with API-key headers only', () => {
         'X-MEMS-API-ID': 'id', 'X-MEMS-API-Key': 'key' });
     assert.deepEqual(JSON.parse(request.body), { destination: '15551234567', messageTypes: ['voice'],
         correlationId: 'correlation-id', shutterMode: false,
-        voice: { text2voice: { beforePasswordText: ' Your code is ', password: '001234', language: 'en' } } });
+        voice: { text2voice: { beforePasswordText: ' Your code is ', password: '001234', language: 'en-US' } } });
     assert.equal(inspect(textToVoice), '[TextToVoice]');
     assert.throws(() => getProvider('soprano').adapter.buildRequest({ ...input, channel: 'voice' }),
         /incomplete voice context/);
@@ -123,7 +123,7 @@ test('Soprano Voice validates decrypted speech before secret lookup or HTTP', as
         const result = await dispatchOtp(contextToDispatch(context, { channel: 2 }, 'message-id'), { config });
         assert.deepEqual([result.httpStatus, result.body.reason], [400, 'incomplete voice context']);
     }
-    const context = DeliveryContext.fromPayload({ textToVoice: { beforePasswordText: '', password: '001234', language: 'en' } });
+    const context = DeliveryContext.fromPayload({ textToVoice: { beforePasswordText: '', password: '001234', language: 'en-US' } });
     assert.ok(contextToDispatch(context, { channel: 2 }, 'message-id').textToVoice.isComplete);
     assert.equal(getSecret.mock.callCount(), 0);
     assert.equal(fetchMock.mock.callCount(), 0);

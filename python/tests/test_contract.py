@@ -17,7 +17,7 @@ MESSAGE = "  Use 918273; then 1234.\nDo not rewrite + or café.  "
 
 def _dispatch(channel="sms"):
     return DispatchRequest("+15551234567", MESSAGE, channel, "message-id", "correlation-id", "en-US",
-                           TextToVoice("Your code is", "001234", "en") if channel == "voice" else None)
+                           TextToVoice("Your code is", "001234", "en-US") if channel == "voice" else None)
 
 
 @pytest.mark.parametrize("channel", ["sms", "voice"])
@@ -37,7 +37,7 @@ def test_soprano_exact_sms_and_voice_contract(channel):
         "correlationId": "correlation-id", "shutterMode": False,
     }
     if channel == "voice":
-        expected["voice"] = {"text2voice": {"beforePasswordText": "Your code is", "password": "001234", "language": "en"}}
+        expected["voice"] = {"text2voice": {"beforePasswordText": "Your code is", "password": "001234", "language": "en-US"}}
     else:
         expected["text"] = MESSAGE
     assert json.loads(request["body"]) == expected

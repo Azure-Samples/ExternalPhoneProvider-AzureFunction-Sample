@@ -15,7 +15,7 @@ public class ContractTests
     [InlineData("voice")]
     public void SopranoUsesExactOmnimsgContract(string channel)
     {
-        var dispatch = Request(channel) with { TextToVoice = new TextToVoice("Your code is", "001234", "en") };
+        var dispatch = Request(channel) with { TextToVoice = new TextToVoice("Your code is", "001234", "en-US") };
         var request = new SopranoProvider().BuildRequest(channel, "https://provider.example/cgpapi///", dispatch,
             new ProviderCredential("apiKey", "test-key", "test-id"), new TestEnv());
         Assert.Equal("https://provider.example/cgpapi/messages/omnimsg", request.Url);
@@ -33,7 +33,7 @@ public class ContractTests
             ["shutterMode"] = false,
         };
         if (channel == "voice")
-            expected["voice"] = new { text2voice = new { beforePasswordText = "Your code is", password = "001234", language = "en" } };
+            expected["voice"] = new { text2voice = new { beforePasswordText = "Your code is", password = "001234", language = "en-US" } };
         else
             expected["text"] = Request().Message;
         Assert.Equal(JsonSerializer.Serialize(expected), request.Body);

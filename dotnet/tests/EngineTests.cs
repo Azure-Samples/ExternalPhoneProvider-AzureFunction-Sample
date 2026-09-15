@@ -31,7 +31,7 @@ public class EngineTests
             entered.TrySetResult();
             return release.Task.WaitAsync(cancellation);
         };
-        var voice = new { beforePasswordText = " Your code is ", password = "001234", language = "en" };
+        var voice = new { beforePasswordText = " Your code is ", password = "001234", language = "en-US" };
         var pending = rig.Invoke(channel: "voice", deliveryOverrides: JsonSerializer.SerializeToElement(new { textToVoice = voice }));
         try
         {
@@ -76,7 +76,7 @@ public class EngineTests
     [Fact]
     public void VoiceAllowsEmptyIntroAndKeepsDebugOutputPrivate()
     {
-        var voice = new TextToVoice("", "001234", "en");
+        var voice = new TextToVoice("", "001234", "en-US");
         Assert.True(voice.IsComplete);
         Assert.Equal("TextToVoice", voice.ToString());
     }

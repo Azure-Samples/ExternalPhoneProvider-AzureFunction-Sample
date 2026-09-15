@@ -90,7 +90,7 @@ For Soprano live voice, include `textToVoice` alongside the required delivery fi
 "textToVoice": {
   "beforePasswordText": "Your verification code is",
   "password": "001234",
-  "language": "en"
+  "language": "en-US"
 }
 ```
 
@@ -102,6 +102,18 @@ SMS continues to use `message`, and evaluation continues to skip provider-specif
 Soprano authentication remains API-key-only (`X-MEMS-API-ID` and `X-MEMS-API-Key`, resolved from
 `soprano-api-id` and `soprano-api-key` in Key Vault). No provider JWT, OAuth flow, token endpoint,
 or bearer-token forwarding is added. Existing platform caller authentication is unchanged.
+
+Use a speech language supported by the selected Soprano endpoint and account. On QA4, an API-key
+voice request using `en` returned HTTP `400` with error code `400101`; the same request structure
+using `en-US` returned HTTP `201` with `ENROUTE` on September 15, 2026. This confirms acceptance,
+not handset receipt or audio quality. The adapter preserves the supplied language and does not
+guess a region for a language-only value.
+
+The supplied Soprano Connect Voice PDF describes a different API: `POST /voice/voice_orderApiCreate.do`
+with form-encoded fields, `subAction=20`, and numeric language IDs (`1` is default English).
+Its password fields are `beforePassword`, `passwordText`, and `afterPassword`. This adapter follows
+the reference integration's JSON `/messages/omnimsg` contract instead; do not mix the form API's
+language IDs, field names, or `ApiResponse.StatusCode` response format with this JSON interface.
 
 JWE provides payload confidentiality and integrity, **not SAS caller authentication**. Anyone with the
 public key can encrypt a request. The nonce acknowledges decryption; it is not an authentication
