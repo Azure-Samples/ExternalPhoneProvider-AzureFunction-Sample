@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const Module = require('node:module');
 const { CompactEncrypt } = require('jose');
 const { SecretClient } = require('@azure/keyvault-secrets');
+const { ManagedIdentityCredential, ClientAssertionCredential } = require('@azure/identity');
 const fixtures = require('../../tests/fixtures/contract.json');
 
 // Capture the real handler; keys stay in memory and all external I/O is mocked.
@@ -25,12 +26,16 @@ try {
 }
 
 const envKeys = ['EPP_ENCRYPTION_KEY_ID', 'AZURE_CLIENT_ID', 'EPP_PROVIDER_NAME', 'EPP_PROVIDER_ENDPOINT',
-    'EPP_PROVIDER_TIMEOUT_MS', 'EPP_LOG_PLAINTEXT', 'KEY_VAULT_URL', 'EPP_DECRYPTION_KEY_PEM'];
+    'EPP_PROVIDER_TIMEOUT_MS', 'EPP_PROVIDER_JWT_ENABLED', 'EPP_PROVIDER_SCOPE',
+    'EPP_PROVIDER_TENANT_ID', 'EPP_PROVIDER_APPLICATION_ID', 'EPP_PROVIDER_MI_CLIENT_ID',
+    'EPP_LOG_PLAINTEXT', 'KEY_VAULT_URL', 'EPP_DECRYPTION_KEY_PEM'];
 let savedEnv;
 let fetchMock;
 let getSecret;
 let logs;
 let warnings;
+let getToken;
+const providerToken = 'eyJhbGciOiJSUzI1NiJ9.eyJ2ZXIiOiIyLjAifQ.c2lnbmF0dXJl';
 beforeEach(() => {
     savedEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
     for (const key of envKeys) delete process.env[key];
@@ -38,6 +43,19 @@ beforeEach(() => {
         EPP_DECRYPTION_KEY_PEM: privateKey.export({ type: 'pkcs8', format: 'pem' }),
         KEY_VAULT_URL: 'https://unit-test.vault.azure.net', EPP_PROVIDER_NAME: 'soprano',
         EPP_PROVIDER_ENDPOINT: 'https://provider.example/cgpapi/' });
+    process.env.EPP_PROVIDER_SCOPE = 'api://provider-application-id/.default';
+    Object.assign(process.env, { EPP_PROVIDER_TENANT_ID: '11111111-1111-4111-8111-111111111111',
+        EPP_PROVIDER_APPLICATION_ID: '22222222-2222-4222-8222-222222222222',
+        EPP_PROVIDER_MI_CLIENT_ID: '33333333-3333-4333-8333-333333333333' });
+    mock.method(ManagedIdentityCredential.prototype, 'getToken', async () => ({
+        token: 'PRIVATE-EXCHANGE-ASSERTION', expiresOnTimestamp: Date.now() + 3600000,
+    }));
+    getToken = mock.method(ClientAssertionCredential.prototype, 'getToken', async function () {
+        assert.equal(await this.getAssertion(), 'PRIVATE-EXCHANGE-ASSERTION');
+        return {
+        token: providerToken, expiresOnTimestamp: Date.now() + 3600000,
+        };
+    });
     getSecret = mock.method(SecretClient.prototype, 'getSecret', async () => ({ value: 'PRIVATE-API-KEY' }));
     fetchMock = mock.method(global, 'fetch', async () => ({ ok: true, status: 201,
         text: async () => JSON.stringify({ status: 'ENROUTE', id: 'PRIVATE-ID', description: 'PRIVATE-STATUS' }) }));
@@ -179,15 +197,82 @@ test('SMS/voice preserve content and correlation without reflecting headers or l
         assert.deepEqual(init.headers, { 'Content-Type': 'application/json', Accept: 'application/json',
             'X-MEMS-API-ID': 'PRIVATE-API-KEY', 'X-MEMS-API-Key': 'PRIVATE-API-KEY' });
         assert.equal(init.redirect, 'manual');
-        assert.equal(logs.length, 1);
-        assert.deepEqual(Object.keys(logs[0]).sort(), ['correlationId', 'elapsedMs', 'evaluation', 'httpStatus', 'requestId']);
-        assert.equal(logs[0].correlationId, crypto.createHash('sha256').update(correlationId).digest('hex').slice(0, 16));
+        assert.equal(logs.length, 2);
+        const correlationHash = crypto.createHash('sha256').update(correlationId).digest('hex').slice(0, 16);
+        assert.equal(logs[0], `[EPP] SopranoAuth=api-key CorrelationId=${correlationHash}`);
+        assert.deepEqual(Object.keys(logs[1]).sort(), ['correlationId', 'elapsedMs', 'evaluation', 'httpStatus', 'requestId']);
+        assert.equal(logs[1].correlationId, correlationHash);
         assert.doesNotMatch(JSON.stringify(logs), /PRIVATE|918273|001234|15551234567/);
         const output = JSON.stringify([result.jsonBody, logs, warnings]);
         assert.doesNotMatch(output, /FORGED/);
         for (const value of Object.values(forgedHeaders)) assert.equal(output.includes(value), false);
     }
     assert.equal(fetchMock.mock.callCount(), 2);
+});
+
+test('Function exchanges a managed identity assertion for Soprano JWT, never from SAS, and keeps it private', async () => {
+    const context = { ...delivery, providerJwt: 'FORGED-PAYLOAD',
+        textToVoice: { beforePasswordText: 'Your code is', password: '001234', language: 'en-US' } };
+    for (const channel of [1, 2]) {
+        for (const flag of ['false', 'true']) {
+            process.env.EPP_PROVIDER_JWT_ENABLED = flag;
+            const result = await invoke(await envelope({ channel }, context), { authorization: 'Bearer FORGED-INBOUND' });
+            assert.equal(result.status, 200);
+            const sent = fetchMock.mock.calls.at(-1).arguments[1];
+            assert.equal(sent.headers.Authorization, flag === 'true' ? `Bearer ${providerToken}` : undefined);
+            assert.ok(logs[0].startsWith(`[EPP] SopranoAuth=${flag === 'true' ? 'api-key+jwt' : 'api-key'} CorrelationId=`));
+            assert.equal(sent.headers['X-MEMS-API-ID'], 'PRIVATE-API-KEY');
+            assert.equal(sent.headers['X-MEMS-API-Key'], 'PRIVATE-API-KEY');
+            assert.equal(sent.body.includes(providerToken), false);
+            assert.equal(sent.body.includes('FORGED-PAYLOAD'), false);
+            assert.equal(JSON.stringify([result, logs, warnings]).includes(providerToken), false);
+            assert.equal(JSON.stringify([sent, result, logs, warnings]).includes('PRIVATE-EXCHANGE-ASSERTION'), false);
+            assert.equal(JSON.stringify([sent, result, logs, warnings]).includes('FORGED-INBOUND'), false);
+        }
+    }
+    assert.equal(getToken.mock.callCount(), 2);
+    assert.equal(getToken.mock.calls[0].arguments[0], process.env.EPP_PROVIDER_SCOPE);
+    assert.ok(getToken.mock.calls[0].arguments[1].abortSignal instanceof AbortSignal);
+    assert.ok(getSecret.mock.calls.every(call => ['soprano-api-id', 'soprano-api-key'].includes(call.arguments[0])));
+    const result = await invoke(await envelope(), { authorization: 'Bearer FORGED-INBOUND' });
+    assert.equal(result.status, 200);
+    assert.equal(fetchMock.mock.calls.at(-1).arguments[1].headers.Authorization, `Bearer ${providerToken}`);
+});
+
+test('Entra failure falls back to keys, evaluation skips acquisition, rejection never resends', async () => {
+    process.env.EPP_PROVIDER_JWT_ENABLED = 'true';
+    const evaluated = await invoke(await envelope({ mode: 2 }, { ...delivery, providerJwt: 'invalid' }));
+    assert.equal(evaluated.status, 200);
+    assert.equal(getToken.mock.callCount(), 0);
+    assert.equal(getSecret.mock.callCount(), 0);
+    assert.equal(fetchMock.mock.callCount(), 0);
+    getToken.mock.mockImplementation(async () => { throw new Error('PRIVATE-TOKEN-ERROR'); });
+    assert.equal((await invoke(await envelope())).status, 200);
+    assert.equal(fetchMock.mock.calls.at(-1).arguments[1].headers.Authorization, undefined);
+    assert.doesNotMatch(JSON.stringify([logs, warnings]), /PRIVATE/);
+    getToken.mock.mockImplementation(async () => ({ token: providerToken, expiresOnTimestamp: Date.now() + 3600000 }));
+    fetchMock.mock.mockImplementation(async () => ({ ok: false, status: 401, text: async () => '{"status":"REJECTED"}' }));
+    assertFailure(await invoke(await envelope()), 401);
+    assert.equal(fetchMock.mock.callCount(), 2);
+    getSecret.mock.mockImplementation(async () => ({ value: '' }));
+    process.env.KEY_VAULT_URL = 'https://missing-key.vault.azure.net';
+    const tokenCalls = getToken.mock.callCount();
+    assertFailure(await invoke(await envelope()), 502);
+    assert.equal(fetchMock.mock.callCount(), 2);
+    assert.equal(getToken.mock.callCount(), tokenCalls);
+});
+
+test('optional Soprano JWT does not affect another provider', async () => {
+    process.env.EPP_PROVIDER_NAME = 'infobip';
+    process.env.EPP_PROVIDER_JWT_ENABLED = 'true';
+    fetchMock.mock.mockImplementation(async () => ({ ok: true, status: 200,
+        text: async () => JSON.stringify({ messages: [{ status: { groupName: 'PENDING' } }] }) }));
+    const result = await invoke(await envelope({}, { ...delivery, providerJwt: 'do-not-send-this' }));
+    assert.equal(result.status, 200);
+    const sent = fetchMock.mock.calls[0].arguments[1];
+    assert.equal(sent.headers.Authorization, 'App PRIVATE-API-KEY');
+    assert.equal(JSON.stringify(sent).includes('do-not-send-this'), false);
+    assert.equal(getToken.mock.callCount(), 0);
 });
 
 test('handler awaits the provider body and returns 502/429 without a nonce or retries', async () => {
@@ -203,7 +288,8 @@ test('handler awaits the provider body and returns 502/429 without a nonce or re
         try {
             await started;
             assert.equal(settled, false);
-            assert.deepEqual(logs, []);
+            assert.equal(logs.length, 1);
+            assert.ok(logs[0].startsWith('[EPP] SopranoAuth=api-key CorrelationId='));
         } finally {
             release(JSON.stringify({ status: 'ENROUTE', description: 'PRIVATE-STATUS' }));
         }

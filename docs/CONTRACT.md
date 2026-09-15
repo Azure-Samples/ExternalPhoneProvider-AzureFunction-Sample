@@ -99,9 +99,9 @@ nonblank strings. Supply the password explicitly to preserve leading zeros; it i
 from `message`. These values are forwarded unchanged as `voice.text2voice`, without a top-level
 `text` field. Missing or invalid speech returns `400` before credential lookup or provider HTTP.
 SMS continues to use `message`, and evaluation continues to skip provider-specific validation and I/O.
-Soprano authentication remains API-key-only (`X-MEMS-API-ID` and `X-MEMS-API-Key`, resolved from
-`soprano-api-id` and `soprano-api-key` in Key Vault). No provider JWT, OAuth flow, token endpoint,
-or bearer-token forwarding is added. Existing platform caller authentication is unchanged.
+Soprano always requires `X-MEMS-API-ID` and `X-MEMS-API-Key`, resolved from `soprano-api-id` and
+`soprano-api-key` in Key Vault. The optional provider JWT described below supplements these headers;
+it never replaces them. Existing platform caller authentication is unchanged.
 
 Use a speech language supported by the selected Soprano endpoint and account. On QA4, an API-key
 voice request using `en` returned HTTP `400` with error code `400101`; the same request structure
@@ -114,6 +114,98 @@ with form-encoded fields, `subAction=20`, and numeric language IDs (`1` is defau
 Its password fields are `beforePassword`, `passwordText`, and `afterPassword`. This adapter follows
 the reference integration's JSON `/messages/omnimsg` contract instead; do not mix the form API's
 language IDs, field names, or `ApiResponse.StatusCode` response format with this JSON interface.
+
+### Optional Soprano provider JWT
+
+**The Azure Function obtains the provider JWT from Entra. SAS supplies only the JWE delivery
+payload, not a Soprano token.** SAS still authenticates its HTTP call with a Function-audience token
+in `Authorization`, validated by Easy Auth. The outbound provider token is separate. A `providerJwt`
+field or provider-token header in the incoming request is ignored and never forwarded.
+
+For live Soprano SMS/Voice with `EPP_PROVIDER_JWT_ENABLED=true`, after checking the API-ID/key and
+provider URL, `ManagedIdentityCredential` uses `EPP_PROVIDER_MI_CLIENT_ID` to obtain an assertion for
+`api://AzureADTokenExchange/.default`. `ClientAssertionCredential` exchanges it in `EPP_PROVIDER_TENANT_ID`
+as `EPP_PROVIDER_APPLICATION_ID` for `EPP_PROVIDER_SCOPE`. Only the final application token is forwarded.
+The scope is the provider API's Application ID or Application ID URI plus `/.default`; there is no default.
+The provider identity must be an attached user-assigned identity. Key Vault's existing identity selection
+(`AZURE_CLIENT_ID`, or system-assigned when unset) is unchanged and independent.
+No application secret, additional vault secret, or manually signed JWT is required for token acquisition.
+Request `tenantId`, incoming Authorization, developer login, and the decryption key are never used to
+select or authenticate this identity. Provider API ID/key secrets remain mandatory.
+
+| Configuration / acquisition result | Soprano request |
+|---|---|
+| Flag missing, false, or unrecognized | API-ID/key only; no token acquisition |
+| Flag true; federation settings missing, identity unavailable, either token request fails, or result is unusable | API-ID/key only |
+| Flag true; usable token obtained from Entra | API-ID/key plus `Authorization: Bearer <access_token>` |
+| API ID or key missing | Fail before token acquisition or provider HTTP |
+
+Only the string `true`, case-insensitive with surrounding whitespace ignored, enables
+`EPP_PROVIDER_JWT_ENABLED`. It applies only to Soprano SMS and Voice. Evaluation mode still skips
+provider lookup, credentials, token acquisition, and provider HTTP. Live payloads keep `shutterMode: false`;
+Voice still uses the full `voice.text2voice` object with a provider-supported language such as `en-US`.
+
+Acquisition runs in [JavaScript `acquireToken`](../javascript/src/functions/providers/soprano.js),
+[Python `acquire_token`](../python/src/providers/soprano.py), and
+[.NET `AcquireTokenAsync`](../dotnet/Src/Providers/SopranoProvider.cs). All three use Azure Identity
+`ManagedIdentityCredential` plus `ClientAssertionCredential` and reuse both so the SDK handles token caching
+and refresh. Changing the provider tenant, calling application or managed identity creates new credentials. Each request passes its
+configured scope to the SDK, so cached tokens cannot be reused for a different resource. Tokens
+must have more than 30 seconds of remaining lifetime. No disk token cache is enabled, and the
+application does not create service principals or credentials. Azure manages identity credentials.
+
+JavaScript SDK calls in each stage receive a 2.5-second cancellation signal; .NET passes its
+2.5-second cancellation token into both stages. Configurable SDK transport
+retries are disabled. Python uses 2.5-second connect/read inactivity timeouts, not a total wall-clock
+deadline. Managed-identity discovery can involve additional SDK operations. Provider-key lookup and
+the provider send have separate timeout behavior; there is no end-to-end 2.5-second guarantee.
+Cold-start and uncached identity latency must be measured before production use. JavaScript suppresses
+Azure SDK log output only in the asynchronous token-request context. Python applies a context-local
+Azure Identity/Core/MSAL filter to configured logging handlers, including SDK-specific handlers.
+Both preserve unrelated requests' logs; .NET disables credential diagnostics. Configure logging sinks
+before handling requests. Keep platform/proxy body tracing disabled; never log tokens, credential
+exceptions, or provider bodies.
+
+**Entra issues and signs the JWT; the Function does not create or sign it.** The Function checks for a
+nonempty token and usable expiry metadata. It treats the access token as opaque, without custom
+JWT parsing, alphabet checks, or regex. The SDK obtains tokens through Azure's managed-identity
+mechanism, so the Function does not need a second inbound-style JWT validator for them.
+Soprano must validate signature, issuer, audience, expiry, and caller claims at its boundary.
+If Soprano rejects the combined credentials, the Function does not resend with API keys alone.
+API-key fallback occurs only before the one provider submission when no usable token was acquired.
+
+The supplied QA4 guide describes an Entra ID v2.0 application token with:
+
+| Claim / token request | QA4 requirement |
+|---|---|
+| `aud` | `32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe` |
+| `iss` | `https://login.microsoftonline.com/{tenantId}/v2.0` for the onboarded tenant |
+| `azp` | The calling app's `EPP_PROVIDER_APPLICATION_ID`, authorized by Soprano for the intended account; not the managed identity's Client ID |
+| Scope requested by the Function | `32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe/.default` |
+
+Configure `EPP_PROVIDER_ENDPOINT=https://qa4.devops.sopranodesign.com/cgpapi`; the adapter appends
+`/messages/omnimsg`. Use an account allowed to send both credentials. The guide does not establish
+whether Soprano accepts API keys alone on every account, or which identity takes precedence when
+both are present. Verify that behavior with Soprano before enabling the flag. The resource app controls
+the access-token version; requesting `/.default` does not guarantee a v2 token. Agree on the issuer,
+audience, token version, calling Application ID, API app-role assignments, and provider-side
+account mapping with Soprano. Key Vault RBAC grants do not grant application permissions to the API.
+
+**Federated trust is required.** The calling app registration and user-assigned identity must share
+the same home tenant. The app's federated credential trusts that tenant's v2 issuer, the identity's
+Object (principal) ID as subject, and `api://AzureADTokenExchange` as audience. For a different provider
+tenant, the calling app must be multitenant and its service principal provisioned and authorized there.
+This exchange does not require the provider API to be provisioned in the identity's home tenant.
+System-assigned identities are not supported as the federated credential in this documented flow.
+See [Microsoft's federation guidance](https://learn.microsoft.com/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity).
+The earlier live client-secret tests do not verify this flow. New live verification must demonstrate
+token attachment, the expected issuer/audience/Application ID, and provider acceptance after onboarding.
+
+Service-principal-per-customer provisioning remains an onboarding decision to agree with Soprano;
+this code does not create service principals or assume that `azp` identifies a Marketplace purchase.
+Marketplace subscription ID is not a standard Entra access-token claim. Do not substitute the Azure
+subscription ID or tenant ID. Agree on an explicit provider-side account/subscription mapping or
+supported claim extension before relying on JWTs for metered billing.
 
 JWE provides payload confidentiality and integrity, **not SAS caller authentication**. Anyone with the
 public key can encrypt a request. The nonce acknowledges decryption; it is not an authentication
@@ -221,10 +313,15 @@ Set by provisioning. **Identical names across all languages.**
 | `EPP_PROVIDER_ENDPOINT` | absolute HTTPS base URL with a hostname, port 1–65535, and no userinfo or fragment; the final adapter URL is also validated; redirects are not followed |
 | `EPP_PROVIDER_ACCOUNT_NAME` | sender/source only when required by the selected adapter |
 | `EPP_PROVIDER_TIMEOUT_MS` | trimmed ASCII decimal milliseconds; default 1500 for missing/invalid/nonpositive values; capped at 2500. Not a whole-invocation deadline |
+| `EPP_PROVIDER_JWT_ENABLED` | Optional, default off. Soprano only: exchange a managed-identity assertion for a provider-tenant application token when `true`; API-ID/key headers remain mandatory |
+| `EPP_PROVIDER_TENANT_ID` | Provider/resource tenant for the final application token |
+| `EPP_PROVIDER_APPLICATION_ID` | Application (client) ID of the calling app registration, not the provider API's ID |
+| `EPP_PROVIDER_MI_CLIENT_ID` | Client ID of the attached user-assigned managed identity trusted by the calling app's federated credential; distinct from its Object (principal) ID |
+| `EPP_PROVIDER_SCOPE` | Required for JWT acquisition. Provider API Application ID or Application ID URI plus `/.default`; no default |
 | `EPP_DECRYPTION_KEY_PEM` | single RSA private key for JWE decryption, PEM or base64-encoded PEM; use a Key Vault secret reference in Azure, not a plaintext private key in shared settings |
 | `EPP_ENCRYPTION_KEY_ID` | optional expected JWE `kid`; after successful decryption, a mismatch emits only `encryption_key_id_mismatch`. Advisory, not a key selector or authentication check |
 | `KEY_VAULT_URL` | Key Vault URI (provider API keys) |
-| `AZURE_CLIENT_ID` | set for a user-assigned managed identity |
+| `AZURE_CLIENT_ID` | Optional Client ID of the attached user-assigned identity for Key Vault only; empty/unset uses system-assigned identity. Independent of `EPP_PROVIDER_MI_CLIENT_ID` |
 
 Provider credential values live in **Key Vault**, under the names in the selected adapter's manifest,
 and are fetched via **managed identity** with the *Key Vault Secrets User* role. Do not put credential
@@ -271,6 +368,9 @@ subscription activation and changing tenant policy belong to provisioning, not t
   correlation ID's SHA256 hash, HTTP status,
   elapsed milliseconds and evaluation flag. Original wire correlation IDs and the required nonce
   echo remain unchanged. Hashes are pseudonymous, not anonymous; restrict log access and retention.
+  Before a live Soprano submission, the engine also logs `SopranoAuth=api-key` or
+  `SopranoAuth=api-key+jwt` with the same correlation hash, based on the actual outgoing headers.
+  This distinguishes token attachment from API-key fallback; it does not expose token values or claims.
   A configured encryption-key-ID mismatch adds a fixed warning, never either key ID or the JWE header.
   Disable SDK, platform and proxy body tracing separately.
 - **Platform authentication only** — enable Easy Auth with `requireAuthentication=true`,

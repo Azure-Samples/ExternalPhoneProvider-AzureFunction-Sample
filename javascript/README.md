@@ -51,6 +51,13 @@ Add `EPP_PROVIDER_ACCOUNT_NAME` and any adapter-specific options only when requi
 `EPP_PROVIDER_TIMEOUT_MS` is a string such as `"1500"`. Replace placeholders; do not put API keys in
 this file. See the [complete variable table](../README.md#configure-environment-variables).
 
+Optional Soprano JWT acquisition uses `ManagedIdentityCredential` and `ClientAssertionCredential`, not an application secret.
+Set `EPP_PROVIDER_SCOPE` to the provider API's Application ID or URI plus `/.default`, and enable
+`EPP_PROVIDER_JWT_ENABLED` only after provider authorization. Configure `EPP_PROVIDER_TENANT_ID`,
+`EPP_PROVIDER_APPLICATION_ID`, and `EPP_PROVIDER_MI_CLIENT_ID` for the federated exchange.
+`AZURE_CLIENT_ID` remains independent for Key Vault. See [JWT setup](../README.md#soprano-jwt-setup)
+for tenant requirements. Local tests mock the identity SDK; CLI login is not a token fallback.
+
 Core Tools copies `Values` into the process environment; direct Node processes and the offline tests
 do **not** automatically load this file. [AppConfig](src/functions/config.js) reads `process.env`
 once per call to `readConfig()`. Restart the host after changing settings. Configure any local host

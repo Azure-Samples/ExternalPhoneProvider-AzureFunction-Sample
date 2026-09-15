@@ -330,16 +330,31 @@ async function sendViaProvider(providerEntry, dispatch, options) {
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider credential unavailable', dispatch, requestId) };
     }
 
-    const providerRequest = adapter.buildRequest({
-        channel,
-        endpoint: endpointBaseUrl,
-        dispatch,
-        credential,
-        env: config.env,
-    });
+    if (adapter.acquireToken) {
+        const token = await adapter.acquireToken(config.env);
+        Object.defineProperty(credential, 'token', { value: token });
+    }
+
+    let providerRequest;
+    try {
+        providerRequest = adapter.buildRequest({
+            channel,
+            endpoint: endpointBaseUrl,
+            dispatch,
+            credential,
+            env: config.env,
+        });
+    } catch {
+        return { httpStatus: 502, body: failBody(providerId, channel, 'provider request failed', dispatch, requestId) };
+    }
 
     if (!isValidProviderUrl(providerRequest.url)) {
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider request URL invalid', dispatch, requestId) };
+    }
+
+    if (providerId === 'soprano') {
+        const correlationHash = crypto.createHash('sha256').update(String(dispatch.correlationId || '')).digest('hex').slice(0, 16);
+        options.log?.(`[EPP] SopranoAuth=${providerRequest.headers.Authorization ? 'api-key+jwt' : 'api-key'} CorrelationId=${correlationHash}`);
     }
 
     const timeoutMilliseconds = parseProviderTimeout(config.providerTimeoutMs);
@@ -382,7 +397,7 @@ async function sendViaProvider(providerEntry, dispatch, options) {
     };
 }
 
-async function dispatchOtp(dispatch, { config = readConfig(), requestId } = {}) {
+async function dispatchOtp(dispatch, { config = readConfig(), requestId, log } = {}) {
     const providerEntry = getProvider(config.providerName);
     if (!providerEntry) {
         return {
@@ -390,7 +405,7 @@ async function dispatchOtp(dispatch, { config = readConfig(), requestId } = {}) 
             body: { status: 'error', reason: 'unknown provider', requestId },
         };
     }
-    return sendViaProvider(providerEntry, dispatch, { config, requestId });
+    return sendViaProvider(providerEntry, dispatch, { config, requestId, log });
 }
 
 module.exports = {

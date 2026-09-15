@@ -51,6 +51,13 @@ Add `EPP_PROVIDER_ACCOUNT_NAME` and adapter-specific options only when required.
 under the adapter manifest's Key Vault secret names, not in local settings. See the
 [complete variable table](../README.md#configure-environment-variables).
 
+Optional Soprano JWT acquisition uses `ManagedIdentityCredential` and `ClientAssertionCredential`, not an application secret.
+Set `EPP_PROVIDER_SCOPE` to the provider API's Application ID or URI plus `/.default`, and enable
+`EPP_PROVIDER_JWT_ENABLED` only after provider authorization. Configure `EPP_PROVIDER_TENANT_ID`,
+`EPP_PROVIDER_APPLICATION_ID`, and `EPP_PROVIDER_MI_CLIENT_ID` for the federated exchange.
+`AZURE_CLIENT_ID` remains independent for Key Vault. See [JWT setup](../README.md#soprano-jwt-setup)
+for tenant requirements. Local tests mock the identity SDK; CLI login is not a token fallback.
+
 Core Tools loads `Values` into environment variables. [AppConfig.Read](Src/AppConfig.cs) reads them
 through `IEnv`; direct worker execution and unit tests do not automatically load local settings.
 Restart the host after edits. Configure local host storage other than Azurite separately; do not copy

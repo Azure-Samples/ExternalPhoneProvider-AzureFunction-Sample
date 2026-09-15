@@ -1,5 +1,7 @@
 import base64
+import hashlib
 import json
+import logging
 import os
 from urllib.parse import urlsplit
 
@@ -279,12 +281,21 @@ class DispatchEngine:
         if not _valid_provider_url(endpoint):
             return 502, self._fail_body(provider_id, channel, "invalid provider endpoint", dispatch, request_id)
 
+        acquire_token = getattr(adapter, "acquire_token", None)
+        if callable(acquire_token):
+            credential["token"] = acquire_token(config.env)
+
         try:
             provider_request = adapter.build_request(channel, endpoint, dispatch, credential, config.env)
         except Exception:
             return 502, self._fail_body(provider_id, channel, "provider request failed", dispatch, request_id)
         if not _valid_provider_url(provider_request.get("url")):
             return 502, self._fail_body(provider_id, channel, "invalid provider request URL", dispatch, request_id)
+
+        if provider_id == "soprano":
+            correlation_hash = hashlib.sha256(str(dispatch.correlation_id or "").encode()).hexdigest()[:16]
+            auth_mode = "api-key+jwt" if provider_request["headers"].get("Authorization") else "api-key"
+            logging.info("[EPP] SopranoAuth=%s CorrelationId=%s", auth_mode, correlation_hash)
 
         timeout_ms = _provider_timeout_ms(config.provider_timeout_ms)
         response = None

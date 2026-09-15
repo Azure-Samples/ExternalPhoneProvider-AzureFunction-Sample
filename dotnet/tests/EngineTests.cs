@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Azure.Core;
 using Epp.Otp.Providers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -18,6 +19,7 @@ public class EngineTests
     private const string Kid = "private-jwe-kid";
     private const string Correlation = "private-correlation";
     private const string PrivateError = "private key/provider error: +15551234567 code 918273";
+    private const string ProviderToken = "eyJhbGciOiJSUzI1NiJ9.eyJ2ZXIiOiIyLjAifQ.c2lnbmF0dXJl";
 
     [Fact]
     public async Task HandlerUsesInjectedConfigAwaitsAcceptanceAndKeepsLogsPrivate()
@@ -79,6 +81,157 @@ public class EngineTests
         var voice = new TextToVoice("", "001234", "en-US");
         Assert.True(voice.IsComplete);
         Assert.Equal("TextToVoice", voice.ToString());
+    }
+
+    [Theory]
+    [InlineData("sms", "true")]
+    [InlineData("voice", " TRUE ")]
+    public async Task OptionalProviderJwtKeepsApiKeysAndStaysOutOfBodyAndLogs(string channel, string? flag)
+    {
+        using var rig = new HandlerRig();
+        rig.Env["EPP_PROVIDER_JWT_ENABLED"] = flag;
+        var changes = JsonSerializer.SerializeToElement(new { providerJwt = "FORGED-PAYLOAD",
+            textToVoice = new { beforePasswordText = "Code", password = "001234", language = "en-US" } });
+        AssertAccepted(await rig.Invoke(channel: channel, deliveryOverrides: changes));
+        Assert.Equal("private-api-id", rig.Http.Headers["X-MEMS-API-ID"]);
+        Assert.Equal("private-api-key", rig.Http.Headers["X-MEMS-API-Key"]);
+        Assert.Equal("Bearer " + ProviderToken, rig.Http.Headers["Authorization"]);
+        Assert.DoesNotContain(ProviderToken, rig.Http.Body! + string.Join("", rig.Log.Messages));
+        Assert.DoesNotContain("FORGED-PAYLOAD", rig.Http.Body!);
+        Assert.DoesNotContain("FORGED-INBOUND", JsonSerializer.Serialize(rig.Http.Headers));
+        var context = DeliveryContext.FromPayload(changes);
+        Assert.DoesNotContain("FORGED-PAYLOAD", JsonSerializer.Serialize(context));
+        var credential = new ProviderCredential("apiKey", "key", "id", ProviderToken);
+        Assert.DoesNotContain(ProviderToken, credential.ToString() + JsonSerializer.Serialize(credential));
+        if (rig.Tokens.Calls > 0)
+        {
+            Assert.Equal(rig.Env["EPP_PROVIDER_SCOPE"], Assert.Single(rig.Tokens.Scopes!));
+            Assert.True(rig.Tokens.HasCancellation);
+        }
+        Assert.Equal(2, rig.Secrets.Calls);
+    }
+
+    [Fact]
+    public async Task DisabledJwtIgnoresInboundTokenAndOtherProviders()
+    {
+        using var rig = new HandlerRig();
+        foreach (var flag in new string?[] { null, "false", "1", "yes" })
+        {
+            rig.Env["EPP_PROVIDER_JWT_ENABLED"] = flag;
+            AssertAccepted(await rig.Invoke(deliveryOverrides: JsonSerializer.SerializeToElement(new { providerJwt = "not-a-jwt" })));
+            Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
+        }
+        rig.Env["EPP_PROVIDER_NAME"] = "infobip";
+        rig.Env["EPP_PROVIDER_JWT_ENABLED"] = "true";
+        rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"messages\":[{\"status\":{\"groupName\":\"PENDING\"}}]}"));
+        AssertAccepted(await rig.Invoke(deliveryOverrides: JsonSerializer.SerializeToElement(new { providerJwt = "not-a-jwt" })));
+        Assert.Equal("App private-api-key", rig.Http.Headers["Authorization"]);
+        Assert.DoesNotContain("not-a-jwt", rig.Http.Body!);
+        Assert.Equal(0, rig.Tokens.Calls);
+    }
+
+    [Fact]
+    public async Task ManagedIdentitySelectionReusesCredentialsWithoutClientSecrets()
+    {
+        using var rig = new HandlerRig();
+        rig.Env["EPP_PROVIDER_JWT_ENABLED"] = "true";
+        AssertAccepted(await rig.Invoke());
+        Assert.Equal(rig.Env["EPP_PROVIDER_MI_CLIENT_ID"], Assert.Single(rig.TokenIdentities));
+        Assert.Equal("api://AzureADTokenExchange/.default", Assert.Single(rig.Assertions.Scopes!));
+        Assert.True(rig.Assertions.HasCancellation);
+        AssertAccepted(await rig.Invoke());
+        Assert.Single(rig.TokenIdentities);
+        rig.Env["EPP_PROVIDER_MI_CLIENT_ID"] = "44444444-4444-4444-8444-444444444444";
+        AssertAccepted(await rig.Invoke());
+        Assert.Equal(2, rig.TokenIdentities.Count);
+        Assert.Equal(rig.Env["EPP_PROVIDER_MI_CLIENT_ID"], rig.TokenIdentities[1]);
+        rig.Env["EPP_PROVIDER_SCOPE"] = "api://another-provider/.default";
+        AssertAccepted(await rig.Invoke());
+        Assert.Equal(2, rig.TokenIdentities.Count);
+        Assert.Equal(rig.Env["EPP_PROVIDER_SCOPE"], Assert.Single(rig.Tokens.Scopes!));
+        Assert.Equal(8, rig.Secrets.Calls);
+        Assert.DoesNotContain("private-exchange-assertion", rig.Http.Body! + string.Join("", rig.Http.Headers.Values) + string.Join("", rig.Log.Messages));
+    }
+
+    [Fact]
+    public async Task MissingFederationSettingsAndUnavailableAssertionsNeverAttachAToken()
+    {
+        using var rig = new HandlerRig();
+        rig.Env["EPP_PROVIDER_JWT_ENABLED"] = "true";
+        foreach (var name in new[] { "EPP_PROVIDER_SCOPE", "EPP_PROVIDER_TENANT_ID", "EPP_PROVIDER_APPLICATION_ID", "EPP_PROVIDER_MI_CLIENT_ID" })
+        {
+            var saved = rig.Env[name];
+            rig.Env[name] = " ";
+            AssertAccepted(await rig.Invoke());
+            Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
+            rig.Env[name] = saved;
+        }
+        Assert.Empty(rig.TokenIdentities);
+        rig.Assertions.Token = "";
+        AssertAccepted(await rig.Invoke());
+        Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
+        rig.Assertions.Token = "private-exchange-assertion";
+        rig.Assertions.ExpiresOn = DateTimeOffset.UtcNow.AddSeconds(-1);
+        AssertAccepted(await rig.Invoke());
+        Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
+        rig.Assertions.Error = new InvalidOperationException("PRIVATE-ASSERTION-ERROR");
+        AssertAccepted(await rig.Invoke());
+        Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
+        Assert.DoesNotContain("PRIVATE-ASSERTION-ERROR", string.Join("", rig.Log.Messages));
+    }
+
+    [Fact]
+    public async Task UnavailableAcquiredTokensFallBackAndEvaluationSkipsEntra()
+    {
+        using var rig = new HandlerRig();
+        foreach (var token in new[] { "", " " })
+        {
+            rig.Tokens.Token = token;
+            var changes = JsonSerializer.SerializeToElement(new { providerJwt = ProviderToken });
+            rig.Env["EPP_PROVIDER_JWT_ENABLED"] = "true";
+            var calls = rig.Http.Calls;
+            var secretCalls = rig.Secrets.Calls;
+            var tokenCalls = rig.Tokens.Calls;
+            AssertAccepted(await rig.Invoke("evaluation", deliveryOverrides: changes));
+            Assert.Equal(secretCalls, rig.Secrets.Calls);
+            Assert.Equal(tokenCalls, rig.Tokens.Calls);
+            AssertAccepted(await rig.Invoke(deliveryOverrides: changes));
+            Assert.Equal(calls + 1, rig.Http.Calls);
+            Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
+            rig.Env["EPP_PROVIDER_JWT_ENABLED"] = "false";
+            AssertAccepted(await rig.Invoke(deliveryOverrides: changes));
+            Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
+        }
+        rig.Env["EPP_PROVIDER_JWT_ENABLED"] = "true";
+        rig.Tokens.Token = "opaque-access-token-from-entra";
+        AssertAccepted(await rig.Invoke());
+        Assert.Equal("Bearer opaque-access-token-from-entra", rig.Http.Headers["Authorization"]);
+        rig.Tokens.Token = ProviderToken;
+        rig.Tokens.ExpiresOn = DateTimeOffset.UtcNow.AddSeconds(-10);
+        AssertAccepted(await rig.Invoke());
+        Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
+        rig.Tokens.Error = new InvalidOperationException("PRIVATE-TOKEN-ERROR");
+        AssertAccepted(await rig.Invoke());
+        Assert.DoesNotContain("PRIVATE-TOKEN-ERROR", string.Join("", rig.Log.Messages));
+    }
+
+    [Fact]
+    public async Task ProviderJwtCannotReplaceMissingKeysAndAuthFailureDoesNotRetry()
+    {
+        using var rig = new HandlerRig();
+        rig.Env["EPP_PROVIDER_JWT_ENABLED"] = "true";
+        var changes = JsonSerializer.SerializeToElement(new { providerJwt = ProviderToken });
+        rig.Secrets.Identity = "";
+        AssertFailure(rig, await rig.Invoke(deliveryOverrides: changes), 502);
+        rig.Secrets.Identity = "private-api-id";
+        rig.Secrets.Secret = "";
+        AssertFailure(rig, await rig.Invoke(deliveryOverrides: changes), 502);
+        Assert.Equal(0, rig.Http.Calls);
+        rig.Secrets.Secret = "private-api-key";
+        rig.Http.Respond = _ => Task.FromResult(Json(401, "{\"status\":\"REJECTED\"}"));
+        AssertFailure(rig, await rig.Invoke(deliveryOverrides: changes), 401);
+        Assert.Equal(1, rig.Http.Calls);
+        Assert.DoesNotContain(ProviderToken, string.Join("", rig.Log.Messages));
     }
 
     [Fact]
@@ -264,6 +417,9 @@ public class EngineTests
         public TestSecrets Secrets { get; } = new();
         public TestHttp Http { get; } = new();
         public TestKeys Keys { get; } = new();
+        public TestTokenCredential Tokens { get; } = new();
+        public TestTokenCredential Assertions { get; } = new() { Token = "private-exchange-assertion" };
+        public List<string?> TokenIdentities { get; } = new();
         public CapturingLogger Log { get; } = new();
         public HandlerRig()
         {
@@ -272,9 +428,23 @@ public class EngineTests
                 ["EPP_PROVIDER_NAME"] = "soprano",
                 ["EPP_PROVIDER_ENDPOINT"] = "https://provider.example/cgpapi",
                 ["EPP_PROVIDER_TIMEOUT_MS"] = "2500",
+                ["EPP_PROVIDER_SCOPE"] = "api://provider-application-id/.default",
+                ["EPP_PROVIDER_TENANT_ID"] = "11111111-1111-4111-8111-111111111111",
+                ["EPP_PROVIDER_APPLICATION_ID"] = "22222222-2222-4222-8222-222222222222",
+                ["EPP_PROVIDER_MI_CLIENT_ID"] = "33333333-3333-4333-8333-333333333333",
             };
             var registry = new ProviderRegistry(new IProviderAdapter[]
-                { new InfobipProvider(), new TelesignProvider(), new SopranoProvider(), new SinchProvider() });
+                { new InfobipProvider(), new TelesignProvider(), new SopranoProvider(identity =>
+                    {
+                        TokenIdentities.Add(identity);
+                        return Assertions;
+                    }, (tenant, applicationId, assertion) =>
+                    {
+                        Assert.Equal(Env["EPP_PROVIDER_TENANT_ID"], tenant);
+                        Assert.Equal(Env["EPP_PROVIDER_APPLICATION_ID"], applicationId);
+                        Tokens.GetAssertion = assertion;
+                        return Tokens;
+                    }), new SinchProvider() });
             _function = new SendOtp(new DispatchEngine(registry, Secrets, Http, Env),
                 new JweDecryptor(Keys), Env, Log);
         }
@@ -301,9 +471,34 @@ public class EngineTests
             request.Method = "POST";
             request.ContentType = "application/json";
             request.Body = stream;
+            request.Headers.Authorization = "Bearer FORGED-INBOUND";
             return Assert.IsAssignableFrom<ObjectResult>(await _function.Run(request));
         }
         public void Dispose() { Keys.Dispose(); Http.Dispose(); }
+    }
+
+    private sealed class TestTokenCredential : TokenCredential
+    {
+        public int Calls { get; private set; }
+        public string Token { get; set; } = ProviderToken;
+        public DateTimeOffset ExpiresOn { get; set; } = DateTimeOffset.UtcNow.AddHours(1);
+        public string[]? Scopes { get; private set; }
+        public bool HasCancellation { get; private set; }
+        public Exception? Error { get; set; }
+        public Func<CancellationToken, Task<string>>? GetAssertion { get; set; }
+        public override AccessToken GetToken(TokenRequestContext context, CancellationToken cancellation)
+        {
+            Calls++;
+            Scopes = context.Scopes;
+            HasCancellation = cancellation.CanBeCanceled;
+            if (Error is not null) throw Error;
+            return new AccessToken(Token, ExpiresOn);
+        }
+        public override async ValueTask<AccessToken> GetTokenAsync(TokenRequestContext context, CancellationToken cancellation)
+        {
+            if (GetAssertion is not null) Assert.Equal("private-exchange-assertion", await GetAssertion(cancellation));
+            return GetToken(context, cancellation);
+        }
     }
 
     private sealed class TestSecrets : ISecretResolver

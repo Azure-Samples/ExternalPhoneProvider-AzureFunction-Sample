@@ -17,6 +17,33 @@ in code or app settings. Grant the Function's managed identity *Key Vault Secret
 appropriate secret or vault scope. Confirm that the endpoint and credentials belong to the same
 account and environment. Individual API contracts stay in the adapters.
 
+For optional Soprano JWT authentication, the **Function requests the token from Entra**; SAS does
+not provide it in the JWE. It exchanges a managed-identity assertion, with no application client secret:
+
+1. Attach the trusted user-assigned identity and set `EPP_PROVIDER_MI_CLIENT_ID` to its Client ID.
+	Keep the existing Key Vault identity (`AZURE_CLIENT_ID` or system-assigned) and API ID/key secrets.
+2. Configure or reuse a federated credential on the calling app registration in the identity's home
+	tenant. Trust its v2 issuer, identity Object (principal) ID as subject, and `api://AzureADTokenExchange`
+	as audience. The calling app must be multitenant and authorized in a different provider tenant.
+3. Set `EPP_PROVIDER_TENANT_ID` to the provider tenant and `EPP_PROVIDER_APPLICATION_ID` to the calling
+	app's Application ID. Set `EPP_PROVIDER_SCOPE` to the provider API's Application ID or URI plus `/.default`.
+	QA4 uses `32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe/.default`; the code has no default scope.
+4. Set `EPP_PROVIDER_JWT_ENABLED=true` to enable acquisition. Leave it off for API-key-only delivery.
+	Missing scope or token failure falls back to API keys, so confirm this policy with Soprano and
+	verify the request's `SopranoAuth=api-key+jwt` log during live JWT testing.
+
+The first token is the managed-identity assertion for `api://AzureADTokenExchange/.default`. The second
+is the application token issued in the provider tenant. Only that second token is sent to Soprano.
+The provider must accept the calling application's identity; Key Vault RBAC is unrelated to this trust.
+
+These settings go in the Azure Function App environment or `Values` in private local settings.
+There is no additional Key Vault secret for JWT acquisition. Never store an access token in settings.
+`AZURE_CLIENT_ID` selects Key Vault's identity; `EPP_PROVIDER_MI_CLIENT_ID` selects federation's identity. Locally, mock
+the identity SDK for offline tests; CLI login cannot substitute for an Azure managed-identity endpoint.
+An injected local API-key resolver alone does not enable JWT acquisition.
+See the [provider JWT contract](CONTRACT.md#optional-soprano-provider-jwt) for token flow, caching,
+fallback, QA4 claims, and the account/billing questions still to agree with Soprano.
+
 ### Setup script compatibility
 
 The Preview 1 setup script creates the encryption-key secret, not the selected provider's API

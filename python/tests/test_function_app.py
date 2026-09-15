@@ -8,11 +8,13 @@ from threading import Event
 from unittest.mock import Mock
 
 import azure.functions as func
+from azure.core.credentials import AccessToken
 import pytest
 from jwcrypto import jwe, jwk
 
 import function_app
 import src.dispatch as dispatch_module
+import src.providers.soprano as soprano_module
 
 _KEY = jwk.JWK.generate(kty="RSA", size=2048)
 _PRIVATE_PEM = _KEY.export_to_pem(private_key=True, password=None).decode()
@@ -38,6 +40,8 @@ def _isolate(monkeypatch):
     )
     monkeypatch.setattr(function_app, "_engine", engine)
     monkeypatch.setattr(dispatch_module.requests, "request", Mock())
+    monkeypatch.setattr(function_app._registry.get("soprano"), "_credential", None)
+    monkeypatch.setattr(soprano_module, "ManagedIdentityCredential", Mock(side_effect=AssertionError("Unexpected token request")))
 
 
 def _request(body, headers=None):
@@ -181,11 +185,88 @@ def test_live_acceptance_waits_and_preserves_wire_data_but_not_plaintext_logs(mo
     assert wire["voice"] == {"text2voice": speech}
     assert "text" not in wire and wire["messageTypes"] == ["voice"] and wire["correlationId"] == _CORRELATION
     summary = json.loads(caplog.records[-1].getMessage().removeprefix("[EPP] result "))
-    assert len(caplog.records) == 1
+    assert len(caplog.records) == 2
+    assert caplog.records[0].getMessage() == "[EPP] SopranoAuth=api-key CorrelationId=" + summary["correlationId"]
     assert set(summary) == {"requestId", "correlationId", "httpStatus", "elapsedMs", "evaluation"}
     assert summary["correlationId"] == hashlib.sha256(_CORRELATION.encode()).hexdigest()[:16]
     for private in (_NONCE, _PHONE, _MESSAGE, "123456", "001234", _CORRELATION, "wire-message", "test-key"):
         assert private not in caplog.text
+
+
+@pytest.mark.parametrize("channel", [1, 2])
+def test_soprano_jwt_is_acquired_by_the_function_not_the_sas_payload(monkeypatch, caplog, channel):
+    caplog.set_level(logging.INFO)
+    token = "eyJhbGciOiJSUzI1NiJ9.eyJ2ZXIiOiIyLjAifQ.c2lnbmF0dXJl"
+    context = {**_CONTEXT, "providerJwt": "FORGED-PAYLOAD",
+        "textToVoice": {"beforePasswordText": "Code", "password": "001234", "language": "en-US"}}
+    send = dispatch_module.requests.request
+    send.return_value = Mock(status_code=201, json=Mock(return_value={"status": "ENROUTE"}))
+    function_app._engine.env["EPP_PROVIDER_SCOPE"] = "api://provider-application-id/.default"
+    function_app._engine.env.update(EPP_PROVIDER_TENANT_ID="11111111-1111-4111-8111-111111111111",
+        EPP_PROVIDER_APPLICATION_ID="22222222-2222-4222-8222-222222222222",
+        EPP_PROVIDER_MI_CLIENT_ID="33333333-3333-4333-8333-333333333333")
+    def exchange(*args, **kwargs):
+        assert factory.call_args.args[2]() == "PRIVATE-EXCHANGE-ASSERTION"
+        return AccessToken(token, soprano_module.time.time() + 3600)
+    get_token = Mock(side_effect=exchange)
+    factory = Mock(return_value=Mock(get_token=get_token))
+    monkeypatch.setattr(soprano_module, "ClientAssertionCredential", factory)
+    monkeypatch.setattr(soprano_module, "ManagedIdentityCredential", Mock(return_value=Mock(get_token=Mock(
+        return_value=AccessToken("PRIVATE-EXCHANGE-ASSERTION", soprano_module.time.time() + 3600)))))
+    for flag in ("false", "true"):
+        function_app._engine.env["EPP_PROVIDER_JWT_ENABLED"] = flag
+        response = _HANDLER(_request(_envelope(channel=channel, encryptedDeliveryContext=_encrypt(context=context)),
+                                    {"Authorization": "Bearer FORGED-INBOUND"}))
+        assert response.status_code == 200
+        sent = send.call_args.kwargs
+        assert sent["headers"].get("Authorization") == ("Bearer " + token if flag == "true" else None)
+        auth_mode = "api-key+jwt" if flag == "true" else "api-key"
+        assert f"[EPP] SopranoAuth={auth_mode} CorrelationId=" in caplog.records[-2].getMessage()
+        assert sent["headers"]["X-MEMS-API-ID"] == sent["headers"]["X-MEMS-API-Key"] == "test-key"
+        assert token not in sent["data"] + response.get_body().decode() + caplog.text
+        assert "PRIVATE-EXCHANGE-ASSERTION" not in str(sent) + response.get_body().decode() + caplog.text
+        assert "FORGED" not in str(sent)
+        if flag == "false":
+            get_token.assert_not_called()
+    context.pop("providerJwt")
+    response = _HANDLER(_request(_envelope(channel=channel, providerJwt=token, encryptedDeliveryContext=_encrypt(context=context)),
+                                {"Authorization": "Bearer FORGED-INBOUND", "x-provider-jwt": token}))
+    assert response.status_code == 200 and send.call_args.kwargs["headers"]["Authorization"] == "Bearer " + token
+    factory.assert_called_once()
+    assert get_token.call_count == 2
+    get_token.assert_called_with(function_app._engine.env["EPP_PROVIDER_SCOPE"], logging_enable=False)
+    assert all(call.args[0] in ("soprano-api-id", "soprano-api-key") for call in function_app._engine.secrets.resolve.call_args_list)
+    send.reset_mock()
+    send.return_value = Mock(status_code=401, json=Mock(return_value={"status": "REJECTED"}))
+    response = _HANDLER(_request(_envelope(channel=channel, encryptedDeliveryContext=_encrypt(context=context))))
+    assert response.status_code == 401 and "nonce" not in json.loads(response.get_body())
+    send.assert_called_once()
+    for missing in ("soprano-api-id", "soprano-api-key"):
+        function_app._engine.secrets.resolve.side_effect = lambda name: "" if name == missing else "test-key"
+        get_token.reset_mock()
+        response = _HANDLER(_request(_envelope(channel=channel, encryptedDeliveryContext=_encrypt(context=context))))
+        assert response.status_code == 502
+        get_token.assert_not_called()
+        send.assert_called_once()
+    function_app._engine.secrets.resolve.side_effect = None
+    send.return_value = Mock(status_code=201, json=Mock(return_value={"status": "ENROUTE"}))
+    get_token.side_effect = RuntimeError("PRIVATE-TOKEN-ERROR")
+    response = _HANDLER(_request(_envelope(channel=channel, encryptedDeliveryContext=_encrypt(context=context))))
+    assert response.status_code == 200 and "Authorization" not in send.call_args.kwargs["headers"]
+    assert "PRIVATE-TOKEN-ERROR" not in caplog.text
+
+
+def test_soprano_evaluation_skips_token_acquisition_and_live_ignores_payload_tokens(monkeypatch):
+    function_app._engine.env["EPP_PROVIDER_JWT_ENABLED"] = "true"
+    for provider_jwt in (False, {}, "bad\r\nheader"):
+        compact = _encrypt(context={**_CONTEXT, "providerJwt": provider_jwt})
+        response = _HANDLER(_request(_envelope(mode=2, encryptedDeliveryContext=compact)))
+        assert response.status_code == 200
+        function_app._engine.secrets.resolve.assert_not_called()
+    response = _HANDLER(_request(_envelope(encryptedDeliveryContext=compact)))
+    assert response.status_code == 502 and "nonce" not in json.loads(response.get_body())
+    assert "Authorization" not in dispatch_module.requests.request.call_args.kwargs["headers"]
+    soprano_module.ManagedIdentityCredential.assert_not_called()
 
 
 def test_provider_failure_preserves_status_without_retry_or_nonce(monkeypatch):

@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { SecretClient } = require('@azure/keyvault-secrets');
+const { ManagedIdentityCredential, ClientAssertionCredential } = require('@azure/identity');
 const { AppConfig, readConfig } = require('../src/functions/config');
 const { DeliveryContext, TextToVoice, ParsedResponse } = require('../src/functions/models');
 const fixtures = require('../../tests/fixtures/contract.json');
@@ -109,6 +110,89 @@ test('Soprano Voice sends structured speech with API-key headers only', () => {
     assert.equal(inspect(textToVoice), '[TextToVoice]');
     assert.throws(() => getProvider('soprano').adapter.buildRequest({ ...input, channel: 'voice' }),
         /incomplete voice context/);
+});
+
+test('Soprano exchanges a reused managed identity assertion in the provider tenant without secrets', async (t) => {
+    const { acquireToken } = getProvider('soprano').adapter;
+    const token = 'opaque-access-token-from-entra';
+    const env = { EPP_PROVIDER_JWT_ENABLED: ' TRUE ', EPP_PROVIDER_SCOPE: 'api://provider-application-id/.default',
+        EPP_PROVIDER_TENANT_ID: '11111111-1111-4111-8111-111111111111',
+        EPP_PROVIDER_APPLICATION_ID: '22222222-2222-4222-8222-222222222222',
+        EPP_PROVIDER_MI_CLIENT_ID: '33333333-3333-4333-8333-333333333333' };
+    const getAssertion = t.mock.method(ManagedIdentityCredential.prototype, 'getToken', async () => ({
+        token: 'private-exchange-assertion', expiresOnTimestamp: Date.now() + 60000,
+    }));
+    const getToken = t.mock.method(ClientAssertionCredential.prototype, 'getToken', async function () {
+        assert.equal(await this.getAssertion(), 'private-exchange-assertion');
+        return { token, expiresOnTimestamp: Date.now() + 60000 };
+    });
+    t.mock.method(SecretClient.prototype, 'getSecret', () => assert.fail('token acquisition must not read Key Vault'));
+    for (const flag of [undefined, 'false', '1', 'yes', true]) {
+        assert.equal(await acquireToken({ ...env, EPP_PROVIDER_JWT_ENABLED: flag }), '');
+    }
+    for (const name of ['EPP_PROVIDER_SCOPE', 'EPP_PROVIDER_TENANT_ID', 'EPP_PROVIDER_APPLICATION_ID', 'EPP_PROVIDER_MI_CLIENT_ID']) {
+        for (const value of [undefined, '', ' ']) assert.equal(await acquireToken({ ...env, [name]: value }), '');
+    }
+    assert.equal(getToken.mock.callCount(), 0);
+    assert.equal(getAssertion.mock.callCount(), 0);
+    assert.equal(await acquireToken(env), token);
+    assert.equal(getToken.mock.calls[0].arguments[0], env.EPP_PROVIDER_SCOPE);
+    assert.ok(getToken.mock.calls[0].arguments[1].abortSignal instanceof AbortSignal);
+    const client = getToken.mock.calls[0].this;
+    assert.equal(client.tenantId, env.EPP_PROVIDER_TENANT_ID);
+    assert.equal(getAssertion.mock.calls[0].arguments[0], 'api://AzureADTokenExchange/.default');
+    assert.ok(getAssertion.mock.calls[0].arguments[1].abortSignal instanceof AbortSignal);
+    assert.equal(await acquireToken(env), token);
+    assert.equal(getToken.mock.calls[1].this, client);
+    assert.equal(getAssertion.mock.calls[0].this, getAssertion.mock.calls[1].this);
+    await acquireToken({ ...env, EPP_PROVIDER_MI_CLIENT_ID: '44444444-4444-4444-8444-444444444444' });
+    assert.notEqual(getToken.mock.calls[2].this, client);
+    await acquireToken({ ...env, EPP_PROVIDER_SCOPE: 'api://another-provider/.default' });
+    assert.equal(getToken.mock.calls[3].arguments[0], 'api://another-provider/.default');
+    for (const result of [null, { token: '', expiresOnTimestamp: Date.now() + 60000 },
+        { token: 'private-exchange-assertion', expiresOnTimestamp: Date.now() - 1000 }]) {
+        getAssertion.mock.mockImplementation(async () => result);
+        assert.equal(await acquireToken(env), '');
+    }
+    getAssertion.mock.mockImplementation(async () => { throw new Error('private assertion failure'); });
+    assert.equal(await acquireToken(env), '');
+    for (const result of [null, { token, expiresOnTimestamp: Date.now() - 1000 },
+        ...[undefined, null, false, {}, '', ' '].map(token => ({ token, expiresOnTimestamp: Date.now() + 60000 }))]) {
+        getToken.mock.mockImplementation(async () => result);
+        assert.equal(await acquireToken(env), '');
+    }
+    getToken.mock.mockImplementation(async () => { throw new Error('private Entra error'); });
+    assert.equal(await acquireToken(env), '');
+});
+
+test('Soprano token acquisition keeps SDK diagnostics private without muting other requests', async (t) => {
+    const { AzureLogger, createClientLogger, getLogLevel, setLogLevel } = require('@azure/logger');
+    const originalLevel = getLogLevel();
+    const output = [];
+    const sink = t.mock.method(AzureLogger, 'log', (...args) => output.push(inspect(args)));
+    const sdk = createClientLogger('identity');
+    setLogLevel('verbose');
+    t.mock.method(ClientAssertionCredential.prototype, 'getToken', async () => {
+        sdk.warning('PRIVATE SDK token error');
+        await Promise.resolve();
+        sdk.error('PRIVATE assertion details');
+        throw new Error('PRIVATE acquisition error');
+    });
+    try {
+        const pending = getProvider('soprano').adapter.acquireToken({ EPP_PROVIDER_JWT_ENABLED: 'true',
+            EPP_PROVIDER_SCOPE: 'api://provider/.default', EPP_PROVIDER_TENANT_ID: '11111111-1111-4111-8111-111111111111',
+            EPP_PROVIDER_APPLICATION_ID: '22222222-2222-4222-8222-222222222222',
+            EPP_PROVIDER_MI_CLIENT_ID: '33333333-3333-4333-8333-333333333333' });
+        sdk.warning('other-request-diagnostic');
+        assert.equal(await pending, '');
+        sdk.warning('after-token-request');
+        assert.ok(output.some(value => value.includes('other-request-diagnostic')));
+        assert.ok(output.some(value => value.includes('after-token-request')));
+        assert.equal(output.some(value => value.includes('PRIVATE')), false);
+    } finally {
+        setLogLevel(originalLevel);
+        sink.mock.restore();
+    }
 });
 
 test('Soprano Voice validates decrypted speech before secret lookup or HTTP', async (t) => {

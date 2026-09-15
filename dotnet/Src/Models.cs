@@ -39,7 +39,11 @@ public sealed record TextToVoice(
     public override string ToString() => nameof(TextToVoice);
 }
 
-public sealed record ProviderCredential(string Mode, string? Secret = null, string? Identity = null);
+public sealed record ProviderCredential(string Mode, string? Secret = null, string? Identity = null,
+    [property: JsonIgnore] string? Token = null)
+{
+    public override string ToString() => nameof(ProviderCredential);
+}
 
 public sealed record ProviderHttpRequest(string Url, string Method, Dictionary<string, string> Headers, string Body);
 

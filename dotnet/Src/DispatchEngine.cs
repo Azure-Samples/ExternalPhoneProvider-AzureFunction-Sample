@@ -217,12 +217,16 @@ public sealed class DispatchEngine
     private readonly IHttpClientFactory _httpFactory;
     private readonly IEnv _env;
 
-    public DispatchEngine(ProviderRegistry registry, ISecretResolver secrets, IHttpClientFactory httpFactory, IEnv? env = null)
+    private readonly Microsoft.Extensions.Logging.ILogger<DispatchEngine>? _logger;
+
+    public DispatchEngine(ProviderRegistry registry, ISecretResolver secrets, IHttpClientFactory httpFactory, IEnv? env = null,
+        Microsoft.Extensions.Logging.ILogger<DispatchEngine>? logger = null)
     {
         _registry = registry;
         _secrets = secrets;
         _httpFactory = httpFactory;
         _env = env ?? new ProcessEnv();
+        _logger = logger;
     }
 
     public async Task<DispatchResult> DispatchAsync(DispatchRequest dispatch, string requestId)
@@ -259,12 +263,22 @@ public sealed class DispatchEngine
         if (!IsHttpsEndpoint(endpoint))
             return new DispatchResult(502, FailBody(providerId, channel, "provider endpoint invalid or not configured", dispatch, requestId));
 
+        credential = credential with { Token = await adapter.AcquireTokenAsync(_env) };
+
         var timeoutMs = NormalizeProviderTimeoutMs(config.ProviderTimeoutMs);
         try
         {
             var req = adapter.BuildRequest(channel, endpoint!, dispatch, credential, _env);
             if (!IsHttpsEndpoint(req.Url))
                 return new DispatchResult(502, FailBody(providerId, channel, "provider request endpoint invalid", dispatch, requestId));
+
+            if (providerId == "soprano" && _logger is not null)
+            {
+                var correlationHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(dispatch.CorrelationId ?? "")))[..16].ToLowerInvariant();
+                Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(_logger,
+                    "[EPP] SopranoAuth={AuthMode} CorrelationId={CorrelationId}",
+                    req.Headers.ContainsKey("Authorization") ? "api-key+jwt" : "api-key", correlationHash);
+            }
 
             var (providerHttpStatus, success, body) = await SendAsync(req, timeoutMs);
             JsonElement json;
