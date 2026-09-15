@@ -1,0 +1,601 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "CYOT infrastructure. The second ARM deployment performs certificate, Graph and secret preparation in Azure.",
+    "sources": [
+      "https://learn.microsoft.com/azure/azure-functions/functions-infrastructure-as-code",
+      "https://learn.microsoft.com/azure/azure-resource-manager/templates/linked-templates",
+      "https://learn.microsoft.com/azure/app-service/app-service-key-vault-references"
+    ]
+  },
+  "parameters": {
+    "functionAppName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 60,
+      "metadata": {
+        "description": "Function App name, also used for its Application Insights component."
+      }
+    },
+    "storageAccountName": {
+      "type": "string",
+      "defaultValue": "[format('st{0}', uniqueString(resourceGroup().id, parameters('functionAppName')))]",
+      "minLength": 3,
+      "maxLength": 24
+    },
+    "keyVaultName": {
+      "type": "string",
+      "defaultValue": "[format('kv-{0}', uniqueString(resourceGroup().id, parameters('functionAppName')))]",
+      "minLength": 3,
+      "maxLength": 24
+    },
+    "outboundIdentityName": {
+      "type": "string",
+      "defaultValue": "[format('{0}-outbound', parameters('functionAppName'))]",
+      "minLength": 1
+    },
+    "hostingPlanName": {
+      "type": "string",
+      "defaultValue": "[format('plan-{0}', uniqueString(resourceGroup().id, parameters('functionAppName')))]",
+      "minLength": 1
+    },
+    "workspaceName": {
+      "type": "string",
+      "defaultValue": "[format('logs-{0}', uniqueString(resourceGroup().id, parameters('functionAppName')))]",
+      "minLength": 1
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "minLength": 1
+    },
+    "preparationIdentityResourceId": {
+      "type": "string",
+      "minLength": 1,
+      "metadata": {
+        "description": "Existing, separately authorized user-assigned identity used only for deployment preparation, never the running Function. Graph permissions and application ownership must be granted beforehand."
+      }
+    },
+    "tenantId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "applicationId": {
+      "type": "string",
+      "minLength": 1,
+      "metadata": {
+        "description": "Existing customer application client ID returned by Step 1, not an application object ID."
+      }
+    },
+    "planType": {
+      "type": "string",
+      "defaultValue": "FlexConsumption",
+      "allowedValues": [
+        "FlexConsumption",
+        "Premium"
+      ]
+    },
+    "tokenVersion": {
+      "type": "int",
+      "defaultValue": 1,
+      "allowedValues": [
+        1,
+        2
+      ]
+    },
+    "enableEasyAuth": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "False skips authsettingsV2 entirely for the imported workflow's custom-authentication path; it does not disable an existing configuration."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": { "Purpose": "Entra - External Phone Provider" },
+      "metadata": {
+        "description": "Setup-managed tags. These override matching existing tags without removing unrelated tags."
+      }
+    },
+    "deploymentContainerName": {
+      "type": "string",
+      "defaultValue": "function-releases",
+      "minLength": 3,
+      "maxLength": 63
+    },
+    "contentShareName": {
+      "type": "string",
+      "defaultValue": "function-content",
+      "minLength": 3,
+      "maxLength": 63
+    },
+    "existing": {
+      "type": "object",
+      "defaultValue": {},
+      "metadata": {
+        "description": "Nonsecret, preflight-approved snapshots: optional tags and locations by resource key, userAssignedIdentities, roleAssignmentNames, siteConfig, siteProperties, storageProperties, vaultProperties, planProperties, workspaceProperties and insightsProperties. Omit absent subobjects. Site snapshots must exclude appSettings, connectionStrings and functionAppConfig; the script validates compatible resources before deployment."
+      }
+    }
+  },
+  "variables": {
+    "isFlex": "[equals(parameters('planType'), 'FlexConsumption')]",
+    "functionAppResourceId": "[resourceId('Microsoft.Web/sites', parameters('functionAppName'))]",
+    "storageAccountResourceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+    "keyVaultResourceId": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+    "outboundIdentityResourceId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('outboundIdentityName'))]",
+    "hostingPlanResourceId": "[resourceId('Microsoft.Web/serverfarms', parameters('hostingPlanName'))]",
+    "workspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('workspaceName'))]",
+    "applicationInsightsResourceId": "[resourceId('Microsoft.Insights/components', parameters('functionAppName'))]",
+    "deploymentContainerResourceId": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', parameters('deploymentContainerName'))]",
+    "contentShareResourceId": "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', parameters('storageAccountName'), 'default', parameters('contentShareName'))]",
+    "existingDefaults": {
+      "tags": {
+        "storage": {},
+        "vault": {},
+        "plan": {},
+        "workspace": {},
+        "insights": {},
+        "outboundIdentity": {},
+        "function": {}
+      },
+      "locations": {
+        "storage": "[parameters('location')]",
+        "vault": "[parameters('location')]",
+        "plan": "[parameters('location')]",
+        "workspace": "[parameters('location')]",
+        "insights": "[parameters('location')]",
+        "outboundIdentity": "[parameters('location')]",
+        "function": "[parameters('location')]"
+      },
+      "userAssignedIdentities": {},
+      "roleAssignmentNames": {},
+      "siteConfig": {},
+      "siteProperties": {},
+      "storageProperties": {},
+      "vaultProperties": {},
+      "planProperties": {},
+      "workspaceProperties": {},
+      "insightsProperties": {}
+    },
+    "existingState": "[union(variables('existingDefaults'), parameters('existing'))]",
+    "storageDefaults": {
+      "accessTier": "Hot",
+      "allowSharedKeyAccess": true
+    },
+    "managedStorageProperties": {
+      "supportsHttpsTrafficOnly": true,
+      "minimumTlsVersion": "TLS1_2",
+      "allowBlobPublicAccess": false
+    },
+    "managedVaultProperties": {
+      "tenantId": "[parameters('tenantId')]",
+      "sku": {
+        "family": "A",
+        "name": "standard"
+      },
+      "enableRbacAuthorization": true,
+      "enableSoftDelete": true
+    },
+    "managedWorkspaceProperties": {
+      "retentionInDays": 30,
+      "sku": {
+        "name": "PerGB2018"
+      }
+    },
+    "managedInsightsProperties": {
+      "Application_Type": "web",
+      "WorkspaceResourceId": "[variables('workspaceResourceId')]",
+      "DisableLocalAuth": true
+    },
+    "flexPlanSku": {
+      "name": "FC1",
+      "tier": "FlexConsumption"
+    },
+    "premiumPlanSku": {
+      "name": "EP1",
+      "tier": "ElasticPremium",
+      "family": "EP",
+      "capacity": 1
+    },
+    "premiumPlanDefaults": {
+      "maximumElasticWorkerCount": 20
+    },
+    "flexSiteConfig": {
+      "minTlsVersion": "1.2",
+      "scmMinTlsVersion": "1.2"
+    },
+    "premiumSiteConfig": {
+      "minTlsVersion": "1.2",
+      "scmMinTlsVersion": "1.2",
+      "linuxFxVersion": "NODE|24",
+      "minimumElasticInstanceCount": 1,
+      "preWarmedInstanceCount": 1
+    },
+    "managedSiteProperties": {
+      "serverFarmId": "[variables('hostingPlanResourceId')]",
+      "httpsOnly": true,
+      "keyVaultReferenceIdentity": "SystemAssigned",
+      "siteConfig": "[union(variables('existingState').siteConfig, if(variables('isFlex'), variables('flexSiteConfig'), variables('premiumSiteConfig')))]"
+    },
+    "flexFunctionAppConfig": {
+      "runtime": {
+        "name": "node",
+        "version": "24"
+      },
+      "scaleAndConcurrency": {
+        "instanceMemoryMB": 2048,
+        "maximumInstanceCount": 100,
+        "alwaysReady": [
+          {
+            "name": "http",
+            "instanceCount": 1
+          }
+        ]
+      }
+    },
+    "deploymentStorageAuthentication": {
+      "type": "SystemAssignedIdentity"
+    },
+    "openIdIssuer": "[if(equals(parameters('tokenVersion'), 1), format('https://sts.windows.net/{0}/', parameters('tenantId')), format('https://login.microsoftonline.com/{0}/v2.0', parameters('tenantId')))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[parameters('storageAccountName')]",
+      "location": "[variables('existingState').locations.storage]",
+      "kind": "StorageV2",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "tags": "[union(variables('existingState').tags.storage, parameters('tags'))]",
+      "properties": "[union(variables('storageDefaults'), variables('existingState').storageProperties, variables('managedStorageProperties'))]"
+    },
+    {
+      "condition": "[variables('isFlex')]",
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/default/{1}', parameters('storageAccountName'), parameters('deploymentContainerName'))]",
+      "properties": {
+        "publicAccess": "None"
+      },
+      "dependsOn": [
+        "[variables('storageAccountResourceId')]"
+      ]
+    },
+    {
+      "condition": "[not(variables('isFlex'))]",
+      "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/default/{1}', parameters('storageAccountName'), parameters('contentShareName'))]",
+      "properties": {
+        "enabledProtocols": "SMB"
+      },
+      "dependsOn": [
+        "[variables('storageAccountResourceId')]"
+      ]
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[parameters('workspaceName')]",
+      "location": "[variables('existingState').locations.workspace]",
+      "tags": "[union(variables('existingState').tags.workspace, parameters('tags'))]",
+      "properties": "[union(variables('existingState').workspaceProperties, variables('managedWorkspaceProperties'))]"
+    },
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[parameters('functionAppName')]",
+      "location": "[variables('existingState').locations.insights]",
+      "kind": "web",
+      "tags": "[union(variables('existingState').tags.insights, parameters('tags'))]",
+      "properties": "[union(variables('existingState').insightsProperties, variables('managedInsightsProperties'))]",
+      "dependsOn": [
+        "[variables('workspaceResourceId')]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "[parameters('keyVaultName')]",
+      "location": "[variables('existingState').locations.vault]",
+      "tags": "[union(variables('existingState').tags.vault, parameters('tags'))]",
+      "properties": "[union(variables('existingState').vaultProperties, variables('managedVaultProperties'))]"
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[parameters('outboundIdentityName')]",
+      "location": "[variables('existingState').locations.outboundIdentity]",
+      "tags": "[union(variables('existingState').tags.outboundIdentity, parameters('tags'))]"
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2024-04-01",
+      "name": "[parameters('hostingPlanName')]",
+      "location": "[variables('existingState').locations.plan]",
+      "kind": "[if(variables('isFlex'), 'functionapp', 'elastic')]",
+      "sku": "[if(variables('isFlex'), variables('flexPlanSku'), variables('premiumPlanSku'))]",
+      "tags": "[union(variables('existingState').tags.plan, parameters('tags'))]",
+      "properties": "[union(if(variables('isFlex'), json('{}'), variables('premiumPlanDefaults')), variables('existingState').planProperties, createObject('reserved', true()))]"
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2024-04-01",
+      "name": "[parameters('functionAppName')]",
+      "location": "[variables('existingState').locations.function]",
+      "kind": "functionapp,linux",
+      "tags": "[union(variables('existingState').tags.function, parameters('tags'))]",
+      "identity": {
+        "type": "SystemAssigned, UserAssigned",
+        "userAssignedIdentities": "[union(variables('existingState').userAssignedIdentities, createObject(variables('outboundIdentityResourceId'), json('{}')))]"
+      },
+      "properties": "[union(variables('existingState').siteProperties, variables('managedSiteProperties'), if(variables('isFlex'), createObject('functionAppConfig', union(variables('flexFunctionAppConfig'), createObject('deployment', createObject('storage', createObject('type', 'blobContainer', 'value', format('{0}{1}', reference(variables('storageAccountResourceId'), '2023-05-01').primaryEndpoints.blob, parameters('deploymentContainerName')), 'authentication', variables('deploymentStorageAuthentication')))))), json('{}')))]",
+      "dependsOn": [
+        "[variables('hostingPlanResourceId')]",
+        "[variables('storageAccountResourceId')]",
+        "[variables('outboundIdentityResourceId')]",
+        "[if(variables('isFlex'), variables('deploymentContainerResourceId'), variables('contentShareResourceId'))]"
+      ]
+    },
+    {
+      "condition": "[parameters('enableEasyAuth')]",
+      "type": "Microsoft.Web/sites/config",
+      "apiVersion": "2022-09-01",
+      "name": "[format('{0}/authsettingsV2', parameters('functionAppName'))]",
+      "properties": {
+        "platform": {
+          "enabled": true
+        },
+        "globalValidation": {
+          "requireAuthentication": true,
+          "unauthenticatedClientAction": "Return401",
+          "excludedPaths": []
+        },
+        "httpSettings": {
+          "requireHttps": true
+        },
+        "identityProviders": {
+          "azureActiveDirectory": {
+            "enabled": true,
+            "registration": {
+              "clientId": "[parameters('applicationId')]",
+              "openIdIssuer": "[variables('openIdIssuer')]"
+            },
+            "validation": {
+              "allowedAudiences": [
+                "[if(equals(parameters('tokenVersion'), 1), format('api://{0}/{1}', reference(variables('functionAppResourceId'), '2024-04-01').defaultHostName, parameters('applicationId')), parameters('applicationId'))]"
+              ],
+              "defaultAuthorizationPolicy": {
+                "allowedApplications": [
+                  "25ec60fa-f18d-41a4-b398-50044c90ce13"
+                ]
+              }
+            }
+          }
+        },
+        "login": {
+          "tokenStore": {
+            "enabled": false
+          }
+        }
+      },
+      "dependsOn": [
+        "[variables('functionAppResourceId')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2022-09-01",
+      "name": "[format('cyot-rbac-{0}-{1}', take(parameters('functionAppName'), 32), uniqueString(variables('functionAppResourceId')))]",
+      "dependsOn": [
+        "[variables('functionAppResourceId')]",
+        "[variables('storageAccountResourceId')]",
+        "[variables('keyVaultResourceId')]",
+        "[variables('applicationInsightsResourceId')]"
+      ],
+      "properties": {
+        "mode": "Incremental",
+        "expressionEvaluationOptions": {
+          "scope": "Inner"
+        },
+        "parameters": {
+          "storageAccountName": {
+            "value": "[parameters('storageAccountName')]"
+          },
+          "keyVaultName": {
+            "value": "[parameters('keyVaultName')]"
+          },
+          "applicationInsightsName": {
+            "value": "[parameters('functionAppName')]"
+          },
+          "systemAssignedPrincipalId": {
+            "value": "[reference(variables('functionAppResourceId'), '2024-04-01', 'Full').identity.principalId]"
+          },
+          "preparationPrincipalId": {
+            "value": "[reference(parameters('preparationIdentityResourceId'), '2023-01-31').principalId]"
+          },
+          "existingRoleAssignmentNames": {
+            "value": "[variables('existingState').roleAssignmentNames]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "storageAccountName": {
+              "type": "string"
+            },
+            "keyVaultName": {
+              "type": "string"
+            },
+            "applicationInsightsName": {
+              "type": "string"
+            },
+            "systemAssignedPrincipalId": {
+              "type": "string"
+            },
+            "preparationPrincipalId": {
+              "type": "string"
+            },
+            "existingRoleAssignmentNames": {
+              "type": "object",
+              "defaultValue": {}
+            }
+          },
+          "variables": {
+            "storageAccountResourceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+            "keyVaultResourceId": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+            "applicationInsightsResourceId": "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]",
+            "storageBlobRoleId": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+            "storageQueueRoleId": "974c5e8b-45b9-4653-ba55-5f855dd0fb88",
+            "storageTableRoleId": "0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3",
+            "vaultReaderRoleId": "4633458b-17de-408a-b874-0445c86b69e6",
+            "vaultWriterRoleId": "b86a8fe4-44ce-4948-aee5-eccb2c155cd7",
+            "certificateOfficerRoleId": "a4417e6f-fecd-4de8-b567-7b0420556985",
+            "metricsPublisherRoleId": "3913510d-42f4-4e42-8a64-420c390055eb"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.Storage/storageAccounts/{0}', parameters('storageAccountName'))]",
+              "name": "[if(contains(parameters('existingRoleAssignmentNames'), 'storageBlob'), parameters('existingRoleAssignmentNames').storageBlob, guid(variables('storageAccountResourceId'), parameters('systemAssignedPrincipalId'), variables('storageBlobRoleId')))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageBlobRoleId'))]",
+                "principalId": "[parameters('systemAssignedPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.Storage/storageAccounts/{0}', parameters('storageAccountName'))]",
+              "name": "[if(contains(parameters('existingRoleAssignmentNames'), 'storageQueue'), parameters('existingRoleAssignmentNames').storageQueue, guid(variables('storageAccountResourceId'), parameters('systemAssignedPrincipalId'), variables('storageQueueRoleId')))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageQueueRoleId'))]",
+                "principalId": "[parameters('systemAssignedPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.Storage/storageAccounts/{0}', parameters('storageAccountName'))]",
+              "name": "[if(contains(parameters('existingRoleAssignmentNames'), 'storageTable'), parameters('existingRoleAssignmentNames').storageTable, guid(variables('storageAccountResourceId'), parameters('systemAssignedPrincipalId'), variables('storageTableRoleId')))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageTableRoleId'))]",
+                "principalId": "[parameters('systemAssignedPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.KeyVault/vaults/{0}', parameters('keyVaultName'))]",
+              "name": "[if(contains(parameters('existingRoleAssignmentNames'), 'vaultReader'), parameters('existingRoleAssignmentNames').vaultReader, guid(variables('keyVaultResourceId'), parameters('systemAssignedPrincipalId'), variables('vaultReaderRoleId')))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('vaultReaderRoleId'))]",
+                "principalId": "[parameters('systemAssignedPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.KeyVault/vaults/{0}', parameters('keyVaultName'))]",
+              "name": "[guid(variables('keyVaultResourceId'), parameters('preparationPrincipalId'), variables('vaultWriterRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('vaultWriterRoleId'))]",
+                "principalId": "[parameters('preparationPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.KeyVault/vaults/{0}', parameters('keyVaultName'))]",
+              "name": "[guid(variables('keyVaultResourceId'), parameters('preparationPrincipalId'), variables('certificateOfficerRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('certificateOfficerRoleId'))]",
+                "principalId": "[parameters('preparationPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[format('Microsoft.Insights/components/{0}', parameters('applicationInsightsName'))]",
+              "name": "[if(contains(parameters('existingRoleAssignmentNames'), 'metricsPublisher'), parameters('existingRoleAssignmentNames').metricsPublisher, guid(variables('applicationInsightsResourceId'), parameters('systemAssignedPrincipalId'), variables('metricsPublisherRoleId')))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('metricsPublisherRoleId'))]",
+                "principalId": "[parameters('systemAssignedPrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "functionAppResourceId": {
+      "type": "string",
+      "value": "[variables('functionAppResourceId')]"
+    },
+    "defaultHostName": {
+      "type": "string",
+      "value": "[reference(variables('functionAppResourceId'), '2024-04-01').defaultHostName]"
+    },
+    "systemAssignedPrincipalId": {
+      "type": "string",
+      "value": "[reference(variables('functionAppResourceId'), '2024-04-01', 'Full').identity.principalId]"
+    },
+    "outboundIdentityResourceId": {
+      "type": "string",
+      "value": "[variables('outboundIdentityResourceId')]"
+    },
+    "outboundIdentityClientId": {
+      "type": "string",
+      "value": "[reference(variables('outboundIdentityResourceId'), '2023-01-31').clientId]"
+    },
+    "outboundIdentityPrincipalId": {
+      "type": "string",
+      "value": "[reference(variables('outboundIdentityResourceId'), '2023-01-31').principalId]"
+    },
+    "storageAccountResourceId": {
+      "type": "string",
+      "value": "[variables('storageAccountResourceId')]"
+    },
+    "keyVaultResourceId": {
+      "type": "string",
+      "value": "[variables('keyVaultResourceId')]"
+    },
+    "keyVaultUri": {
+      "type": "string",
+      "value": "[reference(variables('keyVaultResourceId'), '2023-07-01').vaultUri]"
+    },
+    "applicationInsightsResourceId": {
+      "type": "string",
+      "value": "[variables('applicationInsightsResourceId')]"
+    },
+    "deploymentContainerName": {
+      "type": "string",
+      "value": "[if(variables('isFlex'), parameters('deploymentContainerName'), '')]"
+    },
+    "contentShareName": {
+      "type": "string",
+      "value": "[if(variables('isFlex'), '', parameters('contentShareName'))]"
+    },
+    "contentStorageSecretName": {
+      "type": "string",
+      "value": "[if(variables('isFlex'), '', 'phone-provider-content-storage')]"
+    },
+    "planType": {
+      "type": "string",
+      "value": "[parameters('planType')]"
+    }
+  }
+}

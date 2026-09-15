@@ -4,6 +4,15 @@ node_modules/
 # Local helper scripts
 scripts/
 
+# Generated CYOT setup files (the standalone setup scripts remain tracked)
+/setup/cyot/*.backup-*.ps1
+/setup/cyot/*.cer
+/setup/cyot/*.crt
+/setup/cyot/*.zip
+/setup/cyot/cyot-policy-before-*.json
+/setup/cyot/arm/*.local.json
+/setup/cyot/arm/parameters.json
+
 # Python
 .venv/
 venv/
