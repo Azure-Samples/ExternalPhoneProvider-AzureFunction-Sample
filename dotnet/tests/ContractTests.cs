@@ -71,17 +71,68 @@ public class ContractTests
         using var smsJson = JsonDocument.Parse(sms.Body);
         Assert.Equal(Request().Message, smsJson.RootElement.GetProperty("messages")[0].GetProperty("content").GetProperty("text").GetString());
 
-        var form = new TelesignProvider().BuildRequest("sms", "https://provider.example", Request(), credential, env);
-        Assert.Equal("Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("test-id:test-key")), form.Headers["Authorization"]);
-        Assert.Equal("application/x-www-form-urlencoded", form.Headers["Content-Type"]);
-        Assert.EndsWith("/v1/messaging", form.Url);
-        Assert.Contains("message=" + Uri.EscapeDataString(Request().Message!), form.Body);
-
         var call = new SinchProvider().BuildRequest("voice", "https://provider.example", Request("voice"), credential, env);
         Assert.Equal("Bearer test-key", call.Headers["Authorization"]); // Static provider credential.
         Assert.Equal("https://calling.api.sinch.com/calling/v1/callouts", call.Url);
         using var callJson = JsonDocument.Parse(call.Body);
         Assert.Equal(Request().Message, callJson.RootElement.GetProperty("ttsCallout").GetProperty("text").GetString());
+    }
+
+    [Theory]
+    [InlineData("sms", "en")]
+    [InlineData("voice", "en")]
+    [InlineData("sms", null)]
+    [InlineData("sms", "")]
+    [InlineData("sms", " ")]
+    public void TelesignUsesEppJsonContract(string channel, string? locale)
+    {
+        var dispatch = Request(channel) with { Locale = locale };
+        var request = new TelesignProvider().BuildRequest(channel, "https://verify.telesign.com///", dispatch,
+            new ProviderCredential("apiKey", "test-key", "test-id"), new TestEnv());
+        Assert.Equal("https://verify.telesign.com/integration/msft/cyot", request.Url);
+        Assert.Equal("POST", request.Method);
+        Assert.Equal(3, request.Headers.Count);
+        Assert.Equal("Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("test-id:test-key")), request.Headers["Authorization"]);
+        Assert.Equal("application/json", request.Headers["Content-Type"]);
+        Assert.Equal("application/json", request.Headers["Accept"]);
+        var message = new Dictionary<string, string?> { ["text"] = dispatch.Message };
+        if (locale == "en") message["language"] = locale;
+        var expected = new { recipient = new { phone_number = dispatch.Destination }, message,
+            channels = new[] { new { channel } }, correlation_id = dispatch.CorrelationId };
+        Assert.Equal(JsonSerializer.Serialize(expected), request.Body);
+    }
+
+    [Fact]
+    public void TelesignValidatesRecipientAndFallsBackToMessageId()
+    {
+        var adapter = new TelesignProvider();
+        var credential = new ProviderCredential("apiKey", "key", "id");
+        foreach (var destination in new[] { "15551234567", "+0123", "+1", "+1234567890123456", "+123\n", "+123\r", "+12 34" })
+            Assert.Throws<InvalidOperationException>(() => adapter.BuildRequest("sms", "https://verify.telesign.com",
+                Request() with { Destination = destination }, credential, new TestEnv()));
+        Assert.Throws<InvalidOperationException>(() => adapter.BuildRequest("email", "https://verify.telesign.com", Request(), credential, new TestEnv()));
+        var request = adapter.BuildRequest("sms", "https://verify.telesign.com", Request() with { CorrelationId = null }, credential, new TestEnv());
+        using var json = JsonDocument.Parse(request.Body);
+        Assert.Equal(Request().MessageId, json.RootElement.GetProperty("correlation_id").GetString());
+    }
+
+    [Theory]
+    [InlineData("{}", true, Outcome.Fail)]
+    [InlineData("{\"status\":[]}", true, Outcome.Fail)]
+    [InlineData("{\"status\":{\"code\":true}}", true, Outcome.Fail)]
+    [InlineData("{\"status\":{\"code\":\"290\"}}", true, Outcome.Fail)]
+    [InlineData("{\"status\":{\"code\":999}}", true, Outcome.Fail)]
+    [InlineData("{\"status\":{\"code\":290}}", false, Outcome.Fail)]
+    [InlineData("{\"status\":{\"code\":290}}", true, Outcome.Continue)]
+    [InlineData("{\"status\":{\"code\":100}}", true, Outcome.Continue)]
+    [InlineData("{\"status\":{\"code\":3001}}", true, Outcome.Continue)]
+    [InlineData("{\"status\":{\"code\":3001}}", false, Outcome.Fail)]
+    public void TelesignStatusFailsClosed(string payload, bool ok, Outcome expected)
+    {
+        var adapter = new TelesignProvider();
+        using var json = JsonDocument.Parse(payload);
+        var parsed = adapter.ParseResponse(ok ? 200 : 500, ok, json.RootElement);
+        Assert.Equal(expected, OutcomeMapper.ResolveOutcome(adapter.Manifest, parsed));
     }
 
 }

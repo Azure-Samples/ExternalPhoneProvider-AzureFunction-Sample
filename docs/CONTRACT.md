@@ -1,4 +1,4 @@
-# External Phone Provider Function — Language-Agnostic Contract
+# External Phone Provider Function: Language-Agnostic Contract
 
 This defines the shared contract for [JavaScript](../javascript/), [Python](../python/) and
 [.NET](../dotnet/). See [production limitations](#production-limitations) before production use.
@@ -34,7 +34,7 @@ Forwarded headers, including `x-ms-client-principal`, do not establish trust by 
 replace the required Easy Auth gate. The handler does not use them to authenticate callers or forward
 the incoming `Authorization` header to the provider. Configure Easy Auth as described in section 5.
 
-### EPP request body — `Envelope` (cleartext envelope)
+### EPP request body: `Envelope` (cleartext envelope)
 
 | Field | Required | Notes |
 |-------|----------|-------|
@@ -173,8 +173,8 @@ success-looking status. Explicit `Block`/`StepUp` outcomes remain non-success re
 | `Fail` | `401` | provider returned 401/403 (auth) |
 | `Fail` | `400` | other provider 4xx |
 | `Fail` | `502` | other provider error, or missing credential/endpoint |
-| — | `504` | request to the provider timed out |
-| — | `502` | network error to the provider (non-timeout) |
+| N/A | `504` | request to the provider timed out |
+| N/A | `502` | network error to the provider (non-timeout) |
 
 ---
 
@@ -182,10 +182,10 @@ success-looking status. Explicit `Block`/`StepUp` outcomes remain non-success re
 
 Each provider is one unit exposing three things:
 
-- **`manifest`** — protocol facts only:
-  - `id` — provider id selected by `EPP_PROVIDER_NAME`; its base URL is `EPP_PROVIDER_ENDPOINT`
-  - `auth` — `{ mode: 'apiKey', keyVaultSecretName, identityKeyVaultSecretName? }`; other modes fail closed
-  - `responseMapping` — map of provider status → `Continue` | `Fail` | `Block` | `StepUp` (+ `default`)
+- **`manifest`**: protocol facts only:
+  - `id`: provider id selected by `EPP_PROVIDER_NAME`; its base URL is `EPP_PROVIDER_ENDPOINT`
+  - `auth`: `{ mode: 'apiKey', keyVaultSecretName, identityKeyVaultSecretName? }`; other modes fail closed
+  - `responseMapping`: map of provider status → `Continue` | `Fail` | `Block` | `StepUp` (+ `default`)
 - **`buildRequest({ channel, endpoint, dispatch, credential, env })`** → `{ url, method, headers, body }`
 - **`parseResponse({ httpStatus, ok, json })`** → `ParsedResponse`, containing `success`,
   `providerHttpStatus`, optional `providerMessageId`, `providerStatusName`, `providerStatusCode`
@@ -206,8 +206,36 @@ class hierarchy is required.
 
 Adapters require registration in the chosen runtime. Consult the selected adapter and its manifest
 for required credentials and options: the manifest declares secret names and protocol mappings;
-the implementation reads adapter-specific options from app settings. Do not duplicate individual
-API contracts or credential catalogs in shared onboarding documentation.
+the implementation reads adapter-specific options from app settings. Individual API contracts remain
+in the adapters; the [onboarding credential naming table](ONBOARDING.md#provider-credential-names)
+lists the exact manifest secret names for provisioning and authorized local tests. Keep that table
+aligned with the manifests; never include secret values in documentation or the settings sample.
+
+### Telesign CYOT integration
+
+SMS and Voice both use `POST https://verify.telesign.com/integration/msft/cyot` with JSON. Configure
+the base URL as `https://verify.telesign.com`. The adapter supplies `recipient.phone_number`, the
+unchanged `message.text`, optional `message.language`, one selected `channels[].channel`, and
+`correlation_id`. Keep the leading `+` in the E.164 phone number; the guide's example `12345678`
+does not satisfy its own required phone-number pattern.
+
+Phase 1 supports Basic and Digest; this sample implements Basic only. Per
+[Telesign's authentication instructions](https://developer.telesign.com/enterprise/docs/authentication#basic-authentication),
+the header is `Authorization: Basic <base64(UTF8(customer-id:api-key))>`, using the raw Customer ID
+and API Key strings from Key Vault. Do not decode the API key first, send the API key alone, or
+substitute a key identifier. The guide's `Basic YOUR_API_KEY` is abbreviated, not the literal encoding.
+Provider-token authentication is described as Phase 2 and is not implemented for Telesign here.
+
+The optional `account_lifecycle_event` and `originating_ip` fields are reserved for future intelligence
+capabilities. They are omitted; do not infer an originating address from the Function or synthesize
+account events to fill them.
+
+Telesign's `X-Shutter-Mode: true` suppresses delivery at the provider while still calling its endpoint.
+It is appropriate for an explicitly authorized, direct provider diagnostic, not normal OTP delivery.
+The production adapter does not add or forward this header. Function evaluation mode remains separate:
+it validates/decrypts and skips all provider HTTP. A successful provider shutter probe is not evidence
+that an SMS was delivered or a Voice call was placed. Enabling the API globally also does not prove
+that a particular Customer ID/API Key pair is authorized for this integration.
 
 ---
 
@@ -262,10 +290,10 @@ subscription activation and changing tenant policy belong to provisioning, not t
 
 ## 5. Required behaviors
 
-- **Fail-closed** — only `Continue` → `200 accepted`; unknown status → `Fail`.
-- **Managed identity** — Key Vault access via managed identity only (user-assigned if `AZURE_CLIENT_ID`
+- **Fail-closed**: only `Continue` → `200 accepted`; unknown status → `Fail`.
+- **Managed identity**: Key Vault access via managed identity only (user-assigned if `AZURE_CLIENT_ID`
   set, else system-assigned). No static credentials.
-- **Privacy** — never log phone numbers, passcodes, nonce values, bearer tokens, API keys, JWE headers/payloads,
+- **Privacy**: never log phone numbers, passcodes, nonce values, bearer tokens, API keys, JWE headers/payloads,
   raw exceptions or provider responses. There is no plaintext diagnostic override. Each handler
   writes one summary with a generated request ID, the first 16 lowercase hex characters of the
   correlation ID's SHA256 hash, HTTP status,
@@ -273,7 +301,7 @@ subscription activation and changing tenant policy belong to provisioning, not t
   echo remain unchanged. Hashes are pseudonymous, not anonymous; restrict log access and retention.
   A configured encryption-key-ID mismatch adds a fixed warning, never either key ID or the JWE header.
   Disable SDK, platform and proxy body tracing separately.
-- **Platform authentication only** — enable Easy Auth with `requireAuthentication=true`,
+- **Platform authentication only**: enable Easy Auth with `requireAuthentication=true`,
   `unauthenticatedClientAction=Return401` and `requireHttps=true`. Configure the trusted tenant issuer
   and `allowedAudiences` for the endpoint app, plus a **nonempty `allowedApplications`** list pinned to
   the authorized SAS caller application ID. No excluded path may bypass authentication for SendOtp.
@@ -283,7 +311,7 @@ subscription activation and changing tenant policy belong to provisioning, not t
   or bypassed.** Core Tools supplies no Easy Auth: local execution must bind only to loopback, with
   no tunnels or public forwarding. Neither request data, JWE decryption, a fixed nonce nor forwarded
   principal headers authenticate the SAS caller.
-- **Timeout boundaries** — platform authentication and Key Vault retrieval happen outside the outbound HTTP
+- **Timeout boundaries**: platform authentication and Key Vault retrieval happen outside the outbound HTTP
   timer. Python uses connect/read inactivity timeouts, not a hard elapsed-time deadline. The cap
   therefore does not guarantee a 3.2-second end-to-end response, especially on cold starts.
   A timed-out POST may already have been accepted; avoid blind retries that duplicate messages.

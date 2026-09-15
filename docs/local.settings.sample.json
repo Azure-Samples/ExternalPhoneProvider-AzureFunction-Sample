@@ -1,5 +1,4 @@
 {
-  "_comment": "Local template: copy beside the chosen app's host.json and replace placeholders. Change node to python or dotnet-isolated for those runtimes. Start Azurite for UseDevelopmentStorage=true. Provider credentials stay in Key Vault. Local hosts have no Easy Auth; keep them on loopback. See README.md for Azure settings and optional values.",
   "IsEncrypted": false,
   "Values": {
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",

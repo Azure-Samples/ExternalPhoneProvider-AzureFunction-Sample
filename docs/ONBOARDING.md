@@ -1,194 +1,152 @@
-# Customer Onboarding
+# EPP Onboarding
 
-A shared setup guide for the External Phone Provider OTP Function. Use one implementation:
-[JavaScript](../javascript/README.md), [Python](../python/README.md) or [.NET](../dotnet/README.md).
-[CONTRACT.md](CONTRACT.md) defines shared settings and behavior; the selected adapter and its manifest
-define required credentials and options. No provider is preferred or selected by default.
+Follow these five steps for the External Phone Provider (EPP) Function. Choose one language:
+[JavaScript](../javascript/README.md), [Python](../python/README.md), or [.NET](../dotnet/README.md).
+Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limitations.
 
-## 1. Select and configure an adapter
+1. **Purchase a provider offer from Security Store.**
 
-Choose a registered adapter for the selected provider and an account supporting the required channels.
-Set `EPP_PROVIDER_NAME` to its actual manifest id (`<adapter-id>` is only a placeholder), and configure
-its matching `EPP_PROVIDER_ENDPOINT` and required options. One provider is active per deployment;
-request fields cannot change it. Purchasing or activating a subscription does not install an adapter.
+	 Open **Security Store > Provider offers**, purchase an offer, and activate the provider account.
+	 Confirm EPP endpoint access and support for your required channels. Obtain the provider's API key
+	 and matching customer/API ID, if required.
+	 Purchasing an offer does not deploy this Function or install a missing provider adapter.
 
-Store credentials under the Key Vault secret names declared by the selected adapter's manifest, not
-in code or app settings. Grant the Function's managed identity *Key Vault Secrets User* access at the
-appropriate secret or vault scope. Confirm that the endpoint and credentials belong to the same
-account and environment. Individual API contracts stay in the adapters.
+2. **Run the app setup script.**
 
-### Setup script compatibility
+	 <a id="setup-script-compatibility"></a>
+	 **The script, command, and prerequisites will be provided later.** Run it using the supplied
+	 instructions, verify it succeeded, and retain the app/resource IDs and configuration outputs.
+	 Do not assume it creates provider secrets or deploys the Function code.
 
-The Preview 1 setup script creates the encryption-key secret, not the selected provider's API
-credentials. Before live delivery, complete these steps:
+3. **Fill in app settings.**
 
-1. Set `KEY_VAULT_URL` to the vault containing the provider credentials. When it is the vault created
-	by setup, use that vault's `vaultUri`; otherwise explicitly select the credential vault and grant
-	the Function identity read access there. An encryption-key reference does not configure this client.
-2. Store the API key under the selected manifest's `keyVaultSecretName` (`key_vault_secret_name` in
-	Python). If the manifest also declares `identityKeyVaultSecretName`
-	(`identity_key_vault_secret_name`), store the matching API/customer ID as a separate secret.
-	`EPP_PROVIDER_ACCOUNT_NAME` is a sender/account option, **not** that credential ID or the API key.
-	Keep secret values out of parameters, console transcripts and checked-in settings.
-3. Give `EPP_PROVIDER_ENDPOINT` the **base URL expected by the adapter**. Bundled adapters append the
-	channel-specific API path. Do not pass an already complete send URL unless an adapter explicitly
-	expects it. Use the same account/environment for the endpoint and its credential pair.
-4. Supply any additional options read by the selected adapter. Registering a provider does not make
-	every account option or channel automatically available.
+	 <a id="provider-credential-names"></a>
+	 Reuse your provider's existing cloud API key and matching ID. Store the raw values in Key Vault
+	 under these exact names, shared across all three languages:
 
-The script already writes the correct `EPP_` names; no variable-prefix translation is required.
+	 | Provider | API credential secret | Matching identity secret | Authentication |
+	 |---|---|---|---|
+	 | `telesign` | `telesign-api-key` | `telesign-customer-id` | Basic: base64 of `customer-id:api-key` |
+	 | `soprano` | `soprano-api-key` | `soprano-api-id` | `X-MEMS-API-Key` and `X-MEMS-API-ID` |
+	 | `infobip` | `infobip-api-key` | None | `Authorization: App <api-key>` |
+	 | `sinch` | `sinch-api-token` | None | `Authorization: Bearer <static-api-token>` |
 
-| Setup value | Current application behavior |
-|---|---|
-| `EPP_PROVIDER_NAME` | Selects one registered adapter; no implicit default. |
-| `EPP_PROVIDER_ENDPOINT` | Base URL, with the final send path built by the adapter. |
-| `EPP_PROVIDER_TIMEOUT_MS` | Default 1500 ms; positive decimal values are capped at 2500 ms. Zero/invalid values use the default, not an infinite timeout. |
-| `EPP_PROVIDER_RETRY_INTERVAL_MS` | Not consumed. Calls are not automatically retried; writing this setting does not enable retries. |
-| `EPP_PROVIDER_ACCOUNT_NAME` | Adapter-specific sender/account option, separate from credential secrets. |
-| `EPP_DECRYPTION_KEY_PEM` | PEM or base64 PEM, usually resolved from a Key Vault secret reference. |
-| `EPP_ENCRYPTION_KEY_ID` | Advisory mismatch warning only; not overlapping-key selection. |
-| `EPP_EXPECTED_AUDIENCE`, `EPP_EXPECTED_ISSUER`, `EPP_EXPECTED_CLIENT_ID`, `EPP_TENANT_ID` | The script may write these, but this platform-authenticated application does not read them. The script's separate Easy Auth configuration enforces caller trust. |
+	 Secret names use lowercase and hyphens. Keep `sinch-api-token` unchanged. Store the API key and
+	 matching ID separately, not a prebuilt Authorization header, base64 credential pair, or Entra token.
+	 The adapter builds the headers; there is no provider OAuth/JWT acquisition flow.
 
-**Do not use the script's `-NoEasyAuth` option with this application.** There is no application token
-validator to take over. For the script's v1 registration, configure Easy Auth with the identifier URI
-as audience, `https://sts.windows.net/{tenantId}/` as issuer, and the authorized SAS application in
-`allowedApplications`. Use the v2 audience/issuer only when the registration actually issues v2 tokens.
-No Entra application role check is performed. Azure RBAC grants to the Function's managed identity
-for storage/Key Vault are separate from granting application permissions to the SAS caller.
+	 Enable the Function's managed identity and grant it **Key Vault Secrets User** access to the
+	 required secrets. Confirm vault network access and that the keys match the provider environment.
+	 Select one registered provider per deployment; there is no default. Unsupported providers need
+	 an adapter first; see [adding a provider](../README.md#contributing-a-language-or-provider).
 
-The script alone does not make this implementation conform to every Preview 1 requirement:
+	 <a id="local-settings-and-cloud-secrets"></a>
+	 Start with [local.settings.sample.json](local.settings.sample.json) beside the chosen app's
+	 `host.json`. Replace placeholders in `Values`; all values must be strings. For Telesign, use:
 
-- The guide requires accepting before provider delivery. This implementation still waits for provider
-  acceptance. A durable handoff, expiry and duplicate-handling design is needed before changing that
-  acknowledgement boundary; starting an unawaited task is not a reliable replacement.
-- The guide requires selecting retained private keys by `kid`. This implementation has one configured
-  key. A versionless secret reference alone does not retain both keys during rotation.
-- The guide requires voice digits to be spoken separately. This implementation preserves the supplied
-  message; verify the selected voice API's behavior rather than assuming unspaced digits are intelligible.
+	 ```json
+	 {
+		 "EPP_PROVIDER_NAME": "telesign",
+		 "EPP_PROVIDER_ENDPOINT": "https://verify.telesign.com",
+		 "KEY_VAULT_URL": "https://<existing-provider-credential-vault>.vault.azure.net/"
+	 }
+	 ```
 
-The pasted script also needs its advertised 100-byte UTF-8 endpoint-URL check before deployment.
-A public-only certificate cannot supply the private key it later exports. Treat failed infrastructure
-role assignments as failures unless the exact assignment is verified as already present. Verify these
-script prerequisites separately; the application tests do not validate provisioning.
+	 These are entries in `Values`, not a complete settings file. Use the adapter's **base URL**;
+	 it adds the send path. App-setting names use uppercase and underscores. Provider API keys stay
+	 in Key Vault, not `Values`: `TELESIGN_API_KEY`, `SOPRANO_API_KEY`, and `EPP_PROVIDER_API_KEY`
+	 are not read by the production resolvers. `EPP_PROVIDER_ACCOUNT_NAME` is optional sender metadata,
+	 not an API/customer ID. See the [settings catalog](CONTRACT.md#4-configuration-app-settings--env)
+	 for adapter options and `AZURE_CLIENT_ID` when using a user-assigned managed identity.
 
-## 2. Provision encryption and deployment trust
+	 Set `FUNCTIONS_WORKER_RUNTIME` to `node`, `python`, or `dotnet-isolated`. Local
+	 `UseDevelopmentStorage=true` requires Azurite; configure Azure host storage separately.
+	 Use a local test private key for `EPP_DECRYPTION_KEY_PEM`; in Azure, use a Key Vault reference
+	 and give the caller the matching public key. Core Tools does not resolve Key Vault references
+	 locally. `EPP_ENCRYPTION_KEY_ID` is advisory only; this sample has one decryption key, not
+	 multi-key rotation. The decryption key, provider credentials, and caller authentication are separate.
 
-Use [local.settings.sample.json](local.settings.sample.json) as a starting point, replacing its
-placeholders with the selected adapter's configuration and choosing the matching worker runtime.
-The sample's `UseDevelopmentStorage=true` is local-only and requires Azurite. Keep local settings
-private; set application values in the Function App environment for deployment, configure its host
-storage separately, and use a Key Vault reference instead of a local private-key value. The
-[configuration catalog](CONTRACT.md#4-configuration-app-settings--env) is authoritative.
+	 For local work, keep the host **loopback-only**, without tunnels or public forwarding. Core Tools
+	 has no Easy Auth, and `ManagedIdentityCredential` cannot use your CLI login. `AZURE_CLIENT_ID`
+	 does not create a local identity. Use offline tests or evaluation mode by default. An authorized
+	 live test can inject a private resolver that reads the same cloud secrets into memory using a
+	 signed-in identity with secret-read permission. Do not add a production credential fallback,
+	 print secrets, persist a secret cache, or change cloud settings merely to test locally.
 
-- Configure `EPP_DECRYPTION_KEY_PEM` through a Key Vault secret reference in Azure and give the caller
-	the matching public key. `EPP_ENCRYPTION_KEY_ID` is an optional advisory comparison after decryption,
-	not strict key pinning or multi-key lookup.
+	 `KEY_VAULT_URL` selects the provider credential vault independently of the decryption-key reference.
+	 Timeout defaults to 1500 ms and caps at 2500 ms; zero does not disable it. Retry settings are unused.
+	 Configure caller trust in Easy Auth, not legacy `EPP_EXPECTED_*` or `EPP_TENANT_ID` settings.
 
-**Do not enable Entra access-token encryption for the Easy Auth resource app.** Leave its app
-registration's `tokenEncryptionKeyId` as `null`; if previously configured, clear that property without
-deleting its certificates or changing signing keys. This integration expects a signed bearer JWT,
-not an encrypted access token that requires a separate private-key decryption step before validation.
-After changing the registration, request a fresh token rather than reusing a cached encrypted token.
-The resource is the endpoint app configured in Easy Auth's `clientId`/audience, not necessarily the
-application requesting the token. The application code does not configure `tokenEncryptionKeyId`.
+4. **Deploy the Functions.**
 
-This is separate from the **required JWE encryption of `encryptedDeliveryContext`** in the request
-body. Keep `EPP_DECRYPTION_KEY_PEM`; `EPP_ENCRYPTION_KEY_ID` only produces an advisory warning after
-successful payload decryption and cannot cause a platform `401`.
+	 <a id="2-provision-encryption-and-deployment-trust"></a>
+	 Configure **App Service Authentication (Easy Auth)** before exposing the endpoint. It is the
+	 only caller-authentication gate; the Function handler is anonymous and has no backup validator.
+	 Never use `-NoEasyAuth`, trust forwarded principal headers, or treat JWE/nonce proof as caller
+	 authentication. Anyone with the public encryption key can create a JWE request.
 
-Configure caller trust in the Function App's **App Service Authentication (Easy Auth)** platform
-settings, not application environment variables:
+	 | Easy Auth setting | Required value |
+	 |---|---|
+	 | `globalValidation.requireAuthentication` | `true` |
+	 | `globalValidation.unauthenticatedClientAction` | `Return401` |
+	 | `httpSettings.requireHttps` | `true` |
+	 | `identityProviders.azureActiveDirectory.registration.clientId` | Endpoint app's client ID |
+	 | `identityProviders.azureActiveDirectory.registration.openIdIssuer` | Trusted tenant issuer matching the caller's token version; never `common` or `organizations` |
+	 | `identityProviders.azureActiveDirectory.validation.allowedAudiences` | Exact endpoint-app audience agreed with SAS |
+	 | `identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedApplications` | Nonempty allowlist of authorized SAS caller application IDs, not the endpoint app ID |
+	 | `globalValidation.excludedPaths` | No exemption for `/api/SendOtp` or an alternate ingress route |
 
-- Enable the authentication platform and Microsoft Entra identity provider. Set
-	`globalValidation.requireAuthentication=true`,
-	`globalValidation.unauthenticatedClientAction=Return401` and `httpSettings.requireHttps=true`.
-- Under `identityProviders.azureActiveDirectory.registration`, configure the endpoint app's client ID
-	and a tenant-specific `openIdIssuer` for the trusted SAS issuer tenant and token version. Do not use
-	`common` or `organizations`, or derive the issuer from request `tenantId` or unverified claims.
-- Under `identityProviders.azureActiveDirectory.validation.allowedAudiences`, configure the exact
-	endpoint-app audience agreed during SAS onboarding. For v2 tokens this is the endpoint app client-ID
-	GUID; a v1 configuration may use its Application ID URI. The provisioning URI is not automatically
-	the v2 audience. This is the endpoint app, not the provider or caller application.
-- Set `identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedApplications`
-	to a **nonempty** allowlist containing the authorized SAS caller application ID supplied during
-	onboarding. Do not substitute the endpoint app ID, allow every tenant application, or leave this list empty.
-- Do not exempt `/api/SendOtp` through `globalValidation.excludedPaths` or any alternate ingress route.
-	Verify these requirements on every serving app and slot, including after configuration changes or swaps.
+	 For v1 tokens, use the agreed Application ID URI audience and `https://sts.windows.net/{tenantId}/`
+	 issuer; for v2, use the matching v2 issuer and agreed audience, normally the endpoint app client-ID
+	 GUID. Do not derive trust from request `tenantId`. Key Vault RBAC for the Function identity is
+	 separate from authorizing SAS callers; this code does not check an Entra application role.
 
-Easy Auth is the **only** caller-authentication gate before the `authLevel: anonymous` HTTP Function.
-The handler does not validate bearer tokens or authenticate forwarded principal headers; there is no
-backup application validation or function-key gate. **Do not expose the endpoint to the public internet
-with Easy Auth disabled or bypassed.** JWE decryption does not authenticate SAS: anyone with the public
-key can encrypt a request. A nonce echo, including a fixed nonce, is not authentication or replay protection.
+	 Leave the endpoint app registration's `tokenEncryptionKeyId` **null**: encrypted Entra access
+	 tokens are not supported. If correcting an existing registration, do not delete certificates or
+	 change signing keys; request a fresh token afterward. This does **not** disable the required
+	 JWE encryption of `encryptedDeliveryContext` or remove `EPP_DECRYPTION_KEY_PEM`.
 
-Incoming `mode`, `channel`, `ttlSeconds` and `tenantId` are request data, not customer deployment
-settings or sources of identity trust. There is no application host-detection authentication guard.
+	 Download the selected language's [Function ZIP](../README.md#download-a-function-zip) from GitHub
+	 Releases, or use the [root-level packaging scripts](../README.md#build-zips-locally) for custom builds.
+	 The .NET source ZIP must be extracted and built/published with the .NET 8 SDK or a build-enabled
+	 deployment pipeline. The Python source ZIP requires Azure remote build on Linux. Neither source
+	 ZIP is ready for direct run-from-package. Downloading or building a ZIP does not deploy it.
 
-**Migration:** Older application authentication settings are no longer consumed. Deployments running
-older code require a separate rollout; source edits do not update them. Configure and verify the
-platform gate before publishing this code, then repeat the deployed security checks below.
+	 Build and publish only the selected language folder with its runtime dependencies, not the
+	 repository root or stale output. Inspect the package: exclude local settings, private keys,
+	 credentials, tests, and diagnostic scripts using the runtime's `.funcignore` and publish rules.
+	 Apply the settings from step 3 to the Function App's Azure environment; local settings are not
+	 published automatically. Verify managed identity access and keep public ingress disabled
+	 until authentication is configured. Source changes do not update an existing deployment.
 
-## 3. Validate without delivery
+	 The root [.gitignore](../.gitignore) covers all runtimes; publishing uses separate exclusions in
+	 [JavaScript](../javascript/.funcignore), [Python](../python/.funcignore), and [.NET](../dotnet/.funcignore).
+	 The [.NET project](../dotnet/dotnet.csproj) also excludes local settings from publish output.
 
-Use `POST /api/SendOtp` with an admitted caller's token and a valid encrypted envelope containing
-`mode: 2` or `mode: "evaluation"`. On Azure, Easy Auth authenticates and authorizes the caller first.
-The handler then validates and decrypts, and echoes the nonce without provider lookup, provider Key
-Vault reads or provider HTTP. No provider configuration or diagnostic environment flag is required.
-Platform trust configuration and the decryption key remain prerequisites; see the
-[evaluation contract](CONTRACT.md#evaluation-generic-shutter).
+5. **Validate.**
 
-Core Tools does **not** provide Easy Auth. Local evaluation exercises the unauthenticated application
-path only: bind the host exclusively to loopback, with no tunnels, public forwarding or shared-network
-exposure. Use local test keys and synthetic request data. Sending an authorization header locally
-does not enable authentication, and local success does not verify platform security.
+	 <a id="4-package-deploy-and-verify"></a>
+	 Send an authorized `POST /api/SendOtp` with a valid encrypted envelope and `mode: 2` or
+	 `mode: "evaluation"`. Expect `200` and the matching nonce, with no provider lookup, provider
+	 secret reads, or outbound provider HTTP. See the [evaluation contract](CONTRACT.md#evaluation-generic-shutter).
 
-Evaluation success proves the validation/decryption path, not live credentials or handset delivery.
-A live `200` with the matching nonce means provider acceptance, not handset receipt; confirm delivery
-through the selected provider's reports. Forward the rendered message unchanged, including voice
-digit spacing, without guessing a passcode. A timed-out send may already be accepted; avoid blind retries.
+	 Before live testing, verify these cases on the deployed endpoint, not just in offline tests:
 
-## 4. Package, deploy and verify
+	 | Check | Expected result |
+	 |---|---|
+	 | Missing, malformed, expired, or invalidly signed caller token | `401` before the handler |
+	 | Wrong issuer/audience or caller outside the allowlist | Rejected before the handler |
+	 | Authorized caller and valid evaluation envelope | `200` with matching nonce, no provider I/O |
+	 | Alternate routes, hostnames, and serving slots | No authentication or HTTPS bypass |
 
-Download your language's [Function ZIP](../README.md#download-a-function-zip) from GitHub Releases.
-No local packaging tools are required. For custom builds, use the
-[root-level packaging scripts](../README.md#build-zips-locally). The .NET source ZIP must be extracted
-and built/published with the .NET 8 SDK or a build-enabled deployment pipeline. The Python source ZIP
-requires Azure remote build on Linux. Neither source ZIP is ready for direct run-from-package.
-Downloading or building a ZIP does not deploy it.
+	 After those checks pass, confirm the destination and channel, use `mode: 1`, and submit once.
+	 `200` with a matching nonce confirms provider acceptance, **not handset delivery**. Confirm receipt
+	 and spoken digit clarity through the handset/provider reports. The message is forwarded unchanged.
+	 Do not blindly retry a timeout: the provider may already have accepted the request. Review the
+	 [production limitations](CONTRACT.md#production-limitations), including no durable handoff,
+	 early acknowledgement, expiry enforcement, or multi-key rotation.
 
-Build and publish only the chosen language folder, retaining runtime dependencies or using a supported
-remote build. Configure and verify Easy Auth before publishing; keep public ingress disabled until
-the required platform gate is in place. Verify managed identity access, encryption and platform
-authentication settings on the deployed app. Inspect the final package; do not publish the repository
-root or reuse stale build output.
-
-The repository-root [.gitignore](../.gitignore) covers all runtimes and nested helper scripts.
-Publishing has separate exclusions in [JavaScript](../javascript/.funcignore),
-[Python](../python/.funcignore) and [.NET](../dotnet/.funcignore); local settings, private keys and tests
-must stay out of the package. The [.NET project](../dotnet/dotnet.csproj) also excludes local settings
-from publish output. Application logs are privacy-limited; disable platform/SDK body tracing separately.
-
-### Required deployed security checks
-
-Offline suites cover local application behavior, **not Easy Auth**. Separately test the deployed
-endpoint with non-delivering evaluation requests and synthetic data:
-
-- Missing, malformed, expired or invalidly signed credentials receive `401` before handler execution.
-- Wrong tenant issuer or endpoint audience is rejected; a valid token for an application outside the
-	SAS caller allowlist is denied before handler execution. Check the actual non-success status rather
-	than relying on the handler's response schema for platform errors.
-- An authorized SAS caller with a valid encrypted evaluation request receives `200` and the matching
-	nonce, without provider lookup, provider Key Vault reads or provider HTTP.
-- HTTPS is enforced, and no excluded path, alternate hostname, route or serving slot bypasses the
-	authentication gate for SendOtp. Verify the nonempty caller allowlist in the deployed configuration.
-
-Do not disable Easy Auth on a public endpoint to test failure behavior. Never record raw phone
-numbers, messages, nonce values, bearer tokens, API keys, encrypted request bodies or provider response
-bodies in test reports. Repeat these checks after deployment and any authentication or slot changes;
-passing offline tests is not deployment security certification.
-
-## 5. Add an adapter
-
-Implement `manifest`, `buildRequest` and `parseResponse`, register the adapter in the chosen runtime,
-then provision its credentials and options. Keep API-specific logic in the adapter, with fail-closed
-response mapping; the shared delivery pipeline does not need provider-specific branches.
+	 Never record phone numbers, messages, nonce values, tokens, API keys, encrypted request bodies,
+	 or raw provider responses in reports. Keep platform/SDK body tracing off. Repeat the deployed
+	 checks after deployment, authentication changes, and slot swaps. Local evaluation and passing
+	 unit tests do not certify platform authentication or live delivery.
