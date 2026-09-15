@@ -1,0 +1,29 @@
+{
+  "setup": {
+    "tenantId": "00000000-0000-0000-0000-000000000000",
+    "subscriptionId": "00000000-0000-0000-0000-000000000000"
+  },
+  "registration": {
+    "displayName": "Contoso CYOT application",
+    "skipAzureLogin": false
+  },
+  "endpoint": {
+    "infrastructureMode": "Bicep",
+    "environmentName": "prod",
+    "resourceGroup": "rg-external-phone-provider",
+    "location": "westus2",
+    "functionAppName": "contoso-cyot-endpoint",
+    "planType": "Premium",
+    "functionRoute": "api/SendOtp",
+    "providerName": "Replace with provider name",
+    "providerTenantId": "00000000-0000-0000-0000-000000000000",
+    "providerScope": "api://provider-application-id/.default",
+    "providerEndpoint": "https://provider.example.com/api/send",
+    "resourceTagName": "Purpose",
+    "resourceTagValue": "Entra - External Phone Provider"
+  },
+  "activation": {
+    "graphApiVersion": "beta",
+    "migrated": false
+  }
+}
