@@ -99,11 +99,11 @@ nonblank strings. Supply the password explicitly to preserve leading zeros; it i
 from `message`. These values are forwarded unchanged as `voice.text2voice`, without a top-level
 `text` field. Missing or invalid speech returns `400` before credential lookup or provider HTTP.
 SMS continues to use `message`, and evaluation continues to skip provider-specific validation and I/O.
-Soprano authentication remains API-key-only (`X-MEMS-API-ID` and `X-MEMS-API-Key`, resolved from
-`soprano-api-id` and `soprano-api-key` in Key Vault). No provider JWT, OAuth flow, token endpoint,
-or bearer-token forwarding is added. Existing platform caller authentication is unchanged.
+Soprano uses OAuth client-assertion exchange. The outbound user-assigned managed identity obtains an
+`api://AzureADTokenExchange/.default` assertion for the existing multitenant application, which then
+requests the configured provider scope. Existing platform caller authentication is unchanged.
 
-Use a speech language supported by the selected Soprano endpoint and account. On QA4, an API-key
+Use a speech language supported by the selected Soprano endpoint and account. On QA4, an OAuth
 voice request using `en` returned HTTP `400` with error code `400101`; the same request structure
 using `en-US` returned HTTP `201` with `ENROUTE` on September 15, 2026. This confirms acceptance,
 not handset receipt or audio quality. The adapter preserves the supplied language and does not
@@ -183,8 +183,9 @@ success-looking status. Explicit `Block`/`StepUp` outcomes remain non-success re
 Each provider is one unit exposing three things:
 
 - **`manifest`**: protocol facts only:
-  - `id`: provider id selected by `EPP_PROVIDER_NAME`; its base URL is `EPP_PROVIDER_ENDPOINT`
-  - `auth`: `{ mode: 'apiKey', keyVaultSecretName, identityKeyVaultSecretName? }`; other modes fail closed
+  - `id`: provider id selected by `EPP_PROVIDER_NAME`; its complete request URL is `EPP_PROVIDER_ENDPOINT`
+  - `auth`: either `{ mode: 'apiKey', keyVaultSecretName, identityKeyVaultSecretName? }` or
+    `{ mode: 'oauth' }`; unsupported modes fail closed
   - `responseMapping`: map of provider status → `Continue` | `Fail` | `Block` | `StepUp` (+ `default`)
 - **`buildRequest({ channel, endpoint, dispatch, credential, env })`** → `{ url, method, headers, body }`
 - **`parseResponse({ httpStatus, ok, json })`** → `ParsedResponse`, containing `success`,
@@ -205,19 +206,17 @@ is parsed once and normalized inside its adapter. No serialization framework or 
 class hierarchy is required.
 
 Adapters require registration in the chosen runtime. Consult the selected adapter and its manifest
-for required credentials and options: the manifest declares secret names and protocol mappings;
+for required credentials and options: the manifest declares authentication and protocol mappings;
 the implementation reads adapter-specific options from app settings. Individual API contracts remain
 in the adapters; the [onboarding credential naming table](ONBOARDING.md#provider-credential-names)
 lists the exact manifest secret names for provisioning and authorized local tests. Keep that table
 aligned with the manifests; never include secret values in documentation or the settings sample.
 
-### Telesign CYOT integration
+### Telesign EPP integration
 
-SMS and Voice both use `POST https://verify.telesign.com/integration/msft/cyot` with JSON. Configure
-the base URL as `https://verify.telesign.com`. The adapter supplies `recipient.phone_number`, the
-unchanged `message.text`, optional `message.language`, one selected `channels[].channel`, and
-`correlation_id`. Keep the leading `+` in the E.164 phone number; the guide's example `12345678`
-does not satisfy its own required phone-number pattern.
+SMS and Voice use the complete provider-approved URLs selected from the provider profile. The adapter
+supplies `recipient.phone_number`, the unchanged `message.text`, optional `message.language`, one
+selected `channels[].channel`, and `correlation_id`. Keep the leading `+` in the E.164 phone number.
 
 Phase 1 supports Basic and Digest; this sample implements Basic only. Per
 [Telesign's authentication instructions](https://developer.telesign.com/enterprise/docs/authentication#basic-authentication),
@@ -246,18 +245,23 @@ Set by provisioning. **Identical names across all languages.**
 | Key | Purpose |
 |-----|---------|
 | `EPP_PROVIDER_NAME` | registered id of the selected provider; `<adapter-id>` is a placeholder, not a bundled default |
-| `EPP_PROVIDER_ENDPOINT` | absolute HTTPS base URL with a hostname, port 1–65535, and no userinfo or fragment; the final adapter URL is also validated; redirects are not followed |
+| `EPP_PROVIDER_ENDPOINT` | complete absolute HTTPS request URL for the selected channel/region, with a hostname, port 1–65535, and no userinfo or fragment; redirects are not followed |
+| `EPP_PROVIDER_CHANNEL` | optional configured `sms` or `voice` route; when set, other live-request channels fail closed |
+| `EPP_PROVIDER_ENDPOINT_REGION` | selected `global` or `eu` route label; informational at runtime |
+| `EPP_PROVIDER_AUTH_MODE` | must match the selected adapter (`apiKey` for Telesign, `oauth` for Soprano) |
+| `EPP_PROVIDER_TENANT_ID` | selected provider tenant; added to the Step 1 app's allowed-tenants preview and used as the OAuth authority for Soprano |
+| `EPP_PROVIDER_SCOPE` | Soprano OAuth scope |
+| `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | client application and user-assigned identity used for Soprano client-assertion exchange |
 | `EPP_PROVIDER_ACCOUNT_NAME` | sender/source only when required by the selected adapter |
 | `EPP_PROVIDER_TIMEOUT_MS` | trimmed ASCII decimal milliseconds; default 1500 for missing/invalid/nonpositive values; capped at 2500. Not a whole-invocation deadline |
 | `EPP_DECRYPTION_KEY_PEM` | single RSA private key for JWE decryption, PEM or base64-encoded PEM; use a Key Vault secret reference in Azure, not a plaintext private key in shared settings |
 | `EPP_ENCRYPTION_KEY_ID` | optional expected JWE `kid`; after successful decryption, a mismatch emits only `encryption_key_id_mismatch`. Advisory, not a key selector or authentication check |
-| `KEY_VAULT_URL` | Key Vault URI (provider API keys) |
+| `KEY_VAULT_URL` | Key Vault URI for API-key providers |
 | `AZURE_CLIENT_ID` | set for a user-assigned managed identity |
 
-Provider credential values live in **Key Vault**, under the names in the selected adapter's manifest,
-and are fetched via **managed identity** with the *Key Vault Secrets User* role. Do not put credential
-values in code or app settings. No additional customer-private configuration or new environment
-variable is needed for this guidance.
+Telesign credentials live in **Key Vault**, under the names in its manifest, and are fetched via
+managed identity. Soprano exchanges an outbound managed-identity assertion for a token in the
+configured provider tenant/scope. Do not put provider secrets in code or app settings.
 
 Caller trust is configured in **Easy Auth**, not application environment variables: pin the trusted
 tenant issuer, the endpoint-app audience and the authorized SAS caller application ID. Incoming
@@ -266,9 +270,10 @@ guard or backup token validation. See [platform onboarding](ONBOARDING.md#2-prov
 
 ### Default provider and configuration readers
 
-Provision `EPP_PROVIDER_NAME` with the customer's selected provider, plus that account's
-`EPP_PROVIDER_ENDPOINT` and Key Vault credentials. A missing or unknown provider fails closed;
-there is no implicit default or automatic failover. Request-body provider fields are not used.
+Provision `EPP_PROVIDER_NAME` with the customer's selected provider, plus the complete selected
+channel/region `EPP_PROVIDER_ENDPOINT` and matching authentication settings. A missing or unknown
+provider fails closed; there is no implicit default or automatic failover. Request-body provider
+fields are not used.
 
 The shared configuration readers are [JavaScript `readConfig`](../javascript/src/functions/config.js),
 [Python `read_config`](../python/src/config.py), and [.NET `AppConfig.Read`](../dotnet/Src/AppConfig.cs).

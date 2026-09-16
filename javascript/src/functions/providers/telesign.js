@@ -41,7 +41,7 @@ function buildRequest({ channel, endpoint, dispatch, credential }) {
     const message = { text: dispatch.message };
     if (typeof dispatch.locale === 'string' && dispatch.locale.trim()) message.language = dispatch.locale;
     return {
-        url: `${endpoint.replace(/\/+$/, '')}/integration/msft/cyot`,
+        url: endpoint,
         method: 'POST',
         headers: {
             Authorization: authorization,

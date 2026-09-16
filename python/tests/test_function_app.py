@@ -34,8 +34,10 @@ def _isolate(monkeypatch):
     monkeypatch.setattr(function_app, "_key_provider", Mock(return_value=_PRIVATE_PEM))
     engine = dispatch_module.DispatchEngine(
         function_app._registry, Mock(resolve=Mock(return_value="test-key")),
-        {"EPP_PROVIDER_NAME": "soprano", "EPP_PROVIDER_ENDPOINT": "https://qa4.example/cgpapi"},
+        {"EPP_PROVIDER_NAME": "soprano", "EPP_PROVIDER_ENDPOINT": "https://qa4.example/oauth/messages",
+         "EPP_PROVIDER_AUTH_MODE": "oauth"},
     )
+    engine._resolve_credential = Mock(return_value={"mode": "oauth", "access_token": "provider-token"})
     monkeypatch.setattr(function_app, "_engine", engine)
     monkeypatch.setattr(dispatch_module.requests, "request", Mock())
 
