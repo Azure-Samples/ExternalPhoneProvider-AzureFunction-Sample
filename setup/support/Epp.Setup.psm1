@@ -399,25 +399,108 @@ function Initialize-EppBicep {
 }
 
 function Connect-EppAzureAccount {
-    param([hashtable] $Inputs, [switch] $NonInteractive)
+    param([hashtable] $Inputs, [switch] $NonInteractive, [switch] $ForceAuthentication)
 
     $account = $null
-    try {
+    if ($ForceAuthentication) {
+        if ($NonInteractive) { throw '-ForceAuthentication cannot be combined with -NonInteractive.' }
+        Write-Host "Reauthenticating Azure CLI to tenant $($Inputs.TenantId) with device code..." -ForegroundColor Cyan
+        Invoke-EppAz login --tenant $Inputs.TenantId --use-device-code --output none | Out-Null
         $account = Invoke-EppAz account show --subscription $Inputs.SubscriptionId --output json | ConvertFrom-Json
     }
-    catch {
-        if ($NonInteractive) {
-            throw "Azure CLI is not signed in to subscription '$($Inputs.SubscriptionId)' in tenant '$($Inputs.TenantId)'. Run az login first."
+    else {
+        try {
+            $account = Invoke-EppAz account show --subscription $Inputs.SubscriptionId --output json | ConvertFrom-Json
         }
-        Write-Host "Signing in to Azure tenant $($Inputs.TenantId)..." -ForegroundColor Cyan
-        Invoke-EppAz login --tenant $Inputs.TenantId --output none | Out-Null
-        $account = Invoke-EppAz account show --subscription $Inputs.SubscriptionId --output json | ConvertFrom-Json
+        catch {
+            if ($NonInteractive) {
+                throw "Azure CLI is not signed in to subscription '$($Inputs.SubscriptionId)' in tenant '$($Inputs.TenantId)'. Run az login first."
+            }
+            Write-Host "Signing in to Azure tenant $($Inputs.TenantId)..." -ForegroundColor Cyan
+            Invoke-EppAz login --tenant $Inputs.TenantId --output none | Out-Null
+            $account = Invoke-EppAz account show --subscription $Inputs.SubscriptionId --output json | ConvertFrom-Json
+        }
     }
     if ($account.id -ne $Inputs.SubscriptionId -or $account.tenantId -ne $Inputs.TenantId -or
         $account.state -ne 'Enabled' -or $account.environmentName -ne 'AzureCloud' -or $account.user.type -ne 'user') {
         throw 'Azure CLI must be signed in as a user to the requested enabled subscription and tenant in the public Azure cloud.'
     }
     return $account
+}
+
+function ConvertFrom-EppJwtPayload {
+    param([string] $Token)
+
+    $segments = $Token.Split('.')
+    if ($segments.Count -ne 3 -or $segments[1].Length -gt 65536) {
+        throw 'Azure CLI returned an invalid ARM access token.'
+    }
+    $payload = $segments[1].Replace('-', '+').Replace('_', '/')
+    switch ($payload.Length % 4) {
+        2 { $payload += '==' }
+        3 { $payload += '=' }
+        1 { throw 'Azure CLI returned an invalid ARM access-token payload.' }
+    }
+    try {
+        return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload)) |
+            ConvertFrom-Json -AsHashtable -ErrorAction Stop
+    }
+    catch {
+        throw 'Azure CLI returned an unreadable ARM access-token payload.'
+    }
+}
+
+function Get-EppArmOperatorObjectId {
+    param([hashtable] $Inputs)
+
+    $token = $null
+    try {
+        $token = Invoke-EppAz account get-access-token --subscription $Inputs.SubscriptionId `
+            --resource 'https://management.azure.com/' --query accessToken --output tsv
+        if ([string]::IsNullOrWhiteSpace($token)) { throw 'Azure CLI did not return an ARM access token.' }
+        $claims = ConvertFrom-EppJwtPayload -Token $token
+        if ($claims['tid'] -ne $Inputs.TenantId) {
+            throw 'The ARM access token belongs to a different tenant than the approved deployment.'
+        }
+        return ConvertTo-EppGuid ([string]$claims['oid'])
+    }
+    finally { $token = $null }
+}
+
+function Get-EppGraphOperator {
+    $operator = Invoke-MgGraphRequest -Method GET `
+        -Uri 'https://graph.microsoft.com/v1.0/me?$select=id,userPrincipalName' `
+        -OutputType PSObject -ErrorAction Stop
+    $id = ConvertTo-EppGuid ([string]$operator.id)
+    $account = if ([string]::IsNullOrWhiteSpace([string]$operator.userPrincipalName)) { $id } else { [string]$operator.userPrincipalName }
+    return [pscustomobject]@{ Id = $id; Account = $account }
+}
+
+function Connect-EppGraphAccount {
+    param([hashtable] $Inputs, [switch] $NonInteractive, [switch] $ForceAuthentication)
+
+    if ($NonInteractive -and $ForceAuthentication) {
+        throw '-ForceAuthentication requires interactive Graph device-code sign-in and cannot be combined with -NonInteractive.'
+    }
+    $graph = if ($ForceAuthentication) { $null } else { Get-EppInitialGraphContext }
+    if ($ForceAuthentication -or -not (Test-EppGraphContext -Context $graph -TenantId $Inputs.TenantId)) {
+        $scopeList = $script:GraphRequiredScopes -join ', '
+        if ($NonInteractive) { throw "Connect-MgGraph to the customer tenant with $scopeList before noninteractive setup." }
+        $connectArguments = @{
+            TenantId = $Inputs.TenantId
+            Scopes = $script:GraphRequiredScopes
+            ContextScope = 'Process'
+            NoWelcome = $true
+            ErrorAction = 'Stop'
+        }
+        if ($ForceAuthentication) { $connectArguments.UseDeviceAuthentication = $true }
+        Connect-MgGraph @connectArguments
+        $graph = Get-MgContext -ErrorAction Stop
+    }
+    if (-not (Test-EppGraphContext -Context $graph -TenantId $Inputs.TenantId)) {
+        throw "Microsoft Graph is not connected to the required customer tenant with delegated scopes: $($script:GraphRequiredScopes -join ', ')."
+    }
+    return [pscustomobject]@{ Context = $graph; Operator = Get-EppGraphOperator }
 }
 
 function Get-EppInitialGraphContext {
@@ -645,9 +728,12 @@ function Initialize-EppResourceProviders {
 function Connect-EppContext {
     param(
         [hashtable] $Inputs, [Collections.IDictionary] $Names,
-        [switch] $NonInteractive, [switch] $InstallPrerequisites
+        [switch] $NonInteractive, [switch] $InstallPrerequisites, [switch] $ForceAuthentication
     )
 
+    if ($NonInteractive -and $ForceAuthentication) {
+        throw '-ForceAuthentication requires interactive device-code sign-in and cannot be combined with -NonInteractive.'
+    }
     foreach ($command in @('az', 'New-SelfSignedCertificate', 'Export-Certificate')) {
         if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
             if ($command -eq 'az') {
@@ -662,20 +748,13 @@ function Connect-EppContext {
     }
     Initialize-EppBicep -NonInteractive:$NonInteractive -InstallPrerequisites:$InstallPrerequisites
     Import-EppGraphModules -NonInteractive:$NonInteractive -InstallPrerequisites:$InstallPrerequisites
-    $account = Connect-EppAzureAccount -Inputs $Inputs -NonInteractive:$NonInteractive
-    $operatorId = Invoke-EppAz rest --method get --url 'https://graph.microsoft.com/v1.0/me' `
-        --subscription $Inputs.SubscriptionId --query id --output tsv
-    $operatorId = ConvertTo-EppGuid $operatorId
-    $graph = Get-EppInitialGraphContext
-    if (-not (Test-EppGraphContext -Context $graph -TenantId $Inputs.TenantId)) {
-        $scopeList = $script:GraphRequiredScopes -join ', '
-        if ($NonInteractive) { throw "Connect-MgGraph to the customer tenant with $scopeList before noninteractive setup." }
-        Connect-MgGraph -TenantId $Inputs.TenantId -Scopes $script:GraphRequiredScopes -ContextScope Process -NoWelcome -ErrorAction Stop
-        $graph = Get-MgContext -ErrorAction Stop
-    }
-    if (-not (Test-EppGraphContext -Context $graph -TenantId $Inputs.TenantId)) {
-        throw "Microsoft Graph is not connected to the required customer tenant with delegated scopes: $($script:GraphRequiredScopes -join ', ')."
-    }
+    $account = Connect-EppAzureAccount -Inputs $Inputs -NonInteractive:$NonInteractive `
+        -ForceAuthentication:$ForceAuthentication
+    $operatorId = Get-EppArmOperatorObjectId -Inputs $Inputs
+    $graphAccount = Connect-EppGraphAccount -Inputs $Inputs -NonInteractive:$NonInteractive `
+        -ForceAuthentication:$ForceAuthentication
+    $graph = $graphAccount.Context
+    $graphOperator = $graphAccount.Operator
     $applications = @(Get-MgApplication -Filter "appId eq '$($Inputs.ApplicationId)'" -All -ErrorAction Stop)
     if ($applications.Count -ne 1) { throw 'Complete manual Step 1: exactly one existing application with this client ID is required.' }
     $application = Get-MgApplication -ApplicationId $applications[0].Id `
@@ -734,7 +813,8 @@ function Connect-EppContext {
         }
     }
     return [pscustomobject]@{
-        OperatorId = $operatorId; GraphAccount = $graph.Account; Application = $application; TokenVersion = $version
+        OperatorId = $operatorId; GraphOperatorId = $graphOperator.Id; GraphAccount = $graphOperator.Account
+        Application = $application; TokenVersion = $version
         EndpointPrincipal = $endpointPrincipals | Select-Object -First 1
         CallerPrincipal = $callerPrincipals | Select-Object -First 1
         GraphPrincipal = $graphPrincipals[0]
@@ -779,8 +859,8 @@ function Show-EppPlan {
     Write-Host 'Registration and regional readiness are checked before certificate/resource creation. Existing or in-progress registrations are reused.'
     Write-Host 'Includes the private packages blob container, Function system identity, Easy Auth, and diagnostic settings.'
     Write-Host 'System identity: Storage Blob Data Owner, Queue/Table Data Contributor, Key Vault Secrets User, Monitoring Metrics Publisher.'
-    Write-Host "Azure operator $($Context.OperatorId): Key Vault Secrets Officer and Storage Blob Data Contributor, scoped to these resources."
-    Write-Host "Graph operator $($Context.GraphAccount): configure the dedicated endpoint app and tenant service principals."
+    Write-Host "Azure operator $($Context.OperatorId) (ARM token oid): Key Vault Secrets Officer and Storage Blob Data Contributor."
+    Write-Host "Graph operator $($Context.GraphAccount) [$($Context.GraphOperatorId)]: configure the dedicated endpoint app and tenant service principals."
     if ($Context.Application.SignInAudience -ne 'AzureADMultipleOrgs') {
         Write-Host 'Change the dedicated endpoint application from single-tenant to organizational multi-tenant.'
     }
@@ -1231,8 +1311,8 @@ function Invoke-EppDeployment {
     )
 
     $graph = Get-MgContext
-    if (-not (Test-EppGraphContext -Context $graph -TenantId $Inputs.TenantId) -or
-        $graph.Account -ne $Context.GraphAccount) {
+    $graphOperator = if (Test-EppGraphContext -Context $graph -TenantId $Inputs.TenantId) { Get-EppGraphOperator } else { $null }
+    if (-not $graphOperator -or $graphOperator.Id -ne $Context.GraphOperatorId) {
         throw 'The Graph session changed after the plan was reviewed. Rerun setup.'
     }
     # The single setup approval covers these planned writes, including SDK/certificate cmdlets.
@@ -1368,7 +1448,8 @@ function Invoke-EppSetup {
         [string] $OutputDirectory, [string] $AssetDirectory, [string] $SourceBaseUri,
         [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
         [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample',
-        [switch] $NonInteractive, [switch] $InstallPrerequisites, [switch] $ApproveDeployment
+        [switch] $NonInteractive, [switch] $InstallPrerequisites,
+        [switch] $ForceAuthentication, [switch] $ApproveDeployment
     )
 
     Write-Host 'Step 2: deploy the External Phone Provider endpoint. Steps 1 and 3 are manual.' -ForegroundColor Cyan
@@ -1394,7 +1475,7 @@ function Invoke-EppSetup {
 
     Write-Host "`nChecking prerequisites and the selected Azure context (no resource changes)..." -ForegroundColor Cyan
     $context = Connect-EppContext -Inputs $inputs -Names $names -NonInteractive:$NonInteractive `
-        -InstallPrerequisites:$InstallPrerequisites
+        -InstallPrerequisites:$InstallPrerequisites -ForceAuthentication:$ForceAuthentication
     $package = Get-EppPackage -Selection $selection -Directory $AssetDirectory
     $inputs.PackageSha256 = $package.Sha256
     $inputs.SourcePackageSha256 = $package.SourceSha256

@@ -11,6 +11,8 @@
     Public GitHub owner/repository containing the setup files. Use with SourceRef to test a fork.
 .PARAMETER InstallPrerequisites
     Install missing Microsoft Graph modules and the Azure CLI Bicep component after explicit opt-in.
+.PARAMETER ForceAuthentication
+    Require fresh tenant-specific device-code sign-in for Azure CLI and Microsoft Graph.
 .EXAMPLE
     .\Setup-Epp.ps1
 .EXAMPLE
@@ -34,6 +36,7 @@ param(
     [string] $SourceRef = 'main',
     [switch] $NonInteractive,
     [switch] $InstallPrerequisites,
+    [switch] $ForceAuthentication,
     [switch] $ApproveDeployment
 )
 

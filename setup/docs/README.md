@@ -101,6 +101,11 @@ consent includes broad app-role-management scopes because the approved deploymen
 `Application.Read.All` to the Microsoft phone-provider service principal. Authentication, module
 installation, Bicep installation, MFA, and consent prompts are not resource-creation approvals.
 
+Use `-ForceAuthentication` when the machine has ambiguous cached identities. It requires interactive
+device-code authentication for Azure CLI and Microsoft Graph, does not clear shared token caches,
+and cannot be combined with `-NonInteractive`. Azure RBAC always uses the selected ARM token's
+validated `oid`; Graph `/me` is tracked separately for application-management operations.
+
 ## Step 2 - download and run one script
 
 Download and inspect [Setup-Epp.ps1](../Setup-Epp.ps1), or save it from the upstream raw URL:
@@ -110,6 +115,12 @@ Invoke-WebRequest `
     -Uri 'https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/main/setup/Setup-Epp.ps1' `
     -OutFile .\Setup-Epp.ps1
 .\Setup-Epp.ps1
+```
+
+Force explicit account selection when testing on a shared or multi-account computer:
+
+```powershell
+.\Setup-Epp.ps1 -ForceAuthentication
 ```
 
 The flow is:
