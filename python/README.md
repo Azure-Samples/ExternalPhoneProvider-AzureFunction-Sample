@@ -45,18 +45,12 @@ For local evaluation, start Azurite and replace the test-key placeholder in this
 }
 ```
 
-For live delivery, add `EPP_PROVIDER_NAME`, `EPP_PROVIDER_ENDPOINT` and `KEY_VAULT_URL` to `Values`.
+For live delivery, add `EPP_PROVIDER_NAME`, the complete selected `EPP_PROVIDER_ENDPOINT`, and the
+matching provider authentication settings to `Values`.
 Add `EPP_PROVIDER_ACCOUNT_NAME` and any adapter-specific options only when required. Keep values as
 strings, including optional `EPP_PROVIDER_TIMEOUT_MS: "1500"`. Replace placeholders; provider API
 keys belong in the manifest-named Key Vault secrets, not this file. See the
 [complete variable table](../README.md#configure-environment-variables).
-
-Optional Soprano JWT acquisition uses `ManagedIdentityCredential` and `ClientAssertionCredential`, not an application secret.
-Set `EPP_PROVIDER_SCOPE` to the provider API's Application ID or URI plus `/.default`, and enable
-`EPP_PROVIDER_JWT_ENABLED` only after provider authorization. Configure `EPP_PROVIDER_TENANT_ID`,
-`EPP_PROVIDER_APPLICATION_ID`, and `EPP_PROVIDER_MI_CLIENT_ID` for the federated exchange.
-`AZURE_CLIENT_ID` remains independent for Key Vault. See [JWT setup](../README.md#soprano-jwt-setup)
-for tenant requirements. Local tests mock the identity SDK; CLI login is not a token fallback.
 
 Core Tools loads `Values` into `os.environ`. Direct Python execution and pytest do not automatically
 read local settings. [read_config](src/config.py) returns an `AppConfig` object; the handler/engine
@@ -81,7 +75,7 @@ authenticate SAS: anyone with the public key can encrypt a request, and a fixed 
 Use incoming `mode: 2` or `mode: "evaluation"` as the generic shutter for every provider: platform
 authentication on Azure, handler validation and decryption run, but provider lookup, provider Key Vault
 reads and provider HTTP do not. No provider configuration or diagnostic environment flag is required.
-Live requests forward the rendered message unchanged using the configured provider's API key and
+Live requests forward the rendered message unchanged using the configured provider's API key or OAuth token and
 await acceptance before returning the nonce; failures omit it. Acceptance is not handset delivery.
 Platform/key prerequisites and HTTP outcomes are defined in the
 [contract](../docs/CONTRACT.md#evaluation-generic-shutter).

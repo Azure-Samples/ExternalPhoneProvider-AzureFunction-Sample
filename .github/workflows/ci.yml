@@ -6,6 +6,22 @@ on:
   pull_request:
 
 jobs:
+  epp-setup:
+    name: EPP setup (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Compile Bicep without deploying
+        shell: pwsh
+        run: |
+          az bicep install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          az bicep build --file (Join-Path $env:GITHUB_WORKSPACE 'setup/infra/main.bicep') --outfile (Join-Path $env:RUNNER_TEMP 'epp-main.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   javascript:
     name: JavaScript (Node.js)
     runs-on: ubuntu-latest

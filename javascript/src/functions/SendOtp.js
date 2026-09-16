@@ -72,7 +72,7 @@ app.http('SendOtp', {
             if (!evaluation) {
                 const dispatch = contextToDispatch(delivery, envelope, clientRequestId);
                 dispatch.correlationId = correlationId;
-                const result = await dispatchOtp(dispatch, { requestId, config, log: message => context.log(message) }).catch(() => ({ httpStatus: 500 }));
+                const result = await dispatchOtp(dispatch, { requestId, config }).catch(() => ({ httpStatus: 500 }));
                 if (result.httpStatus !== 200) {
                     return respond(result.httpStatus, { error: 'provider_delivery_failed', correlationId, requestId });
                 }

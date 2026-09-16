@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "id": "javascript",
+      "displayName": "JavaScript",
+      "url": "https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-guided-setup-preview-20260915/epp-javascript.zip",
+      "checksumsUrl": "https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-guided-setup-preview-20260915/SHA256SUMS.txt",
+      "buildStrategy": "ready"
+    },
+    {
+      "id": "dotnet",
+      "displayName": ".NET",
+      "url": "https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-guided-setup-preview-20260915/epp-dotnet-source.zip",
+      "checksumsUrl": "https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-guided-setup-preview-20260915/SHA256SUMS.txt",
+      "buildStrategy": "dotnet-publish"
+    },
+    {
+      "id": "python",
+      "displayName": "Python",
+      "url": "https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-guided-setup-preview-20260915/epp-python-source.zip",
+      "checksumsUrl": "https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-guided-setup-preview-20260915/SHA256SUMS.txt",
+      "buildStrategy": "remote-build"
+    }
+  ]
+}

@@ -13,70 +13,53 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
 
 2. **Run the app setup script.**
 
-	 <a id="setup-script-compatibility"></a>
-	 **The script, command, and prerequisites will be provided later.** Run it using the supplied
-	 instructions, verify it succeeded, and retain the app/resource IDs and configuration outputs.
-	 Do not assume it creates provider secrets or deploys the Function code.
+   <a id="setup-script-compatibility"></a>
+   Use the [guided EPP setup](../setup/docs/README.md) after manually creating only the dedicated
+   endpoint application registration. Download only `setup/Setup-Epp.ps1`; it retrieves commit-pinned support scripts,
+   Bicep, provider profiles, and the selected language package. Choose a provider, SMS or voice,
+   Global or EU, and a resource prefix, then approve one complete deployment plan.
 
-3. **Fill in app settings.**
+   After approval, the script configures the app registration and enterprise application, creates
+   the Microsoft phone-provider service principal, assigns `Epp.Invoke`, grants it Microsoft Graph
+   `Application.Read.All`, and restricts the multi-tenant app through the Entra allowed-tenants
+   preview to its home tenant plus the selected provider tenant. It then deploys the Function and
+   configures Easy Auth. It does not purchase the provider offer, grant provider API consent/roles,
+   or activate the EPP policy.
 
-	 <a id="provider-credential-names"></a>
-	 Reuse your provider's existing cloud API key and matching ID. Store the raw values in Key Vault
-	 under these exact names, shared across all three languages:
+3. **Complete provider authentication and settings.**
 
-	 | Provider | API credential secret | Matching identity secret | Authentication |
-	 |---|---|---|---|
-	 | `telesign` | `telesign-api-key` | `telesign-customer-id` | Basic: base64 of `customer-id:api-key` |
-	 | `soprano` | `soprano-api-key` | `soprano-api-id` | `X-MEMS-API-Key` and `X-MEMS-API-ID` |
-	 | `infobip` | `infobip-api-key` | None | `Authorization: App <api-key>` |
-	 | `sinch` | `sinch-api-token` | None | `Authorization: Bearer <static-api-token>` |
+   <a id="provider-credential-names"></a>
+   The setup script writes the selected provider route and authentication settings:
 
-	 Secret names use lowercase and hyphens. Keep `sinch-api-token` unchanged. Store the API key and
-	 matching ID separately, not a prebuilt Authorization header, base64 credential pair, or Entra token.
-	 The adapter builds the headers. Soprano can also acquire an optional provider JWT; see
-	 [Optional Soprano provider JWT](#optional-soprano-provider-jwt) for the additional setup.
+   | Provider | API credential secret | Matching identity secret | Authentication |
+   |---|---|---|---|
+   | `telesign` | `telesign-api-key` | `telesign-customer-id` | Basic: base64 of `customer-id:api-key` |
+   | `soprano` | None | None | OAuth client assertion using the outbound user-assigned managed identity |
+   | `infobip` | `infobip-api-key` | None | `Authorization: App <api-key>` |
+   | `sinch` | `sinch-api-token` | None | Static token authentication |
 
-	 Enable the Function's managed identity and grant it **Key Vault Secrets User** access to the
-	 required secrets. Confirm vault network access and that the keys match the provider environment.
-	 Select one registered provider per deployment; there is no default. Unsupported providers need
-	 an adapter first; see [adding a provider](../README.md#contributing-a-language-or-provider).
+   For Telesign, store the raw key and customer ID separately and grant the Function identity
+   **Key Vault Secrets User** access. For Soprano, complete provider consent/application-role
+   onboarding for the existing multitenant application. The setup creates the disclosed federated
+   identity credential; it does not grant access to Soprano's API.
 
-	 <a id="local-settings-and-cloud-secrets"></a>
-	 Start with [local.settings.sample.json](local.settings.sample.json) beside the chosen app's
-	 `host.json`. Replace placeholders in `Values`; all values must be strings. For Telesign, use:
+   <a id="local-settings-and-cloud-secrets"></a>
+   Start with [local.settings.sample.json](local.settings.sample.json) beside the chosen app's
+   `host.json`. Replace placeholders in `Values`; all values must be strings. `EPP_PROVIDER_ENDPOINT`
+   is the complete provider-approved request URL selected for the channel and Global/EU region.
+   `EPP_PROVIDER_AUTH_MODE` must match the adapter: `apiKey` for Telesign or `oauth` for Soprano.
+   Provider API keys stay in Key Vault, not `Values`.
 
-	 ```json
-	 {
-		 "EPP_PROVIDER_NAME": "telesign",
-		 "EPP_PROVIDER_ENDPOINT": "https://verify.telesign.com",
-		 "KEY_VAULT_URL": "https://<existing-provider-credential-vault>.vault.azure.net/"
-	 }
-	 ```
+   Set `FUNCTIONS_WORKER_RUNTIME` to `node`, `python`, or `dotnet-isolated`. Local
+   `UseDevelopmentStorage=true` requires Azurite; configure Azure host storage separately.
+   Use a local test private key for `EPP_DECRYPTION_KEY_PEM`; in Azure, use a Key Vault reference
+   and give the caller the matching public key. Core Tools does not resolve Key Vault references
+   locally. `EPP_ENCRYPTION_KEY_ID` is advisory only; this sample has one decryption key, not
+   multi-key rotation. The decryption key, provider credentials, and caller authentication are separate.
 
-	 These are entries in `Values`, not a complete settings file. Use the adapter's **base URL**;
-	 it adds the send path. App-setting names use uppercase and underscores. Provider API keys stay
-	 in Key Vault, not `Values`: `TELESIGN_API_KEY`, `SOPRANO_API_KEY`, and `EPP_PROVIDER_API_KEY`
-	 are not read by the production resolvers. `EPP_PROVIDER_ACCOUNT_NAME` is optional sender metadata,
-	 not an API/customer ID. See the [settings catalog](CONTRACT.md#4-configuration-app-settings--env)
-	 for adapter options and `AZURE_CLIENT_ID` when using a user-assigned managed identity.
-
-	 Set `FUNCTIONS_WORKER_RUNTIME` to `node`, `python`, or `dotnet-isolated`. Local
-	 `UseDevelopmentStorage=true` requires Azurite; configure Azure host storage separately.
-	 Use a local test private key for `EPP_DECRYPTION_KEY_PEM`; in Azure, use a Key Vault reference
-	 and give the caller the matching public key. Core Tools does not resolve Key Vault references
-	 locally. `EPP_ENCRYPTION_KEY_ID` is advisory only; this sample has one decryption key, not
-	 multi-key rotation. The decryption key, provider credentials, and caller authentication are separate.
-
-	 For local work, keep the host **loopback-only**, without tunnels or public forwarding. Core Tools
-	 has no Easy Auth, and `ManagedIdentityCredential` cannot use your CLI login. `AZURE_CLIENT_ID`
-	 does not create a local identity. Use offline tests or evaluation mode by default. An authorized
-	 live test can inject a private resolver that reads the same cloud secrets into memory using a
-	 signed-in identity with secret-read permission. Do not add a production credential fallback,
-	 print secrets, persist a secret cache, or change cloud settings merely to test locally.
-
-	 `KEY_VAULT_URL` selects the provider credential vault independently of the decryption-key reference.
-	 Timeout defaults to 1500 ms and caps at 2500 ms; zero does not disable it. Retry settings are unused.
-	 Configure caller trust in Easy Auth, not legacy `EPP_EXPECTED_*` or `EPP_TENANT_ID` settings.
+   For local work, keep the host **loopback-only**, without tunnels or public forwarding. Core Tools
+   has no Easy Auth, and managed identity cannot use your CLI login. Use offline tests or evaluation
+   mode by default; do not add a production credential fallback merely to test locally.
 
 4. **Deploy the Functions.**
 
@@ -151,32 +134,3 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
 	 or raw provider responses in reports. Keep platform/SDK body tracing off. Repeat the deployed
 	 checks after deployment, authentication changes, and slot swaps. Local evaluation and passing
 	 unit tests do not certify platform authentication or live delivery.
-
-## Optional Soprano provider JWT
-
-For optional Soprano JWT authentication, the **Function requests the token from Entra**; SAS does
-not provide it in the JWE. It exchanges a managed-identity assertion, with no application client secret:
-
-1. Attach the trusted user-assigned identity and set `EPP_PROVIDER_MI_CLIENT_ID` to its Client ID.
-	Keep the existing Key Vault identity (`AZURE_CLIENT_ID` or system-assigned) and API ID/key secrets.
-2. Configure or reuse a federated credential on the calling app registration in the identity's home
-	tenant. Trust its v2 issuer, identity Object (principal) ID as subject, and `api://AzureADTokenExchange`
-	as audience. The calling app must be multitenant and authorized in a different provider tenant.
-3. Set `EPP_PROVIDER_TENANT_ID` to the provider tenant and `EPP_PROVIDER_APPLICATION_ID` to the calling
-	app's Application ID. Set `EPP_PROVIDER_SCOPE` to the provider API's Application ID or URI plus `/.default`.
-	QA4 uses `32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe/.default`; the code has no default scope.
-4. Set `EPP_PROVIDER_JWT_ENABLED=true` to enable acquisition. Leave it off for API-key-only delivery.
-	Missing scope or token failure falls back to API keys, so confirm this policy with Soprano and
-	verify the request's `SopranoAuth=api-key+jwt` log during live JWT testing.
-
-The first token is the managed-identity assertion for `api://AzureADTokenExchange/.default`. The second
-is the application token issued in the provider tenant. Only that second token is sent to Soprano.
-The provider must accept the calling application's identity; Key Vault RBAC is unrelated to this trust.
-
-These settings go in the Azure Function App environment or `Values` in private local settings.
-There is no additional Key Vault secret for JWT acquisition. Never store an access token in settings.
-`AZURE_CLIENT_ID` selects Key Vault's identity; `EPP_PROVIDER_MI_CLIENT_ID` selects federation's identity. Locally, mock
-the identity SDK for offline tests; CLI login cannot substitute for an Azure managed-identity endpoint.
-An injected local API-key resolver alone does not enable JWT acquisition.
-See the [provider JWT contract](CONTRACT.md#optional-soprano-provider-jwt) for token flow, caching,
-fallback, QA4 claims, and the account/billing questions still to agree with Soprano.

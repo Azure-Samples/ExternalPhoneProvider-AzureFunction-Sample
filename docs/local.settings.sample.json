@@ -10,13 +10,6 @@
     "EPP_PROVIDER_ENDPOINT": "https://<provider-host>/<api-base-path>",
     "EPP_PROVIDER_TIMEOUT_MS": "1500",
 
-    "EPP_PROVIDER_JWT_ENABLED": "false",
-    "EPP_PROVIDER_TENANT_ID": "<provider-tenant-id>",
-    "EPP_PROVIDER_APPLICATION_ID": "<calling-application-id>",
-    "EPP_PROVIDER_MI_CLIENT_ID": "<user-assigned-managed-identity-client-id>",
-    "EPP_PROVIDER_SCOPE": "<provider-api-application-id>/.default",
-
-    "KEY_VAULT_URL": "https://<provider-credential-vault>.vault.azure.net/",
-    "AZURE_CLIENT_ID": ""
+    "KEY_VAULT_URL": "https://<provider-credential-vault>.vault.azure.net/"
   }
 }

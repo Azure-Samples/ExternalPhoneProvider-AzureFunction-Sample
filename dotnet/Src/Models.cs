@@ -40,7 +40,7 @@ public sealed record TextToVoice(
 }
 
 public sealed record ProviderCredential(string Mode, string? Secret = null, string? Identity = null,
-    [property: JsonIgnore] string? Token = null)
+    [property: JsonIgnore] string? AccessToken = null)
 {
     public override string ToString() => nameof(ProviderCredential);
 }

@@ -2,15 +2,16 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
-const { ManagedIdentityCredential, ClientAssertionCredential } = require('@azure/identity');
 const { AppConfig, readConfig } = require('../src/functions/config');
 const { DeliveryContext, TextToVoice, ParsedResponse } = require('../src/functions/models');
 const fixtures = require('../../tests/fixtures/contract.json');
 const { inspect } = require('node:util');
+const { AzureLogger } = require('@azure/logger');
 const {
     dispatchOtp, getProvider, resolveOutcome, outcomeToHttpStatus,
-    parseEnvelope, parseProviderTimeout, isValidProviderUrl, contextToDispatch,
+    parseEnvelope, parseProviderTimeout, isValidProviderUrl, contextToDispatch, resolveProviderCredential,
 } = require('../src/functions/dispatch');
 const dispatch = { destination: '+15551234567', message: '  Your code is 918273.\n',
     channel: 'sms', messageId: 'message-id', correlationId: 'correlation-id' };
@@ -81,12 +82,14 @@ test('provider URLs and timeouts retain representative safety boundaries', () =>
     assert.equal(parseProviderTimeout('9999'), 2500);
 });
 
-test('omnimsg preserves its API-key request and normalizes acceptance', () => {
-    const request = getProvider('soprano').adapter.buildRequest({ ...input, env: undefined, endpoint: `${input.endpoint}/cgpapi///` });
-    assert.equal(request.url, 'https://provider.example/cgpapi/messages/omnimsg');
+test('Soprano uses the selected endpoint and OAuth bearer token', () => {
+    const request = getProvider('soprano').adapter.buildRequest({ ...input, env: undefined,
+        endpoint: `${input.endpoint}/oauth/messages`,
+        credential: { mode: 'oauth', accessToken: 'provider-token' } });
+    assert.equal(request.url, 'https://provider.example/oauth/messages');
     assert.equal(request.method, 'POST');
     assert.deepEqual(request.headers, { 'Content-Type': 'application/json', Accept: 'application/json',
-        'X-MEMS-API-ID': 'id', 'X-MEMS-API-Key': 'key' });
+        Authorization: 'Bear' + 'er provider-token' });
     assert.deepEqual(JSON.parse(request.body), { text: dispatch.message, destination: '15551234567',
         messageTypes: ['sms'], correlationId: 'correlation-id', shutterMode: false });
     const response = getProvider('soprano').adapter.parseResponse({ httpStatus: 201, ok: true,
@@ -96,103 +99,21 @@ test('omnimsg preserves its API-key request and normalizes acceptance', () => {
     assert.equal(inspect(response), '[ParsedResponse]');
 });
 
-test('Soprano Voice sends structured speech with API-key headers only', () => {
+test('Soprano Voice sends structured speech with OAuth', () => {
     const textToVoice = TextToVoice.fromPayload({ beforePasswordText: ' Your code is ', password: '001234',
         language: 'en-US', unexpected: 'must-not-be-forwarded' });
     const request = getProvider('soprano').adapter.buildRequest({ ...input, channel: 'voice',
-        dispatch: { ...dispatch, textToVoice }, credential: { ...input.credential, token: 'ignored-token' } });
-    assert.equal(request.url, `${input.endpoint}/messages/omnimsg`);
+        endpoint: `${input.endpoint}/oauth/voice`, dispatch: { ...dispatch, textToVoice },
+        credential: { mode: 'oauth', accessToken: 'provider-token' } });
+    assert.equal(request.url, `${input.endpoint}/oauth/voice`);
     assert.deepEqual(request.headers, { 'Content-Type': 'application/json', Accept: 'application/json',
-        'X-MEMS-API-ID': 'id', 'X-MEMS-API-Key': 'key' });
+        Authorization: 'Bear' + 'er provider-token' });
     assert.deepEqual(JSON.parse(request.body), { destination: '15551234567', messageTypes: ['voice'],
         correlationId: 'correlation-id', shutterMode: false,
         voice: { text2voice: { beforePasswordText: ' Your code is ', password: '001234', language: 'en-US' } } });
     assert.equal(inspect(textToVoice), '[TextToVoice]');
     assert.throws(() => getProvider('soprano').adapter.buildRequest({ ...input, channel: 'voice' }),
         /incomplete voice context/);
-});
-
-test('Soprano exchanges a reused managed identity assertion in the provider tenant without secrets', async (t) => {
-    const { acquireToken } = getProvider('soprano').adapter;
-    const token = 'opaque-access-token-from-entra';
-    const env = { EPP_PROVIDER_JWT_ENABLED: ' TRUE ', EPP_PROVIDER_SCOPE: 'api://provider-application-id/.default',
-        EPP_PROVIDER_TENANT_ID: '11111111-1111-4111-8111-111111111111',
-        EPP_PROVIDER_APPLICATION_ID: '22222222-2222-4222-8222-222222222222',
-        EPP_PROVIDER_MI_CLIENT_ID: '33333333-3333-4333-8333-333333333333' };
-    const getAssertion = t.mock.method(ManagedIdentityCredential.prototype, 'getToken', async () => ({
-        token: 'private-exchange-assertion', expiresOnTimestamp: Date.now() + 60000,
-    }));
-    const getToken = t.mock.method(ClientAssertionCredential.prototype, 'getToken', async function () {
-        assert.equal(await this.getAssertion(), 'private-exchange-assertion');
-        return { token, expiresOnTimestamp: Date.now() + 60000 };
-    });
-    t.mock.method(SecretClient.prototype, 'getSecret', () => assert.fail('token acquisition must not read Key Vault'));
-    for (const flag of [undefined, 'false', '1', 'yes', true]) {
-        assert.equal(await acquireToken({ ...env, EPP_PROVIDER_JWT_ENABLED: flag }), '');
-    }
-    for (const name of ['EPP_PROVIDER_SCOPE', 'EPP_PROVIDER_TENANT_ID', 'EPP_PROVIDER_APPLICATION_ID', 'EPP_PROVIDER_MI_CLIENT_ID']) {
-        for (const value of [undefined, '', ' ']) assert.equal(await acquireToken({ ...env, [name]: value }), '');
-    }
-    assert.equal(getToken.mock.callCount(), 0);
-    assert.equal(getAssertion.mock.callCount(), 0);
-    assert.equal(await acquireToken(env), token);
-    assert.equal(getToken.mock.calls[0].arguments[0], env.EPP_PROVIDER_SCOPE);
-    assert.ok(getToken.mock.calls[0].arguments[1].abortSignal instanceof AbortSignal);
-    const client = getToken.mock.calls[0].this;
-    assert.equal(client.tenantId, env.EPP_PROVIDER_TENANT_ID);
-    assert.equal(getAssertion.mock.calls[0].arguments[0], 'api://AzureADTokenExchange/.default');
-    assert.ok(getAssertion.mock.calls[0].arguments[1].abortSignal instanceof AbortSignal);
-    assert.equal(await acquireToken(env), token);
-    assert.equal(getToken.mock.calls[1].this, client);
-    assert.equal(getAssertion.mock.calls[0].this, getAssertion.mock.calls[1].this);
-    await acquireToken({ ...env, EPP_PROVIDER_MI_CLIENT_ID: '44444444-4444-4444-8444-444444444444' });
-    assert.notEqual(getToken.mock.calls[2].this, client);
-    await acquireToken({ ...env, EPP_PROVIDER_SCOPE: 'api://another-provider/.default' });
-    assert.equal(getToken.mock.calls[3].arguments[0], 'api://another-provider/.default');
-    for (const result of [null, { token: '', expiresOnTimestamp: Date.now() + 60000 },
-        { token: 'private-exchange-assertion', expiresOnTimestamp: Date.now() - 1000 }]) {
-        getAssertion.mock.mockImplementation(async () => result);
-        assert.equal(await acquireToken(env), '');
-    }
-    getAssertion.mock.mockImplementation(async () => { throw new Error('private assertion failure'); });
-    assert.equal(await acquireToken(env), '');
-    for (const result of [null, { token, expiresOnTimestamp: Date.now() - 1000 },
-        ...[undefined, null, false, {}, '', ' '].map(token => ({ token, expiresOnTimestamp: Date.now() + 60000 }))]) {
-        getToken.mock.mockImplementation(async () => result);
-        assert.equal(await acquireToken(env), '');
-    }
-    getToken.mock.mockImplementation(async () => { throw new Error('private Entra error'); });
-    assert.equal(await acquireToken(env), '');
-});
-
-test('Soprano token acquisition keeps SDK diagnostics private without muting other requests', async (t) => {
-    const { AzureLogger, createClientLogger, getLogLevel, setLogLevel } = require('@azure/logger');
-    const originalLevel = getLogLevel();
-    const output = [];
-    const sink = t.mock.method(AzureLogger, 'log', (...args) => output.push(inspect(args)));
-    const sdk = createClientLogger('identity');
-    setLogLevel('verbose');
-    t.mock.method(ClientAssertionCredential.prototype, 'getToken', async () => {
-        sdk.warning('PRIVATE SDK token error');
-        await Promise.resolve();
-        sdk.error('PRIVATE assertion details');
-        throw new Error('PRIVATE acquisition error');
-    });
-    try {
-        const pending = getProvider('soprano').adapter.acquireToken({ EPP_PROVIDER_JWT_ENABLED: 'true',
-            EPP_PROVIDER_SCOPE: 'api://provider/.default', EPP_PROVIDER_TENANT_ID: '11111111-1111-4111-8111-111111111111',
-            EPP_PROVIDER_APPLICATION_ID: '22222222-2222-4222-8222-222222222222',
-            EPP_PROVIDER_MI_CLIENT_ID: '33333333-3333-4333-8333-333333333333' });
-        sdk.warning('other-request-diagnostic');
-        assert.equal(await pending, '');
-        sdk.warning('after-token-request');
-        assert.ok(output.some(value => value.includes('other-request-diagnostic')));
-        assert.ok(output.some(value => value.includes('after-token-request')));
-        assert.equal(output.some(value => value.includes('PRIVATE')), false);
-    } finally {
-        setLogLevel(originalLevel);
-        sink.mock.restore();
-    }
 });
 
 test('Soprano Voice validates decrypted speech before secret lookup or HTTP', async (t) => {
@@ -225,12 +146,12 @@ test('App-auth SMS preserves its request and normalizes acceptance', () => {
         providerMessageId: 'message-id', providerStatusName: 'PENDING' }));
 });
 
-test('Telesign EPP uses the same Basic-auth JSON contract for SMS and voice', () => {
+test('Telesign EPP uses the selected endpoint with the same Basic-auth JSON contract for SMS and voice', () => {
     for (const [channel, locale] of [['sms', 'en'], ['voice', 'en'],
         ['sms', undefined], ['sms', ''], ['sms', { untrusted: true }]]) {
         const request = getProvider('telesign').adapter.buildRequest({ ...input, channel,
-            endpoint: 'https://verify.telesign.com///', dispatch: { ...dispatch, locale } });
-        assert.equal(request.url, 'https://verify.telesign.com/integration/msft/cyot');
+            endpoint: `https://verify.telesign.com/epp/${channel}`, dispatch: { ...dispatch, locale } });
+        assert.equal(request.url, `https://verify.telesign.com/epp/${channel}`);
         assert.equal(request.method, 'POST');
         assert.deepEqual(request.headers, { Authorization: `Basic ${Buffer.from('id:key').toString('base64')}`,
             'Content-Type': 'application/json', Accept: 'application/json' });
@@ -300,11 +221,11 @@ test('response parsing and HTTP mapping fail closed, including malformed status/
     }
 });
 
-test('missing key/identity and an unsafe final voice URL make zero HTTP calls', async (t) => {
+test('missing API-key or OAuth settings and an unsafe final voice URL make zero HTTP calls', async (t) => {
     const settings = { KEY_VAULT_URL: 'https://unit-test.vault.azure.net',
         EPP_PROVIDER_ENDPOINT: input.endpoint, SINCH_VOICE_ENDPOINT: 'http://unsafe.example' };
     const getSecret = t.mock.method(SecretClient.prototype, 'getSecret', async (name) => ({
-        value: ['soprano-api-id', 'telesign-api-key'].includes(name) ? '' : 'fixture-key',
+        value: name === 'telesign-api-key' ? '' : 'fixture-key',
     }));
     const fetchMock = t.mock.method(global, 'fetch', () => assert.fail('unexpected HTTP'));
     for (const [providerName, channel, reason] of [
@@ -327,4 +248,72 @@ test('missing key/identity and an unsafe final voice URL make zero HTTP calls', 
     assert.equal(getSecret.mock.callCount(), calls + 2);
     assert.equal(new Set(getSecret.mock.calls.map((call) => call.this)).size, 3);
     assert.equal(fetchMock.mock.callCount(), 0);
+});
+
+test('Soprano OAuth reuses setup identities and selected scope with private bounded tokens', async (t) => {
+    const identityToken = t.mock.method(ManagedIdentityCredential.prototype, 'getToken', async () => ({
+        token: 'assertion-token', expiresOnTimestamp: Date.now() + 3600000,
+    }));
+    const providerToken = t.mock.method(ClientAssertionCredential.prototype, 'getToken', async function () {
+        assert.equal(await this.getAssertion(), 'assertion-token');
+        return { token: 'provider-token', expiresOnTimestamp: Date.now() + 3600000 };
+    });
+    const config = readConfig({
+        EPP_PROVIDER_TENANT_ID: '11111111-1111-1111-1111-111111111111',
+        EPP_PROVIDER_SCOPE: 'api://provider/.default',
+        EPP_OUTBOUND_CLIENT_ID: '22222222-2222-2222-2222-222222222222',
+        EPP_OUTBOUND_MI_CLIENT_ID: '33333333-3333-3333-3333-333333333333',
+    });
+    const credential = await resolveProviderCredential({ mode: 'oauth' }, config);
+    assert.equal(credential.accessToken, 'provider-token');
+    assert.equal(JSON.stringify(credential), '{"mode":"oauth"}');
+    assert.equal(providerToken.mock.calls[0].arguments[0], 'api://provider/.default');
+    assert.equal(identityToken.mock.calls[0].arguments[0], 'api://AzureADTokenExchange/.default');
+    const signal = providerToken.mock.calls[0].arguments[1].abortSignal;
+    assert.ok(signal instanceof AbortSignal);
+    assert.equal(identityToken.mock.calls[0].arguments[1].abortSignal, signal);
+    await resolveProviderCredential({ mode: 'oauth' }, { ...config, providerScope: 'api://another/.default' });
+    assert.equal(providerToken.mock.calls[1].this, providerToken.mock.calls[0].this);
+    assert.equal(providerToken.mock.calls[1].arguments[0], 'api://another/.default');
+    for (const property of ['providerTenantId', 'outboundClientId', 'outboundManagedIdentityClientId']) {
+        await resolveProviderCredential({ mode: 'oauth' }, { ...config,
+            [property]: '44444444-4444-4444-4444-444444444444' });
+        assert.notEqual(providerToken.mock.calls.at(-1).this, providerToken.mock.calls[0].this);
+    }
+    for (const stage of ['token', 'assertion']) {
+        for (const invalid of [null, { token: '' }, { token: ' ' }, { token: false },
+            { token: 'stale', expiresOnTimestamp: Date.now() + 10000 }, { token: 'missing-expiry' }]) {
+            const method = stage === 'token' ? providerToken : identityToken;
+            method.mock.mockImplementation(async () => invalid);
+            if (stage === 'assertion') providerToken.mock.mockImplementation(async function () {
+                await this.getAssertion();
+                return { token: 'provider-token', expiresOnTimestamp: Date.now() + 3600000 };
+            });
+            await assert.rejects(resolveProviderCredential({ mode: 'oauth' }, config), /^Error: provider OAuth token unavailable$/);
+        }
+    }
+});
+
+test('Soprano OAuth suppresses SDK diagnostics only during token acquisition', async (t) => {
+    const entries = [];
+    t.mock.method(AzureLogger, 'log', (...args) => entries.push(args));
+    let release;
+    const waiting = new Promise(resolve => { release = resolve; });
+    t.mock.method(ClientAssertionCredential.prototype, 'getToken', async () => {
+        AzureLogger.log('PRIVATE-TOKEN-AND-ACCOUNT');
+        await waiting;
+        AzureLogger.log('PRIVATE-SDK-FAILURE');
+        throw new Error('PRIVATE-TOKEN-EXCEPTION');
+    });
+    const pending = resolveProviderCredential({ mode: 'oauth' }, readConfig({
+        EPP_PROVIDER_TENANT_ID: '11111111-1111-1111-1111-111111111111',
+        EPP_PROVIDER_SCOPE: 'api://provider/.default',
+        EPP_OUTBOUND_CLIENT_ID: '22222222-2222-2222-2222-222222222222',
+        EPP_OUTBOUND_MI_CLIENT_ID: '33333333-3333-3333-3333-333333333333',
+    }));
+    AzureLogger.log('unrelated request');
+    release();
+    await assert.rejects(pending, /^Error: provider OAuth token unavailable$/);
+    AzureLogger.log('after acquisition');
+    assert.deepEqual(entries, [['unrelated request'], ['after acquisition']]);
 });

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "providers": [
+    {
+      "id": "telesign",
+      "displayName": "Telesign",
+      "file": "telesign.json"
+    },
+    {
+      "id": "soprano",
+      "displayName": "Soprano",
+      "file": "soprano.json"
+    }
+  ]
+}

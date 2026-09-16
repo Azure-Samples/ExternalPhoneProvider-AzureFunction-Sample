@@ -1,11 +1,17 @@
+from __future__ import annotations
+
 import base64
-import hashlib
 import json
 import logging
+import math
 import os
+import time
+from contextvars import ContextVar
+from threading import Lock
 from urllib.parse import urlsplit
 
 import requests
+from azure.identity import ClientAssertionCredential, ManagedIdentityCredential
 from jwcrypto import jwe as jwe_module
 from jwcrypto import jwk
 from urllib3.exceptions import ReadTimeoutError
@@ -20,6 +26,23 @@ CONTINUE = "Continue"
 FAIL = "Fail"
 BLOCK = "Block"
 STEP_UP = "StepUp"
+
+_oauth_request = ContextVar("provider_oauth_request", default=False)
+
+
+class _OAuthLogFilter(logging.Filter):
+    def filter(self, record):
+        return not (_oauth_request.get() and record.name.startswith(("azure.identity", "azure.core", "msal")))
+
+
+_oauth_log_filter = _OAuthLogFilter()
+
+
+def _usable_access_token(value):
+    token = getattr(value, "token", None)
+    expiry = getattr(value, "expires_on", None)
+    return (isinstance(token, str) and bool(token.strip()) and type(expiry) in (int, float)
+            and math.isfinite(expiry) and expiry > time.time() + 30)
 
 
 def resolve_outcome(manifest, parsed: ParsedResponse):
@@ -243,6 +266,9 @@ class DispatchEngine:
         self.registry = registry
         self.secrets = secrets
         self.env = env if env is not None else os.environ
+        self._oauth_credential = None
+        self._oauth_credential_config = None
+        self._oauth_lock = Lock()
 
     def dispatch(self, dispatch, request_id):
         config = read_config(self.env)
@@ -259,6 +285,8 @@ class DispatchEngine:
 
         if channel not in DEFAULT_CHANNELS:
             return 400, {"status": "error", "provider": provider_id, "reason": "unsupported channel", "requestId": request_id}
+        if config.provider_channel and config.provider_channel != channel:
+            return 400, {"status": "error", "provider": provider_id, "reason": "channel not configured", "requestId": request_id}
 
         if channel == "voice" and manifest.get("requires_text_to_voice") and (
             not isinstance(dispatch.text_to_voice, TextToVoice) or not dispatch.text_to_voice.is_complete
@@ -266,13 +294,17 @@ class DispatchEngine:
             return 400, self._fail_body(provider_id, channel, "incomplete voice context", dispatch, request_id)
 
         auth = manifest["auth"]
-        if auth.get("mode") != "apiKey":
-            return 502, self._fail_body(provider_id, channel, "unsupported provider auth mode", dispatch, request_id)
+        if config.provider_auth_mode and config.provider_auth_mode != auth.get("mode"):
+            return 502, self._fail_body(provider_id, channel, "provider authentication mismatch", dispatch, request_id)
         try:
-            credential = self._resolve_credential(auth)
+            credential = self._resolve_credential(auth, config)
         except Exception:
             return 502, self._fail_body(provider_id, channel, "provider credential unavailable", dispatch, request_id)
-        if not credential.get("secret") or (auth.get("identity_key_vault_secret_name") and not credential.get("identity")):
+        credential_unavailable = (
+            credential.get("mode") == "apiKey"
+            and (not credential.get("secret") or (auth.get("identity_key_vault_secret_name") and not credential.get("identity")))
+        ) or (credential.get("mode") == "oauth" and not credential.get("access_token"))
+        if credential_unavailable:
             return 502, self._fail_body(provider_id, channel, "provider credential unavailable", dispatch, request_id)
 
         endpoint = config.provider_endpoint
@@ -281,21 +313,12 @@ class DispatchEngine:
         if not _valid_provider_url(endpoint):
             return 502, self._fail_body(provider_id, channel, "invalid provider endpoint", dispatch, request_id)
 
-        acquire_token = getattr(adapter, "acquire_token", None)
-        if callable(acquire_token):
-            credential["token"] = acquire_token(config.env)
-
         try:
             provider_request = adapter.build_request(channel, endpoint, dispatch, credential, config.env)
         except Exception:
             return 502, self._fail_body(provider_id, channel, "provider request failed", dispatch, request_id)
         if not _valid_provider_url(provider_request.get("url")):
             return 502, self._fail_body(provider_id, channel, "invalid provider request URL", dispatch, request_id)
-
-        if provider_id == "soprano":
-            correlation_hash = hashlib.sha256(str(dispatch.correlation_id or "").encode()).hexdigest()[:16]
-            auth_mode = "api-key+jwt" if provider_request["headers"].get("Authorization") else "api-key"
-            logging.info("[EPP] SopranoAuth=%s CorrelationId=%s", auth_mode, correlation_hash)
 
         timeout_ms = _provider_timeout_ms(config.provider_timeout_ms)
         response = None
@@ -348,10 +371,52 @@ class DispatchEngine:
                 except Exception:
                     pass
 
-    def _resolve_credential(self, auth):
-        secret = self.secrets.resolve(auth.get("key_vault_secret_name"))
-        identity = self.secrets.resolve(auth.get("identity_key_vault_secret_name")) if auth.get("identity_key_vault_secret_name") else ""
-        return {"mode": "apiKey", "secret": secret, "identity": identity}
+    def _resolve_credential(self, auth, config):
+        if auth.get("mode") == "apiKey":
+            secret = self.secrets.resolve(auth.get("key_vault_secret_name"))
+            identity = self.secrets.resolve(auth.get("identity_key_vault_secret_name")) if auth.get("identity_key_vault_secret_name") else ""
+            return {"mode": "apiKey", "secret": secret, "identity": identity}
+        if auth.get("mode") != "oauth" or not all((
+            config.provider_tenant_id, config.provider_scope,
+            config.outbound_client_id, config.outbound_managed_identity_client_id,
+        )):
+            raise ValueError("unsupported or incomplete provider authentication")
+        for logger in (logging.getLogger(), *logging.Logger.manager.loggerDict.copy().values()):
+            if isinstance(logger, logging.Logger):
+                for handler in logger.handlers:
+                    if _oauth_log_filter not in handler.filters:
+                        handler.addFilter(_oauth_log_filter)
+        context_token = _oauth_request.set(True)
+        try:
+            credential_config = (
+                config.provider_tenant_id, config.outbound_client_id, config.outbound_managed_identity_client_id,
+            )
+            with self._oauth_lock:
+                if self._oauth_credential is None or self._oauth_credential_config != credential_config:
+                    assertion_identity = ManagedIdentityCredential(client_id=config.outbound_managed_identity_client_id,
+                        retry_total=0, connection_timeout=2.5, read_timeout=2.5, logging_enable=False)
+
+                    def get_assertion():
+                        token = assertion_identity.get_token("api://AzureADTokenExchange/.default", logging_enable=False)
+                        if not _usable_access_token(token):
+                            raise ValueError("managed identity assertion unavailable")
+                        return token.token
+
+                    self._oauth_credential = ClientAssertionCredential(
+                        tenant_id=config.provider_tenant_id, client_id=config.outbound_client_id, func=get_assertion,
+                        authority="https://login.microsoftonline.com", retry_total=0,
+                        connection_timeout=2.5, read_timeout=2.5, logging_enable=False,
+                    )
+                    self._oauth_credential_config = credential_config
+                credential = self._oauth_credential
+            token = credential.get_token(config.provider_scope, logging_enable=False)
+            if not _usable_access_token(token):
+                raise ValueError("provider OAuth token unavailable")
+            return {"mode": "oauth", "access_token": token.token}
+        except Exception:
+            raise ValueError("provider OAuth token unavailable") from None
+        finally:
+            _oauth_request.reset(context_token)
 
     def _fail_body(self, provider, channel, reason, dispatch, request_id):
         return {"status": "failed", "outcome": "Fail", "provider": provider, "channel": channel, "reason": reason, "correlationId": dispatch.correlation_id, "messageId": dispatch.message_id, "requestId": request_id}

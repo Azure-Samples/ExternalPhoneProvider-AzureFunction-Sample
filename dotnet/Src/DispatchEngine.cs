@@ -1,3 +1,5 @@
+using Azure.Core;
+using Azure.Identity;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -216,18 +218,41 @@ public sealed class DispatchEngine
     private readonly ISecretResolver _secrets;
     private readonly IHttpClientFactory _httpFactory;
     private readonly IEnv _env;
+    private readonly object _oauthLock = new();
+    private TokenCredential? _oauthCredential;
+    private string? _oauthCredentialConfig;
+    private readonly Func<string, TokenCredential> _createManagedIdentity;
+    private readonly Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> _createOAuthCredential;
 
-    private readonly Microsoft.Extensions.Logging.ILogger<DispatchEngine>? _logger;
+    public DispatchEngine(ProviderRegistry registry, ISecretResolver secrets, IHttpClientFactory httpFactory, IEnv? env = null)
+        : this(registry, secrets, httpFactory, env,
+            identity => new ManagedIdentityCredential(identity, OAuthOptions()),
+            (tenant, application, assertion) => new ClientAssertionCredential(tenant, application, assertion, OAuthOptions())) { }
 
-    public DispatchEngine(ProviderRegistry registry, ISecretResolver secrets, IHttpClientFactory httpFactory, IEnv? env = null,
-        Microsoft.Extensions.Logging.ILogger<DispatchEngine>? logger = null)
+    internal DispatchEngine(ProviderRegistry registry, ISecretResolver secrets, IHttpClientFactory httpFactory, IEnv? env,
+        Func<string, TokenCredential> createManagedIdentity,
+        Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> createOAuthCredential)
     {
         _registry = registry;
         _secrets = secrets;
         _httpFactory = httpFactory;
         _env = env ?? new ProcessEnv();
-        _logger = logger;
+        _createManagedIdentity = createManagedIdentity;
+        _createOAuthCredential = createOAuthCredential;
     }
+
+    private static ClientAssertionCredentialOptions OAuthOptions()
+    {
+        var options = new ClientAssertionCredentialOptions { AuthorityHost = AzureAuthorityHosts.AzurePublicCloud };
+        options.Retry.MaxRetries = 0;
+        options.Retry.NetworkTimeout = TimeSpan.FromSeconds(2.5);
+        options.Diagnostics.IsLoggingEnabled = false;
+        options.Diagnostics.IsLoggingContentEnabled = false;
+        return options;
+    }
+
+    private static bool UsableAccessToken(AccessToken token) =>
+        !string.IsNullOrWhiteSpace(token.Token) && token.ExpiresOn > DateTimeOffset.UtcNow.AddSeconds(30);
 
     public async Task<DispatchResult> DispatchAsync(DispatchRequest dispatch, string requestId)
     {
@@ -246,16 +271,23 @@ public sealed class DispatchEngine
         if (channel == "voice" && manifest.RequiresTextToVoice && dispatch.TextToVoice?.IsComplete != true)
             return new DispatchResult(400, FailBody(providerId, channel, "incomplete voice context", dispatch, requestId));
 
-        if (manifest.Auth.Mode != "apiKey")
-            return new DispatchResult(502, FailBody(providerId, channel, "unsupported provider auth mode", dispatch, requestId));
+        if (!string.IsNullOrEmpty(config.ProviderChannel) && config.ProviderChannel != channel)
+            return new DispatchResult(400, new { status = "error", provider = providerId, reason = "channel not configured", requestId });
+        if (!string.IsNullOrEmpty(config.ProviderAuthMode) && config.ProviderAuthMode != manifest.Auth.Mode)
+            return new DispatchResult(502, FailBody(providerId, channel, "provider authentication mismatch", dispatch, requestId));
 
         ProviderCredential credential;
-        try { credential = await ResolveCredentialAsync(manifest.Auth); }
+        try { credential = await ResolveCredentialAsync(manifest.Auth, config); }
         catch { return new DispatchResult(502, FailBody(providerId, channel, "provider credential unavailable", dispatch, requestId)); }
 
-        var identityRequired = !string.IsNullOrEmpty(manifest.Auth.IdentityKeyVaultSecretName);
-        var credentialUnavailable = string.IsNullOrEmpty(credential.Secret)
-            || (identityRequired && string.IsNullOrEmpty(credential.Identity));
+        var identityRequired = credential.Mode == "apiKey" && !string.IsNullOrEmpty(manifest.Auth.IdentityKeyVaultSecretName);
+        var credentialUnavailable = credential.Mode switch
+        {
+            "apiKey" => string.IsNullOrEmpty(credential.Secret)
+                || (identityRequired && string.IsNullOrEmpty(credential.Identity)),
+            "oauth" => string.IsNullOrEmpty(credential.AccessToken),
+            _ => true,
+        };
         if (credentialUnavailable)
             return new DispatchResult(502, FailBody(providerId, channel, "provider credential unavailable", dispatch, requestId));
 
@@ -263,22 +295,12 @@ public sealed class DispatchEngine
         if (!IsHttpsEndpoint(endpoint))
             return new DispatchResult(502, FailBody(providerId, channel, "provider endpoint invalid or not configured", dispatch, requestId));
 
-        credential = credential with { Token = await adapter.AcquireTokenAsync(_env) };
-
         var timeoutMs = NormalizeProviderTimeoutMs(config.ProviderTimeoutMs);
         try
         {
             var req = adapter.BuildRequest(channel, endpoint!, dispatch, credential, _env);
             if (!IsHttpsEndpoint(req.Url))
                 return new DispatchResult(502, FailBody(providerId, channel, "provider request endpoint invalid", dispatch, requestId));
-
-            if (providerId == "soprano" && _logger is not null)
-            {
-                var correlationHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(dispatch.CorrelationId ?? "")))[..16].ToLowerInvariant();
-                Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(_logger,
-                    "[EPP] SopranoAuth={AuthMode} CorrelationId={CorrelationId}",
-                    req.Headers.ContainsKey("Authorization") ? "api-key+jwt" : "api-key", correlationHash);
-            }
 
             var (providerHttpStatus, success, body) = await SendAsync(req, timeoutMs);
             JsonElement json;
@@ -310,11 +332,49 @@ public sealed class DispatchEngine
         }
     }
 
-    private async Task<ProviderCredential> ResolveCredentialAsync(AuthConfig auth)
+    private async Task<ProviderCredential> ResolveCredentialAsync(AuthConfig auth, AppConfig config)
     {
-        var secret = await _secrets.ResolveAsync(auth.KeyVaultSecretName);
-        var identity = string.IsNullOrEmpty(auth.IdentityKeyVaultSecretName) ? string.Empty : await _secrets.ResolveAsync(auth.IdentityKeyVaultSecretName);
-        return new ProviderCredential("apiKey", Secret: secret, Identity: identity);
+        if (auth.Mode == "apiKey")
+        {
+            var secret = await _secrets.ResolveAsync(auth.KeyVaultSecretName);
+            var identity = string.IsNullOrEmpty(auth.IdentityKeyVaultSecretName) ? string.Empty : await _secrets.ResolveAsync(auth.IdentityKeyVaultSecretName);
+            return new ProviderCredential("apiKey", Secret: secret, Identity: identity);
+        }
+        if (auth.Mode != "oauth" || string.IsNullOrEmpty(config.ProviderTenantId)
+            || string.IsNullOrEmpty(config.ProviderScope) || string.IsNullOrEmpty(config.OutboundClientId)
+            || string.IsNullOrEmpty(config.OutboundManagedIdentityClientId))
+            throw new InvalidOperationException("unsupported or incomplete provider authentication");
+
+        var credentialConfig = string.Join("|", config.ProviderTenantId, config.OutboundClientId, config.OutboundManagedIdentityClientId);
+        TokenCredential providerCredential;
+        lock (_oauthLock)
+        {
+            if (_oauthCredential is null || _oauthCredentialConfig != credentialConfig)
+            {
+                var managedIdentity = _createManagedIdentity(config.OutboundManagedIdentityClientId);
+                _oauthCredential = _createOAuthCredential(
+                    config.ProviderTenantId,
+                    config.OutboundClientId,
+                    async cancellationToken =>
+                    {
+                        var assertion = await managedIdentity.GetTokenAsync(
+                            new TokenRequestContext(new[] { "api://AzureADTokenExchange/.default" }),
+                            cancellationToken);
+                        if (!UsableAccessToken(assertion))
+                            throw new InvalidOperationException("managed identity assertion unavailable");
+                        return assertion.Token;
+                    });
+                _oauthCredentialConfig = credentialConfig;
+            }
+            providerCredential = _oauthCredential;
+        }
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2.5));
+        var token = await providerCredential.GetTokenAsync(
+            new TokenRequestContext(new[] { config.ProviderScope }),
+            cancellation.Token);
+        if (!UsableAccessToken(token))
+            throw new InvalidOperationException("provider OAuth token unavailable");
+        return new ProviderCredential("oauth", AccessToken: token.Token);
     }
 
     internal static int NormalizeProviderTimeoutMs(string? value)

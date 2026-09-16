@@ -45,7 +45,7 @@ public sealed class TelesignProvider : IProviderAdapter
             ["Content-Type"] = "application/json",
             ["Accept"] = "application/json",
         };
-        return new ProviderHttpRequest($"{endpoint.TrimEnd('/')}/integration/msft/cyot", "POST", headers, JsonSerializer.Serialize(body));
+        return new ProviderHttpRequest(endpoint, "POST", headers, JsonSerializer.Serialize(body));
     }
 
     public ParsedResponse ParseResponse(int httpStatus, bool ok, JsonElement json)

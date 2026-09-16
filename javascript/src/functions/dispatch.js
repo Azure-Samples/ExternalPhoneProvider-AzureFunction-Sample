@@ -6,8 +6,10 @@
 
 const crypto = require('crypto');
 const { compactDecrypt } = require('jose');
-const { ManagedIdentityCredential } = require('@azure/identity');
+const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
+const { AzureLogger } = require('@azure/logger');
+const { AsyncLocalStorage } = require('node:async_hooks');
 const { readConfig } = require('./config');
 const { DeliveryContext, TextToVoice } = require('./models');
 
@@ -163,6 +165,15 @@ function getProvider(providerId) {
 let keyVaultSecretClient = null;
 let keyVaultClientConfig;
 const secretCache = new Map();
+let oauthCredential = null;
+let oauthCredentialConfig;
+const oauthRequest = new AsyncLocalStorage();
+let filteredOAuthLogger;
+
+function usableAccessToken(value) {
+    return typeof value?.token === 'string' && value.token.trim()
+        && Number.isFinite(value.expiresOnTimestamp) && value.expiresOnTimestamp > Date.now() + 30000;
+}
 
 function getKeyVaultSecretClient(config) {
     const cacheKey = JSON.stringify([config.keyVaultUrl, config.managedIdentityClientId]);
@@ -197,15 +208,53 @@ async function resolveSecretValue(keyVaultSecretName, config) {
 
 async function resolveProviderCredential(authConfiguration = {}, config) {
     const { mode = 'apiKey' } = authConfiguration;
-    if (mode !== 'apiKey') throw new Error('unsupported provider authentication');
-
-    const [secret, identity] = await Promise.all([
-        resolveSecretValue(authConfiguration.keyVaultSecretName, config),
-        authConfiguration.identityKeyVaultSecretName
-            ? resolveSecretValue(authConfiguration.identityKeyVaultSecretName, config)
-            : Promise.resolve(''),
-    ]);
-    return { mode: 'apiKey', secret, identity };
+    if (mode === 'apiKey') {
+        const [secret, identity] = await Promise.all([
+            resolveSecretValue(authConfiguration.keyVaultSecretName, config),
+            authConfiguration.identityKeyVaultSecretName
+                ? resolveSecretValue(authConfiguration.identityKeyVaultSecretName, config)
+                : Promise.resolve(''),
+        ]);
+        return { mode: 'apiKey', secret, identity };
+    }
+    if (mode !== 'oauth' || !config.providerTenantId || !config.providerScope
+        || !config.outboundClientId || !config.outboundManagedIdentityClientId) {
+        throw new Error('unsupported or incomplete provider authentication');
+    }
+    if (AzureLogger.log !== filteredOAuthLogger) {
+        const log = AzureLogger.log;
+        filteredOAuthLogger = (...args) => { if (!oauthRequest.getStore()) log(...args); };
+        AzureLogger.log = filteredOAuthLogger;
+    }
+    return oauthRequest.run(AbortSignal.timeout(2500), async () => {
+        try {
+            const credentialConfig = JSON.stringify([
+                config.providerTenantId, config.outboundClientId, config.outboundManagedIdentityClientId,
+            ]);
+            if (!oauthCredential || oauthCredentialConfig !== credentialConfig) {
+                const assertionIdentity = new ManagedIdentityCredential({
+                    clientId: config.outboundManagedIdentityClientId, retryOptions: { maxRetries: 0 },
+                });
+                oauthCredential = new ClientAssertionCredential(
+                    config.providerTenantId,
+                    config.outboundClientId,
+                    async () => {
+                        const assertion = await assertionIdentity.getToken('api://AzureADTokenExchange/.default',
+                            { abortSignal: oauthRequest.getStore() });
+                        if (!usableAccessToken(assertion)) throw new Error('managed identity assertion unavailable');
+                        return assertion.token;
+                    },
+                    { authorityHost: 'https://login.microsoftonline.com', retryOptions: { maxRetries: 0 } },
+                );
+                oauthCredentialConfig = credentialConfig;
+            }
+            const accessToken = await oauthCredential.getToken(config.providerScope, { abortSignal: oauthRequest.getStore() });
+            if (!usableAccessToken(accessToken)) throw new Error('provider OAuth token unavailable');
+            return Object.defineProperty({ mode: 'oauth' }, 'accessToken', { value: accessToken.token });
+        } catch {
+            throw new Error('provider OAuth token unavailable');
+        }
+    });
 }
 
 // Status mappings may restrict HTTP success, but cannot turn failed HTTP into Continue.
@@ -306,6 +355,12 @@ async function sendViaProvider(providerEntry, dispatch, options) {
     if (!['sms', 'voice'].includes(channel)) {
         return { httpStatus: 400, body: { status: 'error', reason: 'unsupported channel', requestId } };
     }
+    if (config.providerChannel && config.providerChannel !== channel) {
+        return { httpStatus: 400, body: { status: 'error', provider: providerId, reason: 'channel not configured', requestId } };
+    }
+    if (config.providerAuthMode && config.providerAuthMode !== manifest.auth?.mode) {
+        return { httpStatus: 502, body: failBody(providerId, channel, 'provider authentication mismatch', dispatch, requestId) };
+    }
 
     if (channel === 'voice' && manifest.requiresTextToVoice
         && (!(dispatch.textToVoice instanceof TextToVoice) || !dispatch.textToVoice.isComplete)) {
@@ -323,16 +378,12 @@ async function sendViaProvider(providerEntry, dispatch, options) {
     } catch {
         // Configuration and secret lookup failures share a generic failure response.
     }
-    const identityRequired = !!manifest.auth?.identityKeyVaultSecretName;
-    const credentialUnavailable = !credential || !credential.secret
-        || (identityRequired && !credential.identity);
+    const identityRequired = credential?.mode === 'apiKey' && !!manifest.auth?.identityKeyVaultSecretName;
+    const credentialUnavailable = !credential
+        || (credential.mode === 'apiKey' && (!credential.secret || (identityRequired && !credential.identity)))
+        || (credential.mode === 'oauth' && !credential.accessToken);
     if (credentialUnavailable) {
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider credential unavailable', dispatch, requestId) };
-    }
-
-    if (adapter.acquireToken) {
-        const token = await adapter.acquireToken(config.env);
-        Object.defineProperty(credential, 'token', { value: token });
     }
 
     let providerRequest;
@@ -350,11 +401,6 @@ async function sendViaProvider(providerEntry, dispatch, options) {
 
     if (!isValidProviderUrl(providerRequest.url)) {
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider request URL invalid', dispatch, requestId) };
-    }
-
-    if (providerId === 'soprano') {
-        const correlationHash = crypto.createHash('sha256').update(String(dispatch.correlationId || '')).digest('hex').slice(0, 16);
-        options.log?.(`[EPP] SopranoAuth=${providerRequest.headers.Authorization ? 'api-key+jwt' : 'api-key'} CorrelationId=${correlationHash}`);
     }
 
     const timeoutMilliseconds = parseProviderTimeout(config.providerTimeoutMs);
@@ -397,7 +443,7 @@ async function sendViaProvider(providerEntry, dispatch, options) {
     };
 }
 
-async function dispatchOtp(dispatch, { config = readConfig(), requestId, log } = {}) {
+async function dispatchOtp(dispatch, { config = readConfig(), requestId } = {}) {
     const providerEntry = getProvider(config.providerName);
     if (!providerEntry) {
         return {
@@ -405,7 +451,7 @@ async function dispatchOtp(dispatch, { config = readConfig(), requestId, log } =
             body: { status: 'error', reason: 'unknown provider', requestId },
         };
     }
-    return sendViaProvider(providerEntry, dispatch, { config, requestId, log });
+    return sendViaProvider(providerEntry, dispatch, { config, requestId });
 }
 
 module.exports = {
@@ -419,4 +465,5 @@ module.exports = {
     outcomeToHttpStatus,
     parseProviderTimeout,
     isValidProviderUrl,
+    resolveProviderCredential,
 };

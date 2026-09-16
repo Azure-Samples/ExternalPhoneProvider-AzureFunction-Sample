@@ -13,16 +13,15 @@ public class ContractTests
     [Theory]
     [InlineData("sms")]
     [InlineData("voice")]
-    public void SopranoUsesExactOmnimsgContract(string channel)
+    public void SopranoUsesSelectedEndpointAndOAuth(string channel)
     {
         var dispatch = Request(channel) with { TextToVoice = new TextToVoice("Your code is", "001234", "en-US") };
-        var request = new SopranoProvider().BuildRequest(channel, "https://provider.example/cgpapi///", dispatch,
-            new ProviderCredential("apiKey", "test-key", "test-id"), new TestEnv());
-        Assert.Equal("https://provider.example/cgpapi/messages/omnimsg", request.Url);
+        var request = new SopranoProvider().BuildRequest(channel, "https://provider.example/oauth/messages", dispatch,
+            new ProviderCredential("oauth", AccessToken: "provider-token"), new TestEnv());
+        Assert.Equal("https://provider.example/oauth/messages", request.Url);
         Assert.Equal("POST", request.Method);
-        Assert.Equal(4, request.Headers.Count);
-        Assert.Equal("test-id", request.Headers["X-MEMS-API-ID"]);
-        Assert.Equal("test-key", request.Headers["X-MEMS-API-Key"]);
+        Assert.Equal(3, request.Headers.Count);
+        Assert.Equal("Bear" + "er provider-token", request.Headers["Authorization"]);
         Assert.Equal("application/json", request.Headers["Accept"]);
         Assert.Equal("application/json", request.Headers["Content-Type"]);
         var expected = new Dictionary<string, object?>
@@ -87,9 +86,9 @@ public class ContractTests
     public void TelesignUsesEppJsonContract(string channel, string? locale)
     {
         var dispatch = Request(channel) with { Locale = locale };
-        var request = new TelesignProvider().BuildRequest(channel, "https://verify.telesign.com///", dispatch,
+        var request = new TelesignProvider().BuildRequest(channel, $"https://verify.telesign.com/epp/{channel}", dispatch,
             new ProviderCredential("apiKey", "test-key", "test-id"), new TestEnv());
-        Assert.Equal("https://verify.telesign.com/integration/msft/cyot", request.Url);
+        Assert.Equal($"https://verify.telesign.com/epp/{channel}", request.Url);
         Assert.Equal("POST", request.Method);
         Assert.Equal(3, request.Headers.Count);
         Assert.Equal("Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("test-id:test-key")), request.Headers["Authorization"]);

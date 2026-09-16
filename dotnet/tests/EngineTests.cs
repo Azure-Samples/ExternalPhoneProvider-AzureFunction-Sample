@@ -19,13 +19,140 @@ public class EngineTests
     private const string Kid = "private-jwe-kid";
     private const string Correlation = "private-correlation";
     private const string PrivateError = "private key/provider error: +15551234567 code 918273";
-    private const string ProviderToken = "eyJhbGciOiJSUzI1NiJ9.eyJ2ZXIiOiIyLjAifQ.c2lnbmF0dXJl";
+
+    private static void ConfigureSoprano(HandlerRig rig)
+    {
+        rig.Env["EPP_PROVIDER_NAME"] = "soprano";
+        rig.Env["EPP_PROVIDER_AUTH_MODE"] = "oauth";
+        rig.Env["EPP_PROVIDER_CHANNEL"] = "sms";
+        rig.Env["EPP_PROVIDER_ENDPOINT"] = "https://provider.example/full/send/";
+        rig.Env["EPP_PROVIDER_TENANT_ID"] = "provider-tenant";
+        rig.Env["EPP_PROVIDER_SCOPE"] = "api://provider/.default";
+        rig.Env["EPP_OUTBOUND_CLIENT_ID"] = "calling-application";
+        rig.Env["EPP_OUTBOUND_MI_CLIENT_ID"] = "outbound-identity";
+        rig.Env["AZURE_CLIENT_ID"] = "different-vault-identity";
+        rig.Http.Respond = _ => Task.FromResult(Json(201, "{\"status\":\"ENROUTE\"}"));
+    }
+
+    [Fact]
+    public async Task SopranoOAuthUsesSetupIdentitiesScopeAndOneBoundedExchange()
+    {
+        var scopes = new List<string>();
+        var identities = new List<string>();
+        var applications = new List<(string Tenant, string Application)>();
+        CancellationToken outerCancellation = default;
+        using var rig = new HandlerRig(identity =>
+        {
+            identities.Add(identity);
+            return new TestTokenCredential((context, cancellation) =>
+            {
+                Assert.Equal("api://AzureADTokenExchange/.default", Assert.Single(context.Scopes));
+                Assert.Equal(outerCancellation, cancellation);
+                return ValueTask.FromResult(new AccessToken("private-assertion", DateTimeOffset.UtcNow.AddHours(1)));
+            });
+        }, (tenant, application, assertion) =>
+        {
+            applications.Add((tenant, application));
+            return new TestTokenCredential(async (context, cancellation) =>
+            {
+                Assert.True(cancellation.CanBeCanceled);
+                outerCancellation = cancellation;
+                scopes.Add(Assert.Single(context.Scopes));
+                Assert.Equal("private-assertion", await assertion(cancellation));
+                return new AccessToken("private-provider-token", DateTimeOffset.UtcNow.AddHours(1));
+            });
+        });
+        ConfigureSoprano(rig);
+        AssertAccepted(await rig.Invoke("evaluation"));
+        Assert.Empty(applications);
+        foreach (var channel in new[] { "sms", "voice" })
+        {
+            rig.Env["EPP_PROVIDER_CHANNEL"] = channel;
+            AssertAccepted(await rig.Invoke(channel: channel, deliveryOverrides: JsonSerializer.SerializeToElement(new
+            {
+                providerJwt = "FORGED-PAYLOAD", textToVoice = new { beforePasswordText = "Code", password = "001234", language = "en-US" },
+            })));
+            Assert.Equal("Bearer private-provider-token", rig.Http.Headers["Authorization"]);
+            Assert.DoesNotContain("X-MEMS-API-ID", rig.Http.Headers.Keys);
+            Assert.DoesNotContain("X-MEMS-API-Key", rig.Http.Headers.Keys);
+            Assert.DoesNotContain("FORGED", rig.Http.Body!);
+        }
+        rig.Env["EPP_PROVIDER_CHANNEL"] = "sms";
+        rig.Env["EPP_PROVIDER_SCOPE"] = "api://second/.default";
+        AssertAccepted(await rig.Invoke());
+        Assert.Single(applications);
+        Assert.Equal(new[] { "api://provider/.default", "api://provider/.default", "api://second/.default" }, scopes);
+        rig.Env["EPP_OUTBOUND_CLIENT_ID"] = "second-application";
+        AssertAccepted(await rig.Invoke());
+        Assert.Equal(new[] { ("provider-tenant", "calling-application"), ("provider-tenant", "second-application") }, applications);
+        Assert.All(identities, identity => Assert.Equal("outbound-identity", identity));
+        Assert.Equal(4, rig.Http.Calls);
+        Assert.Equal(0, rig.Secrets.Calls);
+        Assert.DoesNotContain("private-provider-token", string.Join("\n", rig.Log.Messages));
+        var credential = new ProviderCredential("oauth", AccessToken: "private-provider-token");
+        Assert.DoesNotContain("private-provider-token", JsonSerializer.Serialize(credential) + credential);
+    }
+
+    [Theory]
+    [InlineData(true, "", 3600)]
+    [InlineData(true, "private-assertion", 5)]
+    [InlineData(false, " ", 3600)]
+    [InlineData(false, "private-token", -1)]
+    public async Task SopranoOAuthRejectsUnusableTokensBeforeProviderIo(bool invalidAssertion, string token, int lifetime)
+    {
+        var invalid = new AccessToken(token, DateTimeOffset.UtcNow.AddSeconds(lifetime));
+        using var rig = new HandlerRig(_ => new TestTokenCredential((_, _) => ValueTask.FromResult(invalidAssertion
+            ? invalid : new AccessToken("assertion", DateTimeOffset.UtcNow.AddHours(1)))),
+            (_, _, assertion) => new TestTokenCredential(async (_, cancellation) =>
+            {
+                await assertion(cancellation);
+                return invalid;
+            }));
+        ConfigureSoprano(rig);
+        AssertFailure(rig, await rig.Invoke(), 502);
+        Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
+    }
+
+    [Fact]
+    public async Task SopranoOAuthCancellationAndRejectionNeverFallBackOrRetry()
+    {
+        CancellationToken observed = default;
+        var waitForCancellation = true;
+        using var rig = new HandlerRig(_ => new TestTokenCredential(async (_, cancellation) =>
+        {
+            if (waitForCancellation)
+            {
+                observed = cancellation;
+                await Task.Delay(Timeout.Infinite, cancellation);
+            }
+            return new AccessToken("assertion", DateTimeOffset.UtcNow.AddHours(1));
+        }), (_, _, assertion) => new TestTokenCredential(async (_, cancellation) =>
+        {
+            await assertion(cancellation);
+            return new AccessToken("token", DateTimeOffset.UtcNow.AddHours(1));
+        }));
+        ConfigureSoprano(rig);
+        AssertFailure(rig, await rig.Invoke().WaitAsync(TimeSpan.FromSeconds(10)), 502);
+        Assert.True(observed.IsCancellationRequested);
+        Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
+        waitForCancellation = false;
+        rig.Http.Respond = _ => Task.FromResult(Json(401, "{\"status\":\"REJECTED\"}"));
+        AssertFailure(rig, await rig.Invoke(), 401);
+        Assert.Equal((1, 0), (rig.Http.Calls, rig.Secrets.Calls));
+    }
+
+    private sealed class TestTokenCredential(Func<TokenRequestContext, CancellationToken, ValueTask<AccessToken>> acquire) : TokenCredential
+    {
+        public override AccessToken GetToken(TokenRequestContext context, CancellationToken cancellation) =>
+            throw new InvalidOperationException("Synchronous acquisition not expected");
+        public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext context, CancellationToken cancellation) => acquire(context, cancellation);
+    }
 
     [Fact]
     public async Task HandlerUsesInjectedConfigAwaitsAcceptanceAndKeepsLogsPrivate()
     {
         using var rig = new HandlerRig();
-        Assert.Equal("soprano", AppConfig.Read(rig.Env).ProviderName);
+        Assert.Equal("infobip", AppConfig.Read(rig.Env).ProviderName);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         rig.Http.Respond = cancellation =>
@@ -33,8 +160,7 @@ public class EngineTests
             entered.TrySetResult();
             return release.Task.WaitAsync(cancellation);
         };
-        var voice = new { beforePasswordText = " Your code is ", password = "001234", language = "en-US" };
-        var pending = rig.Invoke(channel: "voice", deliveryOverrides: JsonSerializer.SerializeToElement(new { textToVoice = voice }));
+        var pending = rig.Invoke(channel: "sms");
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -42,16 +168,11 @@ public class EngineTests
         }
         finally
         {
-            release.TrySetResult(Json(201, "{\"status\":\"ENROUTE\"}"));
+            release.TrySetResult(Json(200, "{\"messages\":[{\"messageId\":\"id\",\"status\":{\"groupName\":\"PENDING\"}}]}"));
         }
         AssertAccepted(await pending);
         using var body = JsonDocument.Parse(rig.Http.Body!);
-        Assert.False(body.RootElement.TryGetProperty("text", out _));
-        Assert.Equal(JsonSerializer.Serialize(voice), body.RootElement.GetProperty("voice").GetProperty("text2voice").GetRawText());
-        Assert.Equal("voice", body.RootElement.GetProperty("messageTypes")[0].GetString());
-        Assert.Equal("private-api-id", rig.Http.Headers["X-MEMS-API-ID"]);
-        Assert.Equal("private-api-key", rig.Http.Headers["X-MEMS-API-Key"]);
-        Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
+        Assert.Equal(Message, body.RootElement.GetProperty("messages")[0].GetProperty("content").GetProperty("text").GetString());
         Assert.Equal(1, rig.Http.Calls);
         var log = Assert.Single(rig.Log.Messages);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Correlation)))[..16].ToLowerInvariant();
@@ -70,6 +191,8 @@ public class EngineTests
     public async Task IncompleteVoiceFailsBeforeSecretsOrHttp(string speech)
     {
         using var rig = new HandlerRig();
+        rig.Env["EPP_PROVIDER_NAME"] = "soprano";
+        rig.Env["EPP_PROVIDER_AUTH_MODE"] = "oauth";
         var overrides = JsonSerializer.SerializeToElement(new { textToVoice = JsonSerializer.Deserialize<JsonElement>(speech) });
         AssertFailure(rig, await rig.Invoke(channel: "voice", deliveryOverrides: overrides), 400);
         Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
@@ -81,157 +204,6 @@ public class EngineTests
         var voice = new TextToVoice("", "001234", "en-US");
         Assert.True(voice.IsComplete);
         Assert.Equal("TextToVoice", voice.ToString());
-    }
-
-    [Theory]
-    [InlineData("sms", "true")]
-    [InlineData("voice", " TRUE ")]
-    public async Task OptionalProviderJwtKeepsApiKeysAndStaysOutOfBodyAndLogs(string channel, string? flag)
-    {
-        using var rig = new HandlerRig();
-        rig.Env["EPP_PROVIDER_JWT_ENABLED"] = flag;
-        var changes = JsonSerializer.SerializeToElement(new { providerJwt = "FORGED-PAYLOAD",
-            textToVoice = new { beforePasswordText = "Code", password = "001234", language = "en-US" } });
-        AssertAccepted(await rig.Invoke(channel: channel, deliveryOverrides: changes));
-        Assert.Equal("private-api-id", rig.Http.Headers["X-MEMS-API-ID"]);
-        Assert.Equal("private-api-key", rig.Http.Headers["X-MEMS-API-Key"]);
-        Assert.Equal("Bearer " + ProviderToken, rig.Http.Headers["Authorization"]);
-        Assert.DoesNotContain(ProviderToken, rig.Http.Body! + string.Join("", rig.Log.Messages));
-        Assert.DoesNotContain("FORGED-PAYLOAD", rig.Http.Body!);
-        Assert.DoesNotContain("FORGED-INBOUND", JsonSerializer.Serialize(rig.Http.Headers));
-        var context = DeliveryContext.FromPayload(changes);
-        Assert.DoesNotContain("FORGED-PAYLOAD", JsonSerializer.Serialize(context));
-        var credential = new ProviderCredential("apiKey", "key", "id", ProviderToken);
-        Assert.DoesNotContain(ProviderToken, credential.ToString() + JsonSerializer.Serialize(credential));
-        if (rig.Tokens.Calls > 0)
-        {
-            Assert.Equal(rig.Env["EPP_PROVIDER_SCOPE"], Assert.Single(rig.Tokens.Scopes!));
-            Assert.True(rig.Tokens.HasCancellation);
-        }
-        Assert.Equal(2, rig.Secrets.Calls);
-    }
-
-    [Fact]
-    public async Task DisabledJwtIgnoresInboundTokenAndOtherProviders()
-    {
-        using var rig = new HandlerRig();
-        foreach (var flag in new string?[] { null, "false", "1", "yes" })
-        {
-            rig.Env["EPP_PROVIDER_JWT_ENABLED"] = flag;
-            AssertAccepted(await rig.Invoke(deliveryOverrides: JsonSerializer.SerializeToElement(new { providerJwt = "not-a-jwt" })));
-            Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
-        }
-        rig.Env["EPP_PROVIDER_NAME"] = "infobip";
-        rig.Env["EPP_PROVIDER_JWT_ENABLED"] = "true";
-        rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"messages\":[{\"status\":{\"groupName\":\"PENDING\"}}]}"));
-        AssertAccepted(await rig.Invoke(deliveryOverrides: JsonSerializer.SerializeToElement(new { providerJwt = "not-a-jwt" })));
-        Assert.Equal("App private-api-key", rig.Http.Headers["Authorization"]);
-        Assert.DoesNotContain("not-a-jwt", rig.Http.Body!);
-        Assert.Equal(0, rig.Tokens.Calls);
-    }
-
-    [Fact]
-    public async Task ManagedIdentitySelectionReusesCredentialsWithoutClientSecrets()
-    {
-        using var rig = new HandlerRig();
-        rig.Env["EPP_PROVIDER_JWT_ENABLED"] = "true";
-        AssertAccepted(await rig.Invoke());
-        Assert.Equal(rig.Env["EPP_PROVIDER_MI_CLIENT_ID"], Assert.Single(rig.TokenIdentities));
-        Assert.Equal("api://AzureADTokenExchange/.default", Assert.Single(rig.Assertions.Scopes!));
-        Assert.True(rig.Assertions.HasCancellation);
-        AssertAccepted(await rig.Invoke());
-        Assert.Single(rig.TokenIdentities);
-        rig.Env["EPP_PROVIDER_MI_CLIENT_ID"] = "44444444-4444-4444-8444-444444444444";
-        AssertAccepted(await rig.Invoke());
-        Assert.Equal(2, rig.TokenIdentities.Count);
-        Assert.Equal(rig.Env["EPP_PROVIDER_MI_CLIENT_ID"], rig.TokenIdentities[1]);
-        rig.Env["EPP_PROVIDER_SCOPE"] = "api://another-provider/.default";
-        AssertAccepted(await rig.Invoke());
-        Assert.Equal(2, rig.TokenIdentities.Count);
-        Assert.Equal(rig.Env["EPP_PROVIDER_SCOPE"], Assert.Single(rig.Tokens.Scopes!));
-        Assert.Equal(8, rig.Secrets.Calls);
-        Assert.DoesNotContain("private-exchange-assertion", rig.Http.Body! + string.Join("", rig.Http.Headers.Values) + string.Join("", rig.Log.Messages));
-    }
-
-    [Fact]
-    public async Task MissingFederationSettingsAndUnavailableAssertionsNeverAttachAToken()
-    {
-        using var rig = new HandlerRig();
-        rig.Env["EPP_PROVIDER_JWT_ENABLED"] = "true";
-        foreach (var name in new[] { "EPP_PROVIDER_SCOPE", "EPP_PROVIDER_TENANT_ID", "EPP_PROVIDER_APPLICATION_ID", "EPP_PROVIDER_MI_CLIENT_ID" })
-        {
-            var saved = rig.Env[name];
-            rig.Env[name] = " ";
-            AssertAccepted(await rig.Invoke());
-            Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
-            rig.Env[name] = saved;
-        }
-        Assert.Empty(rig.TokenIdentities);
-        rig.Assertions.Token = "";
-        AssertAccepted(await rig.Invoke());
-        Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
-        rig.Assertions.Token = "private-exchange-assertion";
-        rig.Assertions.ExpiresOn = DateTimeOffset.UtcNow.AddSeconds(-1);
-        AssertAccepted(await rig.Invoke());
-        Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
-        rig.Assertions.Error = new InvalidOperationException("PRIVATE-ASSERTION-ERROR");
-        AssertAccepted(await rig.Invoke());
-        Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
-        Assert.DoesNotContain("PRIVATE-ASSERTION-ERROR", string.Join("", rig.Log.Messages));
-    }
-
-    [Fact]
-    public async Task UnavailableAcquiredTokensFallBackAndEvaluationSkipsEntra()
-    {
-        using var rig = new HandlerRig();
-        foreach (var token in new[] { "", " " })
-        {
-            rig.Tokens.Token = token;
-            var changes = JsonSerializer.SerializeToElement(new { providerJwt = ProviderToken });
-            rig.Env["EPP_PROVIDER_JWT_ENABLED"] = "true";
-            var calls = rig.Http.Calls;
-            var secretCalls = rig.Secrets.Calls;
-            var tokenCalls = rig.Tokens.Calls;
-            AssertAccepted(await rig.Invoke("evaluation", deliveryOverrides: changes));
-            Assert.Equal(secretCalls, rig.Secrets.Calls);
-            Assert.Equal(tokenCalls, rig.Tokens.Calls);
-            AssertAccepted(await rig.Invoke(deliveryOverrides: changes));
-            Assert.Equal(calls + 1, rig.Http.Calls);
-            Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
-            rig.Env["EPP_PROVIDER_JWT_ENABLED"] = "false";
-            AssertAccepted(await rig.Invoke(deliveryOverrides: changes));
-            Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
-        }
-        rig.Env["EPP_PROVIDER_JWT_ENABLED"] = "true";
-        rig.Tokens.Token = "opaque-access-token-from-entra";
-        AssertAccepted(await rig.Invoke());
-        Assert.Equal("Bearer opaque-access-token-from-entra", rig.Http.Headers["Authorization"]);
-        rig.Tokens.Token = ProviderToken;
-        rig.Tokens.ExpiresOn = DateTimeOffset.UtcNow.AddSeconds(-10);
-        AssertAccepted(await rig.Invoke());
-        Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
-        rig.Tokens.Error = new InvalidOperationException("PRIVATE-TOKEN-ERROR");
-        AssertAccepted(await rig.Invoke());
-        Assert.DoesNotContain("PRIVATE-TOKEN-ERROR", string.Join("", rig.Log.Messages));
-    }
-
-    [Fact]
-    public async Task ProviderJwtCannotReplaceMissingKeysAndAuthFailureDoesNotRetry()
-    {
-        using var rig = new HandlerRig();
-        rig.Env["EPP_PROVIDER_JWT_ENABLED"] = "true";
-        var changes = JsonSerializer.SerializeToElement(new { providerJwt = ProviderToken });
-        rig.Secrets.Identity = "";
-        AssertFailure(rig, await rig.Invoke(deliveryOverrides: changes), 502);
-        rig.Secrets.Identity = "private-api-id";
-        rig.Secrets.Secret = "";
-        AssertFailure(rig, await rig.Invoke(deliveryOverrides: changes), 502);
-        Assert.Equal(0, rig.Http.Calls);
-        rig.Secrets.Secret = "private-api-key";
-        rig.Http.Respond = _ => Task.FromResult(Json(401, "{\"status\":\"REJECTED\"}"));
-        AssertFailure(rig, await rig.Invoke(deliveryOverrides: changes), 401);
-        Assert.Equal(1, rig.Http.Calls);
-        Assert.DoesNotContain(ProviderToken, string.Join("", rig.Log.Messages));
     }
 
     [Fact]
@@ -261,6 +233,9 @@ public class EngineTests
     public async Task MissingIdentityOrKeyFailsClosedBeforeHttp()
     {
         using var rig = new HandlerRig();
+        rig.Env["EPP_PROVIDER_NAME"] = "telesign";
+        rig.Env["EPP_PROVIDER_ENDPOINT"] = "https://verify.telesign.com/epp/sms";
+        rig.Env["EPP_PROVIDER_AUTH_MODE"] = "apiKey";
         rig.Secrets.Identity = "";
         AssertFailure(rig, await rig.Invoke(), 502);
         rig.Secrets.Identity = "private-api-id";
@@ -417,35 +392,21 @@ public class EngineTests
         public TestSecrets Secrets { get; } = new();
         public TestHttp Http { get; } = new();
         public TestKeys Keys { get; } = new();
-        public TestTokenCredential Tokens { get; } = new();
-        public TestTokenCredential Assertions { get; } = new() { Token = "private-exchange-assertion" };
-        public List<string?> TokenIdentities { get; } = new();
         public CapturingLogger Log { get; } = new();
-        public HandlerRig()
+        public HandlerRig(Func<string, TokenCredential>? createIdentity = null,
+            Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential>? createOAuth = null)
         {
             Env = new TestEnv
             {
-                ["EPP_PROVIDER_NAME"] = "soprano",
-                ["EPP_PROVIDER_ENDPOINT"] = "https://provider.example/cgpapi",
+                ["EPP_PROVIDER_NAME"] = "infobip",
+                ["EPP_PROVIDER_ENDPOINT"] = "https://provider.example",
                 ["EPP_PROVIDER_TIMEOUT_MS"] = "2500",
-                ["EPP_PROVIDER_SCOPE"] = "api://provider-application-id/.default",
-                ["EPP_PROVIDER_TENANT_ID"] = "11111111-1111-4111-8111-111111111111",
-                ["EPP_PROVIDER_APPLICATION_ID"] = "22222222-2222-4222-8222-222222222222",
-                ["EPP_PROVIDER_MI_CLIENT_ID"] = "33333333-3333-4333-8333-333333333333",
             };
             var registry = new ProviderRegistry(new IProviderAdapter[]
-                { new InfobipProvider(), new TelesignProvider(), new SopranoProvider(identity =>
-                    {
-                        TokenIdentities.Add(identity);
-                        return Assertions;
-                    }, (tenant, applicationId, assertion) =>
-                    {
-                        Assert.Equal(Env["EPP_PROVIDER_TENANT_ID"], tenant);
-                        Assert.Equal(Env["EPP_PROVIDER_APPLICATION_ID"], applicationId);
-                        Tokens.GetAssertion = assertion;
-                        return Tokens;
-                    }), new SinchProvider() });
-            _function = new SendOtp(new DispatchEngine(registry, Secrets, Http, Env),
+                { new InfobipProvider(), new TelesignProvider(), new SopranoProvider(), new SinchProvider() });
+            var engine = createIdentity is null ? new DispatchEngine(registry, Secrets, Http, Env)
+                : new DispatchEngine(registry, Secrets, Http, Env, createIdentity, createOAuth!);
+            _function = new SendOtp(engine,
                 new JweDecryptor(Keys), Env, Log);
         }
         public async Task<ObjectResult> Invoke(object? mode = null, string channel = "sms", string? tenantId = null,
@@ -471,34 +432,9 @@ public class EngineTests
             request.Method = "POST";
             request.ContentType = "application/json";
             request.Body = stream;
-            request.Headers.Authorization = "Bearer FORGED-INBOUND";
             return Assert.IsAssignableFrom<ObjectResult>(await _function.Run(request));
         }
         public void Dispose() { Keys.Dispose(); Http.Dispose(); }
-    }
-
-    private sealed class TestTokenCredential : TokenCredential
-    {
-        public int Calls { get; private set; }
-        public string Token { get; set; } = ProviderToken;
-        public DateTimeOffset ExpiresOn { get; set; } = DateTimeOffset.UtcNow.AddHours(1);
-        public string[]? Scopes { get; private set; }
-        public bool HasCancellation { get; private set; }
-        public Exception? Error { get; set; }
-        public Func<CancellationToken, Task<string>>? GetAssertion { get; set; }
-        public override AccessToken GetToken(TokenRequestContext context, CancellationToken cancellation)
-        {
-            Calls++;
-            Scopes = context.Scopes;
-            HasCancellation = cancellation.CanBeCanceled;
-            if (Error is not null) throw Error;
-            return new AccessToken(Token, ExpiresOn);
-        }
-        public override async ValueTask<AccessToken> GetTokenAsync(TokenRequestContext context, CancellationToken cancellation)
-        {
-            if (GetAssertion is not null) Assert.Equal("private-exchange-assertion", await GetAssertion(cancellation));
-            return GetToken(context, cancellation);
-        }
     }
 
     private sealed class TestSecrets : ISecretResolver
@@ -509,7 +445,7 @@ public class EngineTests
         public Task<string> ResolveAsync(string? name)
         {
             Calls++;
-            return Task.FromResult(name == "soprano-api-id" ? Identity : Secret);
+            return Task.FromResult(name == "telesign-customer-id" ? Identity : Secret);
         }
     }
 
@@ -519,7 +455,7 @@ public class EngineTests
         public string? Body { get; private set; }
         public Dictionary<string, string> Headers { get; private set; } = new(StringComparer.OrdinalIgnoreCase);
         public Func<CancellationToken, Task<HttpResponseMessage>> Respond { get; set; } =
-            _ => Task.FromResult(Json(201, "{\"status\":\"ACCEPTED\"}"));
+            _ => Task.FromResult(Json(200, "{\"messages\":[{\"messageId\":\"id\",\"status\":{\"groupName\":\"PENDING\"}}]}"));
         public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
