@@ -36,11 +36,12 @@ beforeEach(() => {
     for (const key of envKeys) delete process.env[key];
     Object.assign(process.env, { EPP_LOG_PLAINTEXT: 'true',
         EPP_DECRYPTION_KEY_PEM: privateKey.export({ type: 'pkcs8', format: 'pem' }),
-        KEY_VAULT_URL: 'https://unit-test.vault.azure.net', EPP_PROVIDER_NAME: 'soprano',
-        EPP_PROVIDER_ENDPOINT: 'https://provider.example/cgpapi/' });
+        KEY_VAULT_URL: 'https://unit-test.vault.azure.net', EPP_PROVIDER_NAME: 'telesign',
+        EPP_PROVIDER_ENDPOINT: 'https://provider.example/epp/send',
+        EPP_PROVIDER_AUTH_MODE: 'apiKey' });
     getSecret = mock.method(SecretClient.prototype, 'getSecret', async () => ({ value: 'PRIVATE-API-KEY' }));
-    fetchMock = mock.method(global, 'fetch', async () => ({ ok: true, status: 201,
-        text: async () => JSON.stringify({ status: 'ENROUTE', id: 'PRIVATE-ID', description: 'PRIVATE-STATUS' }) }));
+    fetchMock = mock.method(global, 'fetch', async () => ({ ok: true, status: 200,
+        text: async () => JSON.stringify({ reference_id: 'PRIVATE-ID', status: { code: 290, description: 'PRIVATE-STATUS' } }) }));
 });
 afterEach(() => {
     mock.restoreAll();
@@ -165,8 +166,10 @@ test('SMS/voice preserve content and correlation without reflecting headers or l
         assert.equal(result.status, 200);
         assert.deepEqual(result.jsonBody, { nonce: delivery.nonce, correlationId, providerStatus: 'accepted' });
         const init = fetchMock.mock.calls.at(-1).arguments[1];
-        const sent = JSON.parse(init.body);
-        assert.deepEqual([sent.text, sent.messageTypes, sent.correlationId], [delivery.message, [name], correlationId]);
+        const sent = new URLSearchParams(init.body);
+        assert.deepEqual([sent.get('message'), sent.get('message_type'), sent.get('external_id')],
+            [delivery.message, 'OTP', correlationId]);
+        assert.equal(fetchMock.mock.calls.at(-1).arguments[0], 'https://provider.example/epp/send');
         assert.equal(init.redirect, 'manual');
         assert.equal(logs.length, 1);
         assert.deepEqual(Object.keys(logs[0]).sort(), ['correlationId', 'elapsedMs', 'evaluation', 'httpStatus', 'requestId']);

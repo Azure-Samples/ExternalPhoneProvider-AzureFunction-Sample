@@ -1,0 +1,43 @@
+{
+  "deployment": {
+    "enabled": true,
+    "testConfiguration": true,
+    "providerName": "Telesign",
+    "authentication": {
+      "mode": "apiKey",
+      "keyVaultSecretName": "telesign-api-key",
+      "identityKeyVaultSecretName": "telesign-customer-id"
+    },
+    "routes": {
+      "sms": {
+        "global": {
+          "endpoint": "https://rest-ww.telesign.com/integration/microsoft-cyot/sms",
+          "appId": "00000000-0000-0000-0000-000000000000",
+          "timeoutMilliseconds": 1500,
+          "retryIntervalSeconds": 30
+        },
+        "eu": {
+          "endpoint": "https://rest-ww.telesign.com/integration/microsoft-cyot/sms",
+          "appId": "00000000-0000-0000-0000-000000000000",
+          "timeoutMilliseconds": 1500,
+          "retryIntervalSeconds": 30
+        }
+      },
+      "voice": {
+        "global": {
+          "endpoint": "https://rest-ww.telesign.com/integration/microsoft-cyot/voice",
+          "appId": "00000000-0000-0000-0000-000000000000",
+          "timeoutMilliseconds": 1500,
+          "retryIntervalSeconds": 30
+        },
+        "eu": {
+          "endpoint": "https://rest-ww.telesign.com/integration/microsoft-cyot/voice",
+          "appId": "00000000-0000-0000-0000-000000000000",
+          "timeoutMilliseconds": 1500,
+          "retryIntervalSeconds": 30
+        }
+      }
+    },
+    "note": "The supplied global SMS and voice URLs are preserved. EU URLs and application IDs are explicit test values until Telesign provides them."
+  }
+}

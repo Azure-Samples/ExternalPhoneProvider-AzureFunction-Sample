@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import base64
 import json
 import os
 from urllib.parse import urlsplit
 
 import requests
+from azure.identity import ClientAssertionCredential, ManagedIdentityCredential
 from jwcrypto import jwe as jwe_module
 from jwcrypto import jwk
 from urllib3.exceptions import ReadTimeoutError
@@ -240,6 +243,8 @@ class DispatchEngine:
         self.registry = registry
         self.secrets = secrets
         self.env = env if env is not None else os.environ
+        self._oauth_credential = None
+        self._oauth_credential_config = None
 
     def dispatch(self, dispatch, request_id):
         config = read_config(self.env)
@@ -256,15 +261,21 @@ class DispatchEngine:
 
         if channel not in DEFAULT_CHANNELS:
             return 400, {"status": "error", "provider": provider_id, "reason": "unsupported channel", "requestId": request_id}
+        if config.provider_channel and config.provider_channel != channel:
+            return 400, {"status": "error", "provider": provider_id, "reason": "channel not configured", "requestId": request_id}
 
         auth = manifest["auth"]
-        if auth.get("mode") != "apiKey":
-            return 502, self._fail_body(provider_id, channel, "unsupported provider auth mode", dispatch, request_id)
+        if config.provider_auth_mode and config.provider_auth_mode != auth.get("mode"):
+            return 502, self._fail_body(provider_id, channel, "provider authentication mismatch", dispatch, request_id)
         try:
-            credential = self._resolve_credential(auth)
+            credential = self._resolve_credential(auth, config)
         except Exception:
             return 502, self._fail_body(provider_id, channel, "provider credential unavailable", dispatch, request_id)
-        if not credential.get("secret") or (auth.get("identity_key_vault_secret_name") and not credential.get("identity")):
+        credential_unavailable = (
+            credential.get("mode") == "apiKey"
+            and (not credential.get("secret") or (auth.get("identity_key_vault_secret_name") and not credential.get("identity")))
+        ) or (credential.get("mode") == "oauth" and not credential.get("access_token"))
+        if credential_unavailable:
             return 502, self._fail_body(provider_id, channel, "provider credential unavailable", dispatch, request_id)
 
         endpoint = config.provider_endpoint
@@ -331,10 +342,40 @@ class DispatchEngine:
                 except Exception:
                     pass
 
-    def _resolve_credential(self, auth):
-        secret = self.secrets.resolve(auth.get("key_vault_secret_name"))
-        identity = self.secrets.resolve(auth.get("identity_key_vault_secret_name")) if auth.get("identity_key_vault_secret_name") else ""
-        return {"mode": "apiKey", "secret": secret, "identity": identity}
+    def _resolve_credential(self, auth, config):
+        if auth.get("mode") == "apiKey":
+            secret = self.secrets.resolve(auth.get("key_vault_secret_name"))
+            identity = self.secrets.resolve(auth.get("identity_key_vault_secret_name")) if auth.get("identity_key_vault_secret_name") else ""
+            return {"mode": "apiKey", "secret": secret, "identity": identity}
+        if auth.get("mode") != "oauth" or not all((
+            config.provider_tenant_id, config.provider_scope,
+            config.outbound_client_id, config.outbound_managed_identity_client_id,
+        )):
+            raise ValueError("unsupported or incomplete provider authentication")
+        credential_config = (
+            config.provider_tenant_id,
+            config.outbound_client_id,
+            config.outbound_managed_identity_client_id,
+        )
+        if self._oauth_credential is None or self._oauth_credential_config != credential_config:
+            assertion_identity = ManagedIdentityCredential(client_id=config.outbound_managed_identity_client_id)
+
+            def get_assertion():
+                token = assertion_identity.get_token("api://AzureADTokenExchange/.default")
+                if not token or not token.token:
+                    raise ValueError("managed identity assertion unavailable")
+                return token.token
+
+            self._oauth_credential = ClientAssertionCredential(
+                tenant_id=config.provider_tenant_id,
+                client_id=config.outbound_client_id,
+                func=get_assertion,
+            )
+            self._oauth_credential_config = credential_config
+        token = self._oauth_credential.get_token(config.provider_scope)
+        if not token or not token.token:
+            raise ValueError("provider OAuth token unavailable")
+        return {"mode": "oauth", "access_token": token.token}
 
     def _fail_body(self, provider, channel, reason, dispatch, request_id):
         return {"status": "failed", "outcome": "Fail", "provider": provider, "channel": channel, "reason": reason, "correlationId": dispatch.correlation_id, "messageId": dispatch.message_id, "requestId": request_id}

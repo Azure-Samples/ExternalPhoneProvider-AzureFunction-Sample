@@ -2,6 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { AppConfig, readConfig } = require('../src/functions/config');
 const { DeliveryContext, ParsedResponse } = require('../src/functions/models');
@@ -9,7 +10,7 @@ const fixtures = require('../../tests/fixtures/contract.json');
 const { inspect } = require('node:util');
 const {
     dispatchOtp, getProvider, resolveOutcome, outcomeToHttpStatus,
-    parseEnvelope, parseProviderTimeout, isValidProviderUrl,
+    parseEnvelope, parseProviderTimeout, isValidProviderUrl, resolveProviderCredential,
 } = require('../src/functions/dispatch');
 const dispatch = { destination: '+15551234567', message: '  Your code is 918273.\n',
     channel: 'sms', messageId: 'message-id', correlationId: 'correlation-id' };
@@ -80,12 +81,17 @@ test('provider URLs and timeouts retain representative safety boundaries', () =>
     assert.equal(parseProviderTimeout('9999'), 2500);
 });
 
-test('omnimsg preserves its API-key request and normalizes acceptance', () => {
-    const request = getProvider('soprano').adapter.buildRequest({ ...input, env: undefined, endpoint: `${input.endpoint}/cgpapi///` });
-    assert.equal(request.url, 'https://provider.example/cgpapi/messages/omnimsg');
+test('Soprano uses the selected endpoint and OAuth bearer token', () => {
+    const request = getProvider('soprano').adapter.buildRequest({
+        ...input,
+        credential: { mode: 'oauth', accessToken: 'provider-token' },
+        env: undefined,
+        endpoint: `${input.endpoint}/oauth/messages`,
+    });
+    assert.equal(request.url, 'https://provider.example/oauth/messages');
     assert.equal(request.method, 'POST');
     assert.deepEqual(request.headers, { 'Content-Type': 'application/json', Accept: 'application/json',
-        'X-MEMS-API-ID': 'id', 'X-MEMS-API-Key': 'key' });
+        Authorization: 'Bearer provider-token' });
     assert.deepEqual(JSON.parse(request.body), { text: dispatch.message, destination: '15551234567',
         messageTypes: ['sms'], correlationId: 'correlation-id', shutterMode: false });
     const response = getProvider('soprano').adapter.parseResponse({ httpStatus: 201, ok: true,
@@ -108,8 +114,8 @@ test('App-auth SMS preserves its request and normalizes acceptance', () => {
 });
 
 test('Basic-auth SMS preserves its form request and normalizes acceptance', () => {
-    const request = getProvider('telesign').adapter.buildRequest(input);
-    assert.equal(request.url, 'https://provider.example/v1/messaging');
+    const request = getProvider('telesign').adapter.buildRequest({ ...input, endpoint: 'https://provider.example/epp/sms' });
+    assert.equal(request.url, 'https://provider.example/epp/sms');
     assert.equal(request.headers.Authorization, `Basic ${Buffer.from('id:key').toString('base64')}`);
     assert.equal(request.headers['Content-Type'], 'application/x-www-form-urlencoded');
     assert.equal(new URLSearchParams(request.body).get('message'), dispatch.message);
@@ -150,11 +156,11 @@ test('response parsing and HTTP mapping fail closed, including malformed status/
     }
 });
 
-test('missing key/identity and an unsafe final voice URL make zero HTTP calls', async (t) => {
+test('missing API-key or OAuth settings and an unsafe final voice URL make zero HTTP calls', async (t) => {
     const settings = { KEY_VAULT_URL: 'https://unit-test.vault.azure.net',
         EPP_PROVIDER_ENDPOINT: input.endpoint, SINCH_VOICE_ENDPOINT: 'http://unsafe.example' };
     const getSecret = t.mock.method(SecretClient.prototype, 'getSecret', async (name) => ({
-        value: ['soprano-api-id', 'telesign-api-key'].includes(name) ? '' : 'fixture-key',
+        value: name === 'telesign-api-key' ? '' : 'fixture-key',
     }));
     const fetchMock = t.mock.method(global, 'fetch', () => assert.fail('unexpected HTTP'));
     for (const [providerName, channel, reason] of [
@@ -177,4 +183,18 @@ test('missing key/identity and an unsafe final voice URL make zero HTTP calls', 
     assert.equal(getSecret.mock.callCount(), calls + 2);
     assert.equal(new Set(getSecret.mock.calls.map((call) => call.this)).size, 3);
     assert.equal(fetchMock.mock.callCount(), 0);
+});
+
+test('Soprano OAuth requests the selected provider scope', async (t) => {
+    t.mock.method(ManagedIdentityCredential.prototype, 'getToken', async () => ({ token: 'assertion-token' }));
+    const providerToken = t.mock.method(ClientAssertionCredential.prototype, 'getToken', async () => ({ token: 'provider-token' }));
+    const config = readConfig({
+        EPP_PROVIDER_TENANT_ID: '11111111-1111-1111-1111-111111111111',
+        EPP_PROVIDER_SCOPE: 'api://provider/.default',
+        EPP_OUTBOUND_CLIENT_ID: '22222222-2222-2222-2222-222222222222',
+        EPP_OUTBOUND_MI_CLIENT_ID: '33333333-3333-3333-3333-333333333333',
+    });
+    const credential = await resolveProviderCredential({ mode: 'oauth' }, config);
+    assert.deepEqual(credential, { mode: 'oauth', accessToken: 'provider-token' });
+    assert.equal(providerToken.mock.calls[0].arguments[0], 'api://provider/.default');
 });

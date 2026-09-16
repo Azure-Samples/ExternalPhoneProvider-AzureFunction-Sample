@@ -8,11 +8,7 @@ const { ParsedResponse } = require('../models');
 
 const manifest = {
     id: 'soprano',
-    auth: {
-        mode: 'apiKey',
-        keyVaultSecretName: 'soprano-api-key',
-        identityKeyVaultSecretName: 'soprano-api-id',
-    },
+    auth: { mode: 'oauth' },
     responseMapping: {
         ENROUTE: 'Continue',
         ACCEPTED: 'Continue',
@@ -29,13 +25,10 @@ const manifest = {
 };
 
 function buildRequest({ channel, endpoint, dispatch, credential }) {
-    let base = endpoint;
-    while (base.endsWith('/')) base = base.slice(0, -1);
     const headers = {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        'X-MEMS-API-ID': credential.identity,
-        'X-MEMS-API-Key': credential.secret,
+        Authorization: `Bearer ${credential.accessToken}`,
     };
     let destination = String(dispatch.destination || '');
     while (destination.startsWith('+')) destination = destination.slice(1);
@@ -46,7 +39,7 @@ function buildRequest({ channel, endpoint, dispatch, credential }) {
         correlationId: dispatch.correlationId || dispatch.messageId,
         shutterMode: false,
     };
-    return { url: `${base}/messages/omnimsg`, method: 'POST', headers, body: JSON.stringify(body) };
+    return { url: endpoint, method: 'POST', headers, body: JSON.stringify(body) };
 }
 
 function parseResponse({ httpStatus, ok, json }) {

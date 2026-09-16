@@ -20,15 +20,15 @@ def _dispatch(channel="sms"):
 
 
 @pytest.mark.parametrize("channel", ["sms", "voice"])
-def test_soprano_exact_sms_and_voice_contract(channel):
+def test_soprano_uses_selected_endpoint_and_oauth(channel):
     request = ProviderRegistry([SopranoProvider()]).get("SOPRANO").build_request(
-        channel, "https://qa4.example/cgpapi///", _dispatch(channel),
-        {"mode": "apiKey", "identity": "test-id", "secret": "test-key"},
+        channel, "https://qa4.example/oauth/messages", _dispatch(channel),
+        {"mode": "oauth", "access_token": "provider-token"},
         {},
     )
-    assert request["url"] == "https://qa4.example/cgpapi/messages/omnimsg" and request["method"] == "POST"
+    assert request["url"] == "https://qa4.example/oauth/messages" and request["method"] == "POST"
     assert request["headers"] == {
-        "X-MEMS-API-ID": "test-id", "X-MEMS-API-Key": "test-key",
+        "Authorization": "Bearer provider-token",
         "Content-Type": "application/json", "Accept": "application/json",
     }
     assert json.loads(request["body"]) == {
@@ -59,10 +59,10 @@ def test_infobip_sms_request_and_response_contract():
 
 def test_telesign_sms_request_and_response_contract():
     request = TelesignProvider().build_request(
-        "sms", "https://telesign.example", _dispatch(),
+        "sms", "https://telesign.example/epp/sms", _dispatch(),
         {"mode": "apiKey", "secret": "key", "identity": "customer"}, {},
     )
-    assert request["method"] == "POST" and request["url"] == "https://telesign.example/v1/messaging"
+    assert request["method"] == "POST" and request["url"] == "https://telesign.example/epp/sms"
     assert request["headers"]["Authorization"] == "Basic " + base64.b64encode(b"customer:key").decode()
     assert request["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
     form = parse_qs(request["body"])

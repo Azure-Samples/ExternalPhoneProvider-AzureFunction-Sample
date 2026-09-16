@@ -1,0 +1,46 @@
+{
+  "deployment": {
+    "enabled": true,
+    "testConfiguration": true,
+    "providerName": "Soprano",
+    "authentication": {
+      "mode": "oauth",
+      "tenantId": "00000000-0000-0000-0000-000000000000"
+    },
+    "routes": {
+      "sms": {
+        "global": {
+          "endpoint": "https://soprano-global.example.invalid/sms",
+          "appId": "00000000-0000-0000-0000-000000000000",
+          "scope": "api://00000000-0000-0000-0000-000000000000/.default",
+          "timeoutMilliseconds": 1500,
+          "retryIntervalSeconds": 30
+        },
+        "eu": {
+          "endpoint": "https://soprano-eu.example.invalid/sms",
+          "appId": "00000000-0000-0000-0000-000000000000",
+          "scope": "api://00000000-0000-0000-0000-000000000000/.default",
+          "timeoutMilliseconds": 1500,
+          "retryIntervalSeconds": 30
+        }
+      },
+      "voice": {
+        "global": {
+          "endpoint": "https://soprano-global.example.invalid/voice",
+          "appId": "00000000-0000-0000-0000-000000000000",
+          "scope": "api://00000000-0000-0000-0000-000000000000/.default",
+          "timeoutMilliseconds": 1500,
+          "retryIntervalSeconds": 30
+        },
+        "eu": {
+          "endpoint": "https://soprano-eu.example.invalid/voice",
+          "appId": "00000000-0000-0000-0000-000000000000",
+          "scope": "api://00000000-0000-0000-0000-000000000000/.default",
+          "timeoutMilliseconds": 1500,
+          "retryIntervalSeconds": 30
+        }
+      }
+    },
+    "note": "All Soprano tenant, endpoint, application ID, scope, and timing values are explicit test values until Soprano supplies the production profile."
+  }
+}

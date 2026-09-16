@@ -23,7 +23,7 @@ public class EngineTests
     public async Task HandlerUsesInjectedConfigAwaitsAcceptanceAndKeepsLogsPrivate()
     {
         using var rig = new HandlerRig();
-        Assert.Equal("soprano", AppConfig.Read(rig.Env).ProviderName);
+        Assert.Equal("infobip", AppConfig.Read(rig.Env).ProviderName);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         rig.Http.Respond = cancellation =>
@@ -31,7 +31,7 @@ public class EngineTests
             entered.TrySetResult();
             return release.Task.WaitAsync(cancellation);
         };
-        var pending = rig.Invoke(channel: "voice");
+        var pending = rig.Invoke(channel: "sms");
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -39,11 +39,11 @@ public class EngineTests
         }
         finally
         {
-            release.TrySetResult(Json(201, "{\"status\":\"ENROUTE\"}"));
+            release.TrySetResult(Json(200, "{\"messages\":[{\"messageId\":\"id\",\"status\":{\"groupName\":\"PENDING\"}}]}"));
         }
         AssertAccepted(await pending);
         using var body = JsonDocument.Parse(rig.Http.Body!);
-        Assert.Equal(Message, body.RootElement.GetProperty("text").GetString());
+        Assert.Equal(Message, body.RootElement.GetProperty("messages")[0].GetProperty("content").GetProperty("text").GetString());
         Assert.Equal(1, rig.Http.Calls);
         var log = Assert.Single(rig.Log.Messages);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Correlation)))[..16].ToLowerInvariant();
@@ -79,6 +79,8 @@ public class EngineTests
     public async Task MissingIdentityOrKeyFailsClosedBeforeHttp()
     {
         using var rig = new HandlerRig();
+        rig.Env["EPP_PROVIDER_NAME"] = "telesign";
+        rig.Env["EPP_PROVIDER_ENDPOINT"] = "https://provider.example/epp/sms";
         rig.Secrets.Identity = "";
         AssertFailure(rig, await rig.Invoke(), 502);
         rig.Secrets.Identity = "private-api-id";
@@ -240,8 +242,8 @@ public class EngineTests
         {
             Env = new TestEnv
             {
-                ["EPP_PROVIDER_NAME"] = "soprano",
-                ["EPP_PROVIDER_ENDPOINT"] = "https://provider.example/cgpapi",
+                ["EPP_PROVIDER_NAME"] = "infobip",
+                ["EPP_PROVIDER_ENDPOINT"] = "https://provider.example",
                 ["EPP_PROVIDER_TIMEOUT_MS"] = "2500",
             };
             var registry = new ProviderRegistry(new IProviderAdapter[]
@@ -285,7 +287,7 @@ public class EngineTests
         public Task<string> ResolveAsync(string? name)
         {
             Calls++;
-            return Task.FromResult(name == "soprano-api-id" ? Identity : Secret);
+            return Task.FromResult(name is "soprano-api-id" or "telesign-customer-id" ? Identity : Secret);
         }
     }
 
@@ -294,7 +296,7 @@ public class EngineTests
         public int Calls { get; private set; }
         public string? Body { get; private set; }
         public Func<CancellationToken, Task<HttpResponseMessage>> Respond { get; set; } =
-            _ => Task.FromResult(Json(201, "{\"status\":\"ACCEPTED\"}"));
+            _ => Task.FromResult(Json(200, "{\"messages\":[{\"messageId\":\"id\",\"status\":{\"groupName\":\"PENDING\"}}]}"));
         public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {

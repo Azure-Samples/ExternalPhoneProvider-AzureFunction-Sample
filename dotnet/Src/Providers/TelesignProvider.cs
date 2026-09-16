@@ -28,10 +28,8 @@ public sealed class TelesignProvider : IProviderAdapter
 
         var externalId = dispatch.CorrelationId ?? dispatch.MessageId;
         var form = new Dictionary<string, string>();
-        string path;
         if (channel == "voice")
         {
-            path = "/v1/voice";
             form["phone_number"] = dispatch.Destination;
             form["message"] = dispatch.Message ?? string.Empty;
             form["message_type"] = "OTP";
@@ -40,7 +38,6 @@ public sealed class TelesignProvider : IProviderAdapter
         }
         else
         {
-            path = "/v1/messaging";
             form["phone_number"] = dispatch.Destination;
             form["message"] = dispatch.Message ?? string.Empty;
             form["sender_id"] = env.Get("EPP_PROVIDER_ACCOUNT_NAME") ?? string.Empty;
@@ -56,7 +53,7 @@ public sealed class TelesignProvider : IProviderAdapter
             ["Accept"] = "application/json",
         };
         var encoded = string.Join("&", form.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
-        return new ProviderHttpRequest($"{endpoint}{path}", "POST", headers, encoded);
+        return new ProviderHttpRequest(endpoint, "POST", headers, encoded);
     }
 
     public ParsedResponse ParseResponse(int httpStatus, bool ok, JsonElement json)

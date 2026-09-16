@@ -26,7 +26,7 @@ public sealed record DispatchRequest(
     string? CorrelationId,
     string? Locale);
 
-public sealed record ProviderCredential(string Mode, string? Secret = null, string? Identity = null);
+public sealed record ProviderCredential(string Mode, string? Secret = null, string? Identity = null, string? AccessToken = null);
 
 public sealed record ProviderHttpRequest(string Url, string Method, Dictionary<string, string> Headers, string Body);
 

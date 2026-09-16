@@ -18,15 +18,20 @@ def _request(channel="sms"):
 def engine(monkeypatch):
     registry = ProviderRegistry([SopranoProvider(), SinchProvider()])
     monkeypatch.setattr(dispatch_module.requests, "request", Mock())
-    return DispatchEngine(registry, Mock(resolve=Mock(return_value="test-key")),
-                          {"EPP_PROVIDER_NAME": " SOPRANO ", "EPP_PROVIDER_ENDPOINT": "https://qa4.example/cgpapi/"})
+    result = DispatchEngine(registry, Mock(resolve=Mock(return_value="test-key")), {
+        "EPP_PROVIDER_NAME": " SOPRANO ",
+        "EPP_PROVIDER_ENDPOINT": "https://qa4.example/oauth/messages",
+        "EPP_PROVIDER_AUTH_MODE": "oauth",
+        "EPP_PROVIDER_CHANNEL": "sms",
+    })
+    result._resolve_credential = Mock(return_value={"mode": "oauth", "access_token": "provider-token"})
+    return result
 
 
-def test_missing_key_or_identity_never_sends(engine):
-    for missing in ("soprano-api-key", "soprano-api-id"):
-        engine.secrets.resolve.side_effect = lambda name: None if name == missing else "test-key"
-        status, body = engine.dispatch(_request(), "r")
-        assert status == 502 and body["reason"] == "provider credential unavailable"
+def test_missing_oauth_configuration_never_sends(engine):
+    engine._resolve_credential = DispatchEngine._resolve_credential.__get__(engine, DispatchEngine)
+    status, body = engine.dispatch(_request(), "r")
+    assert status == 502 and body["reason"] == "provider credential unavailable"
     dispatch_module.requests.request.assert_not_called()
 
 
@@ -37,6 +42,9 @@ def test_base_and_sinch_voice_final_url_guards(engine):
         assert status == 502 and body["reason"] == "invalid provider endpoint"
     engine.env["EPP_PROVIDER_ENDPOINT"] = "https://api.example"
     engine.env["EPP_PROVIDER_NAME"] = "sinch"
+    engine.env.pop("EPP_PROVIDER_CHANNEL", None)
+    engine.env.pop("EPP_PROVIDER_AUTH_MODE", None)
+    engine._resolve_credential = Mock(return_value={"mode": "apiKey", "secret": "test-key", "identity": ""})
     for url in ("http://voice.example", "https://voice.example:0"):
         engine.env["SINCH_VOICE_ENDPOINT"] = url
         status, body = engine.dispatch(_request("voice"), "r")

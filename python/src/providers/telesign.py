@@ -25,7 +25,6 @@ class TelesignProvider:
 
         external_id = dispatch.correlation_id or dispatch.message_id
         if channel == "voice":
-            path = "/v1/voice"
             form = {
                 "phone_number": dispatch.destination,
                 "message": dispatch.message or "",
@@ -34,7 +33,6 @@ class TelesignProvider:
                 "external_id": external_id,
             }
         else:
-            path = "/v1/messaging"
             form = {
                 "phone_number": dispatch.destination,
                 "message": dispatch.message or "",
@@ -45,7 +43,7 @@ class TelesignProvider:
             }
 
         headers = {"Authorization": authorization, "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"}
-        return {"url": f"{endpoint}{path}", "method": "POST", "headers": headers, "body": urllib.parse.urlencode(form)}
+        return {"url": endpoint, "method": "POST", "headers": headers, "body": urllib.parse.urlencode(form)}
 
     def parse_response(self, http_status, ok, json_body):
         status = json_body.get("status") or {} if isinstance(json_body, dict) else {}

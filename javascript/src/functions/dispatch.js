@@ -6,7 +6,7 @@
 
 const crypto = require('crypto');
 const { compactDecrypt } = require('jose');
-const { ManagedIdentityCredential } = require('@azure/identity');
+const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { readConfig } = require('./config');
 const { DeliveryContext } = require('./models');
@@ -162,6 +162,8 @@ function getProvider(providerId) {
 let keyVaultSecretClient = null;
 let keyVaultClientConfig;
 const secretCache = new Map();
+let oauthCredential = null;
+let oauthCredentialConfig;
 
 function getKeyVaultSecretClient(config) {
     const cacheKey = JSON.stringify([config.keyVaultUrl, config.managedIdentityClientId]);
@@ -196,15 +198,38 @@ async function resolveSecretValue(keyVaultSecretName, config) {
 
 async function resolveProviderCredential(authConfiguration = {}, config) {
     const { mode = 'apiKey' } = authConfiguration;
-    if (mode !== 'apiKey') throw new Error('unsupported provider authentication');
-
-    const [secret, identity] = await Promise.all([
-        resolveSecretValue(authConfiguration.keyVaultSecretName, config),
-        authConfiguration.identityKeyVaultSecretName
-            ? resolveSecretValue(authConfiguration.identityKeyVaultSecretName, config)
-            : Promise.resolve(''),
+    if (mode === 'apiKey') {
+        const [secret, identity] = await Promise.all([
+            resolveSecretValue(authConfiguration.keyVaultSecretName, config),
+            authConfiguration.identityKeyVaultSecretName
+                ? resolveSecretValue(authConfiguration.identityKeyVaultSecretName, config)
+                : Promise.resolve(''),
+        ]);
+        return { mode: 'apiKey', secret, identity };
+    }
+    if (mode !== 'oauth' || !config.providerTenantId || !config.providerScope
+        || !config.outboundClientId || !config.outboundManagedIdentityClientId) {
+        throw new Error('unsupported or incomplete provider authentication');
+    }
+    const credentialConfig = JSON.stringify([
+        config.providerTenantId, config.outboundClientId, config.outboundManagedIdentityClientId,
     ]);
-    return { mode: 'apiKey', secret, identity };
+    if (!oauthCredential || oauthCredentialConfig !== credentialConfig) {
+        const assertionIdentity = new ManagedIdentityCredential(config.outboundManagedIdentityClientId);
+        oauthCredential = new ClientAssertionCredential(
+            config.providerTenantId,
+            config.outboundClientId,
+            async () => {
+                const assertion = await assertionIdentity.getToken('api://AzureADTokenExchange/.default');
+                if (!assertion?.token) throw new Error('managed identity assertion unavailable');
+                return assertion.token;
+            },
+        );
+        oauthCredentialConfig = credentialConfig;
+    }
+    const accessToken = await oauthCredential.getToken(config.providerScope);
+    if (!accessToken?.token) throw new Error('provider OAuth token unavailable');
+    return { mode: 'oauth', accessToken: accessToken.token };
 }
 
 // Status mappings may restrict HTTP success, but cannot turn failed HTTP into Continue.
@@ -305,6 +330,12 @@ async function sendViaProvider(providerEntry, dispatch, options) {
     if (!['sms', 'voice'].includes(channel)) {
         return { httpStatus: 400, body: { status: 'error', reason: 'unsupported channel', requestId } };
     }
+    if (config.providerChannel && config.providerChannel !== channel) {
+        return { httpStatus: 400, body: { status: 'error', provider: providerId, reason: 'channel not configured', requestId } };
+    }
+    if (config.providerAuthMode && config.providerAuthMode !== manifest.auth?.mode) {
+        return { httpStatus: 502, body: failBody(providerId, channel, 'provider authentication mismatch', dispatch, requestId) };
+    }
 
     const endpointBaseUrl = config.providerEndpoint;
     if (!isValidProviderUrl(endpointBaseUrl)) {
@@ -317,9 +348,10 @@ async function sendViaProvider(providerEntry, dispatch, options) {
     } catch {
         // Configuration and secret lookup failures share a generic failure response.
     }
-    const identityRequired = !!manifest.auth?.identityKeyVaultSecretName;
-    const credentialUnavailable = !credential || !credential.secret
-        || (identityRequired && !credential.identity);
+    const identityRequired = credential?.mode === 'apiKey' && !!manifest.auth?.identityKeyVaultSecretName;
+    const credentialUnavailable = !credential
+        || (credential.mode === 'apiKey' && (!credential.secret || (identityRequired && !credential.identity)))
+        || (credential.mode === 'oauth' && !credential.accessToken);
     if (credentialUnavailable) {
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider credential unavailable', dispatch, requestId) };
     }
@@ -398,4 +430,5 @@ module.exports = {
     outcomeToHttpStatus,
     parseProviderTimeout,
     isValidProviderUrl,
+    resolveProviderCredential,
 };

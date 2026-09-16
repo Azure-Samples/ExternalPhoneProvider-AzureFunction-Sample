@@ -6,11 +6,7 @@ from ..models import ParsedResponse
 class SopranoProvider:
     manifest = {
         "id": "soprano",
-        "auth": {
-            "mode": "apiKey",
-            "key_vault_secret_name": "soprano-api-key",
-            "identity_key_vault_secret_name": "soprano-api-id",
-        },
+        "auth": {"mode": "oauth"},
         "response_mapping": {
             "ENROUTE": "Continue", "ACCEPTED": "Continue", "SUBMITTED": "Continue",
             "SENT": "Continue", "DELIVERED": "Continue", "QUEUED": "Continue",
@@ -21,8 +17,7 @@ class SopranoProvider:
     def build_request(self, channel, endpoint, dispatch, credential, env):
         message_type = "voice" if channel == "voice" else "sms"
         headers = {
-            "X-MEMS-API-ID": credential.get("identity") or "",
-            "X-MEMS-API-Key": credential.get("secret") or "",
+            "Authorization": f"Bearer {credential.get('access_token') or ''}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
@@ -33,7 +28,7 @@ class SopranoProvider:
             "correlationId": dispatch.correlation_id or dispatch.message_id,
             "shutterMode": False,
         }
-        return {"url": f"{endpoint.rstrip('/')}/messages/omnimsg", "method": "POST", "headers": headers, "body": json.dumps(body)}
+        return {"url": endpoint, "method": "POST", "headers": headers, "body": json.dumps(body)}
 
     def parse_response(self, http_status, ok, json_body):
         payload = json_body[0] if isinstance(json_body, list) and json_body else json_body

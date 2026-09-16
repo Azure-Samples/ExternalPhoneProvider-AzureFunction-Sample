@@ -6,7 +6,7 @@ public sealed class SopranoProvider : IProviderAdapter
 {
     public ProviderManifest Manifest { get; } = new(
         Id: "soprano",
-        Auth: new AuthConfig("apiKey", KeyVaultSecretName: "soprano-api-key", IdentityKeyVaultSecretName: "soprano-api-id"),
+        Auth: new AuthConfig("oauth"),
         ResponseMapping: new Dictionary<string, Outcome>
         {
             ["ENROUTE"] = Outcome.Continue,
@@ -28,8 +28,7 @@ public sealed class SopranoProvider : IProviderAdapter
         {
             ["Content-Type"] = "application/json",
             ["Accept"] = "application/json",
-            ["X-MEMS-API-ID"] = credential.Identity ?? string.Empty,
-            ["X-MEMS-API-Key"] = credential.Secret ?? string.Empty,
+            ["Authorization"] = "Bearer " + credential.AccessToken,
         };
         var body = new
         {
@@ -40,7 +39,7 @@ public sealed class SopranoProvider : IProviderAdapter
             shutterMode = false,
         };
 
-        return new ProviderHttpRequest($"{endpoint.TrimEnd('/')}/messages/omnimsg", "POST", headers, JsonSerializer.Serialize(body));
+        return new ProviderHttpRequest(endpoint, "POST", headers, JsonSerializer.Serialize(body));
     }
 
     public ParsedResponse ParseResponse(int httpStatus, bool ok, JsonElement json)

@@ -25,12 +25,19 @@ by default. Deploy each language separately, not all three to the same Function 
 New here? Start with **[docs/ONBOARDING.md](docs/ONBOARDING.md)** — setup, config, running, securing,
 and deploying, step by step.
 
-## Guided CYOT setup
+## Guided EPP setup
 
-Use **[CYOT-Setup](CYOT-Setup/docs/README.md)** for a PowerShell-guided setup that registers the
-customer application, provisions or connects an External Phone Provider endpoint, validates the
-configuration, and activates the CYOT policy only after explicit approval. The setup supports Bicep
-or Azure CLI provisioning, redacted logs, diagnostics, and resumable stages.
+Use **[setup](setup/docs/README.md)** for **Step 2: endpoint deployment**. Download only
+`Setup-Epp.ps1`; it downloads its supporting tools, Bicep, and provider JSON from GitHub. Supply
+missing customer settings, select **JavaScript, .NET, or Python**, choose Telesign or Soprano,
+**SMS or voice**, **Global or EU**, enter a resource prefix, and approve one complete resource plan.
+Generated names add `epp` after the customer prefix. Missing required Azure resource providers
+are registered automatically after approval. Package links and published checksums are
+selected automatically. Setup publishes .NET for Linux and requests Azure remote build for Python;
+customers do not build or deploy the source ZIPs manually. The .NET choice requires the .NET 8 SDK.
+Application registration (Step 1) and policy activation (Step 3) remain manual. Missing provider
+details are explicitly labelled test values and written to the real Function App settings; replace
+them and complete Telesign API-key or Soprano OAuth onboarding before live delivery.
 
 ## Download a Function ZIP
 
@@ -38,9 +45,9 @@ Download the preview ZIP for your chosen language:
 
 | Language | Download | Contents |
 |---|---|---|
-| JavaScript | [epp-javascript.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-preview-20260914/epp-javascript.zip) | Application and production dependencies |
-| .NET | [epp-dotnet-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-dotnet-source-preview-20260915/epp-dotnet-source.zip) | C# Function source and project file; build/publish before deployment |
-| Python | [epp-python-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-preview-20260914/epp-python-source.zip) | Source for Azure remote build on Linux |
+| JavaScript | [epp-javascript.zip](https://github.com/siyixian/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-provider-auth-preview-20260915/epp-javascript.zip) | Application and production dependencies |
+| .NET | [epp-dotnet-source.zip](https://github.com/siyixian/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-provider-auth-preview-20260915/epp-dotnet-source.zip) | C# Function source and project file; build/publish before deployment |
+| Python | [epp-python-source.zip](https://github.com/siyixian/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-provider-auth-preview-20260915/epp-python-source.zip) | Source for Azure remote build on Linux |
 
 Customers do not need PowerShell or a local build toolchain to download these files. Verify downloads
 against the corresponding release's `SHA256SUMS.txt`. Configure the target Function App's runtime, app settings,
@@ -49,14 +56,14 @@ project; Python requires remote build to install dependencies. Neither source ZI
 as a run-from-package artifact. GitHub's **Code > Download ZIP**
 is the whole source repository, not a Function deployment package.
 
-After the packaging workflow is merged, each successful `main` build tests all three implementations,
+The private test links above match `test/epp-single-script`. After the packaging workflow is merged
+upstream, each successful `main` build tests all three implementations,
 builds and inspects the ZIPs, and publishes a new versioned release. Get those builds from
 [Latest release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest).
 Older releases remain available; existing assets are not overwritten. Pull requests build downloadable
 workflow artifacts only and cannot publish releases. GitHub sign-in may be required for workflow
 artifacts, but public release downloads do not require a local build. Packaging does not deploy or
-verify live provider delivery. The current preview is built from the packaging branch, not a merged
-release of the separate provider feature branches.
+verify live provider delivery.
 
 ## Build ZIPs Locally
 
@@ -113,7 +120,7 @@ extend it deliberately if you add runtime assets, and never put secrets in appli
 ## The design in one line
 
 SAS → Easy Auth → anonymous HTTP handler (`POST /api/SendOtp`, validate envelope + decrypt JWE) →
-configured provider (API key) → HTTP result with nonce on success.
+configured provider (Telesign API key or Soprano OAuth) → HTTP result with nonce on success.
 Only provider acceptance returns the nonce for live requests. Incoming `mode: 2` (evaluation) is the
 generic shutter: after platform authentication, validate and decrypt, then echo the nonce without
 calling a provider.
@@ -148,7 +155,12 @@ how code accesses configuration, not the environment-variable names.
 | `EPP_DECRYPTION_KEY_PEM` | Every request | Local test PEM or base64 PEM. In Azure, use a Key Vault reference resolving to the private-key secret. |
 | `EPP_ENCRYPTION_KEY_ID` | Optional | Expected encryption key ID; mismatch only produces an advisory warning. |
 | `EPP_PROVIDER_NAME` | Live delivery | Selected adapter's manifest ID. No default provider. |
-| `EPP_PROVIDER_ENDPOINT` | Live delivery | HTTPS **base URL**, in the same environment as the provider credentials; the adapter adds its route. |
+| `EPP_PROVIDER_ENDPOINT` | Live delivery | Complete provider-approved HTTPS request URL for the selected channel and endpoint region. |
+| `EPP_PROVIDER_CHANNEL` | Guided deployment | Selected `sms` or `voice` route; live requests for the other channel fail closed. |
+| `EPP_PROVIDER_ENDPOINT_REGION` | Guided deployment metadata | Selected `global` or `eu` route label. |
+| `EPP_PROVIDER_AUTH_MODE` | Live delivery | Must match the adapter: `apiKey` for Telesign or `oauth` for Soprano. |
+| `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE` | Soprano OAuth | Provider tenant and selected API scope. |
+| `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | Soprano OAuth | Existing multitenant application client ID and outbound user-assigned managed identity client ID used for client-assertion exchange. |
 | `EPP_PROVIDER_TIMEOUT_MS` | Optional | Decimal milliseconds. Defaults to `1500`, capped at `2500`; not an end-to-end deadline. |
 | `EPP_PROVIDER_ACCOUNT_NAME` | Adapter-dependent | Sender/account metadata, not an API key or credential identity. |
 | `KEY_VAULT_URL` | Provider credential lookup | URI of the vault containing the manifest-named provider secrets. Separate from the encryption-key reference. |
@@ -160,9 +172,9 @@ how code accesses configuration, not the environment-variable names.
 2. **In Azure:** set the same application variables on the selected Function App (or serving slot)
   under **Settings → Environment variables → App settings**, then apply the changes. Local settings
   are not published automatically. Configure host storage separately for the selected hosting plan.
-3. Store provider API keys and any required identity secrets in Key Vault using the **exact names in
-  the adapter manifest**. Grant that app/slot's managed identity *Key Vault Secrets User* on those
-  secrets. An API key in a local environment variable is not a supported replacement for the resolver.
+3. For Telesign, store provider API credentials in Key Vault using the **exact names in the adapter
+  manifest** and grant the Function identity *Key Vault Secrets User*. For Soprano, configure the
+  provider tenant/scope and outbound managed-identity federation; no provider secret is stored.
 
 Evaluation requests do not need provider variables or provider secrets. They still need the decryption
 key. The default credential resolvers use `ManagedIdentityCredential`, **not** the developer's CLI

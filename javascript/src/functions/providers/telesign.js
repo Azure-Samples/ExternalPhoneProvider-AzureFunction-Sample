@@ -33,10 +33,8 @@ function buildRequest({ channel, endpoint, dispatch, credential, env }) {
     const contentType = 'application/x-www-form-urlencoded';
     const authorization = `Basic ${Buffer.from(`${credential.identity}:${credential.secret}`).toString('base64')}`;
 
-    let path;
     let params;
     if (channel === 'voice') {
-        path = '/v1/voice';
         params = new URLSearchParams({
             phone_number: dispatch.destination,
             message: dispatch.message,
@@ -45,7 +43,6 @@ function buildRequest({ channel, endpoint, dispatch, credential, env }) {
             external_id: dispatch.correlationId || dispatch.messageId,
         });
     } else {
-        path = '/v1/messaging';
         params = new URLSearchParams({
             phone_number: dispatch.destination,
             message: dispatch.message,
@@ -57,7 +54,7 @@ function buildRequest({ channel, endpoint, dispatch, credential, env }) {
     }
 
     return {
-        url: `${base}${path}`,
+        url: base,
         method: 'POST',
         headers: {
             Authorization: authorization,
