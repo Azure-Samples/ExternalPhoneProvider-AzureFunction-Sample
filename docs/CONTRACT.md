@@ -103,7 +103,43 @@ Soprano uses OAuth client-assertion exchange. The outbound user-assigned managed
 `api://AzureADTokenExchange/.default` assertion for the existing multitenant application, which then
 requests the configured provider scope. Existing platform caller authentication is unchanged.
 
-Use a speech language supported by the selected Soprano endpoint and account. On QA4, an OAuth
+### Soprano provider JWT
+
+The Function obtains one provider token through the shared OAuth credential resolver using the
+setup-generated `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE`, `EPP_OUTBOUND_CLIENT_ID`, and
+`EPP_OUTBOUND_MI_CLIENT_ID`. `EPP_PROVIDER_AUTH_MODE=oauth` matches the Soprano adapter.
+`EPP_PROVIDER_ENDPOINT` is the complete selected send URL and is not modified by the adapter.
+The calling app registration and outbound user-assigned identity must share a home tenant; the
+calling app must be multitenant and provisioned/authorized in the provider tenant. The app's
+federated credential trusts the identity's principal ID, home-tenant v2 issuer, and
+`api://AzureADTokenExchange` audience. Key Vault identity selection remains independent.
+
+Only the final application token is sent as `Authorization: Bearer ...`. No Soprano API ID/key,
+managed-identity assertion, or incoming SAS token is forwarded. Missing settings, token-acquisition
+failure, blank tokens, or tokens with 30 seconds or less remaining lifetime fail before provider HTTP;
+there is no API-key fallback. Evaluation skips acquisition. A provider rejection is not retried.
+Tokens are treated as opaque: the Function checks SDK expiry metadata, not custom JWT claims.
+Soprano remains responsible for signature, issuer, audience, expiry, permissions, and account validation.
+
+Credential instances are reused for the configured tenant/application/identity; each acquisition
+uses the selected scope. JavaScript and .NET pass one 2.5-second cancellation signal/token through
+both exchange stages. Python uses 2.5-second connect/read inactivity timeouts, not a total deadline.
+Configured SDK transport retries are disabled. Managed-identity discovery may involve additional
+SDK operations; this is not an end-to-end delivery deadline. JavaScript suppresses SDK logs only
+in the acquisition's asynchronous context. Python filters Azure Identity/Core/MSAL records on
+configured handlers in that context; configure logging sinks before handling requests. .NET disables
+credential diagnostics. Keep platform body tracing off and never log credential objects or tokens.
+
+When migrating from the earlier optional-JWT branch, replace `EPP_PROVIDER_APPLICATION_ID` with
+`EPP_OUTBOUND_CLIENT_ID` and `EPP_PROVIDER_MI_CLIENT_ID` with `EPP_OUTBOUND_MI_CLIENT_ID`.
+Remove `EPP_PROVIDER_JWT_ENABLED`; it no longer controls authentication. Reuse the exact provider
+scope selected by setup and replace old base URLs with complete send URLs. These source changes
+do not update deployed settings or establish provider authorization. Earlier QA4 tests of API keys
+plus JWT do not validate the current Bearer-only configuration or production endpoints.
+
+See [Microsoft's managed-identity federation guidance](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity).
+
+Use a speech language supported by the selected Soprano endpoint and account. On QA4, an API-key
 voice request using `en` returned HTTP `400` with error code `400101`; the same request structure
 using `en-US` returned HTTP `201` with `ENROUTE` on September 15, 2026. This confirms acceptance,
 not handset receipt or audio quality. The adapter preserves the supplied language and does not

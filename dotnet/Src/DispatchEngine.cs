@@ -221,14 +221,38 @@ public sealed class DispatchEngine
     private readonly object _oauthLock = new();
     private TokenCredential? _oauthCredential;
     private string? _oauthCredentialConfig;
+    private readonly Func<string, TokenCredential> _createManagedIdentity;
+    private readonly Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> _createOAuthCredential;
 
     public DispatchEngine(ProviderRegistry registry, ISecretResolver secrets, IHttpClientFactory httpFactory, IEnv? env = null)
+        : this(registry, secrets, httpFactory, env,
+            identity => new ManagedIdentityCredential(identity, OAuthOptions()),
+            (tenant, application, assertion) => new ClientAssertionCredential(tenant, application, assertion, OAuthOptions())) { }
+
+    internal DispatchEngine(ProviderRegistry registry, ISecretResolver secrets, IHttpClientFactory httpFactory, IEnv? env,
+        Func<string, TokenCredential> createManagedIdentity,
+        Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> createOAuthCredential)
     {
         _registry = registry;
         _secrets = secrets;
         _httpFactory = httpFactory;
         _env = env ?? new ProcessEnv();
+        _createManagedIdentity = createManagedIdentity;
+        _createOAuthCredential = createOAuthCredential;
     }
+
+    private static ClientAssertionCredentialOptions OAuthOptions()
+    {
+        var options = new ClientAssertionCredentialOptions { AuthorityHost = AzureAuthorityHosts.AzurePublicCloud };
+        options.Retry.MaxRetries = 0;
+        options.Retry.NetworkTimeout = TimeSpan.FromSeconds(2.5);
+        options.Diagnostics.IsLoggingEnabled = false;
+        options.Diagnostics.IsLoggingContentEnabled = false;
+        return options;
+    }
+
+    private static bool UsableAccessToken(AccessToken token) =>
+        !string.IsNullOrWhiteSpace(token.Token) && token.ExpiresOn > DateTimeOffset.UtcNow.AddSeconds(30);
 
     public async Task<DispatchResult> DispatchAsync(DispatchRequest dispatch, string requestId)
     {
@@ -327,8 +351,8 @@ public sealed class DispatchEngine
         {
             if (_oauthCredential is null || _oauthCredentialConfig != credentialConfig)
             {
-                var managedIdentity = new ManagedIdentityCredential(config.OutboundManagedIdentityClientId);
-                _oauthCredential = new ClientAssertionCredential(
+                var managedIdentity = _createManagedIdentity(config.OutboundManagedIdentityClientId);
+                _oauthCredential = _createOAuthCredential(
                     config.ProviderTenantId,
                     config.OutboundClientId,
                     async cancellationToken =>
@@ -336,15 +360,20 @@ public sealed class DispatchEngine
                         var assertion = await managedIdentity.GetTokenAsync(
                             new TokenRequestContext(new[] { "api://AzureADTokenExchange/.default" }),
                             cancellationToken);
+                        if (!UsableAccessToken(assertion))
+                            throw new InvalidOperationException("managed identity assertion unavailable");
                         return assertion.Token;
                     });
                 _oauthCredentialConfig = credentialConfig;
             }
             providerCredential = _oauthCredential;
         }
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2.5));
         var token = await providerCredential.GetTokenAsync(
             new TokenRequestContext(new[] { config.ProviderScope }),
-            CancellationToken.None);
+            cancellation.Token);
+        if (!UsableAccessToken(token))
+            throw new InvalidOperationException("provider OAuth token unavailable");
         return new ProviderCredential("oauth", AccessToken: token.Token);
     }
 
