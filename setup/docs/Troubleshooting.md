@@ -139,7 +139,7 @@ setup makes it multi-tenant, restricts it to its home tenant plus the provider J
 through the Entra allowed-tenants preview, creates both required service principals, adds and assigns
 `Epp.Invoke`, and grants the Microsoft phone-provider service principal Graph `Application.Read.All`.
 
-Graph needs delegated `Application.ReadWrite.All`, `Application.Read.All`, and
+Graph needs delegated `User.Read`, `Application.ReadWrite.All`, `Application.Read.All`, and
 `AppRoleAssignment.ReadWrite.All`. Granting a Microsoft Graph application permission normally
 requires a Privileged Role Administrator. Noninteractive runs must authenticate both clients first
 with these scopes and supply `-ApproveDeployment` separately.
@@ -147,6 +147,40 @@ with these scopes and supply `-ApproveDeployment` separately.
 The tenant restriction uses Microsoft Graph beta `signInAudienceRestrictions`. If that preview is
 unavailable or the tenant policy blocks it, setup stops before mutation rather than silently allowing
 all organizational tenants.
+
+## Graph /me returns 403 Forbidden
+
+`GET /me?$select=id,userPrincipalName` requires delegated
+[`User.Read`](https://learn.microsoft.com/en-us/graph/api/user-get?view=graph-rest-1.0#permissions).
+The application-management scopes do not authorize this profile lookup. Versions that added the
+Graph operator readback without requesting `User.Read` could therefore fail during preflight.
+This is a setup sign-in scope issue, not a request for another Azure or Entra administrator role.
+
+Use the updated script and source revision. It requests `User.Read` for the operator's Graph
+PowerShell session and reconnects interactively when a cached session lacks it, before calling
+`/me`. `-ForceAuthentication` also requests the complete scope set. Noninteractive runs must
+authenticate first:
+
+```powershell
+Connect-MgGraph -TenantId '<customer-tenant-id>' -ContextScope Process `
+    -Scopes 'User.Read', 'Application.ReadWrite.All', 'Application.Read.All', 'AppRoleAssignment.ReadWrite.All'
+```
+
+This does not grant `User.Read` to the Microsoft phone-provider service principal or endpoint app.
+Azure role assignments continue to use the ARM token's `oid`, not Graph `/me`.
+
+## PrincipalNotFound for the Azure operator
+
+Azure RBAC and Microsoft Graph can expose different object IDs for the same interactive account,
+especially with brokered, guest, or aliased identities. Setup must not use Graph `/me` as an Azure
+role-assignment principal. The current script decodes the selected subscription's ARM access token
+in memory, validates its tenant, and passes its `oid` to Bicep. The token is never printed or saved.
+
+Use `-ForceAuthentication` to require fresh Azure CLI and Graph device-code sign-in when account
+selection is ambiguous. This does not replace ARM-token identity selection and does not run
+`az logout`, `az account clear`, or delete shared authentication caches. If a correct ARM `oid`
+still receives `PrincipalNotFound`, wait for actual directory/RBAC replication and rerun with the
+same prefix; retries must not substitute a Graph object ID.
 Use a distinct resource prefix for each language; setup rejects changing a previously tagged
 app to another runtime with the same prefix.
 

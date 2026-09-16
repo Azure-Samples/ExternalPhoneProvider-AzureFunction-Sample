@@ -12,13 +12,13 @@
     "routes": {
       "sms": {
         "global": {
-          "endpoint": "https://rest-ww.telesign.com/integration/microsoft-cyot/sms",
+          "endpoint": "https://verify.telesign.com/integration/msft/cyot",
           "appId": "00000000-0000-0000-0000-000000000000",
           "timeoutMilliseconds": 1500,
           "retryIntervalSeconds": 30
         },
         "eu": {
-          "endpoint": "https://rest-ww.telesign.com/integration/microsoft-cyot/sms",
+          "endpoint": "https://verify.telesign.com/integration/msft/cyot",
           "appId": "00000000-0000-0000-0000-000000000000",
           "timeoutMilliseconds": 1500,
           "retryIntervalSeconds": 30
@@ -26,19 +26,19 @@
       },
       "voice": {
         "global": {
-          "endpoint": "https://rest-ww.telesign.com/integration/microsoft-cyot/voice",
+          "endpoint": "https://verify.telesign.com/integration/msft/cyot",
           "appId": "00000000-0000-0000-0000-000000000000",
           "timeoutMilliseconds": 1500,
           "retryIntervalSeconds": 30
         },
         "eu": {
-          "endpoint": "https://rest-ww.telesign.com/integration/microsoft-cyot/voice",
+          "endpoint": "https://verify.telesign.com/integration/msft/cyot",
           "appId": "00000000-0000-0000-0000-000000000000",
           "timeoutMilliseconds": 1500,
           "retryIntervalSeconds": 30
         }
       }
     },
-    "note": "The supplied global SMS and voice URLs are preserved. EU URLs and application IDs are explicit test values until Telesign provides them."
+    "note": "All Telesign channel and region selections use the supplied Microsoft CYOT integration endpoint. Application IDs remain explicit test values until Telesign provides them."
   }
 }

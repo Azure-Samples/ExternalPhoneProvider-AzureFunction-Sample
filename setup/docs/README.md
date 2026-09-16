@@ -65,8 +65,10 @@ disclosed outbound managed-identity federated credential.
 - An Azure **user** account permitted to deploy at subscription scope, create the listed resources,
   and create the scoped Azure role assignments.
 - A Microsoft Entra **Privileged Role Administrator** for granting the Microsoft first-party service
-  principal Graph `Application.Read.All`, plus delegated Graph scopes `Application.ReadWrite.All`,
-  `Application.Read.All`, and `AppRoleAssignment.ReadWrite.All`.
+  principal Graph `Application.Read.All`, plus delegated Graph scopes `User.Read`,
+  `Application.ReadWrite.All`, `Application.Read.All`, and `AppRoleAssignment.ReadWrite.All`.
+  `User.Read` is for the setup operator's `/me` lookup; it is not granted to the first-party service
+  principal or the endpoint app.
 - Microsoft Graph **beta** access for the Entra `signInAudienceRestrictions` allowed-tenants preview.
   The selected provider tenant is allowed in addition to the app's home tenant, which Entra always allows.
 - **Linux Premium EP1** available in the chosen region. Setup registers missing required Azure
@@ -96,10 +98,16 @@ Setup normally detects these automatically. For unattended execution, allow inst
 Install Azure CLI through its official installation instructions if necessary. Setup checks the
 explicitly supplied subscription and tenant without changing the CLI's selected subscription. If no
 matching Azure user session exists, it runs `az login --tenant <tenant-id>`. It separately requests
-Graph sign-in before displaying the plan if the delegated session is missing required scopes. The
+Graph sign-in before displaying the plan if the delegated session is missing required scopes,
+including `User.Read` for operator identity readback. The
 consent includes broad app-role-management scopes because the approved deployment grants
 `Application.Read.All` to the Microsoft phone-provider service principal. Authentication, module
 installation, Bicep installation, MFA, and consent prompts are not resource-creation approvals.
+
+Use `-ForceAuthentication` when the machine has ambiguous cached identities. It requires interactive
+device-code authentication for Azure CLI and Microsoft Graph, does not clear shared token caches,
+and cannot be combined with `-NonInteractive`. Azure RBAC always uses the selected ARM token's
+validated `oid`; Graph `/me` is tracked separately for application-management operations.
 
 ## Step 2 - download and run one script
 
@@ -110,6 +118,12 @@ Invoke-WebRequest `
     -Uri 'https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/main/setup/Setup-Epp.ps1' `
     -OutFile .\Setup-Epp.ps1
 .\Setup-Epp.ps1
+```
+
+Force explicit account selection when testing on a shared or multi-account computer:
+
+```powershell
+.\Setup-Epp.ps1 -ForceAuthentication
 ```
 
 The flow is:
