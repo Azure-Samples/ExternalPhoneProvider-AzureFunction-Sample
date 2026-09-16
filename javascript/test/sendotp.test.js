@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const Module = require('node:module');
 const { CompactEncrypt } = require('jose');
-const { ClientAssertionCredential } = require('@azure/identity');
+const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const fixtures = require('../../tests/fixtures/contract.json');
 
@@ -34,6 +34,7 @@ let fetchMock;
 let getSecret;
 let logs;
 let warnings;
+let getToken;
 beforeEach(() => {
     savedEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
     for (const key of envKeys) delete process.env[key];
@@ -45,7 +46,13 @@ beforeEach(() => {
         EPP_PROVIDER_SCOPE: 'api://provider/.default',
         EPP_OUTBOUND_CLIENT_ID: '22222222-2222-2222-2222-222222222222',
         EPP_OUTBOUND_MI_CLIENT_ID: '33333333-3333-3333-3333-333333333333' });
-    mock.method(ClientAssertionCredential.prototype, 'getToken', async () => ({ token: 'PRIVATE-OAUTH-TOKEN' }));
+    mock.method(ManagedIdentityCredential.prototype, 'getToken', async () => ({
+        token: 'PRIVATE-ASSERTION', expiresOnTimestamp: Date.now() + 3600000,
+    }));
+    getToken = mock.method(ClientAssertionCredential.prototype, 'getToken', async function () {
+        assert.equal(await this.getAssertion(), 'PRIVATE-ASSERTION');
+        return { token: 'PRIVATE-OAUTH-TOKEN', expiresOnTimestamp: Date.now() + 3600000 };
+    });
     getSecret = mock.method(SecretClient.prototype, 'getSecret', async () => ({ value: 'PRIVATE-API-KEY' }));
     fetchMock = mock.method(global, 'fetch', async () => ({ ok: true, status: 201,
         text: async () => JSON.stringify({ status: 'ENROUTE', id: 'PRIVATE-ID', description: 'PRIVATE-STATUS' }) }));
@@ -157,6 +164,18 @@ test('evaluation decrypts without provider config or I/O and checks the advisory
         assert.deepEqual(result.jsonBody, { nonce: delivery.nonce, correlationId: 'correlation-id', providerStatus: 'accepted' });
         assert.equal(logs[0].evaluation, true);
         assert.deepEqual(warnings, expectedKeyId === 'private-kid' ? [['encryption_key_id_mismatch']] : []);
+    }
+    assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
+    assert.equal(getToken.mock.callCount(), 0);
+});
+
+test('Soprano OAuth failures never fall back to keys or forward an inbound token', async () => {
+    for (const failure of [async () => { throw new Error('PRIVATE-TOKEN-ERROR'); },
+        async () => ({ token: 'PRIVATE-EXPIRED', expiresOnTimestamp: Date.now() - 1 })]) {
+        getToken.mock.mockImplementation(failure);
+        assertFailure(await invoke(await envelope({}, { ...delivery, providerJwt: 'FORGED-PAYLOAD' }),
+            { authorization: 'Bearer FORGED-INBOUND' }), 502);
+        assert.doesNotMatch(JSON.stringify([logs, warnings]), /PRIVATE|FORGED/);
     }
     assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
 });

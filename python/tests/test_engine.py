@@ -1,4 +1,10 @@
 import json
+import io
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -35,6 +41,109 @@ def test_missing_oauth_configuration_never_sends(engine):
     status, body = engine.dispatch(_request(), "r")
     assert status == 502 and body["reason"] == "provider credential unavailable"
     dispatch_module.requests.request.assert_not_called()
+
+
+def _oauth_settings():
+    return {"EPP_PROVIDER_NAME": "soprano", "EPP_PROVIDER_AUTH_MODE": "oauth", "EPP_PROVIDER_CHANNEL": "sms",
+            "EPP_PROVIDER_ENDPOINT": "https://provider.example/full/sms/url/",
+            "EPP_PROVIDER_TENANT_ID": "provider-tenant", "EPP_PROVIDER_SCOPE": "api://provider/.default",
+            "EPP_OUTBOUND_CLIENT_ID": "calling-app", "EPP_OUTBOUND_MI_CLIENT_ID": "outbound-identity",
+            "AZURE_CLIENT_ID": "different-vault-identity"}
+
+
+def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, monkeypatch):
+    engine.env = _oauth_settings()
+    engine._resolve_credential = DispatchEngine._resolve_credential.__get__(engine, DispatchEngine)
+    assertion = SimpleNamespace(token="private-assertion", expires_on=time.time() + 3600)
+    access = SimpleNamespace(token="private-token", expires_on=time.time() + 3600)
+    managed = Mock(get_token=Mock(side_effect=lambda *args, **kwargs: assertion))
+    identity_factory = Mock(return_value=managed)
+    clients = []
+
+    def create_client(**kwargs):
+        assert kwargs["tenant_id"] == engine.env["EPP_PROVIDER_TENANT_ID"]
+        assert kwargs["client_id"] == engine.env["EPP_OUTBOUND_CLIENT_ID"]
+        assert kwargs["retry_total"] == 0 and kwargs["connection_timeout"] == kwargs["read_timeout"] == 2.5
+        assert kwargs["logging_enable"] is False
+
+        def get_token(*args, **options):
+            assert args == (engine.env["EPP_PROVIDER_SCOPE"],) and options == {"logging_enable": False}
+            assert kwargs["func"]() == "private-assertion"
+            return access
+
+        client = Mock(get_token=Mock(side_effect=get_token))
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(dispatch_module, "ManagedIdentityCredential", identity_factory)
+    monkeypatch.setattr(dispatch_module, "ClientAssertionCredential", create_client)
+    dispatch_module.requests.request.return_value = Mock(status_code=201, json=Mock(return_value={"status": "ENROUTE"}))
+    for scope in ("api://provider/.default", "api://second/.default"):
+        engine.env["EPP_PROVIDER_SCOPE"] = scope
+        assert engine.dispatch(_request(), "request")[0] == 200
+    assert len(clients) == 1
+    sent = dispatch_module.requests.request.call_args
+    assert sent.args[1] == engine.env["EPP_PROVIDER_ENDPOINT"]
+    assert sent.kwargs["headers"] == {"Content-Type": "application/json", "Accept": "application/json",
+                                     "Authorization": "Bearer private-token"}
+    identity_factory.assert_called_once_with(client_id="outbound-identity", retry_total=0,
+        connection_timeout=2.5, read_timeout=2.5, logging_enable=False)
+    managed.get_token.assert_called_with("api://AzureADTokenExchange/.default", logging_enable=False)
+    engine.env["EPP_OUTBOUND_CLIENT_ID"] = "second-calling-app"
+    assert engine.dispatch(_request(), "request")[0] == 200
+    assert len(clients) == 2
+    dispatch_module.requests.request.reset_mock()
+    for stage in ("access", "assertion"):
+        for invalid in (None, SimpleNamespace(token=""), SimpleNamespace(token=" "),
+                        SimpleNamespace(token="private-token"),
+                        SimpleNamespace(token="private-token", expires_on=time.time() + 5)):
+            if stage == "access":
+                access = invalid
+            else:
+                access = SimpleNamespace(token="private-token", expires_on=time.time() + 3600)
+                assertion = invalid
+            status, body = engine.dispatch(_request(), "request")
+            assert status == 502 and body["reason"] == "provider credential unavailable"
+            assert "private" not in json.dumps(body)
+    engine.secrets.resolve.assert_not_called()
+    dispatch_module.requests.request.assert_not_called()
+
+
+def test_soprano_oauth_sdk_logs_stay_private_without_muting_other_requests(engine, monkeypatch, caplog):
+    engine.env = _oauth_settings()
+    engine._resolve_credential = DispatchEngine._resolve_credential.__get__(engine, DispatchEngine)
+    started, release = Event(), Event()
+    logger = logging.getLogger("azure.identity.test_setup_oauth")
+    output = io.StringIO()
+    handler = logging.StreamHandler(output)
+    logger.addHandler(handler)
+
+    def fail(*args, **kwargs):
+        logger.warning("PRIVATE-SDK-TOKEN")
+        started.set()
+        assert release.wait(5)
+        logger.warning("PRIVATE-ACCOUNT-ERROR")
+        raise RuntimeError("PRIVATE-TOKEN-EXCEPTION")
+
+    monkeypatch.setattr(dispatch_module, "ManagedIdentityCredential", Mock())
+    monkeypatch.setattr(dispatch_module, "ClientAssertionCredential", Mock(return_value=Mock(get_token=fail)))
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(engine.dispatch, _request(), "request")
+            try:
+                assert started.wait(5)
+                logger.warning("unrelated request")
+            finally:
+                release.set()
+            status, body = pending.result(timeout=5)
+        assert status == 502 and body["reason"] == "provider credential unavailable"
+        logger.warning("after acquisition")
+        assert "PRIVATE" not in output.getvalue() + caplog.text + json.dumps(body)
+        assert "unrelated request" in output.getvalue() and "after acquisition" in output.getvalue()
+        engine.secrets.resolve.assert_not_called()
+        dispatch_module.requests.request.assert_not_called()
+    finally:
+        logger.removeHandler(handler)
 
 
 def test_soprano_voice_payload_uses_oauth(engine):
