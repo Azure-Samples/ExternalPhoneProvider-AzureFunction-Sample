@@ -7,8 +7,19 @@
     "EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>",
 
     "EPP_PROVIDER_NAME": "<registered-adapter-id>",
-    "EPP_PROVIDER_ENDPOINT": "https://<provider-host>/<api-base-path>",
+    "EPP_PROVIDER_ENDPOINT": "https://<provider-host>/<complete-send-path>",
+    "EPP_PROVIDER_CHANNEL": "<sms-or-voice>",
+    "EPP_PROVIDER_ENDPOINT_REGION": "<global-or-eu>",
+    "EPP_PROVIDER_AUTH_MODE": "<apiKey-or-oauth>",
+    "EPP_PROVIDER_TENANT_ID": "<provider-tenant-id>",
+    "EPP_PROVIDER_APP_ID": "",
+    "EPP_PROVIDER_SCOPE": "",
     "EPP_PROVIDER_TIMEOUT_MS": "1500",
+    "EPP_PROVIDER_RETRY_INTERVAL_MS": "30000",
+    "EPP_PROVIDER_TEST_CONFIGURATION": "false",
+
+    "EPP_OUTBOUND_CLIENT_ID": "",
+    "EPP_OUTBOUND_MI_CLIENT_ID": "",
 
     "KEY_VAULT_URL": "https://<provider-credential-vault>.vault.azure.net/"
   }

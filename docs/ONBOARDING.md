@@ -50,6 +50,35 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
    `EPP_PROVIDER_AUTH_MODE` must match the adapter: `apiKey` for Telesign or `oauth` for Soprano.
    Provider API keys stay in Key Vault, not `Values`.
 
+	Reuse the values from the setup-created Function App's environment variables; do not create
+	a second set of application or identity IDs for local settings. The shared sample uses these
+	same names for JavaScript, Python, and .NET:
+
+	| Local `Values` keys | Value to reuse from setup |
+	|---|---|
+	| `EPP_PROVIDER_NAME`, `EPP_PROVIDER_AUTH_MODE` | Selected provider and its authentication mode. |
+	| `EPP_PROVIDER_ENDPOINT`, `EPP_PROVIDER_CHANNEL`, `EPP_PROVIDER_ENDPOINT_REGION` | Complete selected send URL, `sms` or `voice`, and `global` or `eu`. Do not append an API path. |
+	| `EPP_PROVIDER_TENANT_ID` | Provider tenant, not the customer's home tenant. |
+	| `EPP_PROVIDER_APP_ID`, `EPP_PROVIDER_SCOPE` | Soprano API application ID and the exact selected scope, including `/.default`. These are not the calling application's ID. Leave blank for API-key providers. |
+	| `EPP_OUTBOUND_CLIENT_ID` | Existing calling application's Application (client) ID used during setup, not its Object ID or Soprano's API ID. |
+	| `EPP_OUTBOUND_MI_CLIENT_ID` | Setup-created outbound user-assigned identity's Client ID, not its principal/Object ID. |
+	| `EPP_PROVIDER_TIMEOUT_MS`, `EPP_PROVIDER_RETRY_INTERVAL_MS`, `EPP_PROVIDER_TEST_CONFIGURATION` | Selected profile values, as strings. Retry interval and test-configuration metadata do not enable runtime retries or shutter mode. |
+	| `KEY_VAULT_URL` | Setup-created or explicitly selected credential vault URL, not a secret value. |
+
+	The outbound IDs are used only for Soprano OAuth; leave them blank for local API-key-only
+	configurations. `EPP_PROVIDER_APP_ID` and `EPP_PROVIDER_ENDPOINT_REGION` are setup metadata;
+	the runtime uses the selected scope and full URL directly. Keep Azure host storage, package
+	URLs, Application Insights, and Easy Auth configuration in Azure rather than copying the
+	complete cloud environment into a local settings file. Use the local storage and key guidance below.
+
+	**Migrating local settings from the earlier optional-JWT branch:** replace
+	`EPP_PROVIDER_APPLICATION_ID` with `EPP_OUTBOUND_CLIENT_ID` and `EPP_PROVIDER_MI_CLIENT_ID`
+	with `EPP_OUTBOUND_MI_CLIENT_ID`. Reuse `EPP_PROVIDER_TENANT_ID` and the setup-selected
+	`EPP_PROVIDER_SCOPE`. Remove `EPP_PROVIDER_JWT_ENABLED`; current `main` uses
+	`EPP_PROVIDER_NAME=soprano` with `EPP_PROVIDER_AUTH_MODE=oauth`, not an optional JWT flag.
+	Replace the old base endpoint with the complete send URL. `AZURE_CLIENT_ID`, if separately
+	configured for Key Vault, is not a substitute for `EPP_OUTBOUND_MI_CLIENT_ID`.
+
    Set `FUNCTIONS_WORKER_RUNTIME` to `node`, `python`, or `dotnet-isolated`. Local
    `UseDevelopmentStorage=true` requires Azurite; configure Azure host storage separately.
    Use a local test private key for `EPP_DECRYPTION_KEY_PEM`; in Azure, use a Key Vault reference
