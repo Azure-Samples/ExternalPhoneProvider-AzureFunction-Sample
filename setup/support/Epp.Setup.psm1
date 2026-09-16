@@ -6,7 +6,7 @@ $script:MicrosoftGraphAppId = '00000003-0000-0000-c000-000000000000'
 $script:MicrosoftGraphApplicationReadAllRoleId = '9a5d68dd-52b0-4cc2-bd40-abcf44ac3a30'
 $script:EppInvokeAppRoleId = 'ddf32018-9212-41c7-b73c-f5dfe73a2f24'
 $script:EppInvokeAppRoleValue = 'Epp.Invoke'
-$script:GraphRequiredScopes = @('Application.ReadWrite.All', 'Application.Read.All', 'AppRoleAssignment.ReadWrite.All')
+$script:GraphRequiredScopes = @('User.Read', 'Application.ReadWrite.All', 'Application.Read.All', 'AppRoleAssignment.ReadWrite.All')
 . (Join-Path $PSScriptRoot 'Epp.Packages.ps1')
 
 function Read-EppJson {
