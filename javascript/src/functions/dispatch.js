@@ -8,6 +8,8 @@ const crypto = require('crypto');
 const { compactDecrypt } = require('jose');
 const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
+const { AzureLogger } = require('@azure/logger');
+const { AsyncLocalStorage } = require('node:async_hooks');
 const { readConfig } = require('./config');
 const { DeliveryContext, TextToVoice } = require('./models');
 
@@ -165,6 +167,13 @@ let keyVaultClientConfig;
 const secretCache = new Map();
 let oauthCredential = null;
 let oauthCredentialConfig;
+const oauthRequest = new AsyncLocalStorage();
+let filteredOAuthLogger;
+
+function usableAccessToken(value) {
+    return typeof value?.token === 'string' && value.token.trim()
+        && Number.isFinite(value.expiresOnTimestamp) && value.expiresOnTimestamp > Date.now() + 30000;
+}
 
 function getKeyVaultSecretClient(config) {
     const cacheKey = JSON.stringify([config.keyVaultUrl, config.managedIdentityClientId]);
@@ -212,25 +221,40 @@ async function resolveProviderCredential(authConfiguration = {}, config) {
         || !config.outboundClientId || !config.outboundManagedIdentityClientId) {
         throw new Error('unsupported or incomplete provider authentication');
     }
-    const credentialConfig = JSON.stringify([
-        config.providerTenantId, config.outboundClientId, config.outboundManagedIdentityClientId,
-    ]);
-    if (!oauthCredential || oauthCredentialConfig !== credentialConfig) {
-        const assertionIdentity = new ManagedIdentityCredential(config.outboundManagedIdentityClientId);
-        oauthCredential = new ClientAssertionCredential(
-            config.providerTenantId,
-            config.outboundClientId,
-            async () => {
-                const assertion = await assertionIdentity.getToken('api://AzureADTokenExchange/.default');
-                if (!assertion?.token) throw new Error('managed identity assertion unavailable');
-                return assertion.token;
-            },
-        );
-        oauthCredentialConfig = credentialConfig;
+    if (AzureLogger.log !== filteredOAuthLogger) {
+        const log = AzureLogger.log;
+        filteredOAuthLogger = (...args) => { if (!oauthRequest.getStore()) log(...args); };
+        AzureLogger.log = filteredOAuthLogger;
     }
-    const accessToken = await oauthCredential.getToken(config.providerScope);
-    if (!accessToken?.token) throw new Error('provider OAuth token unavailable');
-    return { mode: 'oauth', accessToken: accessToken.token };
+    return oauthRequest.run(AbortSignal.timeout(2500), async () => {
+        try {
+            const credentialConfig = JSON.stringify([
+                config.providerTenantId, config.outboundClientId, config.outboundManagedIdentityClientId,
+            ]);
+            if (!oauthCredential || oauthCredentialConfig !== credentialConfig) {
+                const assertionIdentity = new ManagedIdentityCredential({
+                    clientId: config.outboundManagedIdentityClientId, retryOptions: { maxRetries: 0 },
+                });
+                oauthCredential = new ClientAssertionCredential(
+                    config.providerTenantId,
+                    config.outboundClientId,
+                    async () => {
+                        const assertion = await assertionIdentity.getToken('api://AzureADTokenExchange/.default',
+                            { abortSignal: oauthRequest.getStore() });
+                        if (!usableAccessToken(assertion)) throw new Error('managed identity assertion unavailable');
+                        return assertion.token;
+                    },
+                    { authorityHost: 'https://login.microsoftonline.com', retryOptions: { maxRetries: 0 } },
+                );
+                oauthCredentialConfig = credentialConfig;
+            }
+            const accessToken = await oauthCredential.getToken(config.providerScope, { abortSignal: oauthRequest.getStore() });
+            if (!usableAccessToken(accessToken)) throw new Error('provider OAuth token unavailable');
+            return Object.defineProperty({ mode: 'oauth' }, 'accessToken', { value: accessToken.token });
+        } catch {
+            throw new Error('provider OAuth token unavailable');
+        }
+    });
 }
 
 // Status mappings may restrict HTTP success, but cannot turn failed HTTP into Continue.

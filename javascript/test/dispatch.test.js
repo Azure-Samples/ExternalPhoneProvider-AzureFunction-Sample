@@ -8,6 +8,7 @@ const { AppConfig, readConfig } = require('../src/functions/config');
 const { DeliveryContext, TextToVoice, ParsedResponse } = require('../src/functions/models');
 const fixtures = require('../../tests/fixtures/contract.json');
 const { inspect } = require('node:util');
+const { AzureLogger } = require('@azure/logger');
 const {
     dispatchOtp, getProvider, resolveOutcome, outcomeToHttpStatus,
     parseEnvelope, parseProviderTimeout, isValidProviderUrl, contextToDispatch, resolveProviderCredential,
@@ -249,9 +250,14 @@ test('missing API-key or OAuth settings and an unsafe final voice URL make zero 
     assert.equal(fetchMock.mock.callCount(), 0);
 });
 
-test('Soprano OAuth requests the selected provider scope', async (t) => {
-    t.mock.method(ManagedIdentityCredential.prototype, 'getToken', async () => ({ token: 'assertion-token' }));
-    const providerToken = t.mock.method(ClientAssertionCredential.prototype, 'getToken', async () => ({ token: 'provider-token' }));
+test('Soprano OAuth reuses setup identities and selected scope with private bounded tokens', async (t) => {
+    const identityToken = t.mock.method(ManagedIdentityCredential.prototype, 'getToken', async () => ({
+        token: 'assertion-token', expiresOnTimestamp: Date.now() + 3600000,
+    }));
+    const providerToken = t.mock.method(ClientAssertionCredential.prototype, 'getToken', async function () {
+        assert.equal(await this.getAssertion(), 'assertion-token');
+        return { token: 'provider-token', expiresOnTimestamp: Date.now() + 3600000 };
+    });
     const config = readConfig({
         EPP_PROVIDER_TENANT_ID: '11111111-1111-1111-1111-111111111111',
         EPP_PROVIDER_SCOPE: 'api://provider/.default',
@@ -259,6 +265,55 @@ test('Soprano OAuth requests the selected provider scope', async (t) => {
         EPP_OUTBOUND_MI_CLIENT_ID: '33333333-3333-3333-3333-333333333333',
     });
     const credential = await resolveProviderCredential({ mode: 'oauth' }, config);
-    assert.deepEqual(credential, { mode: 'oauth', accessToken: 'provider-token' });
+    assert.equal(credential.accessToken, 'provider-token');
+    assert.equal(JSON.stringify(credential), '{"mode":"oauth"}');
     assert.equal(providerToken.mock.calls[0].arguments[0], 'api://provider/.default');
+    assert.equal(identityToken.mock.calls[0].arguments[0], 'api://AzureADTokenExchange/.default');
+    const signal = providerToken.mock.calls[0].arguments[1].abortSignal;
+    assert.ok(signal instanceof AbortSignal);
+    assert.equal(identityToken.mock.calls[0].arguments[1].abortSignal, signal);
+    await resolveProviderCredential({ mode: 'oauth' }, { ...config, providerScope: 'api://another/.default' });
+    assert.equal(providerToken.mock.calls[1].this, providerToken.mock.calls[0].this);
+    assert.equal(providerToken.mock.calls[1].arguments[0], 'api://another/.default');
+    for (const property of ['providerTenantId', 'outboundClientId', 'outboundManagedIdentityClientId']) {
+        await resolveProviderCredential({ mode: 'oauth' }, { ...config,
+            [property]: '44444444-4444-4444-4444-444444444444' });
+        assert.notEqual(providerToken.mock.calls.at(-1).this, providerToken.mock.calls[0].this);
+    }
+    for (const stage of ['token', 'assertion']) {
+        for (const invalid of [null, { token: '' }, { token: ' ' }, { token: false },
+            { token: 'stale', expiresOnTimestamp: Date.now() + 10000 }, { token: 'missing-expiry' }]) {
+            const method = stage === 'token' ? providerToken : identityToken;
+            method.mock.mockImplementation(async () => invalid);
+            if (stage === 'assertion') providerToken.mock.mockImplementation(async function () {
+                await this.getAssertion();
+                return { token: 'provider-token', expiresOnTimestamp: Date.now() + 3600000 };
+            });
+            await assert.rejects(resolveProviderCredential({ mode: 'oauth' }, config), /^Error: provider OAuth token unavailable$/);
+        }
+    }
+});
+
+test('Soprano OAuth suppresses SDK diagnostics only during token acquisition', async (t) => {
+    const entries = [];
+    t.mock.method(AzureLogger, 'log', (...args) => entries.push(args));
+    let release;
+    const waiting = new Promise(resolve => { release = resolve; });
+    t.mock.method(ClientAssertionCredential.prototype, 'getToken', async () => {
+        AzureLogger.log('PRIVATE-TOKEN-AND-ACCOUNT');
+        await waiting;
+        AzureLogger.log('PRIVATE-SDK-FAILURE');
+        throw new Error('PRIVATE-TOKEN-EXCEPTION');
+    });
+    const pending = resolveProviderCredential({ mode: 'oauth' }, readConfig({
+        EPP_PROVIDER_TENANT_ID: '11111111-1111-1111-1111-111111111111',
+        EPP_PROVIDER_SCOPE: 'api://provider/.default',
+        EPP_OUTBOUND_CLIENT_ID: '22222222-2222-2222-2222-222222222222',
+        EPP_OUTBOUND_MI_CLIENT_ID: '33333333-3333-3333-3333-333333333333',
+    }));
+    AzureLogger.log('unrelated request');
+    release();
+    await assert.rejects(pending, /^Error: provider OAuth token unavailable$/);
+    AzureLogger.log('after acquisition');
+    assert.deepEqual(entries, [['unrelated request'], ['after acquisition']]);
 });
