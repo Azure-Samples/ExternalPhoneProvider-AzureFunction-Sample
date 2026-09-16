@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const Module = require('node:module');
 const { CompactEncrypt } = require('jose');
+const { ClientAssertionCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const fixtures = require('../../tests/fixtures/contract.json');
 
@@ -25,7 +26,9 @@ try {
 }
 
 const envKeys = ['EPP_ENCRYPTION_KEY_ID', 'AZURE_CLIENT_ID', 'EPP_PROVIDER_NAME', 'EPP_PROVIDER_ENDPOINT',
-    'EPP_PROVIDER_TIMEOUT_MS', 'EPP_LOG_PLAINTEXT', 'KEY_VAULT_URL', 'EPP_DECRYPTION_KEY_PEM'];
+    'EPP_PROVIDER_TIMEOUT_MS', 'EPP_PROVIDER_AUTH_MODE', 'EPP_PROVIDER_TENANT_ID', 'EPP_PROVIDER_SCOPE',
+    'EPP_OUTBOUND_CLIENT_ID', 'EPP_OUTBOUND_MI_CLIENT_ID', 'EPP_LOG_PLAINTEXT', 'KEY_VAULT_URL',
+    'EPP_DECRYPTION_KEY_PEM'];
 let savedEnv;
 let fetchMock;
 let getSecret;
@@ -37,7 +40,12 @@ beforeEach(() => {
     Object.assign(process.env, { EPP_LOG_PLAINTEXT: 'true',
         EPP_DECRYPTION_KEY_PEM: privateKey.export({ type: 'pkcs8', format: 'pem' }),
         KEY_VAULT_URL: 'https://unit-test.vault.azure.net', EPP_PROVIDER_NAME: 'soprano',
-        EPP_PROVIDER_ENDPOINT: 'https://provider.example/cgpapi/' });
+        EPP_PROVIDER_ENDPOINT: 'https://provider.example/epp/messages', EPP_PROVIDER_AUTH_MODE: 'oauth',
+        EPP_PROVIDER_TENANT_ID: '11111111-1111-1111-1111-111111111111',
+        EPP_PROVIDER_SCOPE: 'api://provider/.default',
+        EPP_OUTBOUND_CLIENT_ID: '22222222-2222-2222-2222-222222222222',
+        EPP_OUTBOUND_MI_CLIENT_ID: '33333333-3333-3333-3333-333333333333' });
+    mock.method(ClientAssertionCredential.prototype, 'getToken', async () => ({ token: 'PRIVATE-OAUTH-TOKEN' }));
     getSecret = mock.method(SecretClient.prototype, 'getSecret', async () => ({ value: 'PRIVATE-API-KEY' }));
     fetchMock = mock.method(global, 'fetch', async () => ({ ok: true, status: 201,
         text: async () => JSON.stringify({ status: 'ENROUTE', id: 'PRIVATE-ID', description: 'PRIVATE-STATUS' }) }));
@@ -177,7 +185,7 @@ test('SMS/voice preserve content and correlation without reflecting headers or l
             assert.equal(sent.voice, undefined);
         }
         assert.deepEqual(init.headers, { 'Content-Type': 'application/json', Accept: 'application/json',
-            'X-MEMS-API-ID': 'PRIVATE-API-KEY', 'X-MEMS-API-Key': 'PRIVATE-API-KEY' });
+            Authorization: 'Bear' + 'er PRIVATE-OAUTH-TOKEN' });
         assert.equal(init.redirect, 'manual');
         assert.equal(logs.length, 1);
         assert.deepEqual(Object.keys(logs[0]).sort(), ['correlationId', 'elapsedMs', 'evaluation', 'httpStatus', 'requestId']);
@@ -192,7 +200,8 @@ test('SMS/voice preserve content and correlation without reflecting headers or l
 
 test('Telesign EPP sends decrypted SMS and voice content with Basic auth and private logs', async () => {
     process.env.EPP_PROVIDER_NAME = 'telesign';
-    process.env.EPP_PROVIDER_ENDPOINT = 'https://verify.telesign.com';
+    process.env.EPP_PROVIDER_ENDPOINT = 'https://verify.telesign.com/epp/send';
+    process.env.EPP_PROVIDER_AUTH_MODE = 'apiKey';
     for (const [channel, name, code] of [[1, 'sms', 290], [2, 'voice', 100],
         [1, 'sms', 3001], [2, 'voice', 3001]]) {
         fetchMock.mock.mockImplementation(async () => ({ ok: true, status: 200,
@@ -202,7 +211,7 @@ test('Telesign EPP sends decrypted SMS and voice content with Basic auth and pri
         assert.deepEqual(result.jsonBody, { nonce: delivery.nonce, correlationId: 'correlation-id', providerStatus: 'accepted' });
         assert.equal(result.status, 200);
         const [url, init] = fetchMock.mock.calls.at(-1).arguments;
-        assert.equal(url, 'https://verify.telesign.com/integration/msft/cyot');
+        assert.equal(url, 'https://verify.telesign.com/epp/send');
         assert.deepEqual(JSON.parse(init.body), { recipient: { phone_number: delivery.phoneNumber },
             message: { text: delivery.message, language: delivery.locale }, channels: [{ channel: name }], correlation_id: 'correlation-id' });
         assert.deepEqual(init.headers, { Authorization: `Basic ${Buffer.from('PRIVATE-API-KEY:PRIVATE-API-KEY').toString('base64')}`,
@@ -230,6 +239,7 @@ test('Telesign evaluation never sends and invalid recipients never reach HTTP', 
 test('Telesign missing status or upstream failure never acknowledges delivery', async () => {
     process.env.EPP_PROVIDER_NAME = 'telesign';
     process.env.EPP_PROVIDER_ENDPOINT = 'https://verify.telesign.com';
+    process.env.EPP_PROVIDER_AUTH_MODE = 'apiKey';
     for (const [status, payload, expected] of [[200, {}, 502], [500, { status: { code: 290 } }, 502],
         [429, { status: { code: 290 } }, 429], [500, { status: { code: 3001 } }, 502],
         [401, { status: { code: 3001 } }, 401], [429, { status: { code: 3001 } }, 429]]) {

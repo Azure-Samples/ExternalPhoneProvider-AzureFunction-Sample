@@ -46,7 +46,8 @@ the test-key placeholder in this minimal setup:
 }
 ```
 
-For live delivery, add `EPP_PROVIDER_NAME`, `EPP_PROVIDER_ENDPOINT` and `KEY_VAULT_URL` to `Values`.
+For live delivery, add `EPP_PROVIDER_NAME`, the complete selected `EPP_PROVIDER_ENDPOINT`, and the
+matching provider authentication settings to `Values`.
 Add `EPP_PROVIDER_ACCOUNT_NAME` and any adapter-specific options only when required. Optional
 `EPP_PROVIDER_TIMEOUT_MS` is a string such as `"1500"`. Replace placeholders; do not put API keys in
 this file. See the [complete variable table](../README.md#configure-environment-variables).
@@ -64,9 +65,8 @@ configure the current shared engine. Use `EPP_PROVIDER_NAME`, `EPP_PROVIDER_ENDP
 that are actually read, such as a service-plan ID or voice selection. Private integration helpers may
 load settings from another location or use test credential variables, but the Function itself does not.
 
-For the omnimsg adapter, the configured base ends in `/cgpapi`; the adapter appends `/messages/omnimsg`
-for SMS and voice. QA4 is the test environment; select the provider-approved production base separately.
-The base URL is not hard-coded and changing local settings does not change an already deployed app.
+The Soprano adapter uses the configured complete endpoint and an OAuth bearer token. The Telesign
+adapter uses the configured complete endpoint and API-key credentials from Key Vault.
 
 For Azure, set these application variables on the Function App/slot's **Environment variables → App
 settings** page and use a Key Vault reference for the private PEM. The provider-secret resolver uses
@@ -87,7 +87,7 @@ works for every provider without provider configuration, provider Key Vault read
 platform authentication on Azure and handler decryption still run. No diagnostic environment flag is needed. See the
 [evaluation contract](../docs/CONTRACT.md#evaluation-generic-shutter) for authentication/key prerequisites.
 
-Live requests use the configured provider's API key and await acceptance before returning the nonce.
+Live requests use the configured provider's API key or OAuth token and await acceptance before returning the nonce.
 Acceptance is not handset delivery; failures omit the nonce, and timeouts must not trigger blind
 retries. The shared contract defines validation, HTTP outcomes and privacy-safe logging.
 

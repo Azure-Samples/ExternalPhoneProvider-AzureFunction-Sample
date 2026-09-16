@@ -45,7 +45,8 @@ For local evaluation, start Azurite and replace the test-key placeholder in this
 }
 ```
 
-For live delivery, add `EPP_PROVIDER_NAME`, `EPP_PROVIDER_ENDPOINT` and `KEY_VAULT_URL` to `Values`.
+For live delivery, add `EPP_PROVIDER_NAME`, the complete selected `EPP_PROVIDER_ENDPOINT`, and the
+matching provider authentication settings to `Values`.
 Add `EPP_PROVIDER_ACCOUNT_NAME` and any adapter-specific options only when required. Keep values as
 strings, including optional `EPP_PROVIDER_TIMEOUT_MS: "1500"`. Replace placeholders; provider API
 keys belong in the manifest-named Key Vault secrets, not this file. See the
@@ -74,7 +75,7 @@ authenticate SAS: anyone with the public key can encrypt a request, and a fixed 
 Use incoming `mode: 2` or `mode: "evaluation"` as the generic shutter for every provider: platform
 authentication on Azure, handler validation and decryption run, but provider lookup, provider Key Vault
 reads and provider HTTP do not. No provider configuration or diagnostic environment flag is required.
-Live requests forward the rendered message unchanged using the configured provider's API key and
+Live requests forward the rendered message unchanged using the configured provider's API key or OAuth token and
 await acceptance before returning the nonce; failures omit it. Acceptance is not handset delivery.
 Platform/key prerequisites and HTTP outcomes are defined in the
 [contract](../docs/CONTRACT.md#evaluation-generic-shutter).
