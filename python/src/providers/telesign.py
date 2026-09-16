@@ -46,7 +46,7 @@ class TelesignProvider:
             "Accept": "application/json",
         }
         return {
-            "url": f"{endpoint.rstrip('/')}/integration/msft/cyot",
+            "url": endpoint,
             "method": "POST",
             "headers": headers,
             "body": json.dumps(body),

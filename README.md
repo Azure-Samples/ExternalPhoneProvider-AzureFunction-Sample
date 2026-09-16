@@ -25,15 +25,25 @@ by default. Deploy each language separately, not all three to the same Function 
 New here? Start with **[docs/ONBOARDING.md](docs/ONBOARDING.md)** for setup, config, running, securing,
 and deploying, step by step.
 
+## Guided EPP setup
+
+Use **[setup](setup/docs/README.md)** for **Step 2: endpoint deployment**. Download only
+`Setup-Epp.ps1`; it downloads its supporting PowerShell, Bicep, package catalog, and provider JSON
+from the same commit. Customers select a language, provider, SMS or voice, Global or EU endpoint,
+and a resource prefix, then approve one complete plan. Manual Step 1 only creates the dedicated app
+registration; PowerShell configures its service principals, `Epp.Invoke`, Microsoft caller access,
+Graph `Application.Read.All`, the provider-tenant allowlist preview, encryption certificate, and
+Easy Auth. The home tenant remains allowed by Entra. Policy activation remains manual.
+
 ## Download a Function ZIP
 
 Download the preview ZIP for your chosen language:
 
 | Language | Download | Contents |
 |---|---|---|
-| JavaScript | [epp-javascript.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-preview-20260914/epp-javascript.zip) | Application and production dependencies |
-| .NET | [epp-dotnet-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-dotnet-source-preview-20260915/epp-dotnet-source.zip) | C# Function source and project file; build/publish before deployment |
-| Python | [epp-python-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-preview-20260914/epp-python-source.zip) | Source for Azure remote build on Linux |
+| JavaScript | [epp-javascript.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-guided-setup-preview-20260915/epp-javascript.zip) | Application and production dependencies |
+| .NET | [epp-dotnet-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-guided-setup-preview-20260915/epp-dotnet-source.zip) | C# Function source and project file; build/publish before deployment |
+| Python | [epp-python-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-guided-setup-preview-20260915/epp-python-source.zip) | Source for Azure remote build on Linux |
 
 Customers do not need PowerShell or a local build toolchain to download these files. Verify downloads
 against the corresponding release's `SHA256SUMS.txt`. Configure the target Function App's runtime, app settings,
@@ -141,7 +151,12 @@ how code accesses configuration, not the environment-variable names.
 | `EPP_DECRYPTION_KEY_PEM` | Every request | Local test PEM or base64 PEM. In Azure, use a Key Vault reference resolving to the private-key secret. |
 | `EPP_ENCRYPTION_KEY_ID` | Optional | Expected encryption key ID; mismatch only produces an advisory warning. |
 | `EPP_PROVIDER_NAME` | Live delivery | Selected adapter's manifest ID. No default provider. |
-| `EPP_PROVIDER_ENDPOINT` | Live delivery | HTTPS **base URL**, in the same environment as the provider credentials; the adapter adds its route. |
+| `EPP_PROVIDER_ENDPOINT` | Live delivery | Complete provider-approved HTTPS request URL selected from the provider profile. |
+| `EPP_PROVIDER_CHANNEL` | Guided deployment | Selected `sms` or `voice` route; other live-request channels fail closed. |
+| `EPP_PROVIDER_ENDPOINT_REGION` | Guided deployment metadata | Selected `global` or `eu` route label. |
+| `EPP_PROVIDER_AUTH_MODE` | Live delivery | Must match the adapter: `apiKey` for Telesign or `oauth` for Soprano. |
+| `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE` | Soprano OAuth | Provider tenant and selected API scope. |
+| `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | Soprano OAuth | Existing multitenant application and outbound user-assigned managed identity used for client-assertion exchange. |
 | `EPP_PROVIDER_TIMEOUT_MS` | Optional | Decimal milliseconds. Defaults to `1500`, capped at `2500`; not an end-to-end deadline. |
 | `EPP_PROVIDER_ACCOUNT_NAME` | Adapter-dependent | Sender/account metadata, not an API key or credential identity. |
 | `KEY_VAULT_URL` | Provider credential lookup | URI of the vault containing the manifest-named provider secrets. Separate from the encryption-key reference. |
@@ -153,11 +168,9 @@ how code accesses configuration, not the environment-variable names.
 2. **In Azure:** set the same application variables on the selected Function App (or serving slot)
   under **Settings → Environment variables → App settings**, then apply the changes. Local settings
   are not published automatically. Configure host storage separately for the selected hosting plan.
-3. Store provider API keys and any required identity secrets in Key Vault using the **exact names in
-  the adapter manifest**. Grant that app/slot's managed identity *Key Vault Secrets User* on those
-  secrets. An API key in a local environment variable is not a supported replacement for the resolver.
-  See the [provider credential naming table](docs/ONBOARDING.md#provider-credential-names) and
-  [local use of existing cloud secrets](docs/ONBOARDING.md#local-settings-and-cloud-secrets).
+3. For Telesign, store provider API credentials in Key Vault using the exact manifest names. For
+  Soprano, configure provider consent plus the profile's tenant/scope and outbound managed-identity
+  federation; the Function stores no Soprano client secret.
 
 Evaluation requests do not need provider variables or provider secrets. They still need the decryption
 key. The default credential resolvers use `ManagedIdentityCredential`, **not** the developer's CLI
@@ -170,15 +183,13 @@ or base64 PEM directly; use a reference such as `@Microsoft.KeyVault(SecretUri=h
 for `EPP_DECRYPTION_KEY_PEM` in Azure app settings, where the platform resolves it.
 
 Configure inbound issuer/audience/caller trust in **Easy Auth**, not these application variables.
-Incoming `tenantId`, `channel`, `mode` and `ttlSeconds` are request data. No outbound OAuth settings
-are supported by this main-based implementation.
+Incoming `tenantId`, `channel`, `mode` and `ttlSeconds` are request data and never override the
+configured provider route or authentication.
 
 ## Telesign EPP
 
-The `telesign` adapter uses `POST https://verify.telesign.com/integration/msft/cyot`
-for both SMS and Voice. Set `EPP_PROVIDER_NAME=telesign` and
-`EPP_PROVIDER_ENDPOINT=https://verify.telesign.com` (the base URL, without the route).
-This replaces the legacy `/v1/messaging` and `/v1/voice` integrations in all three languages.
+The `telesign` adapter sends its JSON contract to the complete SMS or voice URL selected from the
+provider profile. It does not append or infer a route.
 
 Basic authentication uses `base64(customer-id:api-key)`, with the existing Key Vault secrets
 `telesign-customer-id` and `telesign-api-key`. Digest and Phase 2 token authentication are not
@@ -212,7 +223,7 @@ lookup entirely, rather than invoking Telesign shutter mode.
 
 Responses normalize `reference_id` and `status.code`/`status.description` internally; provider
 metadata is not logged or exposed in the public nonce response. Existing numeric success codes
-are retained (SMS: 200, 203, 290-292; Voice: 100-103). CYOT code `3001` ("Message in progress"),
+are retained (SMS: 200, 203, 290-292; Voice: 100-103). EPP code `3001` ("Message in progress"),
 observed for both channels, is also accepted on successful HTTP responses. This acknowledges
 provider acceptance, not handset receipt or completed audio playback. The supplied EPP integration
 overview does not provide a complete replacement status-code catalog. Missing, malformed, or

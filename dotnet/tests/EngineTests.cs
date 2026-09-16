@@ -23,7 +23,7 @@ public class EngineTests
     public async Task HandlerUsesInjectedConfigAwaitsAcceptanceAndKeepsLogsPrivate()
     {
         using var rig = new HandlerRig();
-        Assert.Equal("soprano", AppConfig.Read(rig.Env).ProviderName);
+        Assert.Equal("infobip", AppConfig.Read(rig.Env).ProviderName);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         rig.Http.Respond = cancellation =>
@@ -31,8 +31,7 @@ public class EngineTests
             entered.TrySetResult();
             return release.Task.WaitAsync(cancellation);
         };
-        var voice = new { beforePasswordText = " Your code is ", password = "001234", language = "en-US" };
-        var pending = rig.Invoke(channel: "voice", deliveryOverrides: JsonSerializer.SerializeToElement(new { textToVoice = voice }));
+        var pending = rig.Invoke(channel: "sms");
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -40,16 +39,11 @@ public class EngineTests
         }
         finally
         {
-            release.TrySetResult(Json(201, "{\"status\":\"ENROUTE\"}"));
+            release.TrySetResult(Json(200, "{\"messages\":[{\"messageId\":\"id\",\"status\":{\"groupName\":\"PENDING\"}}]}"));
         }
         AssertAccepted(await pending);
         using var body = JsonDocument.Parse(rig.Http.Body!);
-        Assert.False(body.RootElement.TryGetProperty("text", out _));
-        Assert.Equal(JsonSerializer.Serialize(voice), body.RootElement.GetProperty("voice").GetProperty("text2voice").GetRawText());
-        Assert.Equal("voice", body.RootElement.GetProperty("messageTypes")[0].GetString());
-        Assert.Equal("private-api-id", rig.Http.Headers["X-MEMS-API-ID"]);
-        Assert.Equal("private-api-key", rig.Http.Headers["X-MEMS-API-Key"]);
-        Assert.False(rig.Http.Headers.ContainsKey("Authorization"));
+        Assert.Equal(Message, body.RootElement.GetProperty("messages")[0].GetProperty("content").GetProperty("text").GetString());
         Assert.Equal(1, rig.Http.Calls);
         var log = Assert.Single(rig.Log.Messages);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Correlation)))[..16].ToLowerInvariant();
@@ -68,6 +62,8 @@ public class EngineTests
     public async Task IncompleteVoiceFailsBeforeSecretsOrHttp(string speech)
     {
         using var rig = new HandlerRig();
+        rig.Env["EPP_PROVIDER_NAME"] = "soprano";
+        rig.Env["EPP_PROVIDER_AUTH_MODE"] = "oauth";
         var overrides = JsonSerializer.SerializeToElement(new { textToVoice = JsonSerializer.Deserialize<JsonElement>(speech) });
         AssertFailure(rig, await rig.Invoke(channel: "voice", deliveryOverrides: overrides), 400);
         Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
@@ -108,6 +104,9 @@ public class EngineTests
     public async Task MissingIdentityOrKeyFailsClosedBeforeHttp()
     {
         using var rig = new HandlerRig();
+        rig.Env["EPP_PROVIDER_NAME"] = "telesign";
+        rig.Env["EPP_PROVIDER_ENDPOINT"] = "https://verify.telesign.com/epp/sms";
+        rig.Env["EPP_PROVIDER_AUTH_MODE"] = "apiKey";
         rig.Secrets.Identity = "";
         AssertFailure(rig, await rig.Invoke(), 502);
         rig.Secrets.Identity = "private-api-id";
@@ -269,8 +268,8 @@ public class EngineTests
         {
             Env = new TestEnv
             {
-                ["EPP_PROVIDER_NAME"] = "soprano",
-                ["EPP_PROVIDER_ENDPOINT"] = "https://provider.example/cgpapi",
+                ["EPP_PROVIDER_NAME"] = "infobip",
+                ["EPP_PROVIDER_ENDPOINT"] = "https://provider.example",
                 ["EPP_PROVIDER_TIMEOUT_MS"] = "2500",
             };
             var registry = new ProviderRegistry(new IProviderAdapter[]
@@ -314,7 +313,7 @@ public class EngineTests
         public Task<string> ResolveAsync(string? name)
         {
             Calls++;
-            return Task.FromResult(name == "soprano-api-id" ? Identity : Secret);
+            return Task.FromResult(name == "telesign-customer-id" ? Identity : Secret);
         }
     }
 
@@ -324,7 +323,7 @@ public class EngineTests
         public string? Body { get; private set; }
         public Dictionary<string, string> Headers { get; private set; } = new(StringComparer.OrdinalIgnoreCase);
         public Func<CancellationToken, Task<HttpResponseMessage>> Respond { get; set; } =
-            _ => Task.FromResult(Json(201, "{\"status\":\"ACCEPTED\"}"));
+            _ => Task.FromResult(Json(200, "{\"messages\":[{\"messageId\":\"id\",\"status\":{\"groupName\":\"PENDING\"}}]}"));
         public HttpClient CreateClient(string name) => new(this, disposeHandler: false);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {

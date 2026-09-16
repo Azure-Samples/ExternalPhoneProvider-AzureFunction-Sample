@@ -20,19 +20,25 @@ def _request(channel="sms"):
 def engine(monkeypatch):
     registry = ProviderRegistry([SopranoProvider(), SinchProvider()])
     monkeypatch.setattr(dispatch_module.requests, "request", Mock())
-    return DispatchEngine(registry, Mock(resolve=Mock(return_value="test-key")),
-                          {"EPP_PROVIDER_NAME": " SOPRANO ", "EPP_PROVIDER_ENDPOINT": "https://qa4.example/cgpapi/"})
+    result = DispatchEngine(registry, Mock(resolve=Mock(return_value="test-key")), {
+        "EPP_PROVIDER_NAME": " SOPRANO ",
+        "EPP_PROVIDER_ENDPOINT": "https://qa4.example/oauth/messages",
+        "EPP_PROVIDER_AUTH_MODE": "oauth",
+        "EPP_PROVIDER_CHANNEL": "sms",
+    })
+    result._resolve_credential = Mock(return_value={"mode": "oauth", "access_token": "provider-token"})
+    return result
 
 
-def test_missing_key_or_identity_never_sends(engine):
-    for missing in ("soprano-api-key", "soprano-api-id"):
-        engine.secrets.resolve.side_effect = lambda name: None if name == missing else "test-key"
-        status, body = engine.dispatch(_request(), "r")
-        assert status == 502 and body["reason"] == "provider credential unavailable"
+def test_missing_oauth_configuration_never_sends(engine):
+    engine._resolve_credential = DispatchEngine._resolve_credential.__get__(engine, DispatchEngine)
+    status, body = engine.dispatch(_request(), "r")
+    assert status == 502 and body["reason"] == "provider credential unavailable"
     dispatch_module.requests.request.assert_not_called()
 
 
-def test_soprano_voice_payload_uses_api_key_only(engine):
+def test_soprano_voice_payload_uses_oauth(engine):
+    engine.env["EPP_PROVIDER_CHANNEL"] = "voice"
     speech = {"beforePasswordText": "Your code is", "password": "001234", "language": "en-US"}
     context = DeliveryContext.from_payload({"nonce": "n", "phoneNumber": "+15551234567",
                                             "message": "Your code is 001234", "textToVoice": speech})
@@ -46,9 +52,7 @@ def test_soprano_voice_payload_uses_api_key_only(engine):
     assert payload["voice"] == {"text2voice": speech}
     assert payload["messageTypes"] == ["voice"] and payload["destination"] == "15551234567"
     assert "text" not in payload
-    assert sent["headers"]["X-MEMS-API-Key"] == "test-key"
-    assert sent["headers"]["X-MEMS-API-ID"] == "test-key"
-    assert "Authorization" not in sent["headers"]
+    assert sent["headers"]["Authorization"] == "Bear" + "er provider-token"
     assert "001234" not in repr(request.text_to_voice)
 
 
@@ -57,6 +61,7 @@ def test_soprano_voice_payload_uses_api_key_only(engine):
     {"beforePasswordText": "Code", "password": "1234", "language": " "},
     {"password": "1234", "language": "en"}])
 def test_incomplete_soprano_voice_never_sends(engine, speech):
+    engine.env["EPP_PROVIDER_CHANNEL"] = "voice"
     request = _request("voice")
     request.text_to_voice = TextToVoice.from_payload(speech)
     status, body = engine.dispatch(request, "r")
@@ -72,6 +77,9 @@ def test_base_and_sinch_voice_final_url_guards(engine):
         assert status == 502 and body["reason"] == "invalid provider endpoint"
     engine.env["EPP_PROVIDER_ENDPOINT"] = "https://api.example"
     engine.env["EPP_PROVIDER_NAME"] = "sinch"
+    engine.env.pop("EPP_PROVIDER_CHANNEL", None)
+    engine.env.pop("EPP_PROVIDER_AUTH_MODE", None)
+    engine._resolve_credential = Mock(return_value={"mode": "apiKey", "secret": "test-key", "identity": ""})
     for url in ("http://voice.example", "https://voice.example:0"):
         engine.env["SINCH_VOICE_ENDPOINT"] = url
         status, body = engine.dispatch(_request("voice"), "r")

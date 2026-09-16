@@ -20,15 +20,18 @@ def _dispatch(channel="sms"):
 
 
 @pytest.mark.parametrize("channel", ["sms", "voice"])
-def test_soprano_exact_sms_and_voice_contract(channel):
+def test_soprano_selected_endpoint_and_oauth_contract(channel):
+    dispatch = _dispatch(channel)
+    if channel == "voice":
+        dispatch.text_to_voice = TextToVoice("Your code is", "001234", "en-US")
     request = ProviderRegistry([SopranoProvider()]).get("SOPRANO").build_request(
-        channel, "https://qa4.example/cgpapi///", _dispatch(channel),
-        {"mode": "apiKey", "identity": "test-id", "secret": "test-key"},
+        channel, "https://qa4.example/oauth/messages", dispatch,
+        {"mode": "oauth", "access_token": "provider-token"},
         {},
     )
-    assert request["url"] == "https://qa4.example/cgpapi/messages/omnimsg" and request["method"] == "POST"
+    assert request["url"] == "https://qa4.example/oauth/messages" and request["method"] == "POST"
     assert request["headers"] == {
-        "X-MEMS-API-ID": "test-id", "X-MEMS-API-Key": "test-key",
+        "Authorization": "Bear" + "er provider-token",
         "Content-Type": "application/json", "Accept": "application/json",
     }
     expected = {
@@ -69,10 +72,10 @@ def test_telesign_epp_request_contract(channel, locale):
     dispatch = _dispatch(channel)
     dispatch.locale = locale
     request = TelesignProvider().build_request(
-        channel, "https://verify.telesign.com///", dispatch,
+        channel, f"https://verify.telesign.com/epp/{channel}", dispatch,
         {"mode": "apiKey", "secret": "key", "identity": "customer"}, {},
     )
-    assert request["method"] == "POST" and request["url"] == "https://verify.telesign.com/integration/msft/cyot"
+    assert request["method"] == "POST" and request["url"] == f"https://verify.telesign.com/epp/{channel}"
     assert request["headers"] == {"Authorization": "Basic " + base64.b64encode(b"customer:key").decode(),
                                   "Content-Type": "application/json", "Accept": "application/json"}
     assert json.loads(request["body"]) == {
