@@ -1,28 +1,84 @@
+function Get-EppPackageRelease {
+    param([string] $SourceRepository, [string] $Tag, [string] $TagPrefix)
+
+    $tagPattern = '^' + [regex]::Escape($TagPrefix) + '[0-9]+-[0-9]+$'
+    $headers = @{
+        'User-Agent' = 'EPP-Setup'
+        Accept = 'application/vnd.github+json'
+        'X-GitHub-Api-Version' = '2022-11-28'
+    }
+    $uri = if ($Tag) {
+        "https://api.github.com/repos/$SourceRepository/releases/tags/$([Uri]::EscapeDataString($Tag))"
+    }
+    else {
+        "https://api.github.com/repos/$SourceRepository/releases?per_page=100"
+    }
+    try {
+        $response = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec 60
+    }
+    catch {
+        $description = if ($Tag) { "package release '$Tag'" } else { 'stable package releases' }
+        throw "Could not resolve the $description in '$SourceRepository': $($_.Exception.Message)"
+    }
+    $release = if ($Tag) {
+        $response
+    }
+    else {
+        @($response) | Where-Object {
+            -not $_.draft -and -not $_.prerelease -and [string]$_.tag_name -cmatch $tagPattern
+        } | Select-Object -First 1
+    }
+    if (-not $release) {
+        throw "No stable CI package release matching '$TagPrefix<run>-<attempt>' was found in '$SourceRepository'."
+    }
+    $resolvedTag = [string]$release.tag_name
+    if ($release.draft -or $release.prerelease -or $resolvedTag -cnotmatch $tagPattern) {
+        throw "GitHub release '$resolvedTag' is not a stable CI package release matching '$TagPrefix<run>-<attempt>'."
+    }
+    return $release
+}
+
 function Get-EppLanguage {
-    param([string] $AssetDirectory, [string] $Language, [string] $SourceRepository, [switch] $NonInteractive)
+    param(
+        [string] $AssetDirectory, [string] $Language, [string] $SourceRepository,
+        [string] $PackageReleaseTag, [switch] $NonInteractive
+    )
 
     $catalog = Read-EppJson (Join-Path $AssetDirectory 'packages/catalog.json')
-    if ($catalog['schemaVersion'] -ne 1 -or -not $catalog['packages']) { throw 'Unsupported or empty language package catalog.' }
+    if ($catalog['schemaVersion'] -ne 2 -or -not $catalog['packages'] -or
+        [string]$catalog['releaseTagPrefix'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9.-]*-$') {
+        throw 'Unsupported or empty language package catalog.'
+    }
+    $tagPrefix = [string]$catalog['releaseTagPrefix']
     $strategies = @{ javascript = 'ready'; dotnet = 'dotnet-publish'; python = 'remote-build' }
     $seen = @{}
     $entries = @($catalog['packages'])
     foreach ($entry in $entries) {
         if ($entry -isnot [Collections.IDictionary] -or -not $strategies.ContainsKey([string]$entry['id']) -or
             $seen.ContainsKey($entry['id']) -or $entry['buildStrategy'] -cne $strategies[$entry['id']] -or
-            -not $entry['displayName'] -or $entry['displayName'] -match '[\x00-\x1f]') {
+            -not $entry['displayName'] -or $entry['displayName'] -match '[\x00-\x1f]' -or
+            [string]$entry['assetName'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*\.zip$') {
             throw 'Language catalog contains an invalid, unsupported, or duplicate entry.'
         }
         $seen[$entry['id']] = $true
-        $null = Read-EppInput -Name PackageUrl -Value $entry['url'] -Kind PackageUrl -SourceRepository $SourceRepository -NonInteractive
-        $url = [Uri]$entry['url']
-        if ($url.Segments[-1] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*\.zip$' -or
-            $entry['checksumsUrl'] -cne ($entry['url'].Substring(0, $entry['url'].LastIndexOf('/') + 1) + 'SHA256SUMS.txt')) {
-            throw 'Each package needs an unambiguous ZIP filename and SHA256SUMS.txt in the same GitHub release.'
+    }
+    $entry = Select-EppOption -Entries $entries -Name Language -PromptName Platform `
+        -Value $Language -NonInteractive:$NonInteractive
+    $release = Get-EppPackageRelease -SourceRepository $SourceRepository -Tag $PackageReleaseTag -TagPrefix $tagPrefix
+    $releaseTag = [string]$release.tag_name
+    $releaseBaseUrl = "https://github.com/$SourceRepository/releases/download/$releaseTag"
+    $assetName = [string]$entry['assetName']
+    $assets = @($release.assets)
+    foreach ($requiredAsset in @($assetName, 'SHA256SUMS.txt')) {
+        if (@($assets | Where-Object { $_.name -ceq $requiredAsset }).Count -ne 1) {
+            throw "Release '$releaseTag' must contain exactly one '$requiredAsset' asset."
         }
     }
-    $entry = Select-EppOption -Entries $entries -Name Language -Value $Language -NonInteractive:$NonInteractive
+    $url = Read-EppInput -Name PackageUrl -Value "$releaseBaseUrl/$assetName" -Kind PackageUrl `
+        -SourceRepository $SourceRepository -NonInteractive
     return [pscustomobject]@{
-        Id = $entry['id']; DisplayName = $entry['displayName']; Url = $entry['url']; ChecksumsUrl = $entry['checksumsUrl']
+        Id = $entry['id']; DisplayName = $entry['displayName']; Url = $url
+        ChecksumsUrl = "$releaseBaseUrl/SHA256SUMS.txt"; ReleaseTag = $releaseTag
         BuildStrategy = $entry['buildStrategy']
     }
 }

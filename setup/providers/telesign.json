@@ -1,7 +1,6 @@
 {
   "deployment": {
     "enabled": true,
-    "testConfiguration": true,
     "providerName": "Telesign",
     "tenantId": "d818b557-ea1c-4070-a3f1-928330b7a30c",
     "authentication": {
@@ -13,13 +12,11 @@
       "sms": {
         "global": {
           "endpoint": "https://verify.telesign.com/integration/msft/cyot",
-          "appId": "00000000-0000-0000-0000-000000000000",
           "timeoutMilliseconds": 1500,
           "retryIntervalSeconds": 30
         },
         "eu": {
           "endpoint": "https://verify.telesign.com/integration/msft/cyot",
-          "appId": "00000000-0000-0000-0000-000000000000",
           "timeoutMilliseconds": 1500,
           "retryIntervalSeconds": 30
         }
@@ -27,18 +24,15 @@
       "voice": {
         "global": {
           "endpoint": "https://verify.telesign.com/integration/msft/cyot",
-          "appId": "00000000-0000-0000-0000-000000000000",
           "timeoutMilliseconds": 1500,
           "retryIntervalSeconds": 30
         },
         "eu": {
           "endpoint": "https://verify.telesign.com/integration/msft/cyot",
-          "appId": "00000000-0000-0000-0000-000000000000",
           "timeoutMilliseconds": 1500,
           "retryIntervalSeconds": 30
         }
       }
-    },
-    "note": "All Telesign channel and region selections use the supplied Microsoft CYOT integration endpoint. Application IDs remain explicit test values until Telesign provides them."
+    }
   }
 }

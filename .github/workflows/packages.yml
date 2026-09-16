@@ -145,4 +145,5 @@ jobs:
           tag="epp-packages-${RUN_NUMBER}-${RUN_ATTEMPT}"
           gh release create "$tag" artifacts/*.zip artifacts/SHA256SUMS.txt \
             --target "$COMMIT_SHA" --title "EPP Function ZIPs ${RUN_NUMBER}.${RUN_ATTEMPT}" \
+            --latest \
             --notes "Packaged and tested from commit ${COMMIT_SHA}. Download one language ZIP and verify it against SHA256SUMS.txt. JavaScript includes production dependencies. .NET contains project and C# source only: extract and build/publish the project before deployment. Python is a source ZIP requiring Azure remote build on Linux. Neither source ZIP is a direct run-from-package artifact. Configure runtime, app settings, Key Vault access, and Easy Auth separately. No cloud deployment or live provider verification is performed."
