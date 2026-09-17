@@ -4,11 +4,14 @@
 
 'use strict';
 
-const { ParsedResponse, TextToVoice } = require('../models');
+const { ParsedResponse } = require('../models');
+
+const DEFAULT_VOICE_LANGUAGE = 'en-US';
+const VOICE_GENDER = 1;
+const VOICE_LOOP = 2;
 
 const manifest = {
     id: 'soprano',
-    requiresTextToVoice: true,
     auth: { mode: 'oauth' },
     responseMapping: {
         ENROUTE: 'Continue',
@@ -25,6 +28,24 @@ const manifest = {
     },
 };
 
+function buildTextToVoice(message, locale) {
+    const renderedMessage = String(message || '');
+    const passcodeMatch = renderedMessage.match(/\d{6}/);
+    if (!passcodeMatch) {
+        throw new Error('voice message does not contain a six-digit passcode');
+    }
+
+    const passcodeIndex = passcodeMatch.index;
+    return {
+        beforePasswordText: renderedMessage.slice(0, passcodeIndex),
+        password: passcodeMatch[0],
+        afterPasswordText: renderedMessage.slice(passcodeIndex + passcodeMatch[0].length),
+        language: typeof locale === 'string' && locale.trim() ? locale : DEFAULT_VOICE_LANGUAGE,
+        gender: VOICE_GENDER,
+        loop: VOICE_LOOP,
+    };
+}
+
 function buildRequest({ channel, endpoint, dispatch, credential }) {
     const headers = {
         'Content-Type': 'application/json',
@@ -40,9 +61,7 @@ function buildRequest({ channel, endpoint, dispatch, credential }) {
         shutterMode: false,
     };
     if (channel === 'voice') {
-        const voice = dispatch.textToVoice;
-        if (!(voice instanceof TextToVoice) || !voice.isComplete) throw new Error('incomplete voice context');
-        body.voice = { text2voice: voice };
+        body.voice = { text2voice: buildTextToVoice(dispatch.message, dispatch.locale) };
     } else {
         body.text = dispatch.message;
     }

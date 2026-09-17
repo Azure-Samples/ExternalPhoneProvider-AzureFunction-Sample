@@ -70,12 +70,24 @@ public class EngineTests
             rig.Env["EPP_PROVIDER_CHANNEL"] = channel;
             AssertAccepted(await rig.Invoke(channel: channel, deliveryOverrides: JsonSerializer.SerializeToElement(new
             {
-                providerJwt = "FORGED-PAYLOAD", textToVoice = new { beforePasswordText = "Code", password = "001234", language = "en-US" },
+                providerJwt = "FORGED-PAYLOAD", locale = "fr-FR",
+                textToVoice = new { beforePasswordText = "ignored", password = "001234", language = "override" },
             })));
             Assert.Equal("Bearer private-provider-token", rig.Http.Headers["Authorization"]);
             Assert.DoesNotContain("X-MEMS-API-ID", rig.Http.Headers.Keys);
             Assert.DoesNotContain("X-MEMS-API-Key", rig.Http.Headers.Keys);
             Assert.DoesNotContain("FORGED", rig.Http.Body!);
+            if (channel == "voice")
+            {
+                using var body = JsonDocument.Parse(rig.Http.Body!);
+                var speech = body.RootElement.GetProperty("voice").GetProperty("text2voice");
+                Assert.Equal("  Your code is ", speech.GetProperty("beforePasswordText").GetString());
+                Assert.Equal("918273", speech.GetProperty("password").GetString());
+                Assert.Equal(".\nDo not share.  ", speech.GetProperty("afterPasswordText").GetString());
+                Assert.Equal("fr-FR", speech.GetProperty("language").GetString());
+                Assert.Equal(1, speech.GetProperty("gender").GetInt32());
+                Assert.Equal(2, speech.GetProperty("loop").GetInt32());
+            }
         }
         rig.Env["EPP_PROVIDER_CHANNEL"] = "sms";
         rig.Env["EPP_PROVIDER_SCOPE"] = "api://second/.default";
@@ -179,23 +191,6 @@ public class EngineTests
         Assert.Contains("CorrelationId=" + hash, log);
         foreach (var value in new[] { Phone, "918273", "001234", Nonce, Correlation, "private-api-key", "private-api-id" })
             Assert.DoesNotContain(value, log);
-    }
-
-    [Theory]
-    [InlineData("null")]
-    [InlineData("[]")]
-    [InlineData("{}")]
-    [InlineData("{\"beforePasswordText\":\"\",\"password\":123,\"language\":\"en\"}")]
-    [InlineData("{\"beforePasswordText\":null,\"password\":\"001234\",\"language\":\"en\"}")]
-    [InlineData("{\"beforePasswordText\":\"\",\"password\":\"001234\",\"language\":\" \"}")]
-    public async Task IncompleteVoiceFailsBeforeSecretsOrHttp(string speech)
-    {
-        using var rig = new HandlerRig();
-        rig.Env["EPP_PROVIDER_NAME"] = "soprano";
-        rig.Env["EPP_PROVIDER_AUTH_MODE"] = "oauth";
-        var overrides = JsonSerializer.SerializeToElement(new { textToVoice = JsonSerializer.Deserialize<JsonElement>(speech) });
-        AssertFailure(rig, await rig.Invoke(channel: "voice", deliveryOverrides: overrides), 400);
-        Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
     }
 
     [Fact]

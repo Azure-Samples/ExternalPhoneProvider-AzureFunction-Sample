@@ -15,7 +15,11 @@ public class ContractTests
     [InlineData("voice")]
     public void SopranoUsesSelectedEndpointAndOAuth(string channel)
     {
-        var dispatch = Request(channel) with { TextToVoice = new TextToVoice("Your code is", "001234", "en-US") };
+        var dispatch = Request(channel) with
+        {
+            Locale = channel == "voice" ? "fr-FR" : "en-US",
+            TextToVoice = new TextToVoice("ignored", "001234", "override"),
+        };
         var request = new SopranoProvider().BuildRequest(channel, "https://provider.example/oauth/messages", dispatch,
             new ProviderCredential("oauth", AccessToken: "provider-token"), new TestEnv());
         Assert.Equal("https://provider.example/oauth/messages", request.Url);
@@ -32,10 +36,45 @@ public class ContractTests
             ["shutterMode"] = false,
         };
         if (channel == "voice")
-            expected["voice"] = new { text2voice = new { beforePasswordText = "Your code is", password = "001234", language = "en-US" } };
+            expected["voice"] = new
+            {
+                text2voice = new
+                {
+                    beforePasswordText = "  Your code is ",
+                    password = "918273",
+                    afterPasswordText = ".\nDo not share.  ",
+                    language = "fr-FR",
+                    gender = 1,
+                    loop = 2,
+                },
+            };
         else
             expected["text"] = Request().Message;
         Assert.Equal(JsonSerializer.Serialize(expected), request.Body);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void SopranoVoiceDefaultsLanguageWithoutLocale(string? locale)
+    {
+        var request = new SopranoProvider().BuildRequest("voice", "https://provider.example/oauth/messages",
+            Request("voice") with { Locale = locale }, new ProviderCredential("oauth", AccessToken: "provider-token"),
+            new TestEnv());
+        using var body = JsonDocument.Parse(request.Body);
+        Assert.Equal("en-US", body.RootElement.GetProperty("voice").GetProperty("text2voice")
+            .GetProperty("language").GetString());
+    }
+
+    [Fact]
+    public void SopranoVoiceRequiresSixDigitPasscode()
+    {
+        var dispatch = Request("voice") with { Message = "Your code is unavailable." };
+        var error = Assert.Throws<InvalidOperationException>(() => new SopranoProvider().BuildRequest(
+            "voice", "https://provider.example/oauth/messages", dispatch,
+            new ProviderCredential("oauth", AccessToken: "provider-token"), new TestEnv()));
+        Assert.Contains("six-digit passcode", error.Message);
     }
 
     [Fact]

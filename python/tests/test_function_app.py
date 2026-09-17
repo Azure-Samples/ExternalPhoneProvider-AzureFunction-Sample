@@ -180,7 +180,14 @@ def test_live_acceptance_waits_and_preserves_wire_data_but_not_plaintext_logs(mo
     send.assert_called_once()
     upstream.close.assert_called_once()
     wire = json.loads(send.call_args.kwargs["data"])
-    assert wire["voice"] == {"text2voice": speech}
+    assert wire["voice"] == {"text2voice": {
+        "beforePasswordText": "  Your code is ",
+        "password": "123456",
+        "afterPasswordText": "; keep 7890 unchanged.\nCafé.  ",
+        "language": "en-US",
+        "gender": 1,
+        "loop": 2,
+    }}
     assert "text" not in wire and wire["messageTypes"] == ["voice"] and wire["correlationId"] == _CORRELATION
     summary = json.loads(caplog.records[-1].getMessage().removeprefix("[EPP] result "))
     assert len(caplog.records) == 1

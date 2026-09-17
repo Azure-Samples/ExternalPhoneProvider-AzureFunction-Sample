@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { AppConfig, readConfig } = require('../src/functions/config');
-const { DeliveryContext, TextToVoice, ParsedResponse } = require('../src/functions/models');
+const { DeliveryContext, ParsedResponse } = require('../src/functions/models');
 const fixtures = require('../../tests/fixtures/contract.json');
 const { inspect } = require('node:util');
 const { AzureLogger } = require('@azure/logger');
@@ -100,38 +100,35 @@ test('Soprano uses the selected endpoint and OAuth bearer token', () => {
 });
 
 test('Soprano Voice sends structured speech with OAuth', () => {
-    const textToVoice = TextToVoice.fromPayload({ beforePasswordText: ' Your code is ', password: '001234',
-        language: 'en-US', unexpected: 'must-not-be-forwarded' });
     const request = getProvider('soprano').adapter.buildRequest({ ...input, channel: 'voice',
-        endpoint: `${input.endpoint}/oauth/voice`, dispatch: { ...dispatch, textToVoice },
+        endpoint: `${input.endpoint}/oauth/voice`,
+        dispatch: { ...dispatch, locale: 'fr-FR', textToVoice: { language: 'override', gender: 2, loop: 9 } },
         credential: { mode: 'oauth', accessToken: 'provider-token' } });
     assert.equal(request.url, `${input.endpoint}/oauth/voice`);
     assert.deepEqual(request.headers, { 'Content-Type': 'application/json', Accept: 'application/json',
         Authorization: 'Bear' + 'er provider-token' });
     assert.deepEqual(JSON.parse(request.body), { destination: '15551234567', messageTypes: ['voice'],
         correlationId: 'correlation-id', shutterMode: false,
-        voice: { text2voice: { beforePasswordText: ' Your code is ', password: '001234', language: 'en-US' } } });
-    assert.equal(inspect(textToVoice), '[TextToVoice]');
-    assert.throws(() => getProvider('soprano').adapter.buildRequest({ ...input, channel: 'voice' }),
-        /incomplete voice context/);
+        voice: { text2voice: { beforePasswordText: '  Your code is ', password: '918273',
+            afterPasswordText: '.\n', language: 'fr-FR', gender: 1, loop: 2 } } });
+    for (const locale of [undefined, null, '', '   ', { untrusted: true }]) {
+        const fallbackRequest = getProvider('soprano').adapter.buildRequest({
+            ...input, channel: 'voice', dispatch: { ...dispatch, locale },
+            credential: { mode: 'oauth', accessToken: 'provider-token' },
+        });
+        assert.equal(JSON.parse(fallbackRequest.body).voice.text2voice.language, 'en-US');
+    }
+    assert.throws(() => getProvider('soprano').adapter.buildRequest({
+        ...input, channel: 'voice', dispatch: { ...dispatch, message: 'Your code is unavailable.' },
+    }), /voice message does not contain a six-digit passcode/);
 });
 
-test('Soprano Voice validates decrypted speech before secret lookup or HTTP', async (t) => {
-    const getSecret = t.mock.method(SecretClient.prototype, 'getSecret', () => assert.fail('unexpected secret lookup'));
-    const fetchMock = t.mock.method(global, 'fetch', () => assert.fail('unexpected HTTP'));
-    const config = readConfig({ EPP_PROVIDER_NAME: 'soprano', EPP_PROVIDER_ENDPOINT: input.endpoint });
-    for (const textToVoice of [null, [], 'text', {}, { beforePasswordText: '', password: 123, language: 'en' },
-        { beforePasswordText: '', password: '001234', language: '' },
-        { beforePasswordText: null, password: '001234', language: 'en' }]) {
-        const context = DeliveryContext.fromPayload({ nonce: 'nonce', phoneNumber: dispatch.destination,
-            message: dispatch.message, textToVoice });
-        const result = await dispatchOtp(contextToDispatch(context, { channel: 2 }, 'message-id'), { config });
-        assert.deepEqual([result.httpStatus, result.body.reason], [400, 'incomplete voice context']);
-    }
-    const context = DeliveryContext.fromPayload({ textToVoice: { beforePasswordText: '', password: '001234', language: 'en-US' } });
-    assert.ok(contextToDispatch(context, { channel: 2 }, 'message-id').textToVoice.isComplete);
-    assert.equal(getSecret.mock.callCount(), 0);
-    assert.equal(fetchMock.mock.callCount(), 0);
+test('Soprano SMS remains independent from voice synthesis settings', () => {
+    const request = getProvider('soprano').adapter.buildRequest({ ...input,
+        dispatch: { ...dispatch, textToVoice: { language: 'override', gender: 2, loop: 9 } },
+        credential: { mode: 'oauth', accessToken: 'provider-token' } });
+    assert.deepEqual(JSON.parse(request.body), { text: dispatch.message, destination: '15551234567',
+        messageTypes: ['sms'], correlationId: 'correlation-id', shutterMode: false });
 });
 
 test('App-auth SMS preserves its request and normalizes acceptance', () => {
