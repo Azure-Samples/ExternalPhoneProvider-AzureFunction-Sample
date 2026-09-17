@@ -150,7 +150,8 @@ def test_soprano_voice_payload_uses_oauth(engine):
     engine.env["EPP_PROVIDER_CHANNEL"] = "voice"
     speech = {"beforePasswordText": "Your code is", "password": "001234", "language": "en-US"}
     context = DeliveryContext.from_payload({"nonce": "n", "phoneNumber": "+15551234567",
-                                            "message": "Your code is 001234", "textToVoice": speech})
+                                            "message": "Your code is 001234", "locale": "fr-FR",
+                                            "textToVoice": speech})
     envelope = Envelope("microsoft.mfa.otpDeliver.v1", "tenant", "correlation", 2, 1, None, "encrypted")
     request = dispatch_module.context_to_dispatch(context, envelope, "message")
     dispatch_module.requests.request.return_value = Mock(status_code=200, json=Mock(return_value={"status": "ACCEPTED"}))
@@ -158,23 +159,26 @@ def test_soprano_voice_payload_uses_oauth(engine):
     assert status == 200 and body["outcome"] == "Continue"
     sent = dispatch_module.requests.request.call_args.kwargs
     payload = json.loads(sent["data"])
-    assert payload["voice"] == {"text2voice": speech}
+    assert payload["voice"] == {"text2voice": {
+        "beforePasswordText": "Your code is ",
+        "password": "001234",
+        "afterPasswordText": "",
+        "language": "fr-FR",
+        "gender": 1,
+        "loop": 2,
+    }}
     assert payload["messageTypes"] == ["voice"] and payload["destination"] == "15551234567"
     assert "text" not in payload
     assert sent["headers"]["Authorization"] == "Bear" + "er provider-token"
     assert "001234" not in repr(request.text_to_voice)
 
 
-@pytest.mark.parametrize("speech", [None, {}, [], "invalid",
-    {"beforePasswordText": "Code", "password": 1234, "language": "en"},
-    {"beforePasswordText": "Code", "password": "1234", "language": " "},
-    {"password": "1234", "language": "en"}])
-def test_incomplete_soprano_voice_never_sends(engine, speech):
+def test_soprano_voice_without_six_digit_passcode_never_sends(engine):
     engine.env["EPP_PROVIDER_CHANNEL"] = "voice"
     request = _request("voice")
-    request.text_to_voice = TextToVoice.from_payload(speech)
+    request.message = "Your code is unavailable."
     status, body = engine.dispatch(request, "r")
-    assert status == 400 and body["reason"] == "incomplete voice context"
+    assert status == 502 and body["reason"] == "provider request failed"
     engine.secrets.resolve.assert_not_called()
     dispatch_module.requests.request.assert_not_called()
 

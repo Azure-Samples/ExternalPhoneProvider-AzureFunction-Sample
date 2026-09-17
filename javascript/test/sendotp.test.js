@@ -182,7 +182,6 @@ test('Soprano OAuth failures never fall back to keys or forward an inbound token
 
 test('SMS/voice preserve content and correlation without reflecting headers or logging PII', async () => {
     const correlationId = 'PRIVATE-CORRELATION';
-    const textToVoice = { beforePasswordText: ' PRIVATE-PROMPT ', password: '001234', language: 'en-US' };
     const forgedHeaders = { authorization: 'Bearer FORGED-BEARER',
         'x-ms-client-principal': Buffer.from(JSON.stringify({
             claims: [{ typ: 'appid', val: 'FORGED-CALLER' }],
@@ -190,14 +189,21 @@ test('SMS/voice preserve content and correlation without reflecting headers or l
     for (const [channel, name] of [[1, 'sms'], [2, 'voice']]) {
         const headers = channel === 1 ? {} : forgedHeaders;
         const result = await invoke(await envelope({ channel, correlationId, provider: 'unknown' },
-            { ...delivery, textToVoice }), headers);
+            { ...delivery, textToVoice: { language: 'override', gender: 2, loop: 9 } }), headers);
         assert.equal(result.status, 200);
         assert.deepEqual(result.jsonBody, { nonce: delivery.nonce, correlationId, providerStatus: 'accepted' });
         const init = fetchMock.mock.calls.at(-1).arguments[1];
         const sent = JSON.parse(init.body);
         assert.deepEqual([sent.messageTypes, sent.correlationId], [[name], correlationId]);
         if (channel === 2) {
-            assert.deepEqual(sent.voice, { text2voice: textToVoice });
+            assert.deepEqual(sent.voice, { text2voice: {
+                beforePasswordText: '  PRIVATE-MESSAGE ',
+                password: '918273',
+                afterPasswordText: '.\n',
+                language: delivery.locale,
+                gender: 1,
+                loop: 2,
+            } });
             assert.equal(sent.text, undefined);
         } else {
             assert.equal(sent.text, delivery.message);

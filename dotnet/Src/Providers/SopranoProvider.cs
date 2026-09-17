@@ -1,9 +1,14 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace Epp.Otp.Providers;
 
 public sealed class SopranoProvider : IProviderAdapter
 {
+    private const string DefaultVoiceLanguage = "en-US";
+    private const int VoiceGender = 1;
+    private const int VoiceLoop = 2;
+
     public ProviderManifest Manifest { get; } = new(
         Id: "soprano",
         Auth: new AuthConfig("oauth"),
@@ -20,8 +25,7 @@ public sealed class SopranoProvider : IProviderAdapter
             ["FILTERED"] = Outcome.Fail,
             ["BLOCKED"] = Outcome.Block,
             ["default"] = Outcome.Fail,
-        },
-        RequiresTextToVoice: true);
+        });
 
     public ProviderHttpRequest BuildRequest(string channel, string endpoint, DispatchRequest dispatch, ProviderCredential credential, IEnv env)
     {
@@ -40,9 +44,22 @@ public sealed class SopranoProvider : IProviderAdapter
         };
         if (channel == "voice")
         {
-            var voice = dispatch.TextToVoice;
-            if (voice?.IsComplete != true) throw new InvalidOperationException("incomplete voice context");
-            body["voice"] = new { text2voice = voice };
+            var message = dispatch.Message ?? string.Empty;
+            var passcode = Regex.Match(message, "[0-9]{6}");
+            if (!passcode.Success)
+                throw new InvalidOperationException("voice message does not contain a six-digit passcode");
+            body["voice"] = new
+            {
+                text2voice = new
+                {
+                    beforePasswordText = message[..passcode.Index],
+                    password = passcode.Value,
+                    afterPasswordText = message[(passcode.Index + passcode.Length)..],
+                    language = string.IsNullOrWhiteSpace(dispatch.Locale) ? DefaultVoiceLanguage : dispatch.Locale,
+                    gender = VoiceGender,
+                    loop = VoiceLoop,
+                },
+            };
         }
         else
         {

@@ -80,6 +80,11 @@ await acceptance before returning the nonce; failures omit it. Acceptance is not
 Platform/key prerequisites and HTTP outcomes are defined in the
 [contract](../docs/CONTRACT.md#evaluation-generic-shutter).
 
+For Soprano voice, the adapter extracts the first six-digit passcode from the rendered message. It
+uses a nonblank SAS request locale as the language, falling back to `en-US`, and sends fixed gender
+`1` and loop `2`. These values require no additional environment settings. Soprano SMS continues to
+forward the rendered message unchanged.
+
 ## Source
 
 | Source | Purpose |

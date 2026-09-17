@@ -23,7 +23,8 @@ def _dispatch(channel="sms"):
 def test_soprano_selected_endpoint_and_oauth_contract(channel):
     dispatch = _dispatch(channel)
     if channel == "voice":
-        dispatch.text_to_voice = TextToVoice("Your code is", "001234", "en-US")
+        dispatch.locale = "fr-FR"
+        dispatch.text_to_voice = TextToVoice("ignored", "001234", "override")
     request = ProviderRegistry([SopranoProvider()]).get("SOPRANO").build_request(
         channel, "https://qa4.example/oauth/messages", dispatch,
         {"mode": "oauth", "access_token": "provider-token"},
@@ -39,13 +40,41 @@ def test_soprano_selected_endpoint_and_oauth_contract(channel):
         "correlationId": "correlation-id", "shutterMode": False,
     }
     if channel == "voice":
-        expected["voice"] = {"text2voice": {"beforePasswordText": "Your code is", "password": "001234", "language": "en-US"}}
+        expected["voice"] = {"text2voice": {
+            "beforePasswordText": "  Use ",
+            "password": "918273",
+            "afterPasswordText": "; then 1234.\nDo not rewrite + or café.  ",
+            "language": "fr-FR",
+            "gender": 1,
+            "loop": 2,
+        }}
     else:
         expected["text"] = MESSAGE
     assert json.loads(request["body"]) == expected
     response = SopranoProvider().parse_response(201, True, {"id": 123, "status": "ENROUTE"})
     assert response == ParsedResponse(True, 201, provider_message_id="123", provider_status_name="ENROUTE")
     assert "ENROUTE" not in repr(response)
+
+
+@pytest.mark.parametrize("locale", [None, "", "   ", {"untrusted": True}])
+def test_soprano_voice_defaults_language_without_valid_locale(locale):
+    dispatch = _dispatch("voice")
+    dispatch.locale = locale
+    request = SopranoProvider().build_request(
+        "voice", "https://qa4.example/oauth/messages", dispatch,
+        {"mode": "oauth", "access_token": "provider-token"}, {},
+    )
+    assert json.loads(request["body"])["voice"]["text2voice"]["language"] == "en-US"
+
+
+def test_soprano_voice_requires_six_digit_passcode():
+    dispatch = _dispatch("voice")
+    dispatch.message = "Your code is unavailable."
+    with pytest.raises(ValueError, match="six-digit passcode"):
+        SopranoProvider().build_request(
+            "voice", "https://qa4.example/oauth/messages", dispatch,
+            {"mode": "oauth", "access_token": "provider-token"}, {},
+        )
 
 
 def test_infobip_sms_request_and_response_contract():

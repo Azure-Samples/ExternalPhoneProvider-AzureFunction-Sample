@@ -76,29 +76,21 @@ runs once per language. Tag tampering and original-header-byte tests remain.
 |-------|----------|-------|
 | `nonce` | yes | value the endpoint MUST echo to prove decryption |
 | `phoneNumber` | yes | caller supplies an E.164 string; full E.164 validation is an implementation gap |
-| `message` | yes | fully rendered, localized text containing the passcode; forward unchanged when the adapter uses message text. Do not extract, infer or guess a passcode |
+| `message` | yes | fully rendered, localized text containing the passcode; text-message adapters forward it unchanged, while Soprano voice extracts the first six consecutive digits |
 | `extension` | no | office-voice contract field; not currently forwarded by the shared dispatch model |
 | `locale` | no | voice selection input where supported by the selected adapter |
 | `riskContext` | no | contextual request data; no risk-policy evaluation is implemented here |
-| `textToVoice` | for Soprano live voice | structured speech object supplied inside the encrypted context; see below |
+| `textToVoice` | no | legacy structured speech input; current Soprano adapters ignore it |
 
 Decryption failure → `400`. Missing `nonce` / `phoneNumber` / `message` → `400`.
 
-For Soprano live voice, include `textToVoice` alongside the required delivery fields:
-
-```json
-"textToVoice": {
-  "beforePasswordText": "Your verification code is",
-  "password": "001234",
-  "language": "en-US"
-}
-```
-
-`beforePasswordText` must be a string (empty is allowed); `password` and `language` must be
-nonblank strings. Supply the password explicitly to preserve leading zeros; it is never extracted
-from `message`. These values are forwarded unchanged as `voice.text2voice`, without a top-level
-`text` field. Missing or invalid speech returns `400` before credential lookup or provider HTTP.
-SMS continues to use `message`, and evaluation continues to skip provider-specific validation and I/O.
+For Soprano live voice, the adapter finds the first six consecutive digits in `message`, preserving
+leading zeros, and splits the rendered text into `beforePasswordText`, `password`, and
+`afterPasswordText`. It uses a nonblank SAS `locale` as `language`, falling back to `en-US`, and sends
+fixed `gender: 1` and `loop: 2`. The resulting object is sent as `voice.text2voice` without a top-level
+`text` field. A message without a six-digit sequence fails closed before provider HTTP. No additional
+environment settings are required. Soprano SMS continues to forward `message` unchanged, and
+evaluation continues to skip provider-specific validation and I/O.
 Soprano uses OAuth client-assertion exchange. The outbound user-assigned managed identity obtains an
 `api://AzureADTokenExchange/.default` assertion for the existing multitenant application, which then
 requests the configured provider scope. Existing platform caller authentication is unchanged.
@@ -139,11 +131,10 @@ plus JWT do not validate the current Bearer-only configuration or production end
 
 See [Microsoft's managed-identity federation guidance](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity).
 
-Use a speech language supported by the selected Soprano endpoint and account. On QA4, an API-key
+Use a SAS locale supported by the selected Soprano endpoint and account. On QA4, an API-key
 voice request using `en` returned HTTP `400` with error code `400101`; the same request structure
 using `en-US` returned HTTP `201` with `ENROUTE` on September 15, 2026. This confirms acceptance,
-not handset receipt or audio quality. The adapter preserves the supplied language and does not
-guess a region for a language-only value.
+not handset receipt or audio quality. When SAS omits the locale, the adapters use `en-US`.
 
 The supplied Soprano Connect Voice PDF describes a different API: `POST /voice/voice_orderApiCreate.do`
 with form-encoded fields, `subAction=20`, and numeric language IDs (`1` is default English).

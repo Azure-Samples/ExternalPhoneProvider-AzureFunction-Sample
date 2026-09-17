@@ -1,12 +1,31 @@
 import json
+import re
 
-from ..models import ParsedResponse, TextToVoice
+from ..models import ParsedResponse
+
+DEFAULT_VOICE_LANGUAGE = "en-US"
+VOICE_GENDER = 1
+VOICE_LOOP = 2
+
+
+def _build_text_to_voice(message, locale):
+    rendered_message = str(message or "")
+    passcode_match = re.search(r"[0-9]{6}", rendered_message)
+    if not passcode_match:
+        raise ValueError("voice message does not contain a six-digit passcode")
+    return {
+        "beforePasswordText": rendered_message[:passcode_match.start()],
+        "password": passcode_match.group(0),
+        "afterPasswordText": rendered_message[passcode_match.end():],
+        "language": locale if isinstance(locale, str) and locale.strip() else DEFAULT_VOICE_LANGUAGE,
+        "gender": VOICE_GENDER,
+        "loop": VOICE_LOOP,
+    }
 
 
 class SopranoProvider:
     manifest = {
         "id": "soprano",
-        "requires_text_to_voice": True,
         "auth": {"mode": "oauth"},
         "response_mapping": {
             "ENROUTE": "Continue", "ACCEPTED": "Continue", "SUBMITTED": "Continue",
@@ -29,14 +48,7 @@ class SopranoProvider:
             "shutterMode": False,
         }
         if channel == "voice":
-            voice = dispatch.text_to_voice
-            if not isinstance(voice, TextToVoice) or not voice.is_complete:
-                raise ValueError("incomplete voice context")
-            body["voice"] = {"text2voice": {
-                "beforePasswordText": voice.before_password_text,
-                "password": voice.password,
-                "language": voice.language,
-            }}
+            body["voice"] = {"text2voice": _build_text_to_voice(dispatch.message, dispatch.locale)}
         else:
             body["text"] = dispatch.message
         return {"url": endpoint, "method": "POST", "headers": headers, "body": json.dumps(body)}
