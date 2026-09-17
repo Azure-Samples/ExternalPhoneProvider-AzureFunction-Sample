@@ -8,25 +8,22 @@ The customer does not clone this repository or download Bicep/support scripts se
 
 ## Availability
 
-Choose **JavaScript, .NET, or Python**, then **Telesign or Soprano**, **SMS or voice**, and a
-**Global or EU endpoint**. The private test branch uses its matching fork preview release so the
-package and provider-authentication contract stay in sync. There is no package URL or checksum to
-enter. Setup verifies `SHA256SUMS.txt` automatically and performs the required build and publication
-for the selected language.
+Choose **SMS or voice**, a **Global or EU tenant scope**, **Telesign or Soprano**, and an
+Azure Function **platform**: Node.js, .NET, or Python. By default, setup resolves the source repository's latest stable
+`epp-packages-*` release produced by CI. A private test branch can use its matching fork release.
+There is no package URL or checksum to enter. Setup verifies `SHA256SUMS.txt` automatically and
+performs the required build and publication for the selected language.
 
-Provider profiles contain complete channel/region route objects. Unknown values use **explicit dummy
-test values**, not a separate placeholder list or empty fields that block setup. They are written
-into the Function App's **actual environment settings** after approval. Telesign's supplied route
-URLs, tenant, and timings are preserved, while its zero application IDs remain test-labelled.
-Soprano contains its provider tenant, production Global/EU routes, API application ID, scope, and
-timing values.
-The plan and saved summary identify test configuration. Deployment does not make these values
-working endpoints or credentials. The provider files contain the complete deployment contract.
+Provider profiles contain complete channel/region route objects. Telesign contains its supplied
+route URLs, tenant, authentication, and timings. Soprano contains its provider tenant, Global/EU
+routes, API application ID, scope, authentication, and timings. The provider files contain the
+complete deployment contract.
 
-The default download URLs below become usable when this change is published upstream. Before merging,
-test from a published public fork using `-SourceRepository <owner/repository>` and
+To test unpublished upstream changes, publish them to a public fork with a matching stable package
+release, then use `-SourceRepository <owner/repository>` and
 `-SourceRef <branch-or-full-commit-sha>`. Both options must identify the same source as the downloaded
-launcher. Unpublished worktree changes are not downloadable from GitHub.
+launcher. Use `-PackageReleaseTag` if the fork contains more than one stable package release.
+Unpublished worktree changes are not downloadable from GitHub.
 
 ## Step 1 - manually create the application
 
@@ -129,17 +126,20 @@ Force explicit account selection when testing on a shared or multi-account compu
 The flow is:
 
 1. **Collect missing customer inputs:** tenant, subscription, existing application client ID, Azure
-   region, and provider account/sender name. Supplied values
-   are reused without prompts. Credentials are never requested as ordinary string parameters.
-2. **Choose one language**. Setup looks up its GitHub release and checksum file in
-   `packages/catalog.json`; there are no `PackageUrl` or `PackageSha256` inputs.
-3. **Choose a provider**, then **SMS or voice**, then **Global or EU endpoint**. Setup downloads the
-   provider JSON and resolves one complete route containing endpoint, authentication, app-ID/scope
+   region, and resource prefix. Supplied values are reused without prompts. Credentials are never
+   requested as ordinary string parameters.
+2. **Choose SMS or voice**, then the **Global or EU tenant scope**.
+3. **Choose a provider**, then an Azure Function **platform**: Node.js, .NET, or Python. Setup downloads the provider JSON,
+   resolves one complete route containing endpoint, authentication, app-ID/scope
    when applicable, timeout, and retry interval. Explicit test values are allowed, shown as test
-   configuration, and passed to Azure settings. Malformed or disabled profiles still fail before
-   resource creation.
-4. **Enter a resource prefix**, such as `contoso`: 2-8 lowercase letters/digits, starting with a
-   letter. Every top-level resource name then adds the meaningful `epp` marker, for example
+   configuration, and passed to Azure settings. It also resolves the latest stable CI package
+   release and looks up the language asset name in `packages/catalog.json`; there are no
+   `PackageUrl` or `PackageSha256` inputs. Use
+   `-PackageReleaseTag epp-packages-<run>-<attempt>` to pin a previous CI release. Malformed or
+   disabled profiles still fail before resource creation.
+4. **Enter a resource prefix**, such as `contoso`. All resources created by the script start with
+   this prefix. Use 2-8 lowercase letters or digits, starting with a letter. Every top-level
+   resource name then adds the meaningful `epp` marker, for example
    `contoso-epp-rg-<suffix>`. A deterministic suffix derived from the
    subscription, application ID, and prefix reduces global-name collisions. Reruns use the same names.
 5. **Check prerequisites and sign in.** Missing Graph modules or Bicep can be installed after a
@@ -197,9 +197,7 @@ explicitly rather than hidden.
 
 The public certificate and a timestamped identifier
 summary are saved to `epp-output` beside the downloaded script, or to `-OutputDirectory`.
-Private keys remain in the user's certificate store and Key Vault, not in that summary. With dummy
-profiles, `EPP_PROVIDER_TEST_CONFIGURATION=true` is stored alongside the real environment settings.
-This is a label, not a replacement for caller authentication or a guarantee of provider connectivity.
+Private keys remain in the user's certificate store and Key Vault, not in that summary.
 
 For unattended runs, supply every input, authenticate both clients first, and explicitly authorize
 the whole displayed plan with **both** `-NonInteractive -ApproveDeployment`. `-NonInteractive`
@@ -210,9 +208,13 @@ alone never approves changes. There is no `-Stage`, `-Resume`, `-ConfigPath`, or
 `-SourceRepository` defaults to `Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample`.
 The small entry point resolves `-SourceRef` (default `main`) to a single commit in that repository. All supporting
 PowerShell, Bicep, the catalog, and the selected provider profile are downloaded from that commit.
-Use a reviewed full commit SHA for repeatable deployments. Provider JSON selects data only; it
-cannot redirect execution to another script. Download failures stop setup, and temporary downloads
-are removed on completion or failure. Select only a repository whose code you trust: its supporting
+The package catalog supplies asset names, while setup resolves the latest stable `epp-packages-*`
+release from the same repository and verifies the selected asset against that release's
+`SHA256SUMS.txt`. The plan and saved summary record the concrete versioned URL and hashes.
+For a fully repeatable deployment, use both a reviewed full commit SHA and
+`-PackageReleaseTag epp-packages-<run>-<attempt>`. Provider JSON selects data only; it cannot
+redirect execution to another script. Download failures stop setup, and temporary downloads are
+removed on completion or failure. Select only a repository whose code you trust: its supporting
 PowerShell is executed locally.
 
 ## Step 3 - manually validate and activate policy
@@ -220,25 +222,23 @@ PowerShell is executed locally.
 1. Save the Step 2 summary and confirm its tenant, application client ID, endpoint URL, encryption
    key ID, and certificate with the EPP onboarding owner. **Replace all test provider values** and
    provision the adapter-named API credentials in Key Vault. Verify the package's channel routing
-   and retry behavior; the tenant/scope metadata and test label do not enable unsupported behavior.
+   and retry behavior.
 2. Validate the deployed endpoint with synthetic, non-delivering evaluation requests first.
    Missing/invalid credentials and unauthorized callers must be rejected by Easy Auth. An admitted
    caller's valid encrypted request must return the matching nonce. Then verify live SMS/voice
    provider acceptance and handset delivery through the supported test procedure. Never put
    phone numbers, messages, tokens, private keys, or nonce values in shared logs.
 3. An **Authentication Policy Administrator**, using the approved Microsoft Graph tool and delegated
-   `Policy.ReadWrite.AuthenticationMethod`, must verify that the tenant's currently supported EPP
-   contract is available. For the preview contract formerly handled by Step 3, inspect
-   `https://graph.microsoft.com/beta/$metadata` for `authenticationMethodsPolicy.cyot` and its
-   `endpoint`, `appId`, and `migrated` fields. **If absent or different, stop and obtain the supported
-   onboarding procedure from Microsoft; do not send a guessed PATCH or enable a different method.**
-4. Read `https://graph.microsoft.com/beta/policies/authenticationMethodsPolicy` using that supported
-   contract, save the existing `cyot` value with tenant ID and timestamp, and independently approve
-   the migration choice. `migrated` is a routing decision, not a script default.
-5. Re-read immediately before a manual change, stop if the policy changed, and use `If-Match` when
-   an ETag is available. Patch **only** the `cyot` property with the tested endpoint, the same
-   application client ID, and the deliberately chosen migration Boolean. Read it back and compare
-   before considering activation complete.
+   `Policy.ReadWrite.AuthenticationMethod`, must read the selected channel configuration:
+   `https://graph.microsoft.com/beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/Sms`
+   for SMS or the same path ending in `/Voice` for voice. If the selected configuration or its
+   `url` and `appId` properties are unavailable, stop and obtain the supported onboarding procedure
+   from Microsoft rather than sending a guessed update.
+4. Save the existing channel configuration with the tenant ID and timestamp. Re-read it immediately
+   before a manual change, stop if it changed, and use `If-Match` when an ETag is available.
+5. Update `url` with the highlighted Function endpoint and `appId` with the highlighted endpoint
+   application client ID printed by setup. Preserve all other properties, then read the configuration
+   back and compare those values before considering activation complete.
 
 Policy activation, policy backups, and policy rollback are administrator-owned manual operations.
 No policy API is called by the setup package. For rollback, restore only the reviewed prior EPP

@@ -37,13 +37,13 @@ Easy Auth. The home tenant remains allowed by Entra. Policy activation remains m
 
 ## Download a Function ZIP
 
-Download the preview ZIP for your chosen language:
+Download the latest successful CI ZIP for your chosen language:
 
 | Language | Download | Contents |
 |---|---|---|
-| JavaScript | [epp-javascript.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-guided-setup-preview-20260915/epp-javascript.zip) | Application and production dependencies |
-| .NET | [epp-dotnet-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-guided-setup-preview-20260915/epp-dotnet-source.zip) | C# Function source and project file; build/publish before deployment |
-| Python | [epp-python-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-guided-setup-preview-20260915/epp-python-source.zip) | Source for Azure remote build on Linux |
+| JavaScript | [epp-javascript.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-javascript.zip) | Application and production dependencies |
+| .NET | [epp-dotnet-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-dotnet-source.zip) | C# Function source and project file; build/publish before deployment |
+| Python | [epp-python-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-python-source.zip) | Source for Azure remote build on Linux |
 
 Customers do not need PowerShell or a local build toolchain to download these files. Verify downloads
 against the corresponding release's `SHA256SUMS.txt`. Configure the target Function App's runtime, app settings,
@@ -52,14 +52,14 @@ project; Python requires remote build to install dependencies. Neither source ZI
 as a run-from-package artifact. GitHub's **Code > Download ZIP**
 is the whole source repository, not a Function deployment package.
 
-After the packaging workflow is merged, each successful `main` build tests all three implementations,
-builds and inspects the ZIPs, and publishes a new versioned release. Get those builds from
+Each successful `main` build tests all three implementations, builds and inspects the ZIPs, and
+publishes a new versioned release marked as the latest release.
+The direct links above and guided setup therefore track the newest successful CI package build. Get builds from
 [Latest release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest).
 Older releases remain available; existing assets are not overwritten. Pull requests build downloadable
 workflow artifacts only and cannot publish releases. GitHub sign-in may be required for workflow
 artifacts, but public release downloads do not require a local build. Packaging does not deploy or
-verify live provider delivery. The current preview is built from the packaging branch, not a merged
-release of the separate provider feature branches.
+verify live provider delivery.
 
 ## Build ZIPs Locally
 
