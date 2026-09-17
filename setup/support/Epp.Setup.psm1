@@ -907,7 +907,7 @@ function Show-EppPlan {
         Write-Host '  - Telesign API key: store the required provider credentials in Key Vault; no federated credential is created.'
     }
 
-    Write-Host "`nDeployment impact" -ForegroundColor Cyan
+    Write-Host "`nDeployment notes" -ForegroundColor Cyan
     Write-Host '  - Deploy the verified package, synchronize Function triggers, and enable HTTPS ingress after Easy Auth is verified.'
     if ($Inputs.BuildStrategy -eq 'remote-build') {
         Write-Host '  - Python: use the Entra-protected SCM endpoint for remote build, then save only the built output in private package storage.'
@@ -916,10 +916,6 @@ function Show-EppPlan {
     Write-Host '  - Rerunning setup can restart the Function App.' -ForegroundColor Yellow
     Write-Host '  - Failed deployments are not automatically rolled back, and resources are not automatically deleted.' -ForegroundColor Yellow
 
-    Write-Host "`nNot included" -ForegroundColor Cyan
-    Write-Host '  - Creating the customer application registration'
-    Write-Host '  - Granting provider API roles or provider consent'
-    Write-Host '  - Activating or changing the External Phone Provider policy'
 }
 
 function Confirm-EppDeployment {
@@ -958,10 +954,14 @@ function Show-EppDeploymentResult {
     }
 
     Write-Host "`nNext steps" -ForegroundColor Cyan
-    Write-Host '1. After validating the endpoint, update the External Phone Provider policy in Microsoft Graph with these exact values:'
-    Write-Host '   endpoint: ' -NoNewline
+    $authenticationMethod = if ($ProviderConfiguration.Channel -eq 'voice') { 'Voice' } else { 'Sms' }
+    $graphPolicyEndpoint = "https://graph.microsoft.com/beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/$authenticationMethod"
+    Write-Host 'After validating the endpoint, update the External Phone Provider policy in Microsoft Graph:'
+    Write-Host '   Microsoft Graph endpoint: ' -NoNewline
+    Write-Host $graphPolicyEndpoint -ForegroundColor Yellow
+    Write-Host '   url:   ' -NoNewline
     Write-Host $EndpointUrl -ForegroundColor Yellow
-    Write-Host '   appId:    ' -NoNewline
+    Write-Host '   appId: ' -NoNewline
     Write-Host $Inputs.ApplicationId -ForegroundColor Yellow
     Write-Host '   The setup script did not change the External Phone Provider policy.'
 }
@@ -1510,7 +1510,6 @@ function Invoke-EppSetup {
         [switch] $ForceAuthentication, [switch] $ApproveDeployment
     )
 
-    Write-Host 'Step 2: deploy the External Phone Provider endpoint. Steps 1 and 3 are manual.' -ForegroundColor Cyan
     Write-Host "`nEnter missing customer settings. Supplied values will not be requested again."
     $inputs = @{}
     foreach ($name in @('TenantId', 'SubscriptionId', 'ApplicationId')) {

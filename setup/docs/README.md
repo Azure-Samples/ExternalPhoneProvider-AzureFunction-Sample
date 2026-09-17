@@ -229,18 +229,16 @@ PowerShell is executed locally.
    provider acceptance and handset delivery through the supported test procedure. Never put
    phone numbers, messages, tokens, private keys, or nonce values in shared logs.
 3. An **Authentication Policy Administrator**, using the approved Microsoft Graph tool and delegated
-   `Policy.ReadWrite.AuthenticationMethod`, must verify that the tenant's currently supported EPP
-   contract is available. For the preview contract formerly handled by Step 3, inspect
-   `https://graph.microsoft.com/beta/$metadata` for `authenticationMethodsPolicy.cyot` and its
-   `endpoint`, `appId`, and `migrated` fields. **If absent or different, stop and obtain the supported
-   onboarding procedure from Microsoft; do not send a guessed PATCH or enable a different method.**
-4. Read `https://graph.microsoft.com/beta/policies/authenticationMethodsPolicy` using that supported
-   contract, save the existing `cyot` value with tenant ID and timestamp, and independently approve
-   the migration choice. `migrated` is a routing decision, not a script default.
-5. Re-read immediately before a manual change, stop if the policy changed, and use `If-Match` when
-   an ETag is available. Patch **only** the `cyot` property with the tested endpoint, the same
-   application client ID, and the deliberately chosen migration Boolean. Read it back and compare
-   before considering activation complete.
+   `Policy.ReadWrite.AuthenticationMethod`, must read the selected channel configuration:
+   `https://graph.microsoft.com/beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/Sms`
+   for SMS or the same path ending in `/Voice` for voice. If the selected configuration or its
+   `url` and `appId` properties are unavailable, stop and obtain the supported onboarding procedure
+   from Microsoft rather than sending a guessed update.
+4. Save the existing channel configuration with the tenant ID and timestamp. Re-read it immediately
+   before a manual change, stop if it changed, and use `If-Match` when an ETag is available.
+5. Update `url` with the highlighted Function endpoint and `appId` with the highlighted endpoint
+   application client ID printed by setup. Preserve all other properties, then read the configuration
+   back and compare those values before considering activation complete.
 
 Policy activation, policy backups, and policy rollback are administrator-owned manual operations.
 No policy API is called by the setup package. For rollback, restore only the reviewed prior EPP
