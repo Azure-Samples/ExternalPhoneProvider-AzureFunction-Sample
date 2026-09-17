@@ -62,7 +62,7 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
 	| `EPP_PROVIDER_APP_ID`, `EPP_PROVIDER_SCOPE` | Soprano API application ID and the exact selected scope, including `/.default`. These are not the calling application's ID. Leave blank for API-key providers. |
 	| `EPP_OUTBOUND_CLIENT_ID` | Existing calling application's Application (client) ID used during setup, not its Object ID or Soprano's API ID. |
 	| `EPP_OUTBOUND_MI_CLIENT_ID` | Setup-created outbound user-assigned identity's Client ID, not its principal/Object ID. |
-	| `EPP_PROVIDER_TIMEOUT_MS`, `EPP_PROVIDER_RETRY_INTERVAL_MS`, `EPP_PROVIDER_TEST_CONFIGURATION` | Selected profile values, as strings. Retry interval and test-configuration metadata do not enable runtime retries or shutter mode. |
+	| `EPP_PROVIDER_TIMEOUT_MS`, `EPP_PROVIDER_RETRY_INTERVAL_MS` | Selected profile values, as strings. The retry interval does not enable runtime retries or shutter mode. |
 	| `KEY_VAULT_URL` | Setup-created or explicitly selected credential vault URL, not a secret value. |
 
 	The outbound IDs are used only for Soprano OAuth; leave them blank for local API-key-only

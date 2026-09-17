@@ -9,6 +9,8 @@
     No Azure resources are changed until you approve the complete plan.
 .PARAMETER SourceRepository
     Public GitHub owner/repository containing the setup files. Use with SourceRef to test a fork.
+.PARAMETER PackageReleaseTag
+    Optional stable epp-packages release tag. By default, setup uses the latest stable CI package release.
 .PARAMETER InstallPrerequisites
     Install missing Microsoft Graph modules and the Azure CLI Bicep component after explicit opt-in.
 .PARAMETER ForceAuthentication
@@ -27,13 +29,13 @@ param(
     [string] $Provider,
     [string] $Channel,
     [string] $EndpointRegion,
-    [string] $ProviderAccountName,
     [string] $ResourcePrefix,
     [string] $Language,
     [string] $OutputDirectory = (Join-Path $PSScriptRoot 'epp-output'),
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
     [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample',
     [string] $SourceRef = 'main',
+    [string] $PackageReleaseTag,
     [switch] $NonInteractive,
     [switch] $InstallPrerequisites,
     [switch] $ForceAuthentication,

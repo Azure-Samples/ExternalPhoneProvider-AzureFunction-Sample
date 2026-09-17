@@ -68,24 +68,13 @@ the intended `-SourceRepository` and `-SourceRef`. The current version asks for 
 and reads its package URL and published checksum automatically. Remove old package URL/hash
 arguments from saved commands.
 
-## Provider settings are dummy values
-
-Telesign remains explicitly labelled with `deployment.testConfiguration: true` because its route
-application IDs are still zero GUIDs. The selected values are written into the actual Function App
-environment with `EPP_PROVIDER_TEST_CONFIGURATION=true`. Soprano now has provider-supplied tenant,
-endpoint, application ID, scope, and timing values and is not labelled as test configuration.
-
-The script can deploy code with these values, but dummy routes cannot deliver real messages.
-Update the provider-owned profile before live use. Telesign requires its API-key secrets in Key
-Vault. Soprano uses the selected OAuth tenant/scope/app ID and outbound managed-identity federation;
-provider consent and API roles remain external onboarding steps.
-
 ## A checksum or package download fails
 
-Each language entry points to a versioned GitHub ZIP and the same release's `SHA256SUMS.txt`.
-The file must contain exactly one valid entry for that asset. Missing, duplicate, malformed, or
-mismatched checksums fail closed; there is no manual-hash or skip-verification workaround.
-Verify the catalog's links and your access to GitHub/release assets.
+Setup resolves the latest stable `epp-packages-*` CI release by default, then downloads the selected
+catalog asset and that release's `SHA256SUMS.txt`. Use `-PackageReleaseTag` when reproducing a
+specific release. The checksum file must contain exactly one valid entry for that asset. Missing,
+duplicate, malformed, or mismatched checksums fail closed; there is no manual-hash or
+skip-verification workaround. Verify the release assets and your access to GitHub.
 
 Supporting tools, Bicep, catalogs, and provider JSON all come from the commit selected at startup.
 For a public-fork branch, pass both source options. A full commit SHA avoids branch-resolution

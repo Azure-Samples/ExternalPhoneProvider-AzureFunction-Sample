@@ -18,47 +18,51 @@ function Read-EppJson {
 }
 
 function ConvertTo-EppGuid {
-    param([string] $Value, [switch] $AllowZero)
+    param([string] $Value)
 
     $guid = [Guid]::Empty
-    if (-not [Guid]::TryParse($Value, [ref] $guid) -or (-not $AllowZero -and $guid -eq [Guid]::Empty)) {
+    if (-not [Guid]::TryParse($Value, [ref] $guid) -or $guid -eq [Guid]::Empty) {
         throw 'Use a nonempty GUID, not an application name or an all-zero placeholder.'
     }
     return $guid.ToString('D')
 }
 
 function Assert-EppHttpsUrl {
-    param([string] $Value, [switch] $AllowTestHost)
+    param([string] $Value)
 
     $uri = $null
     if (-not [Uri]::TryCreate($Value, [UriKind]::Absolute, [ref] $uri) -or
         $uri.Scheme -ne 'https' -or $uri.Port -ne 443 -or $uri.IsLoopback -or
         $uri.HostNameType -ne [UriHostNameType]::Dns -or $uri.UserInfo -or $uri.Query -or $uri.Fragment -or
         $uri.Host -notmatch '\.' -or
-        (-not $AllowTestHost -and $uri.Host -match '(?i)((^|\.)example\.(com|net|org)$|\.(invalid|test|example)$)')) {
+        $uri.Host -match '(?i)((^|\.)example\.(com|net|org)$|\.(invalid|test|example)$)') {
         throw 'Use a public HTTPS hostname on port 443, without credentials, a query string, or placeholders.'
     }
 }
 
 function Select-EppOption {
-    param([object[]] $Entries, [string] $Name, [string] $Value, [switch] $NonInteractive)
+    param(
+        [object[]] $Entries, [string] $Name, [string] $Value,
+        [string] $PromptName, [switch] $NonInteractive
+    )
 
     $ids = @($Entries | ForEach-Object { $_['id'] })
+    $displayName = if ($PromptName) { $PromptName } else { $Name }
     if ($Value) {
         $selected = $Entries | Where-Object { $_['id'] -ieq $Value -or $_['displayName'] -ieq $Value } | Select-Object -First 1
         if (-not $selected) { throw "Unknown $Name '$Value'. Choose: $($ids -join ', ')." }
         return $selected
     }
     if ($NonInteractive) { throw "-$Name is required. Choose: $($ids -join ', ')." }
-    Write-Host "`nChoose your $($Name.ToLowerInvariant()):" -ForegroundColor Cyan
+    Write-Host "`nChoose your $($displayName.ToLowerInvariant()):" -ForegroundColor Cyan
     for ($index = 0; $index -lt $Entries.Count; $index++) { Write-Host "  [$($index + 1)] $($Entries[$index]['displayName'])" }
     while ($true) {
-        $answer = ([string](Read-Host "$Name number or name")).Trim()
+        $answer = ([string](Read-Host "$displayName number or name")).Trim()
         $number = 0
         if ([int]::TryParse($answer, [ref] $number) -and $number -ge 1 -and $number -le $Entries.Count) { return $Entries[$number - 1] }
         $selected = $Entries | Where-Object { $_['id'] -ieq $answer -or $_['displayName'] -ieq $answer } | Select-Object -First 1
         if ($selected) { return $selected }
-        Write-Warning "Choose one of the listed $($Name.ToLowerInvariant()) options."
+        Write-Warning "Choose one of the listed $($displayName.ToLowerInvariant()) options."
     }
 }
 
@@ -76,7 +80,8 @@ function Read-EppInput {
     while ($true) {
         if (-not $supplied) {
             if ($NonInteractive) { throw "-$Name is required in noninteractive mode." }
-            $Value = [string](Read-Host "$Name - $Hint")
+            $prompt = if ($Hint) { "$Name - $Hint" } else { $Name }
+            $Value = [string](Read-Host $prompt)
         }
         $Value = $Value.Trim()
         try {
@@ -157,15 +162,11 @@ function ConvertTo-EppProviderSettings {
     $issues = [Collections.Generic.List[string]]::new()
     $deployment = $Profile['deployment']
     if ($deployment -isnot [Collections.IDictionary]) { throw "Provider '$DisplayName' has no deployment configuration." }
-    $testConfiguration = $deployment['testConfiguration'] -eq $true
-    if ($deployment.Contains('testConfiguration') -and $deployment['testConfiguration'] -isnot [bool]) {
-        $issues.Add('deployment.testConfiguration must be a JSON Boolean')
-    }
     if ($deployment['enabled'] -isnot [bool] -or -not $deployment['enabled']) {
         $issues.Add('the provider owner has not enabled this profile')
     }
     if ($deployment['providerName'] -ine $Id) { $issues.Add('deployment.providerName must match the catalog ID or display name') }
-    try { $providerTenantId = ConvertTo-EppGuid $deployment['tenantId'] -AllowZero:$testConfiguration }
+    try { $providerTenantId = ConvertTo-EppGuid $deployment['tenantId'] }
     catch { $issues.Add('deployment.tenantId must identify the provider tenant') }
 
     $authentication = $deployment['authentication']
@@ -194,7 +195,7 @@ function ConvertTo-EppProviderSettings {
                 $issues.Add("deployment.routes.$channelId.$regionId is missing")
                 continue
             }
-            try { Assert-EppHttpsUrl $route['endpoint'] -AllowTestHost:$testConfiguration }
+            try { Assert-EppHttpsUrl $route['endpoint'] }
             catch { $issues.Add("deployment.routes.$channelId.$regionId.endpoint must be a public HTTPS endpoint") }
             $timeout = $route['timeoutMilliseconds']
             $retry = $route['retryIntervalSeconds']
@@ -205,13 +206,13 @@ function ConvertTo-EppProviderSettings {
                 $issues.Add("deployment.routes.$channelId.$regionId.retryIntervalSeconds must be a nonnegative integer fitting Int32 milliseconds")
             }
             if ($authenticationMode -eq 'oauth') {
-                try { $null = ConvertTo-EppGuid $route['appId'] -AllowZero:$testConfiguration }
+                try { $null = ConvertTo-EppGuid $route['appId'] }
                 catch { $issues.Add("deployment.routes.$channelId.$regionId.appId must identify the provider API application") }
                 $scope = [string]$route['scope']
                 $resource = $scope -replace '/\.default$', ''
                 $resourceUri = $null
                 $resourceGuid = [Guid]::Empty
-                $validResource = ([Guid]::TryParse($resource, [ref] $resourceGuid) -and ($testConfiguration -or $resourceGuid -ne [Guid]::Empty)) -or
+                $validResource = ([Guid]::TryParse($resource, [ref] $resourceGuid) -and $resourceGuid -ne [Guid]::Empty) -or
                     ([Uri]::TryCreate($resource, [UriKind]::Absolute, [ref] $resourceUri) -and
                         $resourceUri.Scheme -in @('api', 'https') -and $resourceUri.Host -and
                         -not $resourceUri.UserInfo -and -not $resourceUri.Query -and -not $resourceUri.Fragment)
@@ -243,7 +244,6 @@ function ConvertTo-EppProviderSettings {
         EPP_PROVIDER_RETRY_INTERVAL_MS = [string]([long]$selectedRoute['retryIntervalSeconds'] * 1000)
         EPP_PROVIDER_AUTH_MODE = $authenticationMode
         EPP_PROVIDER_TENANT_ID = $providerTenantId
-        EPP_PROVIDER_TEST_CONFIGURATION = $testConfiguration.ToString().ToLowerInvariant()
     }
     if ($authenticationMode -eq 'oauth') {
         $settings.EPP_PROVIDER_SCOPE = [string]$selectedRoute['scope']
@@ -253,7 +253,6 @@ function ConvertTo-EppProviderSettings {
         Id = $Id
         DisplayName = $DisplayName
         Manifest = $Profile
-        IsTestConfiguration = $testConfiguration
         Channel = [string]$channelEntry['id']
         EndpointRegion = [string]$regionEntry['id']
         AuthenticationMode = $authenticationMode
@@ -825,6 +824,24 @@ function Connect-EppContext {
     }
 }
 
+function Get-EppResourceRows {
+    param([Collections.IDictionary] $Names)
+
+    return @(
+        [pscustomobject]@{ Resource = 'Resource group'; Name = $Names.resourceGroup; Description = 'Contains all Azure resources created by this deployment.' }
+        [pscustomobject]@{ Resource = 'Function App'; Name = $Names.functionApp; Description = 'Hosts the External Phone Provider endpoint.' }
+        [pscustomobject]@{ Resource = 'Hosting plan'; Name = $Names.hostingPlan; Description = 'Linux Premium EP1 compute for the Function App.' }
+        [pscustomobject]@{ Resource = 'Storage account'; Name = $Names.storageAccount; Description = 'Provides Function host storage and private package storage.' }
+        [pscustomobject]@{ Resource = 'Blob container'; Name = 'packages'; Description = 'Stores the verified deployment package privately.' }
+        [pscustomobject]@{ Resource = 'Key Vault'; Name = $Names.keyVault; Description = 'Stores the encryption private key and provider credentials.' }
+        [pscustomobject]@{ Resource = 'Function App identity'; Name = 'System-assigned'; Description = 'Accesses package storage, host storage, Key Vault, and monitoring.' }
+        [pscustomobject]@{ Resource = 'Outbound identity'; Name = $Names.outboundIdentity; Description = 'Supports outbound provider authentication when required.' }
+        [pscustomobject]@{ Resource = 'Log Analytics'; Name = $Names.logAnalytics; Description = 'Stores platform and application diagnostic logs.' }
+        [pscustomobject]@{ Resource = 'Application Insights'; Name = $Names.applicationInsights; Description = 'Collects Function App telemetry.' }
+        [pscustomobject]@{ Resource = 'Diagnostic settings'; Name = 'Configured'; Description = 'Routes supported resource logs and metrics to Log Analytics.' }
+    )
+}
+
 function Show-EppPlan {
     param([hashtable] $Inputs, [Collections.IDictionary] $Names, $ProviderConfiguration, $Context, [string] $SourceBaseUri)
 
@@ -833,10 +850,11 @@ function Show-EppPlan {
     Write-Host "Subscription: $($Inputs.SubscriptionId)"
     Write-Host "Application:  $($Inputs.ApplicationId)"
     Write-Host "Location:     $($Inputs.Location)"
-    Write-Host "Language:     $($Inputs.Language) ($($Inputs.BuildStrategy))"
+    Write-Host "Platform:     $($Inputs.Platform)"
     Write-Host "Provider:     $($ProviderConfiguration.DisplayName)"
     Write-Host "Channel:      $($ProviderConfiguration.Channel)"
-    Write-Host "Endpoint:     $($ProviderConfiguration.EndpointRegion)"
+    $tenantScope = if ($ProviderConfiguration.EndpointRegion -eq 'eu') { 'EU' } else { 'Global' }
+    Write-Host "Tenant scope: $tenantScope"
     Write-Host "Provider auth: $($ProviderConfiguration.AuthenticationMode)"
     Write-Host "Provider tenant: $($ProviderConfiguration.Settings.EPP_PROVIDER_TENANT_ID)"
     Write-Host "API endpoint: $($ProviderConfiguration.Settings.EPP_PROVIDER_ENDPOINT)"
@@ -852,44 +870,52 @@ function Show-EppPlan {
     Write-Host "Package:      $($Inputs.PackageUrl)"
     Write-Host "Source hash:  $($Inputs.SourcePackageSha256) (verified automatically)"
     Write-Host "Source:       $SourceBaseUri"
-    $Names.GetEnumerator() | ForEach-Object { [pscustomobject]@{ Resource = $_.Key; Name = $_.Value } } |
-        Format-Table -AutoSize | Out-String -Width 200 | Write-Host
-    Write-Host 'Required Azure resource providers (subscription-wide; register only those missing after approval):'
+
+    Write-Host "`nAzure resources and configuration" -ForegroundColor Cyan
+    Get-EppResourceRows -Names $Names |
+        Format-Table Resource, Name, Description -AutoSize | Out-String -Width 240 | Write-Host
+    Write-Host '  - Required Azure resource providers are checked before deployment; existing registrations are reused.'
     $Context.ResourceProviders | Select-Object Namespace, RegistrationState | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
-    Write-Host 'Registration and regional readiness are checked before certificate/resource creation. Existing or in-progress registrations are reused.'
-    Write-Host 'Includes the private packages blob container, Function system identity, Easy Auth, and diagnostic settings.'
-    Write-Host 'System identity: Storage Blob Data Owner, Queue/Table Data Contributor, Key Vault Secrets User, Monitoring Metrics Publisher.'
-    Write-Host "Azure operator $($Context.OperatorId) (ARM token oid): Key Vault Secrets Officer and Storage Blob Data Contributor."
-    Write-Host "Graph operator $($Context.GraphAccount) [$($Context.GraphOperatorId)]: configure the dedicated endpoint app and tenant service principals."
+
+    Write-Host "`nAccess and permissions" -ForegroundColor Cyan
+    Write-Host '  - Function App managed identity:'
+    Write-Host '      Storage Blob Data Owner - access the private deployment package.'
+    Write-Host '      Storage Queue Data Contributor and Storage Table Data Contributor - use Azure Functions host storage.'
+    Write-Host '      Key Vault Secrets User - read provider credentials and the encryption private key.'
+    Write-Host '      Monitoring Metrics Publisher - publish platform metrics.'
     if ($Context.Application.SignInAudience -ne 'AzureADMultipleOrgs') {
-        Write-Host 'Change the dedicated endpoint application from single-tenant to organizational multi-tenant.'
-    }
-    if (-not $Context.ProviderTenantRestricted) {
-        Write-Host "Restrict the multi-tenant app to its home tenant plus provider tenant $($Inputs.ProviderTenantId) using the Entra allowed-tenants preview."
+        Write-Host '  - Change the endpoint application from single-tenant to organizational multi-tenant.'
     }
     if (-not $Context.InvokeRoleExists) {
-        Write-Host "Add application permission '$script:EppInvokeAppRoleValue' to the endpoint application."
+        Write-Host "  - Add the '$script:EppInvokeAppRoleValue' application permission to the endpoint application."
     }
-    Write-Host 'Create/reuse the endpoint service principal and require app-role assignment.'
-    Write-Host "Create/reuse Microsoft phone-provider service principal $script:MicrosoftPhoneProviderAppId."
-    Write-Host "Assign '$script:EppInvokeAppRoleValue' so the Microsoft phone-provider app can request an app-only endpoint token."
-    Write-Host 'Grant the Microsoft phone-provider service principal Microsoft Graph Application.Read.All.'
-    Write-Host 'WARNING: Application.Read.All permits app-only reading of every application and service principal in this tenant.' -ForegroundColor Yellow
+    Write-Host '  - Create or reuse the Microsoft phone-provider enterprise application:'
+    Write-Host "      $script:EppInvokeAppRoleValue - allows Microsoft to obtain an access token and call the Azure Function endpoint."
+    Write-Host '      Microsoft Graph Application.Read.All - allows Microsoft to read the public encryption key from the endpoint application and encrypt request payloads.'
+    Write-Host '      WARNING: Application.Read.All permits app-only reading of every application and enterprise application in this tenant.' -ForegroundColor Yellow
+
+    Write-Host "`nEndpoint security" -ForegroundColor Cyan
+    if (-not $Context.ProviderTenantRestricted) {
+        Write-Host '  - Restrict the multi-tenant endpoint application to the customer tenant and selected provider tenant.'
+    }
+    Write-Host '  - Configure Easy Auth to require HTTPS authentication and allow only the Microsoft phone-provider enterprise application.'
+    Write-Host '  - Create an encryption certificate and store its private key in the new Key Vault.'
     if ($Inputs.ProviderAuthentication -eq 'oauth') {
-        Write-Host 'Soprano OAuth: add an outbound managed-identity federated credential to the EXISTING application.'
+        Write-Host '  - Soprano OAuth: add a federated credential so the outbound managed identity can authenticate without a client secret.'
     }
-    else { Write-Host 'Telesign API key: no outbound federated application credential is created.' }
-    Write-Host "Create/reuse an RSA certificate in CurrentUser\My; store its private key as phone-provider-decryption-key in the new vault."
-    Write-Host 'Deploy the verified package, synchronize triggers, and enable HTTPS ingress guarded by Easy Auth.'
-    Write-Host 'Premium EP1, storage, and telemetry incur charges. Reruns can restart the Function. No automatic rollback or deletion.' -ForegroundColor Yellow
-    Write-Host 'This does NOT register an application, grant provider API roles, or activate/change EPP policy.' -ForegroundColor Yellow
+    else {
+        Write-Host '  - Telesign API key: store the required provider credentials in Key Vault; no federated credential is created.'
+    }
+
+    Write-Host "`nDeployment notes" -ForegroundColor Cyan
+    Write-Host '  - Deploy the verified package, synchronize Function triggers, and enable HTTPS ingress after Easy Auth is verified.'
     if ($Inputs.BuildStrategy -eq 'remote-build') {
-        Write-Host 'Python: enable the Entra-protected SCM endpoint, run Azure remote build, then save only the built output to private package storage.'
+        Write-Host '  - Python: use the Entra-protected SCM endpoint for remote build, then save only the built output in private package storage.'
     }
-    if ($ProviderConfiguration.IsTestConfiguration) {
-        Write-Host 'TEST CONFIGURATION: dummy provider values WILL be written to the actual Function App environment settings.' -ForegroundColor Yellow
-        Write-Host 'Zero GUIDs and example.invalid URLs are placeholders, not working provider credentials or endpoints.' -ForegroundColor Yellow
-    }
+    Write-Host '  - Premium EP1, storage, and telemetry incur Azure charges.' -ForegroundColor Yellow
+    Write-Host '  - Rerunning setup can restart the Function App.' -ForegroundColor Yellow
+    Write-Host '  - Failed deployments are not automatically rolled back, and resources are not automatically deleted.' -ForegroundColor Yellow
+
 }
 
 function Confirm-EppDeployment {
@@ -903,6 +929,41 @@ function Confirm-EppDeployment {
         if (-not $answer -or $answer -ieq 'No') { return $false }
         Write-Warning 'Type Yes to deploy, or No/Enter to cancel.'
     }
+}
+
+function Show-EppDeploymentResult {
+    param(
+        [hashtable] $Inputs, [Collections.IDictionary] $Names, $ProviderConfiguration,
+        [string] $EndpointUrl, [string] $ResultPath
+    )
+
+    Write-Host "`nDeployment completed" -ForegroundColor Green
+    Write-Host "`nAzure resources created or updated" -ForegroundColor Cyan
+    Get-EppResourceRows -Names $Names |
+        Format-Table Resource, Name -AutoSize | Out-String -Width 160 | Write-Host
+    Write-Host "Function endpoint: $EndpointUrl" -ForegroundColor Green
+    Write-Host "Deployment details: $ResultPath"
+
+    if ($ProviderConfiguration.Id -eq 'telesign') {
+        $authentication = $ProviderConfiguration.Manifest.deployment.authentication
+        Write-Host "`nPending operation" -ForegroundColor Yellow
+        Write-Host "Add the Telesign credentials to Key Vault '$($Names.keyVault)':"
+        Write-Host "   - $($authentication.identityKeyVaultSecretName) - your Telesign customer ID."
+        Write-Host "   - $($authentication.keyVaultSecretName) - your Telesign API key."
+        Write-Host '   Store the values as Key Vault secrets; do not enter them into this setup script or shared logs.'
+    }
+
+    Write-Host "`nNext steps" -ForegroundColor Cyan
+    $authenticationMethod = if ($ProviderConfiguration.Channel -eq 'voice') { 'Voice' } else { 'Sms' }
+    $graphPolicyEndpoint = "https://graph.microsoft.com/beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/$authenticationMethod"
+    Write-Host 'After validating the endpoint, update the External Phone Provider policy in Microsoft Graph:'
+    Write-Host '   Microsoft Graph endpoint: ' -NoNewline
+    Write-Host $graphPolicyEndpoint -ForegroundColor Yellow
+    Write-Host '   url:   ' -NoNewline
+    Write-Host $EndpointUrl -ForegroundColor Yellow
+    Write-Host '   appId: ' -NoNewline
+    Write-Host $Inputs.ApplicationId -ForegroundColor Yellow
+    Write-Host '   The setup script did not change the External Phone Provider policy.'
 }
 
 function Get-EppServicePrincipal {
@@ -1328,7 +1389,6 @@ function Invoke-EppDeployment {
     if ($existingKeys.Count -gt 1) { throw 'Multiple encryption credentials match this certificate. Resolve the duplicate credentials manually.' }
     $keyId = if ($existingKeys.Count) { [string]$existingKeys[0].KeyId } else { [Guid]::NewGuid().ToString() }
     $settings = @{} + $ProviderConfiguration.Settings
-    $settings.EPP_PROVIDER_ACCOUNT_NAME = $Inputs.ProviderAccountName
     $settings.EPP_ENCRYPTION_KEY_ID = $keyId
     $settings.EPP_PROVIDER_AUTH_MODE = $Inputs.ProviderAuthentication
     $parameters = @{
@@ -1416,7 +1476,7 @@ function Invoke-EppDeployment {
         endpointRegion = $ProviderConfiguration.EndpointRegion; providerAuthentication = $Inputs.ProviderAuthentication
         providerTenantId = $Inputs.ProviderTenantId
         resourcePrefix = $Inputs.ResourcePrefix; resources = $Names
-        language = $Inputs.Language; testConfiguration = $ProviderConfiguration.IsTestConfiguration
+        language = $Inputs.Language
         endpointUrl = $outputs.endpointUrl.value; identifierUri = $outputs.identifierUri.value
         encryptionKeyId = $keyId; certificateThumbprint = $certificate.Thumbprint
         endpointServicePrincipalId = $graphAccess.EndpointPrincipalId
@@ -1429,12 +1489,9 @@ function Invoke-EppDeployment {
     }
     $resultPath = Join-Path $OutputDirectory "deployment-$([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))-$([Guid]::NewGuid().ToString('N').Substring(0, 8)).json"
     $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resultPath -Encoding utf8NoBOM
-    Write-Host "Endpoint deployed: $($outputs.endpointUrl.value)" -ForegroundColor Green
-    Write-Host "Saved identifiers: $resultPath"
-    Write-Host 'EPP policy was not changed. Validate the endpoint, then complete manual Step 3.' -ForegroundColor Yellow
-    if ($ProviderConfiguration.IsTestConfiguration) {
-        Write-Warning 'The code and real app settings were deployed with DUMMY provider values. Replace them and provision the adapter-named Key Vault credentials before live SMS/voice delivery.'
-    }
+
+    Show-EppDeploymentResult -Inputs $Inputs -Names $Names -ProviderConfiguration $ProviderConfiguration `
+        -EndpointUrl $outputs.endpointUrl.value -ResultPath $resultPath
     return [pscustomobject]$result
 }
 
@@ -1443,34 +1500,45 @@ function Invoke-EppSetup {
     param(
         [string] $TenantId, [string] $SubscriptionId, [string] $ApplicationId, [string] $Location,
         [string] $Provider, [string] $Channel, [string] $EndpointRegion,
-        [string] $ProviderAccountName, [string] $ResourcePrefix,
+        [string] $ResourcePrefix,
         [string] $Language,
         [string] $OutputDirectory, [string] $AssetDirectory, [string] $SourceBaseUri,
         [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
         [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample',
+        [string] $PackageReleaseTag,
         [switch] $NonInteractive, [switch] $InstallPrerequisites,
         [switch] $ForceAuthentication, [switch] $ApproveDeployment
     )
 
-    Write-Host 'Step 2: deploy the External Phone Provider endpoint. Steps 1 and 3 are manual.' -ForegroundColor Cyan
     Write-Host "`nEnter missing customer settings. Supplied values will not be requested again."
     $inputs = @{}
     foreach ($name in @('TenantId', 'SubscriptionId', 'ApplicationId')) {
         $inputs[$name] = Read-EppInput -Name $name -Value (Get-Variable -Name $name -ValueOnly) -Kind Guid `
-            -Hint 'Use the customer tenant/subscription or existing application CLIENT ID' -NonInteractive:$NonInteractive
+            -NonInteractive:$NonInteractive
     }
     $inputs.Location = Read-EppInput Location $Location -Kind Location -Hint 'Azure region, for example westus2' -NonInteractive:$NonInteractive
-    $inputs.ProviderAccountName = Read-EppInput ProviderAccountName $ProviderAccountName -Hint 'Your provider account/sender name, not a credential' -NonInteractive:$NonInteractive
-    $selection = Get-EppLanguage -AssetDirectory $AssetDirectory -Language $Language -SourceRepository $SourceRepository -NonInteractive:$NonInteractive
-    $inputs.Language = $selection.Id
-    $inputs.PackageUrl = $selection.Url
-    $inputs.BuildStrategy = $selection.BuildStrategy
+    $channelSelection = Select-EppOption -Entries @(
+        @{ id = 'sms'; displayName = 'SMS' }
+        @{ id = 'voice'; displayName = 'Voice' }
+    ) -Name Channel -Value $Channel -NonInteractive:$NonInteractive
+    $tenantScopeSelection = Select-EppOption -Entries @(
+        @{ id = 'global'; displayName = 'Global' }
+        @{ id = 'eu'; displayName = 'EU' }
+    ) -Name EndpointRegion -PromptName 'Tenant scope' -Value $EndpointRegion -NonInteractive:$NonInteractive
 
     $providerConfiguration = Get-EppProvider -AssetDirectory $AssetDirectory -SourceBaseUri $SourceBaseUri -Provider $Provider `
-        -Channel $Channel -EndpointRegion $EndpointRegion -NonInteractive:$NonInteractive -SourceRepository $SourceRepository
+        -Channel $channelSelection['id'] -EndpointRegion $tenantScopeSelection['id'] `
+        -NonInteractive:$NonInteractive -SourceRepository $SourceRepository
     $inputs.ProviderAuthentication = $providerConfiguration.AuthenticationMode
     $inputs.ProviderTenantId = $providerConfiguration.Settings.EPP_PROVIDER_TENANT_ID
-    $inputs.ResourcePrefix = Read-EppInput ResourcePrefix $ResourcePrefix -Kind Prefix -Hint '2-8 lowercase letters/digits; resource names add epp after this prefix' -NonInteractive:$NonInteractive
+    $selection = Get-EppLanguage -AssetDirectory $AssetDirectory -Language $Language -SourceRepository $SourceRepository `
+        -PackageReleaseTag $PackageReleaseTag -NonInteractive:$NonInteractive
+    $inputs.Language = $selection.Id
+    $inputs.Platform = $selection.DisplayName
+    $inputs.PackageUrl = $selection.Url
+    $inputs.BuildStrategy = $selection.BuildStrategy
+    $inputs.ResourcePrefix = Read-EppInput ResourcePrefix $ResourcePrefix -Kind Prefix `
+        -Hint 'All resources created by this script will start with this prefix' -NonInteractive:$NonInteractive
     $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix $inputs.ResourcePrefix
 
     Write-Host "`nChecking prerequisites and the selected Azure context (no resource changes)..." -ForegroundColor Cyan
@@ -1487,7 +1555,7 @@ function Invoke-EppSetup {
         return
     }
     try {
-        Invoke-EppDeployment -Inputs $inputs -Names $names -ProviderConfiguration $providerConfiguration -Context $context `
+        $null = Invoke-EppDeployment -Inputs $inputs -Names $names -ProviderConfiguration $providerConfiguration -Context $context `
             -AssetDirectory $AssetDirectory -Package $package -OutputDirectory $OutputDirectory -SourceBaseUri $SourceBaseUri
     }
     catch {
