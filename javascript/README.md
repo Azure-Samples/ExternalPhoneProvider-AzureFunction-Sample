@@ -70,7 +70,9 @@ extracts the first six-digit passcode from the rendered message and sends fixed 
 gender `1` and loop `2`. It uses a nonblank SAS request locale as the language, falling back to
 `en-US` when the locale is absent or invalid. These values require no additional environment
 settings. Soprano SMS continues to forward the rendered message unchanged. The Telesign adapter
-uses the configured complete endpoint and API-key credentials from Key Vault.
+uses the configured complete endpoint and API-key credentials from Key Vault. Telesign SMS forwards
+the rendered message unchanged; Telesign voice comma-separates each six-digit numeric run that is
+not part of a longer number and repeats the complete paced message twice.
 
 For Azure, set these application variables on the Function App/slot's **Environment variables → App
 settings** page and use a Key Vault reference for the private PEM. The provider-secret resolver uses

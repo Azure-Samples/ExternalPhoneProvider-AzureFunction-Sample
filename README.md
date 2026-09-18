@@ -206,9 +206,11 @@ The adapter builds the following JSON from the decrypted delivery context and en
 }
 ```
 
-`phoneNumber` must match `^\+[1-9][0-9]{1,14}$`; the leading `+` is preserved. The complete
-`message` is passed unchanged as `message.text`, including whitespace and OTP digit spacing.
-Telesign performs text-to-speech for Voice; no separate speech object or OTP extraction is needed.
+`phoneNumber` must match `^\+[1-9][0-9]{1,14}$`; the leading `+` is preserved. SMS passes the complete
+`message` unchanged as `message.text`, including whitespace. For Voice, each six-digit numeric run
+that is not part of a longer number is rendered with comma-separated digits, and the complete paced
+message is sent twice with one separating space. Telesign performs text-to-speech for Voice; no
+separate speech object is needed.
 A nonblank string `locale` becomes `message.language`; otherwise language is omitted. The envelope
 channel selects the single `sms` or `voice` entry. `correlation_id` uses a nonempty string request
 correlation ID, falling back to the message ID for absent, empty, or non-string values. Reserved

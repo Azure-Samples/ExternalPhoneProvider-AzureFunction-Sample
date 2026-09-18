@@ -6,6 +6,13 @@ namespace Epp.Otp.Providers;
 
 public sealed class TelesignProvider : IProviderAdapter
 {
+    private const string VoiceDigitSeparator = ", ";
+    private const int VoiceRepeatCount = 2;
+    private const string VoiceRepeatSeparator = " ";
+    private static readonly Regex VoicePasscodePattern = new(
+        @"(?<![0-9])[0-9]{6}(?![0-9])",
+        RegexOptions.CultureInvariant);
+
     public ProviderManifest Manifest { get; } = new(
         Id: "telesign",
         Auth: new AuthConfig("apiKey", KeyVaultSecretName: "telesign-api-key", IdentityKeyVaultSecretName: "telesign-customer-id"),
@@ -30,7 +37,8 @@ public sealed class TelesignProvider : IProviderAdapter
         if (dispatch.Destination is null || !Regex.IsMatch(dispatch.Destination, @"\A\+[1-9][0-9]{1,14}\z"))
             throw new InvalidOperationException("invalid recipient");
         var authorization = "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"{credential.Identity}:{credential.Secret}"));
-        var message = new Dictionary<string, string?> { ["text"] = dispatch.Message };
+        var messageText = channel == "voice" ? BuildVoiceMessage(dispatch.Message!) : dispatch.Message;
+        var message = new Dictionary<string, string?> { ["text"] = messageText };
         if (!string.IsNullOrWhiteSpace(dispatch.Locale)) message["language"] = dispatch.Locale;
         var body = new
         {
@@ -46,6 +54,14 @@ public sealed class TelesignProvider : IProviderAdapter
             ["Accept"] = "application/json",
         };
         return new ProviderHttpRequest(endpoint, "POST", headers, JsonSerializer.Serialize(body));
+    }
+
+    private static string BuildVoiceMessage(string message)
+    {
+        var pacedMessage = VoicePasscodePattern.Replace(
+            message,
+            match => string.Join(VoiceDigitSeparator, match.Value.ToCharArray()));
+        return string.Join(VoiceRepeatSeparator, Enumerable.Repeat(pacedMessage, VoiceRepeatCount));
     }
 
     public ParsedResponse ParseResponse(int httpStatus, bool ok, JsonElement json)

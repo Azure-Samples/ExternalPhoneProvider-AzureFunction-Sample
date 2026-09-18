@@ -85,6 +85,9 @@ uses a nonblank SAS request locale as the language, falling back to `en-US`, and
 `1` and loop `2`. These values require no additional environment settings. Soprano SMS continues to
 forward the rendered message unchanged.
 
+Telesign SMS also forwards the rendered message unchanged. Telesign voice comma-separates each
+six-digit numeric run that is not part of a longer number and repeats the complete paced message twice.
+
 ## Source
 
 | Source | Purpose |

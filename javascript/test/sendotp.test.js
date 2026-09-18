@@ -237,8 +237,11 @@ test('Telesign EPP sends decrypted SMS and voice content with Basic auth and pri
         assert.equal(result.status, 200);
         const [url, init] = fetchMock.mock.calls.at(-1).arguments;
         assert.equal(url, 'https://verify.telesign.com/epp/send');
+        const expectedText = name === 'voice'
+            ? '  PRIVATE-MESSAGE 9, 1, 8, 2, 7, 3.\n   PRIVATE-MESSAGE 9, 1, 8, 2, 7, 3.\n'
+            : delivery.message;
         assert.deepEqual(JSON.parse(init.body), { recipient: { phone_number: delivery.phoneNumber },
-            message: { text: delivery.message, language: delivery.locale }, channels: [{ channel: name }], correlation_id: 'correlation-id' });
+            message: { text: expectedText, language: delivery.locale }, channels: [{ channel: name }], correlation_id: 'correlation-id' });
         assert.deepEqual(init.headers, { Authorization: `Basic ${Buffer.from('PRIVATE-API-KEY:PRIVATE-API-KEY').toString('base64')}`,
             'Content-Type': 'application/json', Accept: 'application/json' });
         assert.equal(init.redirect, 'manual');

@@ -4,6 +4,19 @@ import re
 
 from ..models import ParsedResponse
 
+VOICE_PASSCODE_PATTERN = re.compile(r"(?<![0-9])[0-9]{6}(?![0-9])")
+VOICE_DIGIT_SEPARATOR = ", "
+VOICE_REPEAT_COUNT = 2
+VOICE_REPEAT_SEPARATOR = " "
+
+
+def _build_voice_message(message):
+    paced_message = VOICE_PASSCODE_PATTERN.sub(
+        lambda match: VOICE_DIGIT_SEPARATOR.join(match.group(0)),
+        message,
+    )
+    return VOICE_REPEAT_SEPARATOR.join([paced_message] * VOICE_REPEAT_COUNT)
+
 
 class TelesignProvider:
     manifest = {
@@ -31,7 +44,7 @@ class TelesignProvider:
         correlation_id = dispatch.correlation_id
         if not isinstance(correlation_id, str) or not correlation_id:
             correlation_id = dispatch.message_id
-        message = {"text": dispatch.message}
+        message = {"text": _build_voice_message(dispatch.message) if channel == "voice" else dispatch.message}
         if isinstance(dispatch.locale, str) and dispatch.locale.strip():
             message["language"] = dispatch.locale
         body = {

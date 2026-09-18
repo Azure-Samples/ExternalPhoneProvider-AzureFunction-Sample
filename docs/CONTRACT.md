@@ -76,7 +76,7 @@ runs once per language. Tag tampering and original-header-byte tests remain.
 |-------|----------|-------|
 | `nonce` | yes | value the endpoint MUST echo to prove decryption |
 | `phoneNumber` | yes | caller supplies an E.164 string; full E.164 validation is an implementation gap |
-| `message` | yes | fully rendered, localized text containing the passcode; text-message adapters forward it unchanged, while Soprano voice extracts the first six consecutive digits |
+| `message` | yes | fully rendered, localized text containing the passcode; text-message adapters forward it unchanged, Soprano voice extracts the first six consecutive digits, and Telesign voice paces standalone six-digit numeric runs and repeats the full message twice |
 | `extension` | no | office-voice contract field; not currently forwarded by the shared dispatch model |
 | `locale` | no | voice selection input where supported by the selected adapter |
 | `riskContext` | no | contextual request data; no risk-policy evaluation is implemented here |
