@@ -152,9 +152,12 @@ test('Telesign EPP uses the selected endpoint with the same Basic-auth JSON cont
         assert.equal(request.method, 'POST');
         assert.deepEqual(request.headers, { Authorization: `Basic ${Buffer.from('id:key').toString('base64')}`,
             'Content-Type': 'application/json', Accept: 'application/json' });
+        const expectedText = channel === 'voice'
+            ? '  Your code is 9, 1, 8, 2, 7, 3.\n   Your code is 9, 1, 8, 2, 7, 3.\n'
+            : dispatch.message;
         assert.deepEqual(JSON.parse(request.body), {
             recipient: { phone_number: dispatch.destination },
-            message: locale === 'en' ? { text: dispatch.message, language: 'en' } : { text: dispatch.message },
+            message: locale === 'en' ? { text: expectedText, language: 'en' } : { text: expectedText },
             channels: [{ channel }], correlation_id: dispatch.correlationId,
         });
     }
@@ -162,6 +165,18 @@ test('Telesign EPP uses the selected endpoint with the same Basic-auth JSON cont
         json: { reference_id: 'message-id', status: { code: 290 } } });
     assert.deepEqual(response, new ParsedResponse({ success: true, providerHttpStatus: 200,
         providerMessageId: 'message-id', providerStatusCode: '290' }));
+});
+
+test('Telesign Voice paces only six-digit numeric runs and repeats the full message', () => {
+    const message = 'Code 001234; ref 1234567; alternate 654321.';
+    const request = getProvider('telesign').adapter.buildRequest({
+        ...input,
+        channel: 'voice',
+        dispatch: { ...dispatch, message },
+    });
+    assert.equal(JSON.parse(request.body).message.text,
+        'Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1. '
+        + 'Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1.');
 });
 
 test('Telesign EPP rejects invalid recipients and fails closed on unknown status', () => {

@@ -133,11 +133,32 @@ public class ContractTests
         Assert.Equal("Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("test-id:test-key")), request.Headers["Authorization"]);
         Assert.Equal("application/json", request.Headers["Content-Type"]);
         Assert.Equal("application/json", request.Headers["Accept"]);
-        var message = new Dictionary<string, string?> { ["text"] = dispatch.Message };
+        var expectedText = channel == "voice"
+            ? "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.   "
+              + "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.  "
+            : dispatch.Message;
+        var message = new Dictionary<string, string?> { ["text"] = expectedText };
         if (locale == "en") message["language"] = locale;
         var expected = new { recipient = new { phone_number = dispatch.Destination }, message,
             channels = new[] { new { channel } }, correlation_id = dispatch.CorrelationId };
         Assert.Equal(JsonSerializer.Serialize(expected), request.Body);
+    }
+
+    [Fact]
+    public void TelesignVoicePacesOnlySixDigitNumericRunsAndRepeatsMessage()
+    {
+        var dispatch = Request("voice") with { Message = "Code 001234; ref 1234567; alternate 654321." };
+        var request = new TelesignProvider().BuildRequest(
+            "voice",
+            "https://verify.telesign.com/epp/voice",
+            dispatch,
+            new ProviderCredential("apiKey", "test-key", "test-id"),
+            new TestEnv());
+        using var body = JsonDocument.Parse(request.Body);
+        Assert.Equal(
+            "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1. "
+            + "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1.",
+            body.RootElement.GetProperty("message").GetProperty("text").GetString());
     }
 
     [Fact]

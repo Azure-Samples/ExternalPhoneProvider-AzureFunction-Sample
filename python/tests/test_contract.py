@@ -107,11 +107,29 @@ def test_telesign_epp_request_contract(channel, locale):
     assert request["method"] == "POST" and request["url"] == f"https://verify.telesign.com/epp/{channel}"
     assert request["headers"] == {"Authorization": "Basic " + base64.b64encode(b"customer:key").decode(),
                                   "Content-Type": "application/json", "Accept": "application/json"}
+    expected_text = (
+        "  Use 9, 1, 8, 2, 7, 3; then 1234.\nDo not rewrite + or café.   "
+        "  Use 9, 1, 8, 2, 7, 3; then 1234.\nDo not rewrite + or café.  "
+        if channel == "voice" else MESSAGE
+    )
     assert json.loads(request["body"]) == {
         "recipient": {"phone_number": "+15551234567"},
-        "message": {"text": MESSAGE, "language": "en"} if locale == "en" else {"text": MESSAGE},
+        "message": {"text": expected_text, "language": "en"} if locale == "en" else {"text": expected_text},
         "channels": [{"channel": channel}], "correlation_id": "correlation-id",
     }
+
+
+def test_telesign_voice_paces_only_six_digit_numeric_runs_and_repeats_message():
+    dispatch = _dispatch("voice")
+    dispatch.message = "Code 001234; ref 1234567; alternate 654321."
+    request = TelesignProvider().build_request(
+        "voice", "https://verify.telesign.com/epp/voice", dispatch,
+        {"mode": "apiKey", "secret": "key", "identity": "customer"}, {},
+    )
+    assert json.loads(request["body"])["message"]["text"] == (
+        "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1. "
+        "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1."
+    )
 
 
 def test_telesign_epp_validates_recipients_and_status():

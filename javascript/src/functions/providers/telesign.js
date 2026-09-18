@@ -6,6 +6,11 @@
 
 const { ParsedResponse } = require('../models');
 
+const VOICE_PASSCODE_PATTERN = /(?<![0-9])[0-9]{6}(?![0-9])/g;
+const VOICE_DIGIT_SEPARATOR = ', ';
+const VOICE_REPEAT_COUNT = 2;
+const VOICE_REPEAT_SEPARATOR = ' ';
+
 const manifest = {
     id: 'telesign',
     auth: {
@@ -29,6 +34,14 @@ const manifest = {
     },
 };
 
+function buildVoiceMessage(message) {
+    const pacedMessage = message.replace(
+        VOICE_PASSCODE_PATTERN,
+        (passcode) => [...passcode].join(VOICE_DIGIT_SEPARATOR),
+    );
+    return Array(VOICE_REPEAT_COUNT).fill(pacedMessage).join(VOICE_REPEAT_SEPARATOR);
+}
+
 function buildRequest({ channel, endpoint, dispatch, credential }) {
     if (!['sms', 'voice'].includes(channel)) throw new Error('unsupported channel');
     if (typeof dispatch.destination !== 'string' || !/^\+[1-9][0-9]{1,14}$/.test(dispatch.destination)
@@ -38,7 +51,7 @@ function buildRequest({ channel, endpoint, dispatch, credential }) {
     const authorization = `Basic ${Buffer.from(`${credential.identity}:${credential.secret}`).toString('base64')}`;
     const correlationId = typeof dispatch.correlationId === 'string' && dispatch.correlationId
         ? dispatch.correlationId : dispatch.messageId;
-    const message = { text: dispatch.message };
+    const message = { text: channel === 'voice' ? buildVoiceMessage(dispatch.message) : dispatch.message };
     if (typeof dispatch.locale === 'string' && dispatch.locale.trim()) message.language = dispatch.locale;
     return {
         url: endpoint,
