@@ -105,6 +105,7 @@ retries. The shared contract defines validation, HTTP outcomes and privacy-safe 
 | [src/functions/config.js](src/functions/config.js) | Shared deployment settings |
 | [src/functions/models.js](src/functions/models.js) | Delivery context, normalized `ParsedResponse`, and documented request objects |
 | [src/functions/dispatch.js](src/functions/dispatch.js) | Envelope/JWE handling, registry and dispatch |
+| [src/functions/requestLog.js](src/functions/requestLog.js) | Request-scoped [service events and summaries](../docs/CONTRACT.md#application-logs) with explicit ID sources |
 | [src/functions/providers/](src/functions/providers/) | Adapter manifests and API-specific implementations |
 | [test/](test/) | Representative offline checks |
 

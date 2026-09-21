@@ -10,7 +10,7 @@ var builder = FunctionsApplication.CreateBuilder(args);
 
 builder.ConfigureFunctionsWebApplication();
 
-// The handler summary is sufficient; provider URLs must not appear in factory logs.
+// Application events use selected metadata; provider URLs must not appear in factory logs.
 builder.Logging.AddFilter("System.Net.Http.HttpClient." + DispatchEngine.ProviderHttpClientName, LogLevel.None);
 builder.Services.AddHttpClient(DispatchEngine.ProviderHttpClientName)
 	.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });

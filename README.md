@@ -224,7 +224,9 @@ omits that header on live sends and does not forward it from incoming requests. 
 lookup entirely, rather than invoking Telesign shutter mode.
 
 Responses normalize `reference_id` and `status.code`/`status.description` internally; provider
-metadata is not logged or exposed in the public nonce response. Existing numeric success codes
+metadata is not exposed in the public nonce response. [Application logs](docs/CONTRACT.md#application-logs)
+include only the provider HTTP status, mapped status/outcome and the bounded raw provider reference
+ID as `providerMessageId` for support lookup, never the raw response or description. Existing numeric success codes
 are retained (SMS: 200, 203, 290-292; Voice: 100-103). EPP code `3001` ("Message in progress"),
 observed for both channels, is also accepted on successful HTTP responses. This acknowledges
 provider acceptance, not handset receipt or completed audio playback. The supplied EPP integration
@@ -255,6 +257,8 @@ authentication; [separate deployed security checks](docs/ONBOARDING.md#4-package
 
 - **[docs/ONBOARDING.md](docs/ONBOARDING.md)**: customer setup, security, deployment, and validation.
 - **[docs/CONTRACT.md](docs/CONTRACT.md)**: the language-agnostic contract every implementation follows.
+- **[Application logs](docs/CONTRACT.md#application-logs)**: separate service events, per-request summaries,
+  and the meaning of Microsoft, Function and provider identifier fields.
 
 ## Contributing a language or provider
 
