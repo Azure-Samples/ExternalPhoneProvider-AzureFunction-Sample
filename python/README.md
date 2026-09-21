@@ -96,6 +96,7 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 | [src/config.py](src/config.py) | Shared deployment settings |
 | [src/models.py](src/models.py) | Envelope, delivery-context, dispatch and normalized `ParsedResponse` dataclasses |
 | [src/dispatch.py](src/dispatch.py) | Boundary validation, JWE, provider registry and outcome mapping |
+| [src/request_log.py](src/request_log.py) | Request-scoped [service events and summaries](../docs/CONTRACT.md#application-logs) with explicit ID sources |
 | [src/providers/](src/providers/) | Adapter manifests and API-specific implementations |
 | [src/secrets.py](src/secrets.py) | Cached Key Vault access via managed identity |
 

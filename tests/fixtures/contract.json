@@ -1,4 +1,66 @@
 {
+  "logging": {
+    "liveEvents": [
+      "request_received",
+      "envelope_validated",
+      "delivery_context_decrypted",
+      "provider_selected",
+      "provider_credential_resolution_started",
+      "provider_credential_resolved",
+      "provider_request_build_started",
+      "provider_request_built",
+      "provider_request_started",
+      "provider_response_received",
+      "provider_response_processed",
+      "response_prepared",
+      "request_completed"
+    ],
+    "evaluationEvents": [
+      "request_received",
+      "envelope_validated",
+      "delivery_context_decrypted",
+      "evaluation_completed",
+      "response_prepared",
+      "request_completed"
+    ],
+    "summaryFields": [
+      "logType", "eventName", "functionName", "functionRequestId", "functionInvocationId",
+      "x-ms-client-request-id", "x-ms-correlation-id", "msCorrelationIdSource", "omittedIdFields", "channel", "evaluation",
+      "envelopeType", "ttlSeconds",
+      "encryptionKeyIdMismatch", "providerName", "providerAuthMode", "providerAttempted",
+      "providerCredentialSource", "providerCredentialElapsedMs", "providerTenantId",
+      "functionOutboundClientId", "functionOutboundManagedIdentityClientId",
+      "providerHttpMethod", "providerEndpoint",
+      "providerHttpStatus", "providerStatus", "providerOutcome", "providerMessageId",
+      "providerElapsedMs", "providerTimeoutMs", "failureStage", "failureReason",
+      "httpStatus", "result", "elapsedMs", "responseContainsNonce", "responseContainsCorrelationId"
+    ],
+    "identifiers": [
+      { "value": "AB12CD34-1234-4567-890A-ABCDEF123456", "accepted": true },
+      { "value": "ref_AbC:19.2-XY", "accepted": true },
+      { "value": "1234567890", "accepted": true },
+      { "length": 128, "accepted": true },
+      { "length": 129, "accepted": false, "omitted": true },
+      { "value": null, "accepted": false },
+      { "value": "", "accepted": false },
+      { "value": "   ", "accepted": false },
+      { "value": "support-id\n", "accepted": false, "omitted": true },
+      { "value": "support-id\r\n", "accepted": false, "omitted": true },
+      { "value": "id\tPRIVATE-DATA", "accepted": false, "omitted": true },
+      { "value": "id\u0000PRIVATE-DATA", "accepted": false, "omitted": true },
+      { "value": "id\u2028PRIVATE-DATA", "accepted": false, "omitted": true },
+      { "value": "PRIVATE MESSAGE TEXT", "accepted": false, "omitted": true },
+      { "value": "+15551234567", "accepted": false, "omitted": true },
+      { "value": "https://example.com/?key=PRIVATE-KEY", "accepted": false, "omitted": true }
+    ],
+    "endpoints": [
+      { "url": "https://provider.example/epp/voice?key=PRIVATE-KEY&phone=PRIVATE-PHONE#PRIVATE-FRAGMENT", "logged": "https://provider.example/epp/voice" },
+      { "url": "https://provider.example:8443/epp/voice?key=PRIVATE-KEY", "logged": "https://provider.example:8443/epp/voice" },
+      { "url": "https://PRIVATE-USER:PRIVATE-PASSWORD@provider.example/api/send?key=PRIVATE-KEY", "logged": "https://provider.example/api/send" },
+      { "url": "https://provider.example:443?key=PRIVATE-KEY", "logged": "https://provider.example/" },
+      { "url": "https://[2001:db8::1]:8443/api/send?key=PRIVATE-KEY", "logged": "https://[2001:db8::1]:8443/api/send" }
+    ]
+  },
   "jwe": [
     { "alg": "RSA-OAEP-256", "enc": "A256GCM", "accepted": true },
     { "alg": "RSA-OAEP", "enc": "A256GCM", "accepted": false },

@@ -18,6 +18,7 @@ from urllib3.exceptions import ReadTimeoutError
 
 from .config import read_config
 from .models import DeliveryContext, DispatchRequest, Envelope, ParsedResponse, TextToVoice
+from .request_log import RequestLog
 
 DEFAULT_TIMEOUT_MS = 1500
 DEFAULT_CHANNELS = ["sms", "voice"]
@@ -270,59 +271,89 @@ class DispatchEngine:
         self._oauth_credential_config = None
         self._oauth_lock = Lock()
 
-    def dispatch(self, dispatch, request_id):
+    def dispatch(self, dispatch, request_id, log: RequestLog | None = None):
+        def failure(status, stage, reason, body):
+            if log:
+                log.failure(stage, reason, status)
+            return status, body
+
         config = read_config(self.env)
         adapter = self.registry.get(config.provider_name)
         if adapter is None:
-            return 400, {"status": "error", "reason": "unknown provider", "requestId": request_id}
+            return failure(400, "provider_selection", "unknown_provider",
+                           {"status": "error", "reason": "unknown provider", "requestId": request_id})
 
         manifest = adapter.manifest
+        if log:
+            log.provider_selected(manifest)
         provider_id = manifest["id"]
         channel = dispatch.channel if dispatch.channel is not None else "sms"
         if not isinstance(channel, str):
-            return 400, {"status": "error", "provider": provider_id, "reason": "unsupported channel", "requestId": request_id}
+            return failure(400, "provider_configuration", "unsupported_channel",
+                           {"status": "error", "provider": provider_id, "reason": "unsupported channel", "requestId": request_id})
         channel = channel.lower()
 
         if channel not in DEFAULT_CHANNELS:
-            return 400, {"status": "error", "provider": provider_id, "reason": "unsupported channel", "requestId": request_id}
+            return failure(400, "provider_configuration", "unsupported_channel",
+                           {"status": "error", "provider": provider_id, "reason": "unsupported channel", "requestId": request_id})
         if config.provider_channel and config.provider_channel != channel:
-            return 400, {"status": "error", "provider": provider_id, "reason": "channel not configured", "requestId": request_id}
+            return failure(400, "provider_configuration", "channel_not_configured",
+                           {"status": "error", "provider": provider_id, "reason": "channel not configured", "requestId": request_id})
 
         if channel == "voice" and manifest.get("requires_text_to_voice") and (
             not isinstance(dispatch.text_to_voice, TextToVoice) or not dispatch.text_to_voice.is_complete
         ):
-            return 400, self._fail_body(provider_id, channel, "incomplete voice context", dispatch, request_id)
+            return failure(400, "provider_request_build", "incomplete_voice_context",
+                           self._fail_body(provider_id, channel, "incomplete voice context", dispatch, request_id))
 
         auth = manifest["auth"]
         if config.provider_auth_mode and config.provider_auth_mode != auth.get("mode"):
-            return 502, self._fail_body(provider_id, channel, "provider authentication mismatch", dispatch, request_id)
+            return failure(502, "provider_configuration", "authentication_mode_mismatch",
+                           self._fail_body(provider_id, channel, "provider authentication mismatch", dispatch, request_id))
         try:
+            if log:
+                log.credential_resolution_started(config)
             credential = self._resolve_credential(auth, config)
         except Exception:
-            return 502, self._fail_body(provider_id, channel, "provider credential unavailable", dispatch, request_id)
+            return failure(502, "provider_credentials", "credential_unavailable",
+                           self._fail_body(provider_id, channel, "provider credential unavailable", dispatch, request_id))
         credential_unavailable = (
             credential.get("mode") == "apiKey"
             and (not credential.get("secret") or (auth.get("identity_key_vault_secret_name") and not credential.get("identity")))
         ) or (credential.get("mode") == "oauth" and not credential.get("access_token"))
         if credential_unavailable:
-            return 502, self._fail_body(provider_id, channel, "provider credential unavailable", dispatch, request_id)
+            return failure(502, "provider_credentials", "credential_unavailable",
+                           self._fail_body(provider_id, channel, "provider credential unavailable", dispatch, request_id))
+        if log:
+            log.credential_resolved()
 
         endpoint = config.provider_endpoint
         if not endpoint:
-            return 502, self._fail_body(provider_id, channel, "provider endpoint not configured", dispatch, request_id)
+            return failure(502, "provider_configuration", "invalid_provider_endpoint",
+                           self._fail_body(provider_id, channel, "provider endpoint not configured", dispatch, request_id))
         if not _valid_provider_url(endpoint):
-            return 502, self._fail_body(provider_id, channel, "invalid provider endpoint", dispatch, request_id)
+            return failure(502, "provider_configuration", "invalid_provider_endpoint",
+                           self._fail_body(provider_id, channel, "invalid provider endpoint", dispatch, request_id))
 
         try:
+            if log:
+                log.service("provider_request_build_started")
             provider_request = adapter.build_request(channel, endpoint, dispatch, credential, config.env)
         except Exception:
-            return 502, self._fail_body(provider_id, channel, "provider request failed", dispatch, request_id)
+            return failure(502, "provider_request_build", "request_build_failed",
+                           self._fail_body(provider_id, channel, "provider request failed", dispatch, request_id))
         if not _valid_provider_url(provider_request.get("url")):
-            return 502, self._fail_body(provider_id, channel, "invalid provider request URL", dispatch, request_id)
+            return failure(502, "provider_request_build", "invalid_provider_request_url",
+                           self._fail_body(provider_id, channel, "invalid provider request URL", dispatch, request_id))
+        if log:
+            log.provider_request_built(provider_request.get("method"), provider_request["url"])
 
         timeout_ms = _provider_timeout_ms(config.provider_timeout_ms)
         response = None
+        stage = "provider_transport"
         try:
+            if log:
+                log.provider_request_started(timeout_ms)
             response = requests.request(
                 provider_request["method"],
                 provider_request["url"],
@@ -333,16 +364,27 @@ class DispatchEngine:
                 allow_redirects=False,  # Never forward credentials to a redirect target.
                 stream=True,  # Own the response for cleanup if body reading fails.
             )
+            if log:
+                log.provider_response_received(response.status_code)
 
+            valid_json = True
             try:
                 body_json = response.json()
             except ValueError:
+                valid_json = False
+                if log:
+                    log.service("provider_response_invalid_json", level=logging.WARNING)
                 body_json = {}
+            if log:
+                log.provider_request_finished()
 
+            stage = "provider_response"
             ok = 200 <= response.status_code < 300
             parsed = adapter.parse_response(response.status_code, ok, body_json)
             outcome = resolve_outcome(manifest, parsed)
             http_status = to_http_status(outcome, parsed.provider_http_status or response.status_code)
+            if log:
+                log.provider_response_processed(manifest, parsed, outcome, http_status, valid_json)
 
             return http_status, {
                 "status": "accepted" if outcome == CONTINUE else "failed",
@@ -359,17 +401,23 @@ class DispatchEngine:
             if isinstance(error, requests.exceptions.Timeout) or (
                 isinstance(error, requests.exceptions.ConnectionError) and _has_read_timeout(error)
             ):
-                return 504, self._fail_body(provider_id, channel, "provider timeout", dispatch, request_id)
-            return 502, self._fail_body(provider_id, channel, "provider request failed", dispatch, request_id)
+                return failure(504, "provider_transport", "provider_timeout",
+                               self._fail_body(provider_id, channel, "provider timeout", dispatch, request_id))
+            return failure(502, "provider_transport", "provider_network_error",
+                           self._fail_body(provider_id, channel, "provider request failed", dispatch, request_id))
         except Exception:
-            return 502, self._fail_body(provider_id, channel, "provider response failed", dispatch, request_id)
+            return failure(502, stage, "response_parse_failed" if stage == "provider_response" else "provider_network_error",
+                           self._fail_body(provider_id, channel, "provider response failed", dispatch, request_id))
         finally:
+            if log:
+                log.provider_request_finished()
             close = getattr(response, "close", None)
             if callable(close):
                 try:
                     close()
                 except Exception:
-                    pass
+                    if log:
+                        log.service("provider_response_cleanup_failed", level=logging.WARNING)
 
     def _resolve_credential(self, auth, config):
         if auth.get("mode") == "apiKey":

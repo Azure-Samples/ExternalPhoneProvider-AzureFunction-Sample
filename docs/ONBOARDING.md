@@ -163,3 +163,15 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
 	 or raw provider responses in reports. Keep platform/SDK body tracing off. Repeat the deployed
 	 checks after deployment, authentication changes, and slot swaps. Local evaluation and passing
 	 unit tests do not certify platform authentication or live delivery.
+
+   For diagnostics, find the `logType: "request"` summary and join its separate service events by
+   `functionRequestId`. Inspect `failureStage`, `failureReason`, `httpStatus` and `providerHttpStatus`
+   rather than enabling payload tracing. Raw Microsoft `x-ms-client-request-id` / `x-ms-correlation-id`,
+   provider `providerMessageId`, and host `functionInvocationId` have different sources; see
+   [application logs](CONTRACT.md#application-logs) for their meanings and collection/sampling caveats.
+   The service events show safe envelope metadata, the OAuth-app or Key Vault credential path,
+   request construction, provider send/response, and `response_prepared`. The latter records status
+   and whether the response contains nonce/correlation fields, not their values; it is not proof the
+   caller received the response. Credential resolution can use caches. `providerEndpoint` contains the
+   base URL and API path only, without query strings, userinfo or fragments; support IDs remain raw
+   so customers can share the exact reference with Microsoft/provider support.

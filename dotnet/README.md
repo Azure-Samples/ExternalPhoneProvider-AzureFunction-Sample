@@ -96,6 +96,7 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 | [Functions/SendOtp.cs](Functions/SendOtp.cs) | HTTP handler |
 | [Src/AppConfig.cs](Src/AppConfig.cs) | Shared deployment settings |
 | [Src/DispatchEngine.cs](Src/DispatchEngine.cs) | Envelope/JWE handling and dispatch |
+| [Src/RequestLog.cs](Src/RequestLog.cs) | Request-scoped [service events and summaries](../docs/CONTRACT.md#application-logs) with explicit ID sources |
 | [Src/ProviderRegistry.cs](Src/ProviderRegistry.cs), [Src/IProviderAdapter.cs](Src/IProviderAdapter.cs) | Adapter lookup and contract |
 | [Src/Providers/](Src/Providers/) | Adapter manifests and API-specific implementations |
 | [Src/SecretResolver.cs](Src/SecretResolver.cs) | Cached Key Vault access via managed identity |

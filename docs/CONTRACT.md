@@ -226,8 +226,11 @@ or string-key response dictionaries. Optional values default to null/None; a sta
 over a code during outcome mapping, as before. Custom Python adapters must return `ParsedResponse`,
 not the former dictionary.
 
-This model is internal: do not serialize it into the endpoint response or log its fields. Public HTTP
-responses still expose only the existing nonce/correlation/status or sanitized error contract.
+This model is internal: do not serialize it into the endpoint response or logs. The
+[request logger](#application-logs) selects only the provider HTTP status, a status found in the
+adapter's mapping, the mapped outcome and a bounded raw provider message ID; descriptions and raw
+metadata remain private. Public HTTP responses still expose only the existing
+nonce/correlation/status or sanitized error contract.
 Provider requests are serialized only when building the outbound HTTP body; incoming provider JSON
 is parsed once and normalized inside its adapter. No serialization framework or provider-specific
 class hierarchy is required.
@@ -326,13 +329,13 @@ subscription activation and changing tenant policy belong to provisioning, not t
 - **Managed identity**: Key Vault access via managed identity only (user-assigned if `AZURE_CLIENT_ID`
   set, else system-assigned). No static credentials.
 - **Privacy**: never log phone numbers, passcodes, nonce values, bearer tokens, API keys, JWE headers/payloads,
-  raw exceptions or provider responses. There is no plaintext diagnostic override. Each handler
-  writes one summary with a generated request ID, the first 16 lowercase hex characters of the
-  correlation ID's SHA256 hash, HTTP status,
-  elapsed milliseconds and evaluation flag. Original wire correlation IDs and the required nonce
-  echo remain unchanged. Hashes are pseudonymous, not anonymous; restrict log access and retention.
-  A configured encryption-key-ID mismatch adds a fixed warning, never either key ID or the JWE header.
-  Disable SDK, platform and proxy body tracing separately.
+  raw exceptions, provider descriptions/responses or endpoint query strings. There is no plaintext diagnostic
+  override. Each handler emits separate service events and one [request summary](#application-logs),
+  with generated Function IDs distinguished from raw Microsoft/provider support IDs. Original wire IDs
+  and the required nonce echo remain unchanged. Support IDs can correlate customer activity; restrict
+  log access and retention. Endpoint logs contain only scheme, host/port and API path, never userinfo,
+  query strings or fragments. A configured encryption-key-ID mismatch adds a correlated fixed warning,
+  never either key ID or the JWE header. Disable SDK, platform and proxy body tracing separately.
 - **Platform authentication only**: enable Easy Auth with `requireAuthentication=true`,
   `unauthenticatedClientAction=Return401` and `requireHttps=true`. Configure the trusted tenant issuer
   and `allowedAudiences` for the endpoint app, plus a **nonempty `allowedApplications`** list pinned to
@@ -348,6 +351,123 @@ subscription activation and changing tenant policy belong to provisioning, not t
   therefore does not guarantee a 3.2-second end-to-end response, especially on cold starts.
   A timed-out POST may already have been accepted; avoid blind retries that duplicate messages.
 
+### Application logs
+
+All three implementations emit JSON records with the same field names. .NET also supplies these
+fields as structured `ILogger` state. Service events have `logType: "service"` and an individual
+`eventName`: they are emitted as the work happens, **not buffered or combined into a multi-step log**.
+Each handler invocation ends with exactly one `logType: "request"`, `eventName: "request_completed"`
+summary, including validation failures, evaluation and provider failures.
+
+A successful live request emits these separate service events, followed by the request summary:
+
+| Service event | Safe information recorded |
+|---|---|
+| `request_received` | Function invocation and available raw Microsoft trace IDs under their `x-ms-*` names; no raw body or arbitrary headers. |
+| `envelope_validated` | Allowlisted body metadata: validated `envelopeType`, normalized `channel`, `evaluation`, optional `ttlSeconds`, and `encryptedDeliveryContextPresent: true`. |
+| `delivery_context_decrypted` | Decryption completed; no plaintext fields, JWE or key ID. |
+| `provider_selected` | Registered provider and its authentication mode. |
+| `provider_credential_resolution_started` | OAuth client-assertion or Key Vault credential source, with explicitly named raw OAuth application/identity/tenant IDs. |
+| `provider_credential_resolved` | Credential resolution and usability checks completed, with elapsed time; no secret, token, assertion or claims. |
+| `provider_request_build_started` | The adapter is preparing the outbound request. |
+| `provider_request_built` | Allowlisted HTTP method, final endpoint scheme/host/port/API path, HTTPS and disabled redirects; no query string, authorization headers or body. |
+| `provider_request_started` | The outbound send is beginning, with method, sanitized endpoint and timeout. |
+| `provider_response_received` | Actual upstream HTTP status; emitted before response-body reading completes. |
+| `provider_response_processed` | Mapped provider status/outcome, raw provider message/reference ID, duration and resulting Function HTTP status. |
+| `response_prepared` | Response status and booleans indicating nonce/correlation inclusion, not their values or the response body. |
+
+Body metadata is built from validated fields, **not** from a body dump with a few sensitive
+properties removed. Unknown request properties, `tenantId`, locale/risk data and all decrypted
+fields remain excluded. An invalid envelope never contributes unvalidated type or TTL values.
+
+`providerCredentialSource` is `managed_identity_client_assertion` for the app-token path and
+`key_vault` for API-key providers. Resolution may use cached credentials: these events do not claim
+a Key Vault network fetch or a fresh identity/token exchange occurred. `providerCredentialElapsedMs`
+covers resolution plus the existing credential checks, not a separately enforced deadline. SDK
+diagnostics remain suppressed as before; logging adds no token acquisition, secret reads or retries.
+
+`provider_request_built` describes the adapter request, not creation of a new physical HTTP connection
+or a new HTTP client in every runtime. `providerEndpoint` uses the **final** adapter URL, which can
+differ from the configured base URL, but records only scheme + host/port + API path. For example,
+`https://provider.example/epp/voice?key=secret` is logged as `https://provider.example/epp/voice`.
+Userinfo, the entire query string and fragments are excluded. Use provider-approved paths that do
+not embed secrets or personal data; path segments are not redacted. This does not alter the outbound
+URL or its required query parameters. Standard HTTP verbs are logged in uppercase; custom or invalid
+values are represented as `other` without changing the request sent.
+
+`response_prepared` is emitted on success **and failure** immediately before returning the handler
+response. It does not claim the host has serialized/transmitted that response or Microsoft received
+it; consult platform request telemetry for transport completion. Evaluation emits
+`evaluation_completed` instead of provider events, then `response_prepared` and the summary,
+without resolving provider configuration, credentials or HTTP. Failures emit their own stage event,
+such as `decryption_failed`, `provider_credentials_failed` or `provider_transport_failed`.
+A parsed provider rejection uses `provider_response_processed` with its non-success outcome and
+fixed failure reason.
+
+Every service event carries the Function request/invocation IDs, the Microsoft trace IDs available
+at that point, and the known channel, evaluation flag and selected provider. The initial event can
+only know header trace IDs; a valid envelope can subsequently supply the selected correlation.
+The generated Function request ID joins these events even when Microsoft IDs are absent or change
+from header to envelope. The identifiers are intentionally not named simply `requestId` or
+`correlationId` in logs:
+
+| Log field | Source and meaning |
+|---|---|
+| `functionName` | Runtime function name: `SendOtp` in JavaScript/.NET, `send_otp` in Python. The HTTP route remains `/api/SendOtp` in every runtime. |
+| `functionRequestId` | Generated by this handler. Matches `requestId` in failure responses; it is not Microsoft's request ID. |
+| `functionInvocationId` | Azure Functions host invocation ID. Null for direct handler calls without a host context. |
+| `x-ms-client-request-id` | Raw Microsoft per-attempt ID from the header of the same name, not the generated fallback used by dispatch. |
+| `x-ms-correlation-id` | Raw selected Microsoft correlation: envelope `correlationId` first, then the header of the same name. The existing precedence is unchanged, and this never contains a generated Function ID. |
+| `msCorrelationIdSource` | `envelope`, `header` or `none`; disambiguates the selected value when the envelope and header differ. |
+| `providerMessageId` | Raw adapter-normalized message/reference ID returned by the provider, including Telesign `reference_id`, for support lookup. Not filled from dispatch or Function IDs, although a provider may echo an ID it received. |
+| `providerTenantId` | Raw configured `EPP_PROVIDER_TENANT_ID` for OAuth, not incoming envelope `tenantId`. |
+| `functionOutboundClientId` | Raw application's `EPP_OUTBOUND_CLIENT_ID` used for provider access, not the endpoint application's inbound audience or a Microsoft request ID. |
+| `functionOutboundManagedIdentityClientId` | Raw configured `EPP_OUTBOUND_MI_CLIENT_ID` used to obtain the app assertion, not the Key Vault identity or the identity's principal/Object ID. |
+| `providerEndpoint` | Validated final outbound URL without userinfo, query string or fragment; scheme, host/port and API path remain visible. |
+
+The six external/configuration ID fields preserve their raw values and case for cross-system support
+lookup; they are not hashed or truncated. To avoid dumping arbitrary text, only nonblank strings
+of 1-128 ASCII characters are recorded: the first character must be a letter or digit, followed by
+letters, digits, `.`, `_`, `:`, or `-`. This includes GUIDs, hex IDs and ordinary opaque references.
+Missing/blank values are null; other invalid values are null and their field names appear in
+`omittedIdFields`, never the rejected values. These guards affect logs only, not wire IDs or outcomes.
+Application/client/tenant IDs are identifiers, not client secrets or bearer tokens.
+These are tracing fields, not authentication assertions. In particular, an incoming `tenantId`
+does not become a trusted tenant identity in logs. The existing wire correlation precedence,
+provider request IDs and public responses are unchanged.
+
+The request summary contains:
+
+| Fields | Purpose |
+|---|---|
+| `httpStatus`, `result`, `elapsedMs` | Final Function response, `accepted` / `evaluated` / `failed`, and total handler time in milliseconds. Acceptance is not handset delivery. |
+| `envelopeType`, `channel`, `evaluation`, `ttlSeconds` | Allowlisted request-body metadata; null until envelope validation succeeds. Omitted TTL remains null; logging does not introduce expiry enforcement. |
+| `providerName`, `providerAuthMode`, `providerAttempted` | Registered adapter ID, its `apiKey` / `oauth` mode, and whether provider HTTP was attempted. Unknown configured names and credentials are never echoed. |
+| `providerCredentialSource`, `providerCredentialElapsedMs` | Credential resolution path and duration, including failed resolution; null if it never started. |
+| `providerTenantId`, `functionOutboundClientId`, `functionOutboundManagedIdentityClientId` | Raw configured OAuth identity IDs; null when OAuth resolution was not attempted. |
+| `providerHttpMethod`, `providerEndpoint` | Final adapter request method and scheme/host/port/API path, set only after request construction and URL validation. No query string. |
+| `providerHttpStatus`, `providerStatus`, `providerOutcome` | Actual upstream HTTP status and normalized response mapping. Status is logged only if it is an explicit adapter mapping key (not `default`); otherwise it is `unmapped`. |
+| `providerMessageId` | Raw provider lookup/reference ID for support escalation. |
+| `providerElapsedMs`, `providerTimeoutMs` | Outbound request duration including response-body reading, and the configured/clamped HTTP timeout. Neither is an end-to-end deadline. |
+| `failureStage`, `failureReason` | Stage and fixed diagnostic reason, such as `provider_credentials` / `credential_unavailable`, `provider_transport` / `provider_timeout`, or `provider_response` / `provider_rejected`. No exception messages. |
+| `encryptionKeyIdMismatch` | Whether the advisory warning was emitted; never the configured or received key ID. |
+| `responseContainsNonce`, `responseContainsCorrelationId` | Whether those fields are in the prepared response, without recording their values. Null if no response was prepared. |
+| `omittedIdFields` | Names of support ID fields whose current values failed the logging format/length guard; empty for ordinary valid IDs. |
+
+Provider fields remain null when their stage was not reached. `providerHttpStatus` is captured as
+soon as headers arrive, so a response-body timeout can legitimately show upstream `200` alongside
+Function `httpStatus: 504`, without a mapped provider status or success acknowledgement. Unknown
+provider status text and malformed JSON are never logged; malformed JSON emits only
+`provider_response_invalid_json` before the existing adapter outcome rules run.
+
+Normal events and request summaries use Information; invalid requests, non-success 4xx outcomes and
+advisory warnings use Warning; 5xx failures and timeouts use Error. Keep application Information logs
+enabled when investigating. This contract describes **emission**, not guaranteed collection:
+host/telemetry filters and sampling can drop trace records. Application summaries are logs, not
+the host's Request telemetry type, so excluding `Request` from sampling does not by itself retain
+every summary. Configure collection and retention deliberately without enabling SDK/body tracing.
+Easy Auth rejections occur before the handler and appear in platform telemetry, not these events.
+
 ---
 
 ## 6. Lightweight tests
@@ -358,7 +478,9 @@ Each language keeps lightweight offline tests covering representative applicatio
 - Fail-closed outcomes, missing credentials, HTTPS guards and timeouts.
 - Envelope validation and real JWE decryption/tamper rejection.
 - Evaluation without provider I/O.
-- Awaited delivery, nonce acknowledgement and privacy-safe logging.
+- Awaited delivery, nonce acknowledgement and privacy-safe logging, including the shared
+  service-event order and summary field set in [contract.json](../tests/fixtures/contract.json),
+  identifier provenance, error paths, provider-body timeouts and concurrent request isolation.
 
 The sample deliberately omits exhaustive input permutations and SDK internals. These tests use
 local keys and mocked external services; they do not send SMS and **do not test Easy Auth or platform
