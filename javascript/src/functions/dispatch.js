@@ -315,7 +315,7 @@ function isValidProviderUrl(value) {
     }
 }
 
-async function fetchWithTimeout(providerRequest, timeoutMilliseconds) {
+async function fetchWithTimeout(providerRequest, timeoutMilliseconds, log) {
     const abortController = new AbortController();
     let timedOut = false;
     const timeoutTimer = setTimeout(() => {
@@ -324,6 +324,7 @@ async function fetchWithTimeout(providerRequest, timeoutMilliseconds) {
     }, timeoutMilliseconds);
 
     try {
+        log?.providerRequestStarted(timeoutMilliseconds);
         const response = await fetch(providerRequest.url, {
             method: providerRequest.method || 'POST',
             headers: providerRequest.headers,
@@ -331,6 +332,7 @@ async function fetchWithTimeout(providerRequest, timeoutMilliseconds) {
             signal: abortController.signal,
             redirect: 'manual', // Never forward provider credentials to a redirect target.
         });
+        log?.providerResponseReceived(response.status);
         const responseText = await response.text();
         return { response, responseText };
     } catch {
@@ -339,6 +341,7 @@ async function fetchWithTimeout(providerRequest, timeoutMilliseconds) {
         throw error;
     } finally {
         clearTimeout(timeoutTimer);
+        log?.providerRequestFinished();
     }
 }
 
@@ -346,48 +349,58 @@ const failBody = (providerId, channel, reason, dispatch, requestId) =>
     ({ status: 'failed', outcome: OUTCOME.FAIL, provider: providerId, channel, reason, correlationId: dispatch.correlationId, messageId: dispatch.messageId, requestId });
 
 async function sendViaProvider(providerEntry, dispatch, options) {
-    const { requestId, config } = options;
+    const { requestId, config, log } = options;
     const { manifest, adapter } = providerEntry;
     const providerId = manifest.id;
     const channel = dispatch.channel === undefined ? 'sms'
         : (typeof dispatch.channel === 'string' ? dispatch.channel.toLowerCase() : null);
 
     if (!['sms', 'voice'].includes(channel)) {
+        log?.failure('provider_configuration', 'unsupported_channel', 400);
         return { httpStatus: 400, body: { status: 'error', reason: 'unsupported channel', requestId } };
     }
     if (config.providerChannel && config.providerChannel !== channel) {
+        log?.failure('provider_configuration', 'channel_not_configured', 400);
         return { httpStatus: 400, body: { status: 'error', provider: providerId, reason: 'channel not configured', requestId } };
     }
     if (config.providerAuthMode && config.providerAuthMode !== manifest.auth?.mode) {
+        log?.failure('provider_configuration', 'authentication_mode_mismatch', 502);
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider authentication mismatch', dispatch, requestId) };
     }
 
     if (channel === 'voice' && manifest.requiresTextToVoice
         && (!(dispatch.textToVoice instanceof TextToVoice) || !dispatch.textToVoice.isComplete)) {
+        log?.failure('provider_request_build', 'incomplete_voice_context', 400);
         return { httpStatus: 400, body: failBody(providerId, channel, 'incomplete voice context', dispatch, requestId) };
     }
 
     const endpointBaseUrl = config.providerEndpoint;
     if (!isValidProviderUrl(endpointBaseUrl)) {
+        log?.failure('provider_configuration', 'invalid_provider_endpoint', 502);
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider endpoint missing or invalid', dispatch, requestId) };
     }
 
     let credential = null;
     try {
+        log?.credentialResolutionStarted(config);
         credential = await resolveProviderCredential(manifest.auth, config);
     } catch {
-        // Configuration and secret lookup failures share a generic failure response.
+        log?.failure('provider_credentials', 'credential_unavailable', 502);
+        return { httpStatus: 502, body: failBody(providerId, channel, 'provider credential unavailable', dispatch, requestId) };
     }
     const identityRequired = credential?.mode === 'apiKey' && !!manifest.auth?.identityKeyVaultSecretName;
     const credentialUnavailable = !credential
         || (credential.mode === 'apiKey' && (!credential.secret || (identityRequired && !credential.identity)))
         || (credential.mode === 'oauth' && !credential.accessToken);
     if (credentialUnavailable) {
+        log?.failure('provider_credentials', 'credential_unavailable', 502);
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider credential unavailable', dispatch, requestId) };
     }
+    log?.credentialResolved();
 
     let providerRequest;
     try {
+        log?.service('provider_request_build_started');
         providerRequest = adapter.buildRequest({
             channel,
             endpoint: endpointBaseUrl,
@@ -396,38 +409,54 @@ async function sendViaProvider(providerEntry, dispatch, options) {
             env: config.env,
         });
     } catch {
+        log?.failure('provider_request_build', 'request_build_failed', 502);
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider request failed', dispatch, requestId) };
     }
 
     if (!isValidProviderUrl(providerRequest.url)) {
+        log?.failure('provider_request_build', 'invalid_provider_request_url', 502);
         return { httpStatus: 502, body: failBody(providerId, channel, 'provider request URL invalid', dispatch, requestId) };
     }
+    log?.providerRequestBuilt(providerRequest.method || 'POST', providerRequest.url);
 
     const timeoutMilliseconds = parseProviderTimeout(config.providerTimeoutMs);
     let providerResponse;
     let responseText;
     try {
-        ({ response: providerResponse, responseText } = await fetchWithTimeout(providerRequest, timeoutMilliseconds));
+        ({ response: providerResponse, responseText } = await fetchWithTimeout(providerRequest, timeoutMilliseconds, log));
     } catch (error) {
         const isTimeout = error.name === 'TimeoutError';
         const httpStatus = isTimeout ? 504 : 502;
+        log?.failure('provider_transport', isTimeout ? 'provider_timeout' : 'provider_network_error', httpStatus);
         return { httpStatus, body: failBody(providerId, channel, isTimeout ? 'provider request timed out' : 'provider request failed', dispatch, requestId) };
     }
 
     let responseJson;
+    let validJson = true;
     try {
         responseJson = JSON.parse(responseText);
     } catch {
+        validJson = false;
+        log?.service('provider_response_invalid_json', {}, 'warn');
         responseJson = {};
     }
 
-    const parsedResponse = adapter.parseResponse({
-        httpStatus: providerResponse.status,
-        ok: providerResponse.ok,
-        json: responseJson,
-    });
-    const outcome = resolveOutcome(manifest, parsedResponse);
-    const httpStatus = outcomeToHttpStatus(outcome, parsedResponse.providerHttpStatus);
+    let parsedResponse;
+    let outcome;
+    let httpStatus;
+    try {
+        parsedResponse = adapter.parseResponse({
+            httpStatus: providerResponse.status,
+            ok: providerResponse.ok,
+            json: responseJson,
+        });
+        outcome = resolveOutcome(manifest, parsedResponse);
+        httpStatus = outcomeToHttpStatus(outcome, parsedResponse.providerHttpStatus);
+    } catch (error) {
+        log?.failure('provider_response', 'response_parse_failed', 500);
+        throw error;
+    }
+    log?.providerResponseProcessed(manifest, parsedResponse, outcome, httpStatus, validJson);
 
     return {
         httpStatus,
@@ -443,15 +472,17 @@ async function sendViaProvider(providerEntry, dispatch, options) {
     };
 }
 
-async function dispatchOtp(dispatch, { config = readConfig(), requestId } = {}) {
+async function dispatchOtp(dispatch, { config = readConfig(), requestId, log } = {}) {
     const providerEntry = getProvider(config.providerName);
     if (!providerEntry) {
+        log?.failure('provider_selection', 'unknown_provider', 400);
         return {
             httpStatus: 400,
             body: { status: 'error', reason: 'unknown provider', requestId },
         };
     }
-    return sendViaProvider(providerEntry, dispatch, { config, requestId });
+    log?.providerSelected(providerEntry.manifest);
+    return sendViaProvider(providerEntry, dispatch, { config, requestId, log });
 }
 
 module.exports = {

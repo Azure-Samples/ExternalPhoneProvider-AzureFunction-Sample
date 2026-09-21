@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 
 namespace Epp.Otp;
 
@@ -254,31 +255,51 @@ public sealed class DispatchEngine
     private static bool UsableAccessToken(AccessToken token) =>
         !string.IsNullOrWhiteSpace(token.Token) && token.ExpiresOn > DateTimeOffset.UtcNow.AddSeconds(30);
 
-    public async Task<DispatchResult> DispatchAsync(DispatchRequest dispatch, string requestId)
+    public async Task<DispatchResult> DispatchAsync(DispatchRequest dispatch, string requestId, RequestLog? log = null)
     {
+        DispatchResult Failure(int status, string stage, string reason, object body)
+        {
+            log?.Failure(stage, reason, status);
+            return new DispatchResult(status, body);
+        }
+
         var config = AppConfig.Read(_env);
         var adapter = _registry.Get(config.ProviderName);
         if (adapter is null)
-            return new DispatchResult(400, new { status = "error", reason = "unknown provider", requestId });
+            return Failure(400, "provider_selection", "unknown_provider",
+                new { status = "error", reason = "unknown provider", requestId });
 
         var manifest = adapter.Manifest;
+        log?.ProviderSelected(manifest);
         var providerId = manifest.Id;
         var channel = (dispatch.Channel ?? "sms").ToLowerInvariant();
 
         if (!OutcomeMapper.DefaultChannels.Contains(channel))
-            return new DispatchResult(400, new { status = "error", provider = providerId, reason = "unsupported channel", requestId });
+            return Failure(400, "provider_configuration", "unsupported_channel",
+                new { status = "error", provider = providerId, reason = "unsupported channel", requestId });
 
         if (channel == "voice" && manifest.RequiresTextToVoice && dispatch.TextToVoice?.IsComplete != true)
-            return new DispatchResult(400, FailBody(providerId, channel, "incomplete voice context", dispatch, requestId));
+            return Failure(400, "provider_request_build", "incomplete_voice_context",
+                FailBody(providerId, channel, "incomplete voice context", dispatch, requestId));
 
         if (!string.IsNullOrEmpty(config.ProviderChannel) && config.ProviderChannel != channel)
-            return new DispatchResult(400, new { status = "error", provider = providerId, reason = "channel not configured", requestId });
+            return Failure(400, "provider_configuration", "channel_not_configured",
+                new { status = "error", provider = providerId, reason = "channel not configured", requestId });
         if (!string.IsNullOrEmpty(config.ProviderAuthMode) && config.ProviderAuthMode != manifest.Auth.Mode)
-            return new DispatchResult(502, FailBody(providerId, channel, "provider authentication mismatch", dispatch, requestId));
+            return Failure(502, "provider_configuration", "authentication_mode_mismatch",
+                FailBody(providerId, channel, "provider authentication mismatch", dispatch, requestId));
 
         ProviderCredential credential;
-        try { credential = await ResolveCredentialAsync(manifest.Auth, config); }
-        catch { return new DispatchResult(502, FailBody(providerId, channel, "provider credential unavailable", dispatch, requestId)); }
+        try
+        {
+            log?.CredentialResolutionStarted(config);
+            credential = await ResolveCredentialAsync(manifest.Auth, config);
+        }
+        catch
+        {
+            return Failure(502, "provider_credentials", "credential_unavailable",
+                FailBody(providerId, channel, "provider credential unavailable", dispatch, requestId));
+        }
 
         var identityRequired = credential.Mode == "apiKey" && !string.IsNullOrEmpty(manifest.Auth.IdentityKeyVaultSecretName);
         var credentialUnavailable = credential.Mode switch
@@ -289,27 +310,44 @@ public sealed class DispatchEngine
             _ => true,
         };
         if (credentialUnavailable)
-            return new DispatchResult(502, FailBody(providerId, channel, "provider credential unavailable", dispatch, requestId));
+            return Failure(502, "provider_credentials", "credential_unavailable",
+                FailBody(providerId, channel, "provider credential unavailable", dispatch, requestId));
+        log?.CredentialResolved();
 
         var endpoint = config.ProviderEndpoint;
         if (!IsHttpsEndpoint(endpoint))
-            return new DispatchResult(502, FailBody(providerId, channel, "provider endpoint invalid or not configured", dispatch, requestId));
+            return Failure(502, "provider_configuration", "invalid_provider_endpoint",
+                FailBody(providerId, channel, "provider endpoint invalid or not configured", dispatch, requestId));
 
         var timeoutMs = NormalizeProviderTimeoutMs(config.ProviderTimeoutMs);
+        var stage = "provider_request_build";
         try
         {
+            log?.Service("provider_request_build_started");
             var req = adapter.BuildRequest(channel, endpoint!, dispatch, credential, _env);
             if (!IsHttpsEndpoint(req.Url))
-                return new DispatchResult(502, FailBody(providerId, channel, "provider request endpoint invalid", dispatch, requestId));
+                return Failure(502, "provider_request_build", "invalid_provider_request_url",
+                    FailBody(providerId, channel, "provider request endpoint invalid", dispatch, requestId));
+            log?.ProviderRequestBuilt(req.Method, req.Url);
 
-            var (providerHttpStatus, success, body) = await SendAsync(req, timeoutMs);
+            stage = "provider_transport";
+            var (providerHttpStatus, success, body) = await SendAsync(req, timeoutMs, log);
+            stage = "provider_response";
             JsonElement json;
-            try { using var responseDocument = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body); json = responseDocument.RootElement.Clone(); }
-            catch { using var emptyDocument = JsonDocument.Parse("{}"); json = emptyDocument.RootElement.Clone(); }
+            var validJson = true;
+            try { using var responseDocument = JsonDocument.Parse(body); json = responseDocument.RootElement.Clone(); }
+            catch (JsonException)
+            {
+                validJson = false;
+                log?.Service("provider_response_invalid_json", level: LogLevel.Warning);
+                using var emptyDocument = JsonDocument.Parse("{}");
+                json = emptyDocument.RootElement.Clone();
+            }
 
             var parsed = adapter.ParseResponse(providerHttpStatus, success, json);
             var outcome = OutcomeMapper.ResolveOutcome(manifest, parsed);
             var httpStatus = OutcomeMapper.ToHttpStatus(outcome, parsed.ProviderHttpStatus);
+            log?.ProviderResponseProcessed(manifest, parsed, outcome, httpStatus, validJson);
 
             return new DispatchResult(httpStatus, new
             {
@@ -324,11 +362,18 @@ public sealed class DispatchEngine
         }
         catch (OperationCanceledException)
         {
-            return new DispatchResult(504, FailBody(providerId, channel, $"endpoint timeout after {timeoutMs}ms", dispatch, requestId));
+            return Failure(504, stage, "provider_timeout",
+                FailBody(providerId, channel, $"endpoint timeout after {timeoutMs}ms", dispatch, requestId));
         }
         catch
         {
-            return new DispatchResult(502, FailBody(providerId, channel, "provider request failed", dispatch, requestId));
+            var reason = stage switch
+            {
+                "provider_request_build" => "request_build_failed",
+                "provider_response" => "response_parse_failed",
+                _ => "provider_network_error",
+            };
+            return Failure(502, stage, reason, FailBody(providerId, channel, "provider request failed", dispatch, requestId));
         }
     }
 
@@ -401,7 +446,7 @@ public sealed class DispatchEngine
         && string.IsNullOrEmpty(uri.UserInfo)
         && string.IsNullOrEmpty(uri.Fragment);
 
-    private async Task<(int HttpStatus, bool Success, string Body)> SendAsync(ProviderHttpRequest req, int timeoutMs)
+    private async Task<(int HttpStatus, bool Success, string Body)> SendAsync(ProviderHttpRequest req, int timeoutMs, RequestLog? log)
     {
         using var cts = new CancellationTokenSource(timeoutMs);
         using var client = _httpFactory.CreateClient(ProviderHttpClientName);
@@ -414,11 +459,20 @@ public sealed class DispatchEngine
             if (k.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) continue;
             if (!message.Headers.TryAddWithoutValidation(k, v)) message.Content.Headers.TryAddWithoutValidation(k, v);
         }
-        using var resp = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cts.Token);
-        using var stream = await resp.Content.ReadAsStreamAsync(cts.Token);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        var text = await reader.ReadToEndAsync(cts.Token);
-        return ((int)resp.StatusCode, resp.IsSuccessStatusCode, text);
+        log?.ProviderRequestStarted(timeoutMs);
+        try
+        {
+            using var resp = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            log?.ProviderResponseReceived((int)resp.StatusCode);
+            using var stream = await resp.Content.ReadAsStreamAsync(cts.Token);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            var text = await reader.ReadToEndAsync(cts.Token);
+            return ((int)resp.StatusCode, resp.IsSuccessStatusCode, text);
+        }
+        finally
+        {
+            log?.ProviderRequestFinished();
+        }
     }
 
     private static object FailBody(string provider, string channel, string reason, DispatchRequest d, string requestId) =>
