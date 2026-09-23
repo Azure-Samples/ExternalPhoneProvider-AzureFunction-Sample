@@ -35,19 +35,45 @@ public class EngineTests
     }
 
     [Fact]
+    public async Task StartupPreparesOnlyCredentialsAndWarmRequestsReuseTheBundle()
+    {
+        using var rig = new HandlerRig();
+        await rig.Engine.StartCredentialRefreshAsync();
+        Assert.Equal(1, rig.Secrets.Calls);
+        Assert.Equal(0, rig.Http.Calls);
+        Assert.Equal(0, rig.Keys.Calls);
+        AssertAccepted(await rig.Invoke("evaluation"));
+        Assert.Equal(1, rig.Secrets.Calls);
+        Assert.Equal(0, rig.Http.Calls);
+        AssertAccepted(await rig.Invoke());
+        Assert.Equal(1, rig.Secrets.Calls);
+        Assert.Equal(1, rig.Http.Calls);
+    }
+
+    [Fact]
+    public async Task StartupWithoutProviderConfigurationKeepsEvaluationIndependent()
+    {
+        using var rig = new HandlerRig();
+        rig.Env.Clear();
+        await rig.Engine.StartCredentialRefreshAsync();
+        Assert.Equal(0, rig.Secrets.Calls);
+        Assert.Equal(0, rig.Http.Calls);
+        AssertAccepted(await rig.Invoke("evaluation"));
+    }
+
+    [Fact]
     public async Task SopranoOAuthUsesSetupIdentitiesScopeAndOneBoundedExchange()
     {
         var scopes = new List<string>();
         var identities = new List<string>();
         var applications = new List<(string Tenant, string Application)>();
-        CancellationToken outerCancellation = default;
         using var rig = new HandlerRig(identity =>
         {
             identities.Add(identity);
             return new TestTokenCredential((context, cancellation) =>
             {
                 Assert.Equal("api://AzureADTokenExchange/.default", Assert.Single(context.Scopes));
-                Assert.Equal(outerCancellation, cancellation);
+                Assert.True(cancellation.CanBeCanceled);
                 return ValueTask.FromResult(new AccessToken("private-assertion", DateTimeOffset.UtcNow.AddHours(1)));
             });
         }, (tenant, application, assertion) =>
@@ -56,7 +82,6 @@ public class EngineTests
             return new TestTokenCredential(async (context, cancellation) =>
             {
                 Assert.True(cancellation.CanBeCanceled);
-                outerCancellation = cancellation;
                 scopes.Add(Assert.Single(context.Scopes));
                 Assert.Equal("private-assertion", await assertion(cancellation));
                 return new AccessToken("private-provider-token", DateTimeOffset.UtcNow.AddHours(1));
@@ -93,7 +118,7 @@ public class EngineTests
         rig.Env["EPP_PROVIDER_SCOPE"] = "api://second/.default";
         AssertAccepted(await rig.Invoke());
         Assert.Single(applications);
-        Assert.Equal(new[] { "api://provider/.default", "api://provider/.default", "api://second/.default" }, scopes);
+        Assert.Equal(new[] { "api://provider/.default", "api://second/.default" }, scopes);
         rig.Env["EPP_OUTBOUND_CLIENT_ID"] = "second-application";
         AssertAccepted(await rig.Invoke());
         Assert.Equal(new[] { ("provider-tenant", "calling-application"), ("provider-tenant", "second-application") }, applications);
@@ -148,6 +173,7 @@ public class EngineTests
         Assert.True(observed.IsCancellationRequested);
         Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
         waitForCancellation = false;
+        rig.Engine.Dispose();
         rig.Http.Respond = _ => Task.FromResult(Json(401, "{\"status\":\"REJECTED\"}"));
         AssertFailure(rig, await rig.Invoke(), 401);
         Assert.Equal((1, 0), (rig.Http.Calls, rig.Secrets.Calls));
@@ -800,6 +826,7 @@ public class EngineTests
         public TestHttp Http { get; } = new();
         public TestKeys Keys { get; } = new();
         public CapturingLogger Log { get; } = new();
+        public DispatchEngine Engine { get; }
         public HandlerRig(Func<string, TokenCredential>? createIdentity = null,
             Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential>? createOAuth = null)
         {
@@ -813,6 +840,7 @@ public class EngineTests
                 { new InfobipProvider(), new TelesignProvider(), new SopranoProvider(), new SinchProvider() });
             var engine = createIdentity is null ? new DispatchEngine(registry, Secrets, Http, Env)
                 : new DispatchEngine(registry, Secrets, Http, Env, createIdentity, createOAuth!);
+            Engine = engine;
             _function = new SendOtp(engine,
                 new JweDecryptor(Keys), Env, Log);
         }
@@ -843,7 +871,7 @@ public class EngineTests
                 foreach (var (key, value) in headers) request.Headers[key] = value;
             return Assert.IsAssignableFrom<ObjectResult>(await _function.Run(request));
         }
-        public void Dispose() { Keys.Dispose(); Http.Dispose(); }
+        public void Dispose() { Engine.Dispose(); Keys.Dispose(); Http.Dispose(); }
     }
 
     private sealed class TestSecrets : ISecretResolver
@@ -852,7 +880,7 @@ public class EngineTests
         public string Secret { get; set; } = "private-api-key";
         public string Identity { get; set; } = "private-api-id";
         public Exception? Error { get; set; }
-        public Task<string> ResolveAsync(string? name)
+        public Task<string> ResolveAsync(string? name, CancellationToken cancellationToken = default)
         {
             Calls++;
             if (Error is not null) throw Error;

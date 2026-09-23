@@ -113,14 +113,20 @@ there is no API-key fallback. Evaluation skips acquisition. A provider rejection
 Tokens are treated as opaque: the Function checks SDK expiry metadata, not custom JWT claims.
 Soprano remains responsible for signature, issuer, audience, expiry, permissions, and account validation.
 
-Credential instances are reused for the configured tenant/application/identity; each acquisition
-uses the selected scope. JavaScript and .NET pass one 2.5-second cancellation signal/token through
-both exchange stages. Python uses 2.5-second connect/read inactivity timeouts, not a total deadline.
-Configured SDK transport retries are disabled. Managed-identity discovery may involve additional
-SDK operations; this is not an end-to-end delivery deadline. JavaScript suppresses SDK logs only
-in the acquisition's asynchronous context. Python filters Azure Identity/Core/MSAL records on
-configured handlers in that context; configure logging sinks before handling requests. .NET disables
-credential diagnostics. Keep platform body tracing off and never log credential objects or tokens.
+Credential instances are reused for the configured tenant/application/identity. Separate
+[worker-local caches](#credential-caching-and-refresh) hold the managed-identity assertion and the
+final provider token for each selected scope. A usable final token avoids both SDK acquisition calls
+on the delivery path. Each cache owns its refresh independently, so one waiting caller cannot cancel
+an assertion refresh another caller needs. JavaScript and .NET bound each acquisition to 2.5 seconds;
+JavaScript also links that cancellation to the actual Azure SDK HTTP pipeline rather than relying
+only on the SDK's `getToken` option. Python bounds each wait to 2.5 seconds and uses 2.5-second
+connect/read inactivity timeouts; its shared refresh may finish after a waiter leaves.
+
+Credential SDK transport retries are disabled; failed refreshes use the bounded backoff described
+below. These are not end-to-end delivery deadlines. JavaScript suppresses SDK logs in the
+acquisition's asynchronous context. Python filters Azure Identity/Core/MSAL records on configured
+handlers in that context; configure logging sinks before handling requests. .NET disables credential
+diagnostics. Keep platform body tracing off and never log credential objects or tokens.
 
 When migrating from the earlier optional-JWT branch, replace `EPP_PROVIDER_APPLICATION_ID` with
 `EPP_OUTBOUND_CLIENT_ID` and `EPP_PROVIDER_MI_CLIENT_ID` with `EPP_OUTBOUND_MI_CLIENT_ID`.
@@ -178,6 +184,11 @@ handler validates the envelope and decrypts the JWE with integrity checks. Provi
 Key Vault reads and outbound provider HTTP are skipped. No provider name, endpoint or credentials
 are needed. Platform authentication and resolution of the decryption-key reference may still require
 network access. Core Tools has no Easy Auth; local evaluation must remain loopback-only, without tunnels.
+
+This describes the evaluation **request path**. Independently, workers with a configured provider
+automatically prewarm and refresh credentials, even if their current traffic is evaluation-only.
+No background task dispatches an OTP. A worker without `EPP_PROVIDER_NAME` performs no credential
+prewarming, and evaluation does not require that prewarming succeed.
 
 There is no diagnostic environment flag. A live request is not an evaluation request. Adapter-specific
 wire fields, where required by an API, remain internal and cannot enable a separate non-delivery mode.
@@ -320,6 +331,58 @@ All customers call the same `POST /api/SendOtp` handler in their chosen language
 the configured adapter, which builds the provider's SMS or voice API call. Purchasing an unsupported
 provider does not install an adapter: add and register that provider's adapter first. Purchase,
 subscription activation and changing tenant policy belong to provisioning, not this Function.
+
+### Credential caching and refresh
+
+Provider credential management is automatic for configured providers in every runtime. It changes
+when credentials are fetched, not the HTTP/nonce contract, caller authentication, FIC, provider
+selection or provider request format. The decryption-key Key Vault reference remains separate and
+is still resolved by the platform; this cache does not rotate or replace JWE keys.
+
+| Cache | Refresh target | Hard usability boundary |
+|---|---|---|
+| Key Vault API-key bundle | Four minutes after successful retrieval. Required key and customer-ID secrets are fetched concurrently and published together only when both reads succeed and values are nonblank. | Five minutes after retrieval; failed refreshes never extend the old bundle's lifetime. |
+| Managed-identity assertion | Five minutes before SDK expiry, or an earlier SDK refresh hint when available. | SDK expiry minus 30 seconds. |
+| Final Entra provider token | Five minutes before SDK expiry, or an earlier SDK refresh hint when available, separately for each scope. | SDK expiry minus 30 seconds. |
+
+These are in-memory caches, one per worker process, not distributed caches or persisted token
+stores. API-key entries are isolated by vault, managed identity and manifest secret names. OAuth
+state is isolated by provider tenant, application and managed identity, with separate final-token
+entries for different scopes. A change of credential configuration stops the old entries; deploy
+app-setting changes normally with a worker restart rather than mutating process environment in place.
+
+Concurrent cache misses share **one in-progress acquisition per entry**. A request with a still-usable
+cached credential returns it immediately while a due refresh proceeds separately. Refresh failures
+retain that credential only until its original hard expiry. Once expired, callers join the shared
+refresh or fail closed with the existing sanitized credential error; no stale-success fallback is
+introduced. This does not deduplicate provider deliveries or change caller/provider retry behavior.
+
+An SDK refresh can return the same token from its own cache. The manager preserves the token's
+original expiry instead of treating it as a new token. If the suggested refresh time is already past,
+the next check is delayed by half the remaining usable lifetime, bounded to 1-60 seconds, preventing
+an immediate refresh loop. Failed refreshes back off exponentially from 5 seconds to a 60-second
+base, plus up to 20% jitter. Requests do not bypass that backoff and repeatedly hit a failing
+dependency. Successful refresh resets it.
+
+JavaScript's app-start hook, Python's worker-module initialization thread, and .NET's hosted service
+start credential preparation. Each entry then owns its refresh timer; a single distributed timer
+trigger would not populate every worker's memory. JavaScript timers are unreferenced and Python
+threads are daemon threads; termination hooks/`atexit`/hosted-service shutdown cancel scheduled
+work and discard entries. Late completion cannot repopulate a stopped cache. A cold Python caller
+can stop waiting without cancelling the shared retrieval. Failed or absent provider configuration
+does not prevent evaluation from working.
+
+**This is not a guarantee that the first request after a cold start meets the caller's budget.**
+Initialization can itself be on that first request's critical path, and a worker may receive traffic
+before preparation finishes. Existing Always On/minimum-instance settings can help, but readiness,
+scale-out and caller-observed latency must be measured in the deployment. A warm final token avoids
+the Entra exchange; warming only the managed-identity assertion would not achieve that.
+
+Background failures emit a compact `credential_refresh_failed` service event with `cacheKind`
+(`key_vault`, `managed_identity`, `provider_token`, `configuration`, or `initialization`) and the
+fixed reason `credential_unavailable`. They do not carry a request's tracing IDs or secret values.
+The existing per-request `providerCredentialElapsedMs` still measures the resolution observed by
+that caller. No per-operation MI/Entra timing diagnostics are added.
 
 ---
 
@@ -477,10 +540,13 @@ Each language keeps lightweight offline tests covering representative applicatio
 - Bundled adapter request formats and static provider credentials.
 - Fail-closed outcomes, missing credentials, HTTPS guards and timeouts.
 - Envelope validation and real JWE decryption/tamper rejection.
-- Evaluation without provider I/O.
+- Evaluation handling without provider I/O; configured-provider startup refresh is tested separately.
 - Awaited delivery, nonce acknowledgement and privacy-safe logging, including the shared
   service-event order and summary field set in [contract.json](../tests/fixtures/contract.json),
   identifier provenance, error paths, provider-body timeouts and concurrent request isolation.
+- Single-flight credential retrieval, automatic refresh, stale-value expiry, token lifetime
+  preservation, failure backoff, configuration isolation and cleanup using controlled clocks and
+  fake dependencies. JavaScript tests also exercise cancellation through the actual SDK pipeline.
 
 The sample deliberately omits exhaustive input permutations and SDK internals. These tests use
 local keys and mocked external services; they do not send SMS and **do not test Easy Auth or platform
@@ -501,6 +567,9 @@ not prove handset delivery or support for every provider feature.
   timing architecture merely because the setup script deploys it.
 - The outbound timeout is not an end-to-end deadline. Cold starts, platform authentication and Key
   Vault access can exceed the caller's budget; Python uses connect/read inactivity timeouts.
+- Credential caches are process-local and proactive preparation is best-effort, not an Azure
+  traffic-readiness guarantee. Provider delivery still waits for acceptance; background refresh
+  is not background OTP delivery, a queue, or protection against duplicate sends.
 - Voice text is forwarded unchanged. Digit-by-digit rendering required by the setup guide must be
   verified for the chosen voice integration; unspaced numeric text is not guaranteed to be spoken correctly.
 - Full body-size/content-type and E.164 validation, subscription provisioning, certification,

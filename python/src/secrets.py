@@ -1,40 +1,32 @@
 import os
-import time
+from threading import Lock
 
 from azure.identity import ManagedIdentityCredential
 from azure.keyvault.secrets import SecretClient
 
-CACHE_TTL_SECONDS = 5 * 60
-
-
 class SecretResolver:
-    def __init__(self):
+    def __init__(self, env=None):
+        self._env = env if env is not None else os.environ
         self._client = None
-        self._cache = {}
+        self._client_key = None
+        self._lock = Lock()
 
     def _get_client(self):
-        if self._client is None:
-            vault_url = os.environ.get("KEY_VAULT_URL")
-            if not vault_url:
-                return None
-            client_id = os.environ.get("AZURE_CLIENT_ID")
-            credential = (
-                ManagedIdentityCredential(client_id=client_id)
-                if client_id
-                else ManagedIdentityCredential()
-            )
-            self._client = SecretClient(vault_url=vault_url, credential=credential)
-        return self._client
+        vault_url = self._env.get("KEY_VAULT_URL")
+        client_id = self._env.get("AZURE_CLIENT_ID")
+        if not vault_url:
+            raise RuntimeError("KEY_VAULT_URL not set")
+        with self._lock:
+            if self._client_key != (vault_url, client_id):
+                credential = ManagedIdentityCredential(client_id=client_id, logging_enable=False,
+                    retry_total=0, connection_timeout=2.5, read_timeout=2.5)
+                self._client = SecretClient(vault_url=vault_url, credential=credential,
+                    retry_total=0, connection_timeout=2.5, read_timeout=2.5, logging_enable=False)
+                self._client_key = (vault_url, client_id)
+            return self._client
 
     def resolve(self, secret_name):
         if not secret_name:
             return ""
-        cached = self._cache.get(secret_name)
-        if cached and cached[1] > time.time():
-            return cached[0]
-        client = self._get_client()
-        if client is None:
-            raise RuntimeError("KEY_VAULT_URL not set")
-        value = client.get_secret(secret_name).value or ""
-        self._cache[secret_name] = (value, time.time() + CACHE_TTL_SECONDS)
-        return value
+        # ProviderCredentials caches the complete credential bundle and owns refresh.
+        return self._get_client().get_secret(secret_name, logging_enable=False).value or ""

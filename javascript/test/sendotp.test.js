@@ -8,16 +8,20 @@ const { CompactEncrypt } = require('jose');
 const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const fixtures = require('../../tests/fixtures/contract.json');
-const { getProvider } = require('../src/functions/dispatch');
+const { getProvider, stopProviderCredentialRefresh } = require('../src/functions/dispatch');
 const { RequestLog } = require('../src/functions/requestLog');
 
 // Capture the real handler; keys stay in memory and all external I/O is mocked.
 const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 let handler;
+let startHook;
+let stopHook;
 const originalLoad = Module._load;
 const registration = mock.method(Module, '_load', function (name, ...args) {
     if (name === '@azure/functions') {
-        return { app: { http: (_name, options) => { handler = options.handler; } } };
+        return { app: { hook: { appStart: (callback) => { startHook = callback; },
+            appTerminate: (callback) => { stopHook = callback; } },
+            http: (_name, options) => { handler = options.handler; } } };
     }
     return originalLoad.call(this, name, ...args);
 });
@@ -39,6 +43,7 @@ let warnings;
 let records;
 let getToken;
 beforeEach(() => {
+    stopProviderCredentialRefresh();
     savedEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
     for (const key of envKeys) delete process.env[key];
     Object.assign(process.env, { EPP_LOG_PLAINTEXT: 'true',
@@ -61,6 +66,7 @@ beforeEach(() => {
         text: async () => JSON.stringify({ status: 'ENROUTE', id: 'provider-reference-id', description: 'PRIVATE-STATUS' }) }));
 });
 afterEach(() => {
+    stopProviderCredentialRefresh();
     mock.restoreAll();
     for (const [key, value] of Object.entries(savedEnv)) {
         if (value === undefined) delete process.env[key];
@@ -126,6 +132,29 @@ function assertFailure(result, status, error = 'provider_delivery_failed') {
     assert.equal(result.jsonBody.nonce, undefined);
     assert.doesNotMatch(JSON.stringify(result.jsonBody), /PRIVATE|accepted/);
 }
+
+test('worker startup preloads credentials without delivery and leaves evaluation independent', async () => {
+    await startHook();
+    assert.equal(getToken.mock.callCount(), 1);
+    assert.equal(fetchMock.mock.callCount(), 0);
+    assert.equal(getSecret.mock.callCount(), 0);
+    const response = await invoke(await envelope({ mode: 2 }));
+    assert.equal(response.status, 200);
+    assert.equal(getToken.mock.callCount(), 1);
+    assert.equal(fetchMock.mock.callCount(), 0);
+    await invoke(await envelope());
+    assert.equal(getToken.mock.callCount(), 1);
+    assert.equal(fetchMock.mock.callCount(), 1);
+    stopHook();
+});
+
+test('worker startup without a configured provider does not acquire any credentials', async () => {
+    delete process.env.EPP_PROVIDER_NAME;
+    await startHook();
+    assert.equal(getToken.mock.callCount(), 0);
+    assert.equal(getSecret.mock.callCount(), 0);
+    assert.equal(fetchMock.mock.callCount(), 0);
+});
 
 test('shared invalid requests return matching safe reasons before provider I/O', async () => {
     const valid = { type: 'microsoft.mfa.otpDeliver.v1', channel: 1, mode: 1, encryptedDeliveryContext: 'unused' };

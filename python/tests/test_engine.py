@@ -11,6 +11,7 @@ import pytest
 from urllib3.exceptions import ReadTimeoutError
 
 import src.dispatch as dispatch_module
+import src.credentials as credentials_module
 from src.config import AppConfig, read_config
 from src.dispatch import DispatchEngine, DispatchRequest, ProviderRegistry
 from src.models import DeliveryContext, Envelope, TextToVoice
@@ -33,7 +34,8 @@ def engine(monkeypatch):
         "EPP_PROVIDER_CHANNEL": "sms",
     })
     result._resolve_credential = Mock(return_value={"mode": "oauth", "access_token": "provider-token"})
-    return result
+    yield result
+    result.close()
 
 
 def test_missing_oauth_configuration_never_sends(engine):
@@ -75,8 +77,8 @@ def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, m
         clients.append(client)
         return client
 
-    monkeypatch.setattr(dispatch_module, "ManagedIdentityCredential", identity_factory)
-    monkeypatch.setattr(dispatch_module, "ClientAssertionCredential", create_client)
+    monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", identity_factory)
+    monkeypatch.setattr(credentials_module, "ClientAssertionCredential", create_client)
     dispatch_module.requests.request.return_value = Mock(status_code=201, json=Mock(return_value={"status": "ENROUTE"}))
     for scope in ("api://provider/.default", "api://second/.default"):
         engine.env["EPP_PROVIDER_SCOPE"] = scope
@@ -97,6 +99,7 @@ def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, m
         for invalid in (None, SimpleNamespace(token=""), SimpleNamespace(token=" "),
                         SimpleNamespace(token="private-token"),
                         SimpleNamespace(token="private-token", expires_on=time.time() + 5)):
+            engine.close()
             if stage == "access":
                 access = invalid
             else:
@@ -125,8 +128,8 @@ def test_soprano_oauth_sdk_logs_stay_private_without_muting_other_requests(engin
         logger.warning("PRIVATE-ACCOUNT-ERROR")
         raise RuntimeError("PRIVATE-TOKEN-EXCEPTION")
 
-    monkeypatch.setattr(dispatch_module, "ManagedIdentityCredential", Mock())
-    monkeypatch.setattr(dispatch_module, "ClientAssertionCredential", Mock(return_value=Mock(get_token=fail)))
+    monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock())
+    monkeypatch.setattr(credentials_module, "ClientAssertionCredential", Mock(return_value=Mock(get_token=fail)))
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(engine.dispatch, _request(), "request")

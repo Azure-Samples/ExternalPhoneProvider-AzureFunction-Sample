@@ -1,6 +1,6 @@
 'use strict';
 
-const { test } = require('node:test');
+const { test, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
@@ -12,7 +12,9 @@ const { AzureLogger } = require('@azure/logger');
 const {
     dispatchOtp, getProvider, resolveOutcome, outcomeToHttpStatus,
     parseEnvelope, parseProviderTimeout, isValidProviderUrl, contextToDispatch, resolveProviderCredential,
+    stopProviderCredentialRefresh,
 } = require('../src/functions/dispatch');
+afterEach(stopProviderCredentialRefresh);
 const dispatch = { destination: '+15551234567', message: '  Your code is 918273.\n',
     channel: 'sms', messageId: 'message-id', correlationId: 'correlation-id' };
 const input = { channel: 'sms', endpoint: 'https://provider.example', dispatch,
@@ -258,7 +260,7 @@ test('missing API-key or OAuth settings and an unsafe final voice URL make zero 
         assert.equal(getSecret.mock.calls.at(-1).this.vaultUrl, nextConfig.keyVaultUrl);
     }
     assert.equal(getSecret.mock.callCount(), calls + 2);
-    assert.equal(new Set(getSecret.mock.calls.map((call) => call.this)).size, 3);
+    assert.equal(new Set(getSecret.mock.calls.map((call) => call.this)).size, 4);
     assert.equal(fetchMock.mock.callCount(), 0);
 });
 
@@ -283,7 +285,7 @@ test('Soprano OAuth reuses setup identities and selected scope with private boun
     assert.equal(identityToken.mock.calls[0].arguments[0], 'api://AzureADTokenExchange/.default');
     const signal = providerToken.mock.calls[0].arguments[1].abortSignal;
     assert.ok(signal instanceof AbortSignal);
-    assert.equal(identityToken.mock.calls[0].arguments[1].abortSignal, signal);
+    assert.ok(identityToken.mock.calls[0].arguments[1].abortSignal instanceof AbortSignal);
     await resolveProviderCredential({ mode: 'oauth' }, { ...config, providerScope: 'api://another/.default' });
     assert.equal(providerToken.mock.calls[1].this, providerToken.mock.calls[0].this);
     assert.equal(providerToken.mock.calls[1].arguments[0], 'api://another/.default');
@@ -296,6 +298,7 @@ test('Soprano OAuth reuses setup identities and selected scope with private boun
         for (const invalid of [null, { token: '' }, { token: ' ' }, { token: false },
             { token: 'stale', expiresOnTimestamp: Date.now() + 10000 }, { token: 'missing-expiry' }]) {
             const method = stage === 'token' ? providerToken : identityToken;
+            stopProviderCredentialRefresh();
             method.mock.mockImplementation(async () => invalid);
             if (stage === 'assertion') providerToken.mock.mockImplementation(async function () {
                 await this.getAssertion();

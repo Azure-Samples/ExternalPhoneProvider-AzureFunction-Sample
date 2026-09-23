@@ -90,15 +90,24 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 
 ## Source
 
+Worker initialization starts background credential preparation when a provider is configured.
+Key Vault bundles, managed-identity assertions and final Entra tokens use separate process-local
+caches with daemon refresh timers. A caller can stop waiting without cancelling shared retrieval;
+the HTTP SDK still uses connect/read inactivity timeouts, not a total transport deadline. `atexit`
+stops scheduled work and prevents late cache publication. See the
+[refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh). Evaluation handling stays
+independent; leave the provider unset for local evaluation without background credential acquisition.
+
 | Source | Purpose |
 |---|---|
 | [function_app.py](function_app.py) | HTTP handler and adapter registration |
 | [src/config.py](src/config.py) | Shared deployment settings |
 | [src/models.py](src/models.py) | Envelope, delivery-context, dispatch and normalized `ParsedResponse` dataclasses |
 | [src/dispatch.py](src/dispatch.py) | Boundary validation, JWE, provider registry and outcome mapping |
+| [src/credentials.py](src/credentials.py), [refreshing_cache.py](src/refreshing_cache.py) | Provider credential bundles, independent token caches and scheduled refresh |
 | [src/request_log.py](src/request_log.py) | Request-scoped [service events and summaries](../docs/CONTRACT.md#application-logs) with explicit ID sources |
 | [src/providers/](src/providers/) | Adapter manifests and API-specific implementations |
-| [src/secrets.py](src/secrets.py) | Cached Key Vault access via managed identity |
+| [src/secrets.py](src/secrets.py) | Key Vault transport; bundle caching belongs to the credential manager |
 
 Add and register an adapter without adding provider-specific branches to the shared pipeline.
 Return `ParsedResponse` from `parse_response` using named fields; the engine reads attributes such as

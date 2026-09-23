@@ -99,12 +99,20 @@ retries. The shared contract defines validation, HTTP outcomes and privacy-safe 
 
 ## Source and extension points
 
+Configured providers automatically prewarm on the app-start hook. Key Vault credential bundles,
+managed-identity assertions and final Entra tokens refresh through separate process-local caches.
+Warm requests reuse usable values; concurrent misses share a retrieval, refresh failure never
+extends expiry, and termination stops timers. Startup/refresh never sends an OTP. See the
+[refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh) for budgets and cold-start
+limitations. Leave the provider unset for local evaluation-only use without credential acquisition.
+
 | Source | Purpose |
 |---|---|
 | [src/functions/SendOtp.js](src/functions/SendOtp.js) | HTTP handler |
 | [src/functions/config.js](src/functions/config.js) | Shared deployment settings |
 | [src/functions/models.js](src/functions/models.js) | Delivery context, normalized `ParsedResponse`, and documented request objects |
 | [src/functions/dispatch.js](src/functions/dispatch.js) | Envelope/JWE handling, registry and dispatch |
+| [src/functions/credentials.js](src/functions/credentials.js), [refreshingCache.js](src/functions/refreshingCache.js) | Provider credential acquisition, single-flight caching and scheduled refresh |
 | [src/functions/requestLog.js](src/functions/requestLog.js) | Request-scoped [service events and summaries](../docs/CONTRACT.md#application-logs) with explicit ID sources |
 | [src/functions/providers/](src/functions/providers/) | Adapter manifests and API-specific implementations |
 | [test/](test/) | Representative offline checks |

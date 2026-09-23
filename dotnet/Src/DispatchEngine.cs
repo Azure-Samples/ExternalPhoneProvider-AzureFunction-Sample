@@ -210,36 +210,31 @@ public sealed class EnvJweKeyProvider : IJweKeyProvider
             : Encoding.UTF8.GetString(Convert.FromBase64String(value.Trim()));
 }
 
-public sealed class DispatchEngine
+public sealed class DispatchEngine : IDisposable
 {
     public const string ProviderHttpClientName = "otp-provider";
     private const int DefaultTimeoutMs = 1500;
     private const int MaxTimeoutMs = 2500;
     private readonly ProviderRegistry _registry;
-    private readonly ISecretResolver _secrets;
     private readonly IHttpClientFactory _httpFactory;
     private readonly IEnv _env;
-    private readonly object _oauthLock = new();
-    private TokenCredential? _oauthCredential;
-    private string? _oauthCredentialConfig;
-    private readonly Func<string, TokenCredential> _createManagedIdentity;
-    private readonly Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> _createOAuthCredential;
+    private readonly ProviderCredentials _credentials;
 
-    public DispatchEngine(ProviderRegistry registry, ISecretResolver secrets, IHttpClientFactory httpFactory, IEnv? env = null)
+    public DispatchEngine(ProviderRegistry registry, ISecretResolver secrets, IHttpClientFactory httpFactory,
+        IEnv? env = null, ILogger<DispatchEngine>? log = null)
         : this(registry, secrets, httpFactory, env,
             identity => new ManagedIdentityCredential(identity, OAuthOptions()),
-            (tenant, application, assertion) => new ClientAssertionCredential(tenant, application, assertion, OAuthOptions())) { }
+            (tenant, application, assertion) => new ClientAssertionCredential(tenant, application, assertion, OAuthOptions()), log) { }
 
     internal DispatchEngine(ProviderRegistry registry, ISecretResolver secrets, IHttpClientFactory httpFactory, IEnv? env,
         Func<string, TokenCredential> createManagedIdentity,
-        Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> createOAuthCredential)
+        Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> createOAuthCredential,
+        ILogger? log = null, TimeProvider? clock = null)
     {
         _registry = registry;
-        _secrets = secrets;
         _httpFactory = httpFactory;
         _env = env ?? new ProcessEnv();
-        _createManagedIdentity = createManagedIdentity;
-        _createOAuthCredential = createOAuthCredential;
+        _credentials = new ProviderCredentials(secrets, _env, createManagedIdentity, createOAuthCredential, log, clock);
     }
 
     private static ClientAssertionCredentialOptions OAuthOptions()
@@ -252,8 +247,21 @@ public sealed class DispatchEngine
         return options;
     }
 
-    private static bool UsableAccessToken(AccessToken token) =>
-        !string.IsNullOrWhiteSpace(token.Token) && token.ExpiresOn > DateTimeOffset.UtcNow.AddSeconds(30);
+    public async Task StartCredentialRefreshAsync(CancellationToken cancellation = default)
+    {
+        var config = AppConfig.Read(_env);
+        if (string.IsNullOrWhiteSpace(config.ProviderName)) return;
+        var adapter = _registry.Get(config.ProviderName);
+        if (adapter is null || (!string.IsNullOrEmpty(config.ProviderAuthMode) && config.ProviderAuthMode != adapter.Manifest.Auth.Mode))
+        {
+            _credentials.ReportFailure("configuration");
+            return;
+        }
+        try { await _credentials.ResolveAsync(adapter.Manifest.Auth, config, cancellation).ConfigureAwait(false); }
+        catch (Exception) { _credentials.ReportFailure("initialization"); }
+    }
+
+    public void Dispose() => _credentials.Dispose();
 
     public async Task<DispatchResult> DispatchAsync(DispatchRequest dispatch, string requestId, RequestLog? log = null)
     {
@@ -377,50 +385,8 @@ public sealed class DispatchEngine
         }
     }
 
-    private async Task<ProviderCredential> ResolveCredentialAsync(AuthConfig auth, AppConfig config)
-    {
-        if (auth.Mode == "apiKey")
-        {
-            var secret = await _secrets.ResolveAsync(auth.KeyVaultSecretName);
-            var identity = string.IsNullOrEmpty(auth.IdentityKeyVaultSecretName) ? string.Empty : await _secrets.ResolveAsync(auth.IdentityKeyVaultSecretName);
-            return new ProviderCredential("apiKey", Secret: secret, Identity: identity);
-        }
-        if (auth.Mode != "oauth" || string.IsNullOrEmpty(config.ProviderTenantId)
-            || string.IsNullOrEmpty(config.ProviderScope) || string.IsNullOrEmpty(config.OutboundClientId)
-            || string.IsNullOrEmpty(config.OutboundManagedIdentityClientId))
-            throw new InvalidOperationException("unsupported or incomplete provider authentication");
-
-        var credentialConfig = string.Join("|", config.ProviderTenantId, config.OutboundClientId, config.OutboundManagedIdentityClientId);
-        TokenCredential providerCredential;
-        lock (_oauthLock)
-        {
-            if (_oauthCredential is null || _oauthCredentialConfig != credentialConfig)
-            {
-                var managedIdentity = _createManagedIdentity(config.OutboundManagedIdentityClientId);
-                _oauthCredential = _createOAuthCredential(
-                    config.ProviderTenantId,
-                    config.OutboundClientId,
-                    async cancellationToken =>
-                    {
-                        var assertion = await managedIdentity.GetTokenAsync(
-                            new TokenRequestContext(new[] { "api://AzureADTokenExchange/.default" }),
-                            cancellationToken);
-                        if (!UsableAccessToken(assertion))
-                            throw new InvalidOperationException("managed identity assertion unavailable");
-                        return assertion.Token;
-                    });
-                _oauthCredentialConfig = credentialConfig;
-            }
-            providerCredential = _oauthCredential;
-        }
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2.5));
-        var token = await providerCredential.GetTokenAsync(
-            new TokenRequestContext(new[] { config.ProviderScope }),
-            cancellation.Token);
-        if (!UsableAccessToken(token))
-            throw new InvalidOperationException("provider OAuth token unavailable");
-        return new ProviderCredential("oauth", AccessToken: token.Token);
-    }
+    private Task<ProviderCredential> ResolveCredentialAsync(AuthConfig auth, AppConfig config) =>
+        _credentials.ResolveAsync(auth, config);
 
     internal static int NormalizeProviderTimeoutMs(string? value)
     {

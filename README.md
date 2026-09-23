@@ -178,6 +178,13 @@ login; ordinary local machines have no managed-identity endpoint. Use offline te
 evaluation locally, or an explicitly injected test resolver for integration work. Never commit local
 settings, keys or test credentials.
 
+Configured providers are [prepared automatically per worker](docs/CONTRACT.md#credential-caching-and-refresh):
+Telesign's Key Vault credentials, Soprano's managed-identity assertion, and its final Entra access
+token are cached and refreshed before expiry. Refresh never sends an OTP. Evaluation handling still
+skips provider work, but a worker with a configured provider can independently acquire credentials
+at startup or during background refresh. Leave `EPP_PROVIDER_NAME` unset for local evaluation-only
+work without credential acquisition. No extra refresh app settings are required.
+
 Core Tools does not resolve Azure Key Vault reference expressions locally. Supply the local test PEM
 or base64 PEM directly; use a reference such as `@Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/<private-key-secret>/)`
 for `EPP_DECRYPTION_KEY_PEM` in Azure app settings, where the platform resolves it.

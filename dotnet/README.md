@@ -90,16 +90,25 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 
 ## Source
 
+The hosted credential-refresh service automatically prewarms a configured provider. Separate
+process-local caches refresh Key Vault bundles, managed-identity assertions and final Entra tokens.
+Each acquisition owns its cancellation budget; cancelling a waiter does not cancel another
+request's shared retrieval. Shutdown stops timers and drops values. See the
+[refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh) for expiry/backoff semantics
+and cold-start limitations. Evaluation remains independent from successful credential preparation.
+
 | Source | Purpose |
 |---|---|
 | [Program.cs](Program.cs) | Host and adapter registration |
 | [Functions/SendOtp.cs](Functions/SendOtp.cs) | HTTP handler |
 | [Src/AppConfig.cs](Src/AppConfig.cs) | Shared deployment settings |
 | [Src/DispatchEngine.cs](Src/DispatchEngine.cs) | Envelope/JWE handling and dispatch |
+| [Src/ProviderCredentials.cs](Src/ProviderCredentials.cs), [RefreshingCache.cs](Src/RefreshingCache.cs) | Single-flight credential bundles and independent token refresh |
+| [Src/CredentialRefreshService.cs](Src/CredentialRefreshService.cs) | Per-worker startup and shutdown integration |
 | [Src/RequestLog.cs](Src/RequestLog.cs) | Request-scoped [service events and summaries](../docs/CONTRACT.md#application-logs) with explicit ID sources |
 | [Src/ProviderRegistry.cs](Src/ProviderRegistry.cs), [Src/IProviderAdapter.cs](Src/IProviderAdapter.cs) | Adapter lookup and contract |
 | [Src/Providers/](Src/Providers/) | Adapter manifests and API-specific implementations |
-| [Src/SecretResolver.cs](Src/SecretResolver.cs) | Cached Key Vault access via managed identity |
+| [Src/SecretResolver.cs](Src/SecretResolver.cs) | Key Vault transport; `ISecretResolver.ResolveAsync` accepts an optional cancellation token and bundle caching belongs to the credential manager |
 | [Src/OutcomeMapper.cs](Src/OutcomeMapper.cs), [Src/Models.cs](Src/Models.cs) | Outcomes and shared records |
 
 Implement `IProviderAdapter` and register it in [Program.cs](Program.cs) without adding provider-specific

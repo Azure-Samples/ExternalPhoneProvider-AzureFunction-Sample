@@ -3,20 +3,16 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import math
 import os
-import time
-from contextvars import ContextVar
-from threading import Lock
 from urllib.parse import urlsplit
 
 import requests
-from azure.identity import ClientAssertionCredential, ManagedIdentityCredential
 from jwcrypto import jwe as jwe_module
 from jwcrypto import jwk
 from urllib3.exceptions import ReadTimeoutError
 
 from .config import read_config
+from .credentials import ProviderCredentials, report_refresh_failure
 from .models import DeliveryContext, DispatchRequest, Envelope, ParsedResponse, TextToVoice
 from .request_log import RequestLog
 
@@ -27,24 +23,6 @@ CONTINUE = "Continue"
 FAIL = "Fail"
 BLOCK = "Block"
 STEP_UP = "StepUp"
-
-_oauth_request = ContextVar("provider_oauth_request", default=False)
-
-
-class _OAuthLogFilter(logging.Filter):
-    def filter(self, record):
-        return not (_oauth_request.get() and record.name.startswith(("azure.identity", "azure.core", "msal")))
-
-
-_oauth_log_filter = _OAuthLogFilter()
-
-
-def _usable_access_token(value):
-    token = getattr(value, "token", None)
-    expiry = getattr(value, "expires_on", None)
-    return (isinstance(token, str) and bool(token.strip()) and type(expiry) in (int, float)
-            and math.isfinite(expiry) and expiry > time.time() + 30)
-
 
 def resolve_outcome(manifest, parsed: ParsedResponse):
     mapping = manifest["response_mapping"]
@@ -267,9 +245,23 @@ class DispatchEngine:
         self.registry = registry
         self.secrets = secrets
         self.env = env if env is not None else os.environ
-        self._oauth_credential = None
-        self._oauth_credential_config = None
-        self._oauth_lock = Lock()
+        self._credentials = ProviderCredentials(secrets)
+
+    def start_credential_refresh(self):
+        config = read_config(self.env)
+        if not config.provider_name:
+            return
+        adapter = self.registry.get(config.provider_name)
+        if adapter is None or (config.provider_auth_mode and config.provider_auth_mode != adapter.manifest["auth"]["mode"]):
+            report_refresh_failure("configuration")
+            return
+        try:
+            self._resolve_credential(adapter.manifest["auth"], config)
+        except Exception:
+            report_refresh_failure("initialization")
+
+    def close(self):
+        self._credentials.close()
 
     def dispatch(self, dispatch, request_id, log: RequestLog | None = None):
         def failure(status, stage, reason, body):
@@ -420,51 +412,7 @@ class DispatchEngine:
                         log.service("provider_response_cleanup_failed", level=logging.WARNING)
 
     def _resolve_credential(self, auth, config):
-        if auth.get("mode") == "apiKey":
-            secret = self.secrets.resolve(auth.get("key_vault_secret_name"))
-            identity = self.secrets.resolve(auth.get("identity_key_vault_secret_name")) if auth.get("identity_key_vault_secret_name") else ""
-            return {"mode": "apiKey", "secret": secret, "identity": identity}
-        if auth.get("mode") != "oauth" or not all((
-            config.provider_tenant_id, config.provider_scope,
-            config.outbound_client_id, config.outbound_managed_identity_client_id,
-        )):
-            raise ValueError("unsupported or incomplete provider authentication")
-        for logger in (logging.getLogger(), *logging.Logger.manager.loggerDict.copy().values()):
-            if isinstance(logger, logging.Logger):
-                for handler in logger.handlers:
-                    if _oauth_log_filter not in handler.filters:
-                        handler.addFilter(_oauth_log_filter)
-        context_token = _oauth_request.set(True)
-        try:
-            credential_config = (
-                config.provider_tenant_id, config.outbound_client_id, config.outbound_managed_identity_client_id,
-            )
-            with self._oauth_lock:
-                if self._oauth_credential is None or self._oauth_credential_config != credential_config:
-                    assertion_identity = ManagedIdentityCredential(client_id=config.outbound_managed_identity_client_id,
-                        retry_total=0, connection_timeout=2.5, read_timeout=2.5, logging_enable=False)
-
-                    def get_assertion():
-                        token = assertion_identity.get_token("api://AzureADTokenExchange/.default", logging_enable=False)
-                        if not _usable_access_token(token):
-                            raise ValueError("managed identity assertion unavailable")
-                        return token.token
-
-                    self._oauth_credential = ClientAssertionCredential(
-                        tenant_id=config.provider_tenant_id, client_id=config.outbound_client_id, func=get_assertion,
-                        authority="https://login.microsoftonline.com", retry_total=0,
-                        connection_timeout=2.5, read_timeout=2.5, logging_enable=False,
-                    )
-                    self._oauth_credential_config = credential_config
-                credential = self._oauth_credential
-            token = credential.get_token(config.provider_scope, logging_enable=False)
-            if not _usable_access_token(token):
-                raise ValueError("provider OAuth token unavailable")
-            return {"mode": "oauth", "access_token": token.token}
-        except Exception:
-            raise ValueError("provider OAuth token unavailable") from None
-        finally:
-            _oauth_request.reset(context_token)
+        return self._credentials.resolve(auth, config)
 
     def _fail_body(self, provider, channel, reason, dispatch, request_id):
         return {"status": "failed", "outcome": "Fail", "provider": provider, "channel": channel, "reason": reason, "correlationId": dispatch.correlation_id, "messageId": dispatch.message_id, "requestId": request_id}

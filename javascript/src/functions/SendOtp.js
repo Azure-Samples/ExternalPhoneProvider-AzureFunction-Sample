@@ -11,10 +11,15 @@ const {
     parseEnvelope,
     decryptDeliveryContext,
     contextToDispatch,
+    startProviderCredentialRefresh,
+    stopProviderCredentialRefresh,
     MODE,
 } = require('./dispatch');
 const { readConfig } = require('./config');
 const { RequestLog } = require('./requestLog');
+
+app.hook.appStart(startProviderCredentialRefresh);
+app.hook.appTerminate(stopProviderCredentialRefresh);
 
 app.http('SendOtp', {
     methods: ['POST'],

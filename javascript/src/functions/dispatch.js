@@ -6,12 +6,9 @@
 
 const crypto = require('crypto');
 const { compactDecrypt } = require('jose');
-const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
-const { SecretClient } = require('@azure/keyvault-secrets');
-const { AzureLogger } = require('@azure/logger');
-const { AsyncLocalStorage } = require('node:async_hooks');
 const { readConfig } = require('./config');
 const { DeliveryContext, TextToVoice } = require('./models');
+const { providerCredentials, reportRefreshFailure } = require('./credentials');
 
 const CHANNEL_BY_CODE = Object.freeze({ 1: 'sms', 2: 'voice' });
 const CHANNEL_BY_NAME = Object.freeze({ sms: 1, voice: 2 });
@@ -144,8 +141,6 @@ const OUTCOME = Object.freeze({
     STEP_UP: 'StepUp',
 });
 
-const SECRET_CACHE_TIME_TO_LIVE_MILLISECONDS = 5 * 60 * 1000; // rotated secrets picked up within this window
-
 const providerRegistry = new Map(
     [
         require('./providers/infobip'),
@@ -162,99 +157,28 @@ function getProvider(providerId) {
     return providerId ? providerRegistry.get(String(providerId).trim().toLowerCase()) || null : null;
 }
 
-let keyVaultSecretClient = null;
-let keyVaultClientConfig;
-const secretCache = new Map();
-let oauthCredential = null;
-let oauthCredentialConfig;
-const oauthRequest = new AsyncLocalStorage();
-let filteredOAuthLogger;
-
-function usableAccessToken(value) {
-    return typeof value?.token === 'string' && value.token.trim()
-        && Number.isFinite(value.expiresOnTimestamp) && value.expiresOnTimestamp > Date.now() + 30000;
-}
-
-function getKeyVaultSecretClient(config) {
-    const cacheKey = JSON.stringify([config.keyVaultUrl, config.managedIdentityClientId]);
-    if (!keyVaultSecretClient || keyVaultClientConfig !== cacheKey) {
-        const credential = config.managedIdentityClientId
-            ? new ManagedIdentityCredential(config.managedIdentityClientId)
-            : new ManagedIdentityCredential();
-        keyVaultSecretClient = new SecretClient(config.keyVaultUrl, credential);
-        keyVaultClientConfig = cacheKey;
-    }
-    return keyVaultSecretClient;
-}
-
-async function resolveSecretValue(keyVaultSecretName, config) {
-    if (!keyVaultSecretName) {
-        return '';
-    }
-    const cacheKey = JSON.stringify([config.keyVaultUrl, config.managedIdentityClientId, keyVaultSecretName]);
-    const cachedSecret = secretCache.get(cacheKey);
-    if (cachedSecret && cachedSecret.expiresAt > Date.now()) {
-        return cachedSecret.value;
-    }
-
-    const secretValue = (await getKeyVaultSecretClient(config).getSecret(keyVaultSecretName)).value || '';
-
-    secretCache.set(cacheKey, {
-        value: secretValue,
-        expiresAt: Date.now() + SECRET_CACHE_TIME_TO_LIVE_MILLISECONDS,
-    });
-    return secretValue;
-}
-
 async function resolveProviderCredential(authConfiguration = {}, config) {
-    const { mode = 'apiKey' } = authConfiguration;
-    if (mode === 'apiKey') {
-        const [secret, identity] = await Promise.all([
-            resolveSecretValue(authConfiguration.keyVaultSecretName, config),
-            authConfiguration.identityKeyVaultSecretName
-                ? resolveSecretValue(authConfiguration.identityKeyVaultSecretName, config)
-                : Promise.resolve(''),
-        ]);
-        return { mode: 'apiKey', secret, identity };
+    return providerCredentials.resolve(authConfiguration, config);
+}
+
+async function startProviderCredentialRefresh() {
+    const config = readConfig();
+    if (!config.providerName) return;
+    const provider = getProvider(config.providerName);
+    if (!provider || (config.providerAuthMode && config.providerAuthMode !== provider.manifest.auth.mode)) {
+        reportRefreshFailure('configuration');
+        return;
     }
-    if (mode !== 'oauth' || !config.providerTenantId || !config.providerScope
-        || !config.outboundClientId || !config.outboundManagedIdentityClientId) {
-        throw new Error('unsupported or incomplete provider authentication');
+    try {
+        await resolveProviderCredential(provider.manifest.auth, config);
+    } catch {
+        // The cache reports acquisition failures; also report configurations rejected before caching.
+        if (!providerCredentials.current) reportRefreshFailure('configuration');
     }
-    if (AzureLogger.log !== filteredOAuthLogger) {
-        const log = AzureLogger.log;
-        filteredOAuthLogger = (...args) => { if (!oauthRequest.getStore()) log(...args); };
-        AzureLogger.log = filteredOAuthLogger;
-    }
-    return oauthRequest.run(AbortSignal.timeout(2500), async () => {
-        try {
-            const credentialConfig = JSON.stringify([
-                config.providerTenantId, config.outboundClientId, config.outboundManagedIdentityClientId,
-            ]);
-            if (!oauthCredential || oauthCredentialConfig !== credentialConfig) {
-                const assertionIdentity = new ManagedIdentityCredential({
-                    clientId: config.outboundManagedIdentityClientId, retryOptions: { maxRetries: 0 },
-                });
-                oauthCredential = new ClientAssertionCredential(
-                    config.providerTenantId,
-                    config.outboundClientId,
-                    async () => {
-                        const assertion = await assertionIdentity.getToken('api://AzureADTokenExchange/.default',
-                            { abortSignal: oauthRequest.getStore() });
-                        if (!usableAccessToken(assertion)) throw new Error('managed identity assertion unavailable');
-                        return assertion.token;
-                    },
-                    { authorityHost: 'https://login.microsoftonline.com', retryOptions: { maxRetries: 0 } },
-                );
-                oauthCredentialConfig = credentialConfig;
-            }
-            const accessToken = await oauthCredential.getToken(config.providerScope, { abortSignal: oauthRequest.getStore() });
-            if (!usableAccessToken(accessToken)) throw new Error('provider OAuth token unavailable');
-            return Object.defineProperty({ mode: 'oauth' }, 'accessToken', { value: accessToken.token });
-        } catch {
-            throw new Error('provider OAuth token unavailable');
-        }
-    });
+}
+
+function stopProviderCredentialRefresh() {
+    providerCredentials.close();
 }
 
 // Status mappings may restrict HTTP success, but cannot turn failed HTTP into Continue.
@@ -497,4 +421,6 @@ module.exports = {
     parseProviderTimeout,
     isValidProviderUrl,
     resolveProviderCredential,
+    startProviderCredentialRefresh,
+    stopProviderCredentialRefresh,
 };
