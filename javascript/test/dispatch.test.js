@@ -1,6 +1,6 @@
 'use strict';
 
-const { test, afterEach } = require('node:test');
+const { test, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
@@ -9,12 +9,17 @@ const { DeliveryContext, ParsedResponse } = require('../src/functions/models');
 const fixtures = require('../../tests/fixtures/contract.json');
 const { inspect } = require('node:util');
 const { AzureLogger } = require('@azure/logger');
+const { ProviderCredentials, providerCredentials } = require('../src/functions/credentials');
 const {
     dispatchOtp, getProvider, resolveOutcome, outcomeToHttpStatus,
     parseEnvelope, parseProviderTimeout, isValidProviderUrl, contextToDispatch, resolveProviderCredential,
-    stopProviderCredentialRefresh,
 } = require('../src/functions/dispatch');
-afterEach(stopProviderCredentialRefresh);
+let credentials;
+beforeEach((t) => {
+    credentials = new ProviderCredentials();
+    t.mock.method(providerCredentials, 'resolve', (...args) => credentials.resolve(...args));
+});
+afterEach(() => credentials.close());
 const dispatch = { destination: '+15551234567', message: '  Your code is 918273.\n',
     channel: 'sms', messageId: 'message-id', correlationId: 'correlation-id' };
 const input = { channel: 'sms', endpoint: 'https://provider.example', dispatch,
@@ -298,7 +303,8 @@ test('Soprano OAuth reuses setup identities and selected scope with private boun
         for (const invalid of [null, { token: '' }, { token: ' ' }, { token: false },
             { token: 'stale', expiresOnTimestamp: Date.now() + 10000 }, { token: 'missing-expiry' }]) {
             const method = stage === 'token' ? providerToken : identityToken;
-            stopProviderCredentialRefresh();
+            credentials.close();
+            credentials = new ProviderCredentials();
             method.mock.mockImplementation(async () => invalid);
             if (stage === 'assertion') providerToken.mock.mockImplementation(async function () {
                 await this.getAssertion();

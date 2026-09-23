@@ -5,13 +5,16 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import requests
+import pytest
+from azure.identity import ClientAssertionCredential
 
 import src.credentials as credentials_module
 from src.config import read_config
 from src.credentials import ProviderCredentials
 
 
-def test_real_provider_sdk_uses_one_exchange_for_concurrent_requests_and_no_exchange_when_warm(monkeypatch):
+@pytest.mark.parametrize("refresh_in", [None, 60])
+def test_real_provider_sdk_reuses_tokens_and_preserves_refresh_metadata(monkeypatch, refresh_in):
     token_endpoint_calls = []
     mi_calls = []
 
@@ -28,7 +31,10 @@ def test_real_provider_sdk_uses_one_exchange_for_concurrent_requests_and_no_exch
         if method == "POST" and url.endswith("/oauth2/v2.0/token"):
             token_endpoint_calls.append(url)
             time.sleep(0.03)
-            return response({"access_token": "PRIVATE-PROVIDER", "expires_in": 3600, "token_type": "Bearer"})
+            payload = {"access_token": "PRIVATE-PROVIDER", "expires_in": 3600, "token_type": "Bearer"}
+            if refresh_in is not None:
+                payload["refresh_in"] = refresh_in
+            return response(payload)
         if method == "GET" and ".well-known/openid-configuration" in url:
             return response({
                 "token_endpoint": "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token",
@@ -43,7 +49,7 @@ def test_real_provider_sdk_uses_one_exchange_for_concurrent_requests_and_no_exch
 
     monkeypatch.setattr(requests.Session, "request", send)
     monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock(
-        return_value=Mock(get_token=Mock(side_effect=managed))))
+        return_value=Mock(spec=["get_token"], get_token=Mock(side_effect=managed))))
     secrets = Mock()
     manager = ProviderCredentials(secrets)
     config = read_config({
@@ -59,6 +65,15 @@ def test_real_provider_sdk_uses_one_exchange_for_concurrent_requests_and_no_exch
         assert len(token_endpoint_calls) == 1
         assert len(mi_calls) == 1
         assert manager.resolve({"mode": "oauth"}, config)["access_token"] == "PRIVATE-PROVIDER"
+        assert len(token_endpoint_calls) == len(mi_calls) == 1
+        entry = manager._state.tokens[config.provider_scope]._entry
+        if refresh_in is not None and hasattr(ClientAssertionCredential, "get_token_info"):
+            info = manager._state.credential.get_token_info(config.provider_scope)
+            assert info.refresh_on is not None
+            assert entry.refresh_at == info.refresh_on
+            assert entry.refresh_at < entry.expires_at - 3000
+        else:
+            assert entry.refresh_at == entry.value.expires_on - 300
         assert len(token_endpoint_calls) == len(mi_calls) == 1
         secrets.resolve.assert_not_called()
     finally:

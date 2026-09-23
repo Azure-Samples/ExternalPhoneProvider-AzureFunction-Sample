@@ -92,9 +92,12 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 
 Worker initialization starts background credential preparation when a provider is configured.
 Key Vault bundles, managed-identity assertions and final Entra tokens use separate process-local
-caches with daemon refresh timers. A caller can stop waiting without cancelling shared retrieval;
-the HTTP SDK still uses connect/read inactivity timeouts, not a total transport deadline. `atexit`
-stops scheduled work and prevents late cache publication. See the
+caches with daemon refresh timers and parallel daemon secret reads. A caller can stop waiting
+without cancelling shared retrieval or starting overlapping reads; the HTTP SDK still uses
+connect/read inactivity timeouts, not a total transport deadline. `get_token_info`, when supported
+by the installed SDK, preserves early refresh hints; older SDKs retain the pre-expiry refresh target.
+`atexit` stops scheduled work, releases waiters and prevents late cache publication. Pending
+synchronous reads do not block process exit. Closing a credential manager is terminal. See the
 [refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh). Evaluation handling stays
 independent; leave the provider unset for local evaluation without background credential acquisition.
 

@@ -8,7 +8,8 @@ const { CompactEncrypt } = require('jose');
 const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const fixtures = require('../../tests/fixtures/contract.json');
-const { getProvider, stopProviderCredentialRefresh } = require('../src/functions/dispatch');
+const { getProvider } = require('../src/functions/dispatch');
+const { ProviderCredentials, providerCredentials } = require('../src/functions/credentials');
 const { RequestLog } = require('../src/functions/requestLog');
 
 // Capture the real handler; keys stay in memory and all external I/O is mocked.
@@ -42,8 +43,11 @@ let logs;
 let warnings;
 let records;
 let getToken;
+let credentials;
 beforeEach(() => {
-    stopProviderCredentialRefresh();
+    credentials = new ProviderCredentials();
+    mock.method(providerCredentials, 'resolve', (...args) => credentials.resolve(...args));
+    mock.method(providerCredentials, 'close', () => credentials.close());
     savedEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
     for (const key of envKeys) delete process.env[key];
     Object.assign(process.env, { EPP_LOG_PLAINTEXT: 'true',
@@ -66,7 +70,7 @@ beforeEach(() => {
         text: async () => JSON.stringify({ status: 'ENROUTE', id: 'provider-reference-id', description: 'PRIVATE-STATUS' }) }));
 });
 afterEach(() => {
-    stopProviderCredentialRefresh();
+    credentials.close();
     mock.restoreAll();
     for (const [key, value] of Object.entries(savedEnv)) {
         if (value === undefined) delete process.env[key];
@@ -146,6 +150,9 @@ test('worker startup preloads credentials without delivery and leaves evaluation
     assert.equal(getToken.mock.callCount(), 1);
     assert.equal(fetchMock.mock.callCount(), 1);
     stopHook();
+    assertFailure(await invoke(await envelope()), 502);
+    assert.equal(getToken.mock.callCount(), 1);
+    assert.equal(fetchMock.mock.callCount(), 1);
 });
 
 test('worker startup without a configured provider does not acquire any credentials', async () => {

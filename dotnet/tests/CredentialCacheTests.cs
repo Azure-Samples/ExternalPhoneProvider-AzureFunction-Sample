@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Azure.Core;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace Epp.Otp.Tests;
@@ -218,6 +220,87 @@ public class CredentialCacheTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => manager.ResolveAsync(new("oauth"), Config()));
     }
 
+    [Fact]
+    public async Task DisposingManagerIsTerminalAndCancelsPendingAcquisition()
+    {
+        var clock = new ManualClock();
+        var release = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        CancellationToken acquisition = default;
+        var env = new TestEnv { ["KEY_VAULT_URL"] = "https://unit.vault.azure.net" };
+        using var manager = new ProviderCredentials(new Secrets((_, cancellation) =>
+        {
+            calls++;
+            acquisition = cancellation;
+            return release.Task;
+        }), env, _ => throw new Exception("Unexpected managed identity"),
+            (_, _, _) => throw new Exception("Unexpected OAuth"), clock: clock);
+        var auth = new AuthConfig("apiKey", "key");
+        var pending = manager.ResolveAsync(auth, new AppConfig());
+        manager.Dispose();
+        manager.Dispose();
+        Assert.True(acquisition.IsCancellationRequested);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => pending);
+        release.SetResult("PRIVATE-LATE-KEY");
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => manager.ResolveAsync(auth, new AppConfig()));
+        env["KEY_VAULT_URL"] = "https://different.vault.azure.net";
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => manager.ResolveAsync(auth, new AppConfig()));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => manager.ResolveAsync(new("oauth"), Config()));
+        Assert.Equal(1, calls);
+        Assert.Equal(0, clock.TimerCount);
+    }
+
+    [Fact]
+    public async Task InvalidConfigurationClearsOldStateWithoutDisposingManager()
+    {
+        var clock = new ManualClock();
+        var instances = 0;
+        using var manager = new ProviderCredentials(new Secrets((_, _) => throw new Exception("Unexpected Key Vault")),
+            new TestEnv(), _ => new Token((_, _) =>
+                ValueTask.FromResult(new AccessToken("assertion", clock.GetUtcNow().AddHours(1)))),
+            (_, _, assertion) =>
+            {
+                instances++;
+                return new Token(async (_, cancellation) =>
+                {
+                    await assertion(cancellation);
+                    return new("provider-token", clock.GetUtcNow().AddHours(1));
+                });
+            }, clock: clock);
+        await manager.ResolveAsync(new("oauth"), Config());
+        Assert.Equal(2, clock.TimerCount);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => manager.ResolveAsync(new("oauth"), Config(scope: "")));
+        Assert.Equal(0, clock.TimerCount);
+        Assert.Equal("provider-token", (await manager.ResolveAsync(new("oauth"), Config())).AccessToken);
+        Assert.Equal(2, instances);
+        Assert.Equal(2, clock.TimerCount);
+    }
+
+    [Fact]
+    public async Task RefreshFailureUsesStructuredSanitizedLogRecord()
+    {
+        var clock = new ManualClock();
+        var logger = new CredentialLogger();
+        using var manager = new ProviderCredentials(new Secrets((_, _) =>
+            throw new InvalidOperationException("PRIVATE-SDK-ERROR")), new TestEnv(),
+            _ => throw new Exception("Unexpected managed identity"),
+            (_, _, _) => throw new Exception("Unexpected OAuth"), logger, clock);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            manager.ResolveAsync(new("apiKey", "key"), new AppConfig()));
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Equal("credential_refresh_failed", entry.EventId.Name);
+        Assert.Null(entry.Error);
+        Assert.Equal(4, entry.State.Count);
+        Assert.Equal("service", entry.State["logType"]);
+        Assert.Equal("credential_refresh_failed", entry.State["eventName"]);
+        Assert.Equal("key_vault", entry.State["cacheKind"]);
+        Assert.Equal("credential_unavailable", entry.State["failureReason"]);
+        using var json = JsonDocument.Parse(entry.Message);
+        Assert.Equal("key_vault", json.RootElement.GetProperty("cacheKind").GetString());
+        Assert.DoesNotContain("PRIVATE", entry.Message);
+    }
+
     private static AppConfig Config(string scope = "api://provider/.default", string application = "app") => new()
     {
         ProviderTenantId = "tenant", ProviderScope = scope, OutboundClientId = application,
@@ -245,6 +328,22 @@ public class CredentialCacheTests
             throw new InvalidOperationException("Synchronous acquisition was not expected");
         public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken) =>
             acquire(requestContext, cancellationToken);
+    }
+
+    private sealed record LogEntry(LogLevel Level, EventId EventId, IReadOnlyDictionary<string, object?> State,
+        Exception? Error, string Message);
+
+    private sealed class CredentialLogger : ILogger
+    {
+        internal List<LogEntry> Entries { get; } = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => true;
+        public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? error,
+            Func<TState, Exception?, string> formatter)
+        {
+            var record = Assert.IsAssignableFrom<IReadOnlyDictionary<string, object?>>(state);
+            Entries.Add(new(level, eventId, record, error, formatter(state, error)));
+        }
     }
 
     private sealed class ManualClock : TimeProvider

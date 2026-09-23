@@ -58,7 +58,7 @@ def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, m
     engine._resolve_credential = DispatchEngine._resolve_credential.__get__(engine, DispatchEngine)
     assertion = SimpleNamespace(token="private-assertion", expires_on=time.time() + 3600)
     access = SimpleNamespace(token="private-token", expires_on=time.time() + 3600)
-    managed = Mock(get_token=Mock(side_effect=lambda *args, **kwargs: assertion))
+    managed = Mock(spec=["get_token"], get_token=Mock(side_effect=lambda *args, **kwargs: assertion))
     identity_factory = Mock(return_value=managed)
     clients = []
 
@@ -73,7 +73,7 @@ def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, m
             assert kwargs["func"]() == "private-assertion"
             return access
 
-        client = Mock(get_token=Mock(side_effect=get_token))
+        client = Mock(spec=["get_token"], get_token=Mock(side_effect=get_token))
         clients.append(client)
         return client
 
@@ -99,13 +99,16 @@ def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, m
         for invalid in (None, SimpleNamespace(token=""), SimpleNamespace(token=" "),
                         SimpleNamespace(token="private-token"),
                         SimpleNamespace(token="private-token", expires_on=time.time() + 5)):
-            engine.close()
             if stage == "access":
                 access = invalid
             else:
                 access = SimpleNamespace(token="private-token", expires_on=time.time() + 3600)
                 assertion = invalid
-            status, body = engine.dispatch(_request(), "request")
+            candidate = DispatchEngine(engine.registry, engine.secrets, engine.env)
+            try:
+                status, body = candidate.dispatch(_request(), "request")
+            finally:
+                candidate.close()
             assert status == 502 and body["reason"] == "provider credential unavailable"
             assert "private" not in json.dumps(body)
     engine.secrets.resolve.assert_not_called()
@@ -129,7 +132,8 @@ def test_soprano_oauth_sdk_logs_stay_private_without_muting_other_requests(engin
         raise RuntimeError("PRIVATE-TOKEN-EXCEPTION")
 
     monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock())
-    monkeypatch.setattr(credentials_module, "ClientAssertionCredential", Mock(return_value=Mock(get_token=fail)))
+    monkeypatch.setattr(credentials_module, "ClientAssertionCredential",
+                        Mock(return_value=Mock(spec=["get_token"], get_token=fail)))
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(engine.dispatch, _request(), "request")

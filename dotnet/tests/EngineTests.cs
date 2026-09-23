@@ -155,7 +155,7 @@ public class EngineTests
     {
         CancellationToken observed = default;
         var waitForCancellation = true;
-        using var rig = new HandlerRig(_ => new TestTokenCredential(async (_, cancellation) =>
+        TokenCredential CreateIdentity(string _) => new TestTokenCredential(async (_, cancellation) =>
         {
             if (waitForCancellation)
             {
@@ -163,20 +163,27 @@ public class EngineTests
                 await Task.Delay(Timeout.Infinite, cancellation);
             }
             return new AccessToken("assertion", DateTimeOffset.UtcNow.AddHours(1));
-        }), (_, _, assertion) => new TestTokenCredential(async (_, cancellation) =>
+        });
+        TokenCredential CreateProvider(string tenant, string application, Func<CancellationToken, Task<string>> assertion) =>
+            new TestTokenCredential(async (_, cancellation) =>
         {
             await assertion(cancellation);
             return new AccessToken("token", DateTimeOffset.UtcNow.AddHours(1));
-        }));
+        });
+        using var rig = new HandlerRig(CreateIdentity, CreateProvider);
         ConfigureSoprano(rig);
         AssertFailure(rig, await rig.Invoke().WaitAsync(TimeSpan.FromSeconds(10)), 502);
         Assert.True(observed.IsCancellationRequested);
         Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
         waitForCancellation = false;
         rig.Engine.Dispose();
-        rig.Http.Respond = _ => Task.FromResult(Json(401, "{\"status\":\"REJECTED\"}"));
-        AssertFailure(rig, await rig.Invoke(), 401);
-        Assert.Equal((1, 0), (rig.Http.Calls, rig.Secrets.Calls));
+        AssertFailure(rig, await rig.Invoke(), 502);
+        Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
+        using var replacement = new HandlerRig(CreateIdentity, CreateProvider);
+        ConfigureSoprano(replacement);
+        replacement.Http.Respond = _ => Task.FromResult(Json(401, "{\"status\":\"REJECTED\"}"));
+        AssertFailure(replacement, await replacement.Invoke(), 401);
+        Assert.Equal((1, 0), (replacement.Http.Calls, replacement.Secrets.Calls));
     }
 
     private sealed class TestTokenCredential(Func<TokenRequestContext, CancellationToken, ValueTask<AccessToken>> acquire) : TokenCredential

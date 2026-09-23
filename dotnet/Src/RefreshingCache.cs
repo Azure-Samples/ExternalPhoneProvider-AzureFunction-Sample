@@ -1,5 +1,21 @@
 namespace Epp.Otp;
 
+internal static class CredentialCachePolicy
+{
+    internal static readonly TimeSpan AcquisitionTimeout = TimeSpan.FromSeconds(2.5);
+    internal static readonly TimeSpan SecretTtl = TimeSpan.FromMinutes(5);
+    internal static readonly TimeSpan SecretRefreshInterval = TimeSpan.FromMinutes(4);
+    internal static readonly TimeSpan TokenExpirySkew = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan TokenRefreshLead = TimeSpan.FromMinutes(5);
+    internal static readonly TimeSpan MinRefreshDelay = TimeSpan.FromSeconds(1);
+    internal static readonly TimeSpan MaxRefreshDelay = TimeSpan.FromSeconds(60);
+    internal static readonly TimeSpan InitialRetryDelay = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan MaxRetryDelay = TimeSpan.FromSeconds(60);
+    internal static readonly TimeSpan MaxTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue);
+    internal const int MaxRetryExponent = 4;
+    internal const double RetryJitterRatio = 0.2;
+}
+
 internal sealed record CredentialCacheEntry<T>(T Value, DateTimeOffset ExpiresAt, DateTimeOffset RefreshAt)
 {
     public override string ToString() => nameof(CredentialCacheEntry<T>);
@@ -65,7 +81,7 @@ internal sealed class RefreshingCache<T> : IDisposable
         _timer = null;
         var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         _inFlight = completion.Task;
-        _acquisition = new CancellationTokenSource(TimeSpan.FromSeconds(2.5), _clock);
+        _acquisition = new CancellationTokenSource(CredentialCachePolicy.AcquisitionTimeout, _clock);
         _ = RunRefreshAsync(completion, _acquisition);
         return completion.Task;
     }
@@ -93,8 +109,10 @@ internal sealed class RefreshingCache<T> : IDisposable
                 if (entry is null)
                 {
                     _failures++;
-                    var backoff = Math.Min(60, 5 * Math.Pow(2, Math.Min(_failures - 1, 4)));
-                    _retryAt = _clock.GetUtcNow().AddSeconds(backoff * (1 + _random() * 0.2));
+                    var exponent = Math.Min(_failures - 1, CredentialCachePolicy.MaxRetryExponent);
+                    var backoff = Math.Min(CredentialCachePolicy.MaxRetryDelay.TotalSeconds,
+                        CredentialCachePolicy.InitialRetryDelay.TotalSeconds * Math.Pow(2, exponent));
+                    _retryAt = _clock.GetUtcNow().AddSeconds(backoff * (1 + _random() * CredentialCachePolicy.RetryJitterRatio));
                     _onFailure();
                 }
                 else
@@ -104,7 +122,8 @@ internal sealed class RefreshingCache<T> : IDisposable
                     _retryAt = default;
                 }
                 var next = entry is null ? _retryAt : entry.RefreshAt;
-                var wait = Math.Clamp((next - _clock.GetUtcNow()).TotalMilliseconds, 1000, int.MaxValue);
+                var wait = Math.Clamp((next - _clock.GetUtcNow()).TotalMilliseconds,
+                    CredentialCachePolicy.MinRefreshDelay.TotalMilliseconds, CredentialCachePolicy.MaxTimerDelay.TotalMilliseconds);
                 _timer = _clock.CreateTimer(_ => ScheduledRefresh(), null, TimeSpan.FromMilliseconds(wait), Timeout.InfiniteTimeSpan);
             }
             if (entry is null) completion.TrySetException(Unavailable());

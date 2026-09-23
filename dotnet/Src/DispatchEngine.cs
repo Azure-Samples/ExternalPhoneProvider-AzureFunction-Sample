@@ -241,7 +241,7 @@ public sealed class DispatchEngine : IDisposable
     {
         var options = new ClientAssertionCredentialOptions { AuthorityHost = AzureAuthorityHosts.AzurePublicCloud };
         options.Retry.MaxRetries = 0;
-        options.Retry.NetworkTimeout = TimeSpan.FromSeconds(2.5);
+        options.Retry.NetworkTimeout = CredentialCachePolicy.AcquisitionTimeout;
         options.Diagnostics.IsLoggingEnabled = false;
         options.Diagnostics.IsLoggingContentEnabled = false;
         return options;

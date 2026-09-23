@@ -1,6 +1,10 @@
+import subprocess
+import sys
+import textwrap
 import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, Lock
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -188,7 +192,7 @@ def oauth_config():
 
 def test_both_mi_and_provider_token_caches_refresh_independently_and_skip_warm_sdk_calls(monkeypatch):
     clock = Clock()
-    identity = Mock(get_token=Mock(side_effect=lambda *args, **kwargs:
+    identity = Mock(spec=["get_token"], get_token=Mock(side_effect=lambda *args, **kwargs:
         SimpleNamespace(token="PRIVATE-ASSERTION", expires_on=clock.now + 3600)))
     monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock(return_value=identity))
     clients = []
@@ -198,7 +202,7 @@ def test_both_mi_and_provider_token_caches_refresh_independently_and_skip_warm_s
             assert kwargs["func"]() == "PRIVATE-ASSERTION"
             assert kwargs["func"]() == "PRIVATE-ASSERTION"
             return SimpleNamespace(token="PRIVATE-TOKEN", expires_on=clock.now + 3600)
-        client = Mock(get_token=Mock(side_effect=get_token))
+        client = Mock(spec=["get_token"], get_token=Mock(side_effect=get_token))
         clients.append(client)
         return client
 
@@ -292,3 +296,151 @@ def test_startup_only_prepares_credentials_and_handles_missing_provider_or_failu
         broken.start_credential_refresh()
     finally:
         broken.close()
+
+
+def test_token_info_refresh_hints_apply_to_both_caches_without_legacy_sdk_calls(monkeypatch):
+    clock = Clock()
+
+    def token_info(value):
+        return SimpleNamespace(token=value, expires_on=clock.now + 3600, refresh_on=clock.now + 60)
+
+    identity = Mock(
+        spec=["get_token", "get_token_info"],
+        get_token_info=Mock(side_effect=lambda scope: token_info("PRIVATE-ASSERTION")),
+    )
+    monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock(return_value=identity))
+    clients = []
+
+    def create(**kwargs):
+        def get_token_info(scope):
+            assert kwargs["func"]() == "PRIVATE-ASSERTION"
+            return token_info("PRIVATE-PROVIDER")
+        credential = Mock(spec=["get_token", "get_token_info"], get_token_info=Mock(side_effect=get_token_info))
+        clients.append(credential)
+        return credential
+
+    monkeypatch.setattr(credentials_module, "ClientAssertionCredential", create)
+    manager = ProviderCredentials(Mock(), cache_options=clock.options)
+    config = oauth_config()
+    try:
+        manager.resolve({"mode": "oauth"}, config)
+        state = manager._state
+        assert state.assertion._entry.refresh_at == clock.now + 60
+        assert state.tokens[config.provider_scope]._entry.refresh_at == clock.now + 60
+        assert "PRIVATE" not in repr(state) + repr(state.assertion._entry)
+        clock.advance(60)
+        wait_until(lambda: identity.get_token_info.call_count == clients[0].get_token_info.call_count == 2)
+        wait_until(lambda: clock.timer_count == 2)
+        identity.get_token.assert_not_called()
+        clients[0].get_token.assert_not_called()
+        config.provider_scope = ""
+        with pytest.raises(ValueError, match="OAuth token unavailable"):
+            manager.resolve({"mode": "oauth"}, config)
+        assert clock.timer_count == 0
+        config.provider_scope = "api://provider/.default"
+        assert manager.resolve({"mode": "oauth"}, config)["access_token"] == "PRIVATE-PROVIDER"
+        assert len(clients) == 2
+    finally:
+        manager.close()
+
+
+def test_close_releases_waiters_immediately_and_never_reopens_the_manager():
+    clock = Clock()
+    started, release = Event(), Event()
+
+    def load():
+        started.set()
+        assert release.wait(3)
+        return CacheEntry("late", clock.now + 300, clock.now + 240)
+
+    cache = RefreshingCache(load, **clock.options)
+    future = cache.refresh()
+    try:
+        assert started.wait(3)
+        cache.close()
+        with pytest.raises(ValueError, match="unavailable"):
+            future.result(timeout=0.1)
+        assert clock.timer_count == 0
+    finally:
+        release.set()
+        cache.close()
+
+    secrets = Mock(resolve=Mock(return_value="PRIVATE-KEY"))
+    manager = ProviderCredentials(secrets, cache_options=clock.options)
+    auth = {"mode": "apiKey", "key_vault_secret_name": "key"}
+    config = read_config({"KEY_VAULT_URL": "https://unit.vault.azure.net"})
+    manager.resolve(auth, config)
+    manager.close()
+    manager.close()
+    for settings in (config, read_config({"KEY_VAULT_URL": "https://other.vault.azure.net"})):
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.resolve(auth, settings)
+    with pytest.raises(ValueError, match="unavailable"):
+        manager.resolve({"mode": "oauth"}, config)
+    secrets.resolve.assert_called_once()
+    assert clock.timer_count == 0
+
+
+def test_pending_secret_reads_remain_single_flight_after_waiters_leave():
+    clock = Clock()
+    started, release = Event(), Event()
+    calls = []
+
+    def resolve(name):
+        calls.append(name)
+        if name == "key":
+            raise ValueError("PRIVATE-FAILURE")
+        started.set()
+        assert release.wait(3)
+        return "PRIVATE-IDENTITY"
+
+    manager = ProviderCredentials(
+        Mock(resolve=resolve), cache_options={**clock.options, "wait_timeout": 0.02},
+        report_failure=lambda kind: None,
+    )
+    auth = {"mode": "apiKey", "key_vault_secret_name": "key", "identity_key_vault_secret_name": "id"}
+    config = read_config({})
+    try:
+        for _ in range(3):
+            with pytest.raises(ValueError, match="unavailable"):
+                manager.resolve(auth, config)
+            clock.advance(60)
+        assert started.is_set()
+        assert sorted(calls) == ["id", "key"]
+        assert clock.timer_count == 0
+    finally:
+        manager.close()
+        release.set()
+
+
+def test_pending_secret_reads_do_not_block_process_shutdown():
+    script = textwrap.dedent("""
+        import atexit
+        from threading import Event
+        from types import SimpleNamespace
+        from src.config import read_config
+        from src.credentials import ProviderCredentials
+
+        started, blocked = Event(), Event()
+        def resolve(name):
+            started.set()
+            blocked.wait()
+            return "synthetic-key"
+
+        manager = ProviderCredentials(SimpleNamespace(resolve=resolve), cache_options={"wait_timeout": 0.02})
+        atexit.register(lambda: print("shutdown-complete", flush=True))
+        atexit.register(manager.close)
+        try:
+            manager.resolve({"mode": "apiKey", "key_vault_secret_name": "key"}, read_config({}))
+        except ValueError:
+            pass
+        assert started.wait(1)
+        manager.close()
+        print("main-finished", flush=True)
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["main-finished", "shutdown-complete"]

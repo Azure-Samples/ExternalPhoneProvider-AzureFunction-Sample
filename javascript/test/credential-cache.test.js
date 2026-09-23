@@ -250,3 +250,20 @@ test('incomplete OAuth reconfiguration clears old timers and never reuses old va
         assert.equal(time.timerCount, 2);
     } finally { manager.close(); }
 });
+
+test('closing a credential manager is terminal, including after a configuration change', async (t) => {
+    const time = clock();
+    const getSecret = t.mock.method(SecretClient.prototype, 'getSecret', async () => ({ value: 'PRIVATE-KEY' }));
+    const manager = new ProviderCredentials({ cacheOptions: time.options });
+    const auth = { mode: 'apiKey', keyVaultSecretName: 'key' };
+    const config = readConfig({ KEY_VAULT_URL: 'https://unit.vault.azure.net' });
+    await manager.resolve(auth, config);
+    manager.close();
+    manager.close();
+    for (const settings of [config, { ...config, keyVaultUrl: 'https://other.vault.azure.net' }]) {
+        await assert.rejects(manager.resolve(auth, settings), /provider credential unavailable/);
+    }
+    await assert.rejects(manager.resolve({ mode: 'oauth' }, config), /provider credential unavailable/);
+    assert.equal(getSecret.mock.callCount(), 1);
+    assert.equal(time.timerCount, 0);
+});

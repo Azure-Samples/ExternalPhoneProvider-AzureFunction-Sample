@@ -101,8 +101,11 @@ retries. The shared contract defines validation, HTTP outcomes and privacy-safe 
 
 Configured providers automatically prewarm on the app-start hook. Key Vault credential bundles,
 managed-identity assertions and final Entra tokens refresh through separate process-local caches.
-Warm requests reuse usable values; concurrent misses share a retrieval, refresh failure never
-extends expiry, and termination stops timers. Startup/refresh never sends an OTP. See the
+Warm requests reuse usable values; concurrent misses share a retrieval and refresh failure never
+extends expiry. Acquisition deadlines and termination cancel the actual SDK HTTP transport,
+including managed identity, through an HTTP-client wrapper. Termination stops timers and closes
+the manager permanently; configuration replacement uses a separate cache reset. Startup/refresh
+never sends an OTP. See the
 [refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh) for budgets and cold-start
 limitations. Leave the provider unset for local evaluation-only use without credential acquisition.
 

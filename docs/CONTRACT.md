@@ -118,9 +118,14 @@ Credential instances are reused for the configured tenant/application/identity. 
 final provider token for each selected scope. A usable final token avoids both SDK acquisition calls
 on the delivery path. Each cache owns its refresh independently, so one waiting caller cannot cancel
 an assertion refresh another caller needs. JavaScript and .NET bound each acquisition to 2.5 seconds;
-JavaScript also links that cancellation to the actual Azure SDK HTTP pipeline rather than relying
-only on the SDK's `getToken` option. Python bounds each wait to 2.5 seconds and uses 2.5-second
+JavaScript links that cancellation through an SDK HTTP-client wrapper, including the managed-identity
+transport, rather than relying on `getToken` options or policies the SDK can replace.
+Python bounds each wait to 2.5 seconds and uses 2.5-second
 connect/read inactivity timeouts; its shared refresh may finish after a waiter leaves.
+
+Python uses `get_token_info` when the installed SDK supports it, preserving the `refresh_on` hint.
+Older supported SDKs expose only expiry metadata through `get_token`; those versions retain the
+five-minute pre-expiry refresh target. An acquisition failure never falls back to another token API.
 
 Credential SDK transport retries are disabled; failed refreshes use the bounded backoff described
 below. These are not end-to-end delivery deadlines. JavaScript suppresses SDK logs in the
@@ -350,6 +355,10 @@ stores. API-key entries are isolated by vault, managed identity and manifest sec
 state is isolated by provider tenant, application and managed identity, with separate final-token
 entries for different scopes. A change of credential configuration stops the old entries; deploy
 app-setting changes normally with a worker restart rather than mutating process environment in place.
+Configuration replacement clears old entries without shutting down the manager. Explicit
+`close()`/`Dispose()` is terminal: a stopped manager cannot acquire credentials again. Create a
+new manager or restart the worker instead of reusing a stopped instance. Timing values are named
+policy constants in each runtime's refreshing-cache implementation, not additional app settings.
 
 Concurrent cache misses share **one in-progress acquisition per entry**. A request with a still-usable
 cached credential returns it immediately while a due refresh proceeds separately. Refresh failures
@@ -371,6 +380,12 @@ threads are daemon threads; termination hooks/`atexit`/hosted-service shutdown c
 work and discard entries. Late completion cannot repopulate a stopped cache. A cold Python caller
 can stop waiting without cancelling the shared retrieval. Failed or absent provider configuration
 does not prevent evaluation from working.
+
+Python uses explicitly owned daemon threads for parallel secret reads, not executor workers that
+are joined before application `atexit` handlers. A bundle keeps ownership of both reads until they
+finish, so a waiting caller's timeout or one failed read cannot start overlapping retries. Shutdown
+releases pending cache waiters immediately. Synchronous Python SDK I/O is not forcibly cancelled;
+unfinished reads cannot publish late values or block normal process exit.
 
 **This is not a guarantee that the first request after a cold start meets the caller's budget.**
 Initialization can itself be on that first request's critical path, and a worker may receive traffic

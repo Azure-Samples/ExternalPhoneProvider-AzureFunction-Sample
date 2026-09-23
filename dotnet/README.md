@@ -93,7 +93,9 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 The hosted credential-refresh service automatically prewarms a configured provider. Separate
 process-local caches refresh Key Vault bundles, managed-identity assertions and final Entra tokens.
 Each acquisition owns its cancellation budget; cancelling a waiter does not cancel another
-request's shared retrieval. Shutdown stops timers and drops values. See the
+request's shared retrieval. Shutdown stops timers, cancels acquisitions and drops values.
+Disposal is terminal; configuration replacement clears caches without disposing the manager.
+Refresh failures use the same structured, sanitized JSON logging pattern as request events. See the
 [refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh) for expiry/backoff semantics
 and cold-start limitations. Evaluation remains independent from successful credential preparation.
 

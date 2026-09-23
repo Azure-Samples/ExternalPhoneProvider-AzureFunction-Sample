@@ -27,13 +27,13 @@ public sealed class SecretResolver : ISecretResolver
             if (_client is not null && _clientKey == (url, clientId)) return _client;
             var identityOptions = new TokenCredentialOptions();
             identityOptions.Retry.MaxRetries = 0;
-            identityOptions.Retry.NetworkTimeout = TimeSpan.FromSeconds(2.5);
+            identityOptions.Retry.NetworkTimeout = CredentialCachePolicy.AcquisitionTimeout;
             identityOptions.Diagnostics.IsLoggingEnabled = false;
             identityOptions.Diagnostics.IsLoggingContentEnabled = false;
             var credential = new ManagedIdentityCredential(clientId, identityOptions);
             var options = new SecretClientOptions();
             options.Retry.MaxRetries = 0;
-            options.Retry.NetworkTimeout = TimeSpan.FromSeconds(2.5);
+            options.Retry.NetworkTimeout = CredentialCachePolicy.AcquisitionTimeout;
             options.Diagnostics.IsLoggingEnabled = false;
             options.Diagnostics.IsLoggingContentEnabled = false;
             _client = new SecretClient(new Uri(url), credential, options);

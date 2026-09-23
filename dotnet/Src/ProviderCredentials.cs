@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Azure.Core;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -18,6 +19,7 @@ internal sealed class ProviderCredentials : IDisposable
     private RefreshingCache<AccessToken>? _assertion;
     private TokenCredential? _credential;
     private readonly Dictionary<string, RefreshingCache<AccessToken>> _tokens = new();
+    private bool _disposed;
 
     internal ProviderCredentials(ISecretResolver secrets, IEnv env,
         Func<string, TokenCredential> createIdentity,
@@ -32,33 +34,58 @@ internal sealed class ProviderCredentials : IDisposable
         _clock = clock ?? TimeProvider.System;
     }
 
-    internal void ReportFailure(string kind) =>
-        _log.LogWarning("{{\"logType\":\"service\",\"eventName\":\"credential_refresh_failed\",\"cacheKind\":\"{CacheKind}\",\"failureReason\":\"credential_unavailable\"}}", kind);
+    internal void ReportFailure(string kind)
+    {
+        const string eventName = "credential_refresh_failed";
+        var record = new Dictionary<string, object?>
+        {
+            ["logType"] = "service",
+            ["eventName"] = eventName,
+            ["cacheKind"] = kind,
+            ["failureReason"] = "credential_unavailable",
+        };
+        _log.Log(LogLevel.Warning, new EventId(0, eventName), record, null,
+            static (state, _) => JsonSerializer.Serialize(state));
+    }
 
     private RefreshingCache<T> Cache<T>(string kind, Func<CancellationToken, Task<CredentialCacheEntry<T>>> load) =>
         new(load, () => ReportFailure(kind), _clock);
 
     internal async Task<ProviderCredential> ResolveAsync(AuthConfig auth, AppConfig config, CancellationToken cancellation = default)
     {
-        if (auth.Mode == "oauth" && (string.IsNullOrWhiteSpace(config.ProviderTenantId)
-            || string.IsNullOrWhiteSpace(config.ProviderScope) || string.IsNullOrWhiteSpace(config.OutboundClientId)
-            || string.IsNullOrWhiteSpace(config.OutboundManagedIdentityClientId)))
-        {
-            Dispose();
-            throw new InvalidOperationException("provider OAuth token unavailable");
-        }
-        if (auth.Mode is not ("apiKey" or "oauth"))
-        {
-            Dispose();
-            throw new InvalidOperationException("provider credential unavailable");
-        }
-        var key = System.Text.Json.JsonSerializer.Serialize(auth.Mode == "apiKey"
-            ? new[] { auth.Mode, _env.Get("KEY_VAULT_URL"), _env.Get("AZURE_CLIENT_ID"), auth.KeyVaultSecretName, auth.IdentityKeyVaultSecretName }
-            : new[] { auth.Mode, config.ProviderTenantId, config.OutboundClientId, config.OutboundManagedIdentityClientId });
         RefreshingCache<ProviderCredential>? bundle;
         RefreshingCache<AccessToken>? tokenCache = null;
         lock (_gate)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (auth.Mode == "oauth" && (string.IsNullOrWhiteSpace(config.ProviderTenantId)
+                || string.IsNullOrWhiteSpace(config.ProviderScope) || string.IsNullOrWhiteSpace(config.OutboundClientId)
+                || string.IsNullOrWhiteSpace(config.OutboundManagedIdentityClientId)))
+            {
+                Clear();
+                throw new InvalidOperationException("provider OAuth token unavailable");
+            }
+            if (auth.Mode is not ("apiKey" or "oauth"))
+            {
+                Clear();
+                throw new InvalidOperationException("provider credential unavailable");
+            }
+            string key;
+            if (auth.Mode == "apiKey")
+            {
+                key = JsonSerializer.Serialize(new[]
+                {
+                    auth.Mode, _env.Get("KEY_VAULT_URL"), _env.Get("AZURE_CLIENT_ID"),
+                    auth.KeyVaultSecretName, auth.IdentityKeyVaultSecretName,
+                });
+            }
+            else
+            {
+                key = JsonSerializer.Serialize(new[]
+                {
+                    auth.Mode, config.ProviderTenantId, config.OutboundClientId, config.OutboundManagedIdentityClientId,
+                });
+            }
             if (_key != key)
             {
                 Clear();
@@ -69,10 +96,10 @@ internal sealed class ProviderCredentials : IDisposable
             bundle = _bundle;
             if (auth.Mode == "oauth")
             {
-                var scope = config.ProviderScope!;
+                var scope = config.ProviderScope ?? throw new InvalidOperationException("provider OAuth token unavailable");
                 if (!_tokens.TryGetValue(scope, out tokenCache))
                 {
-                    var credential = _credential!;
+                    var credential = _credential ?? throw new InvalidOperationException("provider OAuth token unavailable");
                     tokenCache = Cache("provider_token", async ct =>
                         TokenEntry(await credential.GetTokenAsync(new TokenRequestContext(new[] { scope }), ct).ConfigureAwait(false)));
                     _tokens.Add(scope, tokenCache);
@@ -80,7 +107,8 @@ internal sealed class ProviderCredentials : IDisposable
             }
         }
         if (bundle is not null) return await bundle.GetAsync(cancellation).ConfigureAwait(false);
-        var token = await tokenCache!.GetAsync(cancellation).ConfigureAwait(false);
+        if (tokenCache is null) throw new InvalidOperationException("provider credential unavailable");
+        var token = await tokenCache.GetAsync(cancellation).ConfigureAwait(false);
         return new ProviderCredential("oauth", AccessToken: token.Token);
     }
 
@@ -97,7 +125,7 @@ internal sealed class ProviderCredentials : IDisposable
             throw new InvalidOperationException("provider credential unavailable");
         var now = _clock.GetUtcNow();
         return new CredentialCacheEntry<ProviderCredential>(new("apiKey", Secret: secret, Identity: identity),
-            now.AddMinutes(5), now.AddMinutes(4));
+            now + CredentialCachePolicy.SecretTtl, now + CredentialCachePolicy.SecretRefreshInterval);
     });
 
     private void CreateOAuth(AppConfig config)
@@ -114,12 +142,17 @@ internal sealed class ProviderCredentials : IDisposable
     private CredentialCacheEntry<AccessToken> TokenEntry(AccessToken token)
     {
         var now = _clock.GetUtcNow();
-        if (string.IsNullOrWhiteSpace(token.Token) || token.ExpiresOn <= now.AddSeconds(30))
+        if (string.IsNullOrWhiteSpace(token.Token) || token.ExpiresOn <= now + CredentialCachePolicy.TokenExpirySkew)
             throw new InvalidOperationException("provider credential unavailable");
-        var expires = token.ExpiresOn.AddSeconds(-30);
-        var refresh = token.ExpiresOn.AddMinutes(-5);
+        var expires = token.ExpiresOn - CredentialCachePolicy.TokenExpirySkew;
+        var refresh = token.ExpiresOn - CredentialCachePolicy.TokenRefreshLead;
         if (token.RefreshOn is { } hint && hint < refresh) refresh = hint;
-        if (refresh <= now) refresh = now.AddSeconds(Math.Max(1, Math.Min(60, (expires - now).TotalSeconds / 2)));
+        if (refresh <= now)
+        {
+            var delay = Math.Clamp((expires - now).TotalSeconds / 2,
+                CredentialCachePolicy.MinRefreshDelay.TotalSeconds, CredentialCachePolicy.MaxRefreshDelay.TotalSeconds);
+            refresh = now.AddSeconds(delay);
+        }
         return new(token, expires, refresh);
     }
 
@@ -135,5 +168,12 @@ internal sealed class ProviderCredentials : IDisposable
         _key = null;
     }
 
-    public void Dispose() { lock (_gate) Clear(); }
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            _disposed = true;
+            Clear();
+        }
+    }
 }
