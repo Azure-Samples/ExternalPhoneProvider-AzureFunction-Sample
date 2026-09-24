@@ -2,31 +2,39 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future, wait
 from contextvars import ContextVar
-from dataclasses import dataclass, field
-from typing import Literal, Protocol, TypedDict, TypeVar
+from typing import Final, Literal, Protocol, TypedDict, TypeVar
 
 from azure.core.credentials import TokenCredential
-from azure.identity import ClientAssertionCredential, ManagedIdentityCredential
+from azure.identity import AzureAuthorityHosts, ClientAssertionCredential, ManagedIdentityCredential
+from cachetools import TTLCache
 
 from .config import AppConfig
-from .refreshing_cache import (
-    ACQUISITION_TIMEOUT_SECONDS,
-    SECRET_REFRESH_INTERVAL_SECONDS,
-    SECRET_TTL_SECONDS,
-    CacheEntry,
-    CacheOptions,
-    RefreshingCache,
-    Token,
-    token_entry,
-)
 
+API_KEY_MODE: Final = "apiKey"
+OAUTH_MODE: Final = "oauth"
+BUNDLE_KEY = "bundle"
+TOKEN_EXCHANGE_SCOPE = "api://AzureADTokenExchange/.default"
+CREDENTIAL_ERROR = "provider credential unavailable"
+ACQUISITION_TIMEOUT_SECONDS = 2.5
+REFRESH_POLL_SECONDS = 30
+SECRET_TTL_SECONDS = 300
+SECRET_REFRESH_SECONDS = 240
+TOKEN_SKEW_SECONDS = 30
 _acquiring = ContextVar("epp_credential_acquisition", default=False)
 T = TypeVar("T")
+
+
+class Token(Protocol):
+    @property
+    def token(self) -> str: ...
+    @property
+    def expires_on(self) -> float: ...
 
 
 class SecretReader(Protocol):
@@ -44,16 +52,9 @@ class OAuthCredential(TypedDict):
     access_token: str
 
 
-@dataclass(repr=False)
-class _ApiKeyState:
-    bundle: RefreshingCache[ApiKeyCredential]
-
-
-@dataclass(repr=False)
-class _OAuthState:
-    assertion: RefreshingCache[Token]
-    credential: TokenCredential
-    tokens: dict[str, RefreshingCache[Token]] = field(default_factory=dict)
+class RefreshOptions(TypedDict, total=False):
+    clock: Callable[[], float]
+    wait_timeout: float
 
 
 class _CredentialLogFilter(logging.Filter):
@@ -82,153 +83,194 @@ def _private_acquisition(load: Callable[[], T]) -> T:
         _acquiring.reset(context)
 
 
-class ProviderCredentials:
-    def __init__(
-        self,
-        secrets: SecretReader,
-        *,
-        cache_options: CacheOptions | None = None,
-        report_failure: Callable[[str], None] = report_refresh_failure,
-    ) -> None:
-        self._secrets = secrets
-        self._options: CacheOptions = cache_options or {}
-        self._clock = self._options.get("clock", time.time)
-        self._report_failure = report_failure
-        self._lock = threading.RLock()
-        self._key: tuple[str | None, ...] | None = None
-        self._state: _ApiKeyState | _OAuthState | None = None
+class ApiKeyCache:
+    stage = "key_vault"
+
+    def __init__(self, secrets: SecretReader, auth: Mapping[str, str], clock=time.time) -> None:
+        self._secrets, self._auth, self._clock = secrets, dict(auth), clock
+        self._values: TTLCache[str, ApiKeyCredential] = TTLCache(maxsize=1, ttl=SECRET_TTL_SECONDS, timer=clock)
+        self._lock = threading.Lock()
+        self._refresh_at = 0.0
         self._closed = False
 
-    def _cache(self, kind: str, load: Callable[[], CacheEntry[T]]) -> RefreshingCache[T]:
-        options = self._options.copy()
-        options["on_failure"] = lambda: self._report_failure(kind)
-        return RefreshingCache(lambda: _private_acquisition(load), **options)
-
-    def resolve(self, auth: Mapping[str, str], config: AppConfig) -> ApiKeyCredential | OAuthCredential:
-        mode = auth.get("mode")
-        scope = config.provider_scope
+    def get(self) -> ApiKeyCredential | None:
         with self._lock:
-            if self._closed:
-                raise ValueError("provider credential unavailable")
-            if mode == "oauth" and not all((
-                config.provider_tenant_id, scope,
-                config.outbound_client_id, config.outbound_managed_identity_client_id,
-            )):
-                self._clear()
-                raise ValueError("provider OAuth token unavailable")
-            if mode not in ("apiKey", "oauth"):
-                self._clear()
-                raise ValueError("provider credential unavailable")
-            key: tuple[str | None, ...]
-            if mode == "apiKey":
-                key = (
-                    mode, config.env.get("KEY_VAULT_URL"), config.env.get("AZURE_CLIENT_ID"),
-                    auth.get("key_vault_secret_name"), auth.get("identity_key_vault_secret_name"),
-                )
-            else:
-                key = (
-                    mode, config.provider_tenant_id,
-                    config.outbound_client_id, config.outbound_managed_identity_client_id,
-                )
-            if self._key != key:
-                self._clear()
-                if mode == "apiKey":
-                    self._state = self._api_key_state(auth)
-                else:
-                    self._state = _private_acquisition(lambda: self._oauth_state(config))
-                self._key = key
-            state = self._state
-            if isinstance(state, _OAuthState) and scope not in state.tokens:
-                credential = state.credential
-                state.tokens[scope] = self._cache("provider_token", lambda: self._load_token(credential, scope))
-        try:
-            if isinstance(state, _ApiKeyState):
-                return state.bundle.get().copy()
-            if isinstance(state, _OAuthState):
-                return {"mode": "oauth", "access_token": state.tokens[scope].get().token}
-            raise ValueError("provider credential unavailable")
-        except Exception:
-            reason = "provider OAuth token unavailable" if mode == "oauth" else "provider credential unavailable"
-            raise ValueError(reason) from None
+            value = None if self._closed else self._values.get(BUNDLE_KEY)
+            return value.copy() if value is not None else None
 
-    def _start_secret_read(self, name: str) -> Future[str]:
-        future: Future[str] = Future()
+    def _read(self, name: str) -> Future[str]:
+        result: Future[str] = Future()
 
         def read() -> None:
             try:
                 with self._lock:
                     if self._closed:
-                        raise ValueError("provider credential unavailable")
-                value = _private_acquisition(lambda: self._secrets.resolve(name))
-                future.set_result(value)
+                        raise ValueError(CREDENTIAL_ERROR)
+                result.set_result(_private_acquisition(lambda: self._secrets.resolve(name)))
             except Exception:
-                future.set_exception(ValueError("provider credential unavailable"))
+                result.set_exception(ValueError(CREDENTIAL_ERROR))
 
-        # Executor workers are joined before atexit, even when their parent is a daemon.
+        # Executor threads are joined at exit; unfinished SDK reads must not block shutdown.
         threading.Thread(target=read, daemon=True).start()
-        return future
+        return result
 
-    def _api_key_state(self, auth: Mapping[str, str]) -> _ApiKeyState:
-        def load() -> CacheEntry[ApiKeyCredential]:
-            key_name = auth.get("key_vault_secret_name")
-            identity_name = auth.get("identity_key_vault_secret_name")
-            if not key_name:
-                raise ValueError("provider credential unavailable")
-            key_future = self._start_secret_read(key_name)
-            identity_future = self._start_secret_read(identity_name) if identity_name else None
-            pending = [key_future]
-            if identity_future is not None:
-                pending.append(identity_future)
-            # Keep one refresh in flight until both reads finish, even after a caller stops waiting.
-            wait(pending)
-            secret = key_future.result()
-            identity = identity_future.result() if identity_future is not None else ""
-            if not isinstance(secret, str) or not secret.strip() or (identity_name and (
-                    not isinstance(identity, str) or not identity.strip())):
-                raise ValueError("provider credential unavailable")
-            now = self._clock()
-            value: ApiKeyCredential = {"mode": "apiKey", "secret": secret, "identity": identity}
-            return CacheEntry(value, now + SECRET_TTL_SECONDS, now + SECRET_REFRESH_INTERVAL_SECONDS)
-        return _ApiKeyState(self._cache("key_vault", load))
+    def refresh(self) -> None:
+        if self.get() is not None and self._clock() < self._refresh_at:
+            return
+        key, account = self._auth.get("key_vault_secret_name"), self._auth.get("identity_key_vault_secret_name")
+        if not key:
+            raise ValueError(CREDENTIAL_ERROR)
+        secret = self._read(key)
+        identity = self._read(account) if account else None
+        wait([secret, identity] if identity is not None else [secret])
+        value, customer = secret.result(), identity.result() if identity is not None else ""
+        if not value.strip() or (account and not customer.strip()):
+            raise ValueError(CREDENTIAL_ERROR)
+        with self._lock:
+            if self._closed:
+                raise ValueError(CREDENTIAL_ERROR)
+            self._values[BUNDLE_KEY] = {"mode": API_KEY_MODE, "secret": value, "identity": customer}
+            self._refresh_at = self._clock() + SECRET_REFRESH_SECONDS
 
-    def _load_token(self, credential: TokenCredential, scope: str) -> CacheEntry[Token]:
-        get_token_info = getattr(credential, "get_token_info", None)
-        if callable(get_token_info):
-            token = get_token_info(scope)
-        else:
-            # Older supported SDKs expose only expiry metadata through get_token.
-            token = credential.get_token(scope, logging_enable=False)
-        return token_entry(token, self._clock())
+    def stop(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._values.clear()
 
-    def _oauth_state(self, config: AppConfig) -> _OAuthState:
-        identity = ManagedIdentityCredential(
-            client_id=config.outbound_managed_identity_client_id,
-            retry_total=0, connection_timeout=ACQUISITION_TIMEOUT_SECONDS,
-            read_timeout=ACQUISITION_TIMEOUT_SECONDS, logging_enable=False,
-        )
-        assertion = self._cache(
-            "managed_identity", lambda: self._load_token(identity, "api://AzureADTokenExchange/.default"),
-        )
-        credential = ClientAssertionCredential(
-            tenant_id=config.provider_tenant_id, client_id=config.outbound_client_id,
-            func=lambda: assertion.get().token, authority="https://login.microsoftonline.com",
-            retry_total=0, connection_timeout=ACQUISITION_TIMEOUT_SECONDS,
-            read_timeout=ACQUISITION_TIMEOUT_SECONDS, logging_enable=False,
-        )
-        return _OAuthState(assertion, credential)
 
-    def _clear(self) -> None:
-        state = self._state
-        if isinstance(state, _ApiKeyState):
-            state.bundle.close()
-        elif isinstance(state, _OAuthState):
-            state.assertion.close()
-            for cache in state.tokens.values():
-                cache.close()
-        self._state = None
-        self._key = None
+class AccessTokenCache:
+    stage = "provider_token"
+
+    def __init__(self, config: AppConfig, clock=time.time) -> None:
+        if not all((config.provider_tenant_id, config.provider_scope, config.outbound_client_id,
+                    config.outbound_managed_identity_client_id)):
+            raise ValueError(CREDENTIAL_ERROR)
+        self._clock, self._scope = clock, config.provider_scope
+        self._lock = threading.Lock()
+        self._closed = False
+        self._token: Token | None = None
+        self._identity = ManagedIdentityCredential(client_id=config.outbound_managed_identity_client_id,
+            retry_total=0, logging_enable=False, connection_timeout=ACQUISITION_TIMEOUT_SECONDS,
+            read_timeout=ACQUISITION_TIMEOUT_SECONDS)
+        self._credential = ClientAssertionCredential(tenant_id=config.provider_tenant_id, client_id=config.outbound_client_id,
+            func=lambda: self._load(self._identity, TOKEN_EXCHANGE_SCOPE).token,
+            authority=AzureAuthorityHosts.AZURE_PUBLIC_CLOUD, retry_total=0, logging_enable=False,
+            connection_timeout=ACQUISITION_TIMEOUT_SECONDS, read_timeout=ACQUISITION_TIMEOUT_SECONDS)
+
+    def get(self) -> OAuthCredential | None:
+        with self._lock:
+            token = self._token
+            return ({"mode": OAUTH_MODE, "access_token": token.token}
+                    if not self._closed and token and token.expires_on > self._clock() + TOKEN_SKEW_SECONDS else None)
+
+    def _load(self, credential: TokenCredential, scope: str) -> Token:
+        info = getattr(credential, "get_token_info", None)
+        token = info(scope) if callable(info) else credential.get_token(scope, logging_enable=False)
+        if (not isinstance(token.token, str) or not token.token.strip() or not math.isfinite(token.expires_on)
+                or token.expires_on <= self._clock() + TOKEN_SKEW_SECONDS):
+            raise ValueError(CREDENTIAL_ERROR)
+        return token
+
+    def refresh(self) -> None:
+        with self._lock:
+            if self._closed:
+                raise ValueError(CREDENTIAL_ERROR)
+        self.stage = "managed_identity"
+        self._load(self._identity, TOKEN_EXCHANGE_SCOPE)
+        self.stage = "provider_token"
+        token = self._load(self._credential, self._scope)
+        with self._lock:
+            if self._closed:
+                raise ValueError(CREDENTIAL_ERROR)
+            self._token = token
+
+    def stop(self) -> None:
+        with self._lock:
+            self._closed = True
+            self._token = None
+
+
+class ProviderCredentials:
+    """One selected cache and one refresh loop; configuration changes require a worker restart."""
+
+    def __init__(self, secrets: SecretReader, *, cache_options: RefreshOptions | None = None,
+                 report_failure: Callable[[str], None] = report_refresh_failure) -> None:
+        options = cache_options or {}
+        self._secrets, self._report_failure = secrets, report_failure
+        self._clock = options.get("clock", time.time)
+        self._wait_timeout = options.get("wait_timeout", ACQUISITION_TIMEOUT_SECONDS)
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self.cache: ApiKeyCache | AccessTokenCache | None = None
+        self._pending: Future[ApiKeyCredential | OAuthCredential] | None = None
+        self._next_attempt = 0.0
+
+    def resolve(self, auth: Mapping[str, str], config: AppConfig) -> ApiKeyCredential | OAuthCredential:
+        with self._lock:
+            if self._stop.is_set():
+                raise ValueError(CREDENTIAL_ERROR)
+            if self.cache is None:
+                try:
+                    if auth.get("mode") == API_KEY_MODE:
+                        self.cache = ApiKeyCache(self._secrets, auth, self._clock)
+                    elif auth.get("mode") == OAUTH_MODE:
+                        self.cache = _private_acquisition(lambda: AccessTokenCache(config, self._clock))
+                    else:
+                        raise ValueError(CREDENTIAL_ERROR)
+                except Exception:
+                    self._report_failure("configuration")
+                    raise ValueError(CREDENTIAL_ERROR) from None
+                threading.Thread(target=self._loop, daemon=True).start()
+            value = self.cache.get()
+            if value is not None:
+                return value
+            pending = self.refresh()
+        try:
+            return pending.result(timeout=self._wait_timeout)
+        except Exception:
+            raise ValueError(CREDENTIAL_ERROR) from None
+
+    def refresh(self) -> Future[ApiKeyCredential | OAuthCredential]:
+        with self._lock:
+            if self._stop.is_set() or self.cache is None:
+                raise ValueError(CREDENTIAL_ERROR)
+            if self._pending is not None:
+                return self._pending
+            if self._next_attempt > self._clock():
+                raise ValueError(CREDENTIAL_ERROR)
+            self._next_attempt = self._clock() + REFRESH_POLL_SECONDS
+            future: Future[ApiKeyCredential | OAuthCredential] = Future()
+            self._pending = future
+            threading.Thread(target=self._run, args=(self.cache, future), daemon=True).start()
+            return future
+
+    def _run(self, cache: ApiKeyCache | AccessTokenCache, future: Future[ApiKeyCredential | OAuthCredential]) -> None:
+        value = None
+        try:
+            _private_acquisition(cache.refresh)
+            value = cache.get()
+        except Exception:
+            pass  # Report only the sanitized failure below.
+        with self._lock:
+            self._pending = None
+            if not self._stop.is_set():
+                if value is None:
+                    self._report_failure(cache.stage)
+                    future.set_exception(ValueError(CREDENTIAL_ERROR))
+                else:
+                    future.set_result(value)
+
+    def _loop(self) -> None:
+        while not self._stop.wait(REFRESH_POLL_SECONDS):
+            try:
+                self.refresh().result()
+            except ValueError:
+                pass  # Shared acquisition reports failures; cooldown is intentionally quiet.
 
     def close(self) -> None:
         with self._lock:
-            self._closed = True
-            self._clear()
+            self._stop.set()
+            if self.cache is not None:
+                self.cache.stop()
+            if self._pending is not None and not self._pending.done():
+                self._pending.set_exception(ValueError(CREDENTIAL_ERROR))

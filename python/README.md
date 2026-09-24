@@ -90,16 +90,14 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 
 ## Source
 
-Worker initialization starts background credential preparation when a provider is configured.
-Key Vault bundles, managed-identity assertions and final Entra tokens use separate process-local
-caches with daemon refresh timers and parallel daemon secret reads. A caller can stop waiting
-without cancelling shared retrieval or starting overlapping reads; the HTTP SDK still uses
-connect/read inactivity timeouts, not a total transport deadline. `get_token_info`, when supported
-by the installed SDK, preserves early refresh hints; older SDKs retain the pre-expiry refresh target.
-`atexit` stops scheduled work, releases waiters and prevents late cache publication. Pending
-synchronous reads do not block process exit. Closing a credential manager is terminal. See the
-[refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh). Evaluation handling stays
-independent; leave the provider unset for local evaluation without background credential acquisition.
+Worker initialization selects `ApiKeyCache` or `AccessTokenCache` from the provider manifest's auth mode.
+Only the selected cache starts: API keys use Key Vault and `cachetools.TTLCache`; access tokens use
+the MI/Entra SDKs without Key Vault. One daemon loop polls every 30 seconds. Configuration changes
+require restart. Callers can stop waiting without abandoning shared reads; synchronous SDK I/O uses connect/read
+timeouts, not a total transport deadline. `atexit` stops refresh and releases waiters; unfinished
+daemon reads cannot publish or block process exit. See the
+[refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh). Leave the provider unset for
+local evaluation without background credential acquisition.
 
 | Source | Purpose |
 |---|---|
@@ -107,10 +105,10 @@ independent; leave the provider unset for local evaluation without background cr
 | [src/config.py](src/config.py) | Shared deployment settings |
 | [src/models.py](src/models.py) | Envelope, delivery-context, dispatch and normalized `ParsedResponse` dataclasses |
 | [src/dispatch.py](src/dispatch.py) | Boundary validation, JWE, provider registry and outcome mapping |
-| [src/credentials.py](src/credentials.py), [refreshing_cache.py](src/refreshing_cache.py) | Provider credential bundles, independent token caches and scheduled refresh |
+| [src/credentials.py](src/credentials.py) | `ApiKeyCache`, `AccessTokenCache` and their shared refresh coordinator |
 | [src/request_log.py](src/request_log.py) | Request-scoped [service events and summaries](../docs/CONTRACT.md#application-logs) with explicit ID sources |
 | [src/providers/](src/providers/) | Adapter manifests and API-specific implementations |
-| [src/secrets.py](src/secrets.py) | Key Vault transport; bundle caching belongs to the credential manager |
+| [src/secrets.py](src/secrets.py) | Key Vault transport; bundle caching belongs to `ApiKeyCache` |
 
 Add and register an adapter without adding provider-specific branches to the shared pipeline.
 Return `ParsedResponse` from `parse_response` using named fields; the engine reads attributes such as

@@ -61,8 +61,10 @@ public class EngineTests
         AssertAccepted(await rig.Invoke("evaluation"));
     }
 
-    [Fact]
-    public async Task SopranoOAuthUsesSetupIdentitiesScopeAndOneBoundedExchange()
+    [Theory]
+    [InlineData("api://provider/.default")]
+    [InlineData("api://second/.default")]
+    public async Task SopranoOAuthUsesSetupIdentitiesScopeAndOneBoundedExchange(string scope)
     {
         var scopes = new List<string>();
         var identities = new List<string>();
@@ -88,6 +90,7 @@ public class EngineTests
             });
         });
         ConfigureSoprano(rig);
+        rig.Env["EPP_PROVIDER_SCOPE"] = scope;
         AssertAccepted(await rig.Invoke("evaluation"));
         Assert.Empty(applications);
         foreach (var channel in new[] { "sms", "voice" })
@@ -115,15 +118,12 @@ public class EngineTests
             }
         }
         rig.Env["EPP_PROVIDER_CHANNEL"] = "sms";
-        rig.Env["EPP_PROVIDER_SCOPE"] = "api://second/.default";
         AssertAccepted(await rig.Invoke());
         Assert.Single(applications);
-        Assert.Equal(new[] { "api://provider/.default", "api://second/.default" }, scopes);
-        rig.Env["EPP_OUTBOUND_CLIENT_ID"] = "second-application";
-        AssertAccepted(await rig.Invoke());
-        Assert.Equal(new[] { ("provider-tenant", "calling-application"), ("provider-tenant", "second-application") }, applications);
+        Assert.Equal(new[] { scope }, scopes);
+        Assert.Equal(new[] { ("provider-tenant", "calling-application") }, applications);
         Assert.All(identities, identity => Assert.Equal("outbound-identity", identity));
-        Assert.Equal(4, rig.Http.Calls);
+        Assert.Equal(3, rig.Http.Calls);
         Assert.Equal(0, rig.Secrets.Calls);
         Assert.DoesNotContain("private-provider-token", string.Join("\n", rig.Log.Messages));
         var credential = new ProviderCredential("oauth", AccessToken: "private-provider-token");

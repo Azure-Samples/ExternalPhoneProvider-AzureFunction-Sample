@@ -234,14 +234,14 @@ public sealed class DispatchEngine : IDisposable
         _registry = registry;
         _httpFactory = httpFactory;
         _env = env ?? new ProcessEnv();
-        _credentials = new ProviderCredentials(secrets, _env, createManagedIdentity, createOAuthCredential, log, clock);
+        _credentials = new ProviderCredentials(secrets, createManagedIdentity, createOAuthCredential, log, clock);
     }
 
     private static ClientAssertionCredentialOptions OAuthOptions()
     {
         var options = new ClientAssertionCredentialOptions { AuthorityHost = AzureAuthorityHosts.AzurePublicCloud };
         options.Retry.MaxRetries = 0;
-        options.Retry.NetworkTimeout = CredentialCachePolicy.AcquisitionTimeout;
+        options.Retry.NetworkTimeout = ProviderCredentials.AcquisitionTimeout;
         options.Diagnostics.IsLoggingEnabled = false;
         options.Diagnostics.IsLoggingContentEnabled = false;
         return options;

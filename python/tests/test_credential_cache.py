@@ -3,7 +3,7 @@ import sys
 import textwrap
 import time
 from concurrent.futures import ThreadPoolExecutor
-from threading import Event, Lock
+from threading import Event
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -12,10 +12,12 @@ import pytest
 
 import src.credentials as credentials_module
 from src.config import read_config
-from src.credentials import ProviderCredentials
+from src.credentials import ApiKeyCache, AccessTokenCache, ProviderCredentials
 from src.dispatch import DispatchEngine, ProviderRegistry
 from src.providers.telesign import TelesignProvider
-from src.refreshing_cache import CacheEntry, RefreshingCache, token_entry
+
+AUTH = {"mode": "apiKey", "key_vault_secret_name": "key", "identity_key_vault_secret_name": "id"}
+CONFIG = read_config({"KEY_VAULT_URL": "https://unit.vault.azure.net"})
 
 
 def wait_until(predicate):
@@ -28,262 +30,197 @@ def wait_until(predicate):
 class Clock:
     def __init__(self):
         self.now = 1700000000.0
-        self.timers = []
-        self.lock = Lock()
-
-    def schedule(self, seconds, callback):
-        timer = SimpleNamespace(at=self.now + seconds, callback=callback, canceled=False)
-        timer.cancel = lambda: setattr(timer, "canceled", True)
-        with self.lock:
-            self.timers.append(timer)
-        return timer
 
     @property
     def options(self):
-        return {"clock": lambda: self.now, "schedule": self.schedule, "jitter": lambda: 0}
-
-    @property
-    def timer_count(self):
-        with self.lock:
-            return sum(not timer.canceled for timer in self.timers)
+        return {"clock": lambda: self.now}
 
     def advance(self, seconds):
         self.now += seconds
-        with self.lock:
-            due = [timer for timer in self.timers if not timer.canceled and timer.at <= self.now]
-            for timer in due:
-                timer.canceled = True
-        for timer in due:
-            timer.callback()
 
 
-def test_single_flight_and_scheduled_refresh_do_not_block_valid_cached_values():
+def test_library_cache_shares_parallel_reads_and_serves_a_complete_pair_during_refresh(monkeypatch):
     clock = Clock()
-    first_started, release_first, refresh_started, release_refresh = Event(), Event(), Event(), Event()
-    calls = []
+    key_started, id_started, release = Event(), Event(), Event()
+    version = 1
 
-    def load():
-        calls.append(clock.now)
-        if len(calls) == 1:
-            first_started.set()
-            assert release_first.wait(3)
-            value = "PRIVATE-FIRST"
-        else:
-            refresh_started.set()
-            assert release_refresh.wait(3)
-            value = "PRIVATE-NEXT"
-        return CacheEntry(value, clock.now + 300, clock.now + 240)
+    def read(name):
+        (key_started if name == "key" else id_started).set()
+        assert release.wait(3)
+        return f"PRIVATE-{name}-{version}"
 
-    cache = RefreshingCache(load, **clock.options)
+    secrets = Mock(resolve=Mock(side_effect=read))
+    oauth = Mock(side_effect=AssertionError("API-key mode must not create an OAuth credential"))
+    monkeypatch.setattr(credentials_module, "ClientAssertionCredential", oauth)
+    manager = ProviderCredentials(secrets, cache_options=clock.options)
     try:
         with ThreadPoolExecutor(max_workers=10) as pool:
-            pending = [pool.submit(cache.get) for _ in range(10)]
-            assert first_started.wait(3)
-            assert len(calls) == 1
-            release_first.set()
-            assert all(item.result(3) == "PRIVATE-FIRST" for item in pending)
+            pending = [pool.submit(manager.resolve, AUTH, CONFIG) for _ in range(10)]
+            assert key_started.wait(3) and id_started.wait(3)
+            assert secrets.resolve.call_count == 2
+            release.set()
+            assert all(item.result(3)["secret"] == "PRIVATE-key-1" for item in pending)
+        assert isinstance(manager.cache, ApiKeyCache)
+        oauth.assert_not_called()
+        release.clear()
+        version = 2
         clock.advance(240)
-        assert refresh_started.wait(3)
-        assert cache.get() == "PRIVATE-FIRST"
-        release_refresh.set()
-        wait_until(lambda: cache.get() == "PRIVATE-NEXT")
-        assert len(calls) == 2
-        assert clock.timer_count == 1
-        assert "PRIVATE" not in repr(cache)
+        pending = manager.refresh()
+        wait_until(lambda: secrets.resolve.call_count == 4)
+        assert manager.resolve(AUTH, CONFIG)["identity"] == "PRIVATE-id-1"
+        release.set()
+        pending.result(timeout=3)
+        assert manager.resolve(AUTH, CONFIG)["secret"] == "PRIVATE-key-2"
+        assert manager.resolve(AUTH, CONFIG)["identity"] == "PRIVATE-id-2"
+        assert "PRIVATE" not in repr(manager) + repr(manager.cache)
     finally:
-        release_first.set()
-        release_refresh.set()
-        cache.close()
-    assert clock.timer_count == 0
+        release.set()
+        manager.close()
+    assert manager.cache.get() is None
 
 
-def test_failed_refresh_keeps_only_unexpired_entry_and_uses_backoff():
+def test_failed_refresh_never_extends_ttl_or_publishes_a_partial_pair():
     clock = Clock()
-    calls, failures = [], []
     fail = False
+    failures = []
 
-    def load():
-        calls.append(clock.now)
-        if fail:
+    def read(name):
+        if fail and name == "id":
             raise ValueError("PRIVATE-ERROR")
-        return CacheEntry("value", clock.now + 300, clock.now + 240)
+        return name
 
-    cache = RefreshingCache(load, **clock.options, on_failure=lambda: failures.append("failed"))
+    secrets = Mock(resolve=Mock(side_effect=read))
+    manager = ProviderCredentials(secrets, cache_options=clock.options, report_failure=failures.append)
     try:
-        assert cache.get() == "value"
+        manager.resolve(AUTH, CONFIG)
         fail = True
         clock.advance(240)
-        wait_until(lambda: len(failures) == 1)
-        assert cache.get() == "value"
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.refresh().result(timeout=3)
+        wait_until(lambda: failures == ["key_vault"])
         for _ in range(10):
-            assert cache.get() == "value"
-        assert len(calls) == 2
+            assert manager.resolve(AUTH, CONFIG)["identity"] == "id"
+        assert secrets.resolve.call_count == 4
         clock.advance(60)
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.refresh().result(timeout=3)
         wait_until(lambda: len(failures) == 2)
-        with pytest.raises(ValueError, match="provider credential unavailable"):
-            cache.get()
+        for _ in range(10):
+            with pytest.raises(ValueError, match="unavailable"):
+                manager.resolve(AUTH, CONFIG)
+        assert secrets.resolve.call_count == 6
+        for delay in (30, 30, 30, 30, 30):
+            calls = secrets.resolve.call_count
+            clock.advance(delay - 0.5)
+            with pytest.raises(ValueError, match="unavailable"):
+                manager.resolve(AUTH, CONFIG)
+            assert secrets.resolve.call_count == calls
+            clock.advance(0.5)
+            with pytest.raises(ValueError, match="unavailable"):
+                manager.refresh().result(timeout=3)
+            assert secrets.resolve.call_count == calls + 2
         fail = False
-        clock.advance(10)
-        wait_until(lambda: len(calls) == 4 and cache._inflight is None)
-        assert cache.get() == "value"
+        clock.advance(30)
+        manager.refresh().result(timeout=3)
+        assert manager.resolve(AUTH, CONFIG)["secret"] == "key"
+        assert secrets.resolve.call_count == 18
     finally:
-        cache.close()
+        manager.close()
 
 
-def test_timed_out_waiter_does_not_cancel_refresh_and_shutdown_blocks_late_publication():
+def test_waiter_timeouts_and_partial_failures_do_not_start_overlapping_secret_reads():
     clock = Clock()
     started, release = Event(), Event()
+    calls = []
 
-    def load():
+    def read(name):
+        calls.append(name)
+        if name == "key":
+            raise ValueError("PRIVATE-FAILURE")
         started.set()
         assert release.wait(3)
-        return CacheEntry("late", clock.now + 300, clock.now + 240)
+        return "PRIVATE-IDENTITY"
 
-    cache = RefreshingCache(load, **clock.options, wait_timeout=0.02)
+    manager = ProviderCredentials(Mock(resolve=read), cache_options={**clock.options, "wait_timeout": 0.02},
+                                  report_failure=lambda _: None)
     try:
-        with pytest.raises(ValueError, match="unavailable"):
-            cache.get()
+        for _ in range(3):
+            with pytest.raises(ValueError, match="unavailable"):
+                manager.resolve(AUTH, CONFIG)
+            clock.advance(60)
         assert started.is_set()
-        future = cache.refresh()
-        release.set()
-        assert future.result(3) == "late"
-        assert cache.get() == "late"
-    finally:
-        release.set()
-        cache.close()
-    with pytest.raises(ValueError, match="unavailable"):
-        cache.get()
-    assert clock.timer_count == 0
-
-    release.clear()
-    stopped = RefreshingCache(load, **clock.options)
-    pending = stopped.refresh()
-    stopped.close()
-    release.set()
-    with pytest.raises(ValueError, match="unavailable"):
-        pending.result(3)
-    assert clock.timer_count == 0
-
-
-def test_token_entry_preserves_real_expiry_and_never_spins_on_sdk_cached_return():
-    now = 1700000000
-    token = SimpleNamespace(token="PRIVATE-TOKEN", expires_on=now + 3600)
-    entry = token_entry(token, now)
-    assert (entry.expires_at, entry.refresh_at) == (now + 3570, now + 3300)
-    repeated = token_entry(token, now + 3300)
-    assert repeated.expires_at == now + 3570
-    assert repeated.refresh_at == now + 3360
-    token.refresh_on = now + 600
-    assert token_entry(token, now).refresh_at == now + 600
-    for invalid in (None, SimpleNamespace(token=""), SimpleNamespace(token=" "),
-                    SimpleNamespace(token="PRIVATE", expires_on=now + 30),
-                    SimpleNamespace(token="PRIVATE", expires_on=float("inf")),
-                    SimpleNamespace(token="PRIVATE", expires_on=True)):
+        assert sorted(calls) == ["id", "key"]
+        pending = manager.refresh()
+        manager.close()
         with pytest.raises(ValueError, match="unavailable"):
-            token_entry(invalid, now)
+            pending.result(timeout=0.1)
+        release.set()
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.resolve(AUTH, CONFIG)
+        assert manager.cache.get() is None
+    finally:
+        manager.close()
+        release.set()
 
 
-def oauth_config():
-    return read_config({
-        "EPP_PROVIDER_TENANT_ID": "tenant", "EPP_PROVIDER_SCOPE": "api://provider/.default",
-        "EPP_OUTBOUND_CLIENT_ID": "app", "EPP_OUTBOUND_MI_CLIENT_ID": "identity",
-    })
-
-
-def test_both_mi_and_provider_token_caches_refresh_independently_and_skip_warm_sdk_calls(monkeypatch):
+def test_access_token_cache_uses_sdk_refresh_metadata_and_preserves_original_expiry(monkeypatch):
     clock = Clock()
-    identity = Mock(spec=["get_token"], get_token=Mock(side_effect=lambda *args, **kwargs:
-        SimpleNamespace(token="PRIVATE-ASSERTION", expires_on=clock.now + 3600)))
+    expiry = clock.now + 3600
+    identity = Mock(spec=["get_token", "get_token_info"], get_token_info=Mock(
+        side_effect=lambda _: SimpleNamespace(token="PRIVATE-ASSERTION", expires_on=expiry, refresh_on=clock.now + 10)))
     monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock(return_value=identity))
     clients = []
 
     def create(**kwargs):
-        def get_token(*args, **options):
+        def get_token_info(_):
             assert kwargs["func"]() == "PRIVATE-ASSERTION"
-            assert kwargs["func"]() == "PRIVATE-ASSERTION"
-            return SimpleNamespace(token="PRIVATE-TOKEN", expires_on=clock.now + 3600)
-        client = Mock(spec=["get_token"], get_token=Mock(side_effect=get_token))
+            return SimpleNamespace(token="PRIVATE-TOKEN", expires_on=expiry, refresh_on=clock.now + 10)
+        client = Mock(spec=["get_token", "get_token_info"], get_token_info=Mock(side_effect=get_token_info))
         clients.append(client)
         return client
 
     monkeypatch.setattr(credentials_module, "ClientAssertionCredential", create)
-    manager = ProviderCredentials(Mock(), cache_options=clock.options)
-    config = oauth_config()
+    secrets = Mock(resolve=Mock(side_effect=AssertionError("OAuth must not read Key Vault")))
+    manager = ProviderCredentials(secrets, cache_options=clock.options, report_failure=lambda _: None)
+    config = read_config({"EPP_PROVIDER_TENANT_ID": "tenant", "EPP_OUTBOUND_CLIENT_ID": "app",
+                          "EPP_OUTBOUND_MI_CLIENT_ID": "identity", "EPP_PROVIDER_SCOPE": "scope"})
     try:
         with ThreadPoolExecutor(max_workers=10) as pool:
             results = list(pool.map(lambda _: manager.resolve({"mode": "oauth"}, config), range(10)))
         assert all(value["access_token"] == "PRIVATE-TOKEN" for value in results)
-        assert identity.get_token.call_count == 1 and clients[0].get_token.call_count == 1
-        assert manager.resolve({"mode": "oauth"}, config)["access_token"] == "PRIVATE-TOKEN"
-        assert identity.get_token.call_count == 1 and clients[0].get_token.call_count == 1
-        clock.advance(3300)
-        wait_until(lambda: identity.get_token.call_count == 2 and clients[0].get_token.call_count == 2)
-        wait_until(lambda: clock.timer_count == 2)
-        config.provider_scope = "api://second/.default"
+        assert clients[0].get_token_info.call_count == 1
+        assert identity.get_token_info.call_count == 2  # Warmup plus the SDK callback, not HTTP requests.
+        assert isinstance(manager.cache, AccessTokenCache)
+        secrets.resolve.assert_not_called()
         manager.resolve({"mode": "oauth"}, config)
-        assert len(clients) == 1 and clients[0].get_token.call_count == 3
-        config.outbound_client_id = "different-app"
-        manager.resolve({"mode": "oauth"}, config)
-        assert len(clients) == 2
-        assert clock.timer_count == 2
+        assert clients[0].get_token_info.call_count == 1
+        clock.advance(30)
+        manager.refresh().result(timeout=3)
+        assert clients[0].get_token_info.call_count == 2
+        identity.get_token.assert_not_called()
+        clients[0].get_token.assert_not_called()
+        assert len(clients) == 1
+        clock.advance(3540)
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.refresh().result(timeout=3)
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.resolve({"mode": "oauth"}, config)
     finally:
         manager.close()
-    assert clock.timer_count == 0
 
 
-def test_keyvault_pair_is_parallel_single_flight_and_failed_partial_refresh_retains_old_pair():
-    clock = Clock()
-    key_started, id_started, release = Event(), Event(), Event()
-    calls = []
-    version = 1
-    fail_identity = False
-
-    def resolve(name):
-        calls.append(name)
-        (key_started if name == "key" else id_started).set()
-        assert release.wait(3)
-        if name == "id" and fail_identity:
-            raise ValueError("PRIVATE-FAILURE")
-        return f"{name}-{version}"
-
-    failures = []
-    manager = ProviderCredentials(Mock(resolve=Mock(side_effect=resolve)), cache_options=clock.options,
-                                  report_failure=lambda kind: failures.append(kind))
-    config = read_config({"KEY_VAULT_URL": "https://unit.vault.azure.net"})
-    auth = {"mode": "apiKey", "key_vault_secret_name": "key", "identity_key_vault_secret_name": "id"}
-    try:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            first = pool.submit(manager.resolve, auth, config)
-            second = pool.submit(manager.resolve, auth, config)
-            assert key_started.wait(3) and id_started.wait(3)
-            release.set()
-            assert first.result(3) == second.result(3) == {"mode": "apiKey", "secret": "key-1", "identity": "id-1"}
-        assert sorted(calls) == ["id", "key"]
-        version = 2
-        fail_identity = True
-        clock.advance(240)
-        wait_until(lambda: failures == ["key_vault"])
-        assert manager.resolve(auth, config) == {"mode": "apiKey", "secret": "key-1", "identity": "id-1"}
-        fail_identity = False
-        clock.advance(5)
-        wait_until(lambda: manager.resolve(auth, config)["identity"] == "id-2")
-        assert manager.resolve(auth, config)["secret"] == "key-2"
-    finally:
-        release.set()
-        manager.close()
-
-
-def test_startup_only_prepares_credentials_and_handles_missing_provider_or_failure():
+def test_startup_only_prepares_credentials_and_shutdown_is_terminal():
     secrets = Mock(resolve=Mock(return_value="test-key"))
     engine = DispatchEngine(ProviderRegistry([TelesignProvider()]), secrets,
                             {"EPP_PROVIDER_NAME": "telesign", "EPP_PROVIDER_AUTH_MODE": "apiKey"})
     try:
         engine.start_credential_refresh()
-        assert secrets.resolve.call_count == 2
         engine.start_credential_refresh()
         assert secrets.resolve.call_count == 2
     finally:
         engine.close()
+    with pytest.raises(ValueError, match="unavailable"):
+        engine._credentials.resolve(AUTH, CONFIG)
     no_provider = DispatchEngine(ProviderRegistry([TelesignProvider()]), secrets, {})
     try:
         no_provider.start_credential_refresh()
@@ -298,119 +235,47 @@ def test_startup_only_prepares_credentials_and_handles_missing_provider_or_failu
         broken.close()
 
 
-def test_token_info_refresh_hints_apply_to_both_caches_without_legacy_sdk_calls(monkeypatch):
-    clock = Clock()
-
-    def token_info(value):
-        return SimpleNamespace(token=value, expires_on=clock.now + 3600, refresh_on=clock.now + 60)
-
-    identity = Mock(
-        spec=["get_token", "get_token_info"],
-        get_token_info=Mock(side_effect=lambda scope: token_info("PRIVATE-ASSERTION")),
-    )
-    monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock(return_value=identity))
-    clients = []
-
-    def create(**kwargs):
-        def get_token_info(scope):
-            assert kwargs["func"]() == "PRIVATE-ASSERTION"
-            return token_info("PRIVATE-PROVIDER")
-        credential = Mock(spec=["get_token", "get_token_info"], get_token_info=Mock(side_effect=get_token_info))
-        clients.append(credential)
-        return credential
-
-    monkeypatch.setattr(credentials_module, "ClientAssertionCredential", create)
-    manager = ProviderCredentials(Mock(), cache_options=clock.options)
-    config = oauth_config()
-    try:
-        manager.resolve({"mode": "oauth"}, config)
-        state = manager._state
-        assert state.assertion._entry.refresh_at == clock.now + 60
-        assert state.tokens[config.provider_scope]._entry.refresh_at == clock.now + 60
-        assert "PRIVATE" not in repr(state) + repr(state.assertion._entry)
-        clock.advance(60)
-        wait_until(lambda: identity.get_token_info.call_count == clients[0].get_token_info.call_count == 2)
-        wait_until(lambda: clock.timer_count == 2)
-        identity.get_token.assert_not_called()
-        clients[0].get_token.assert_not_called()
-        config.provider_scope = ""
-        with pytest.raises(ValueError, match="OAuth token unavailable"):
-            manager.resolve({"mode": "oauth"}, config)
-        assert clock.timer_count == 0
-        config.provider_scope = "api://provider/.default"
-        assert manager.resolve({"mode": "oauth"}, config)["access_token"] == "PRIVATE-PROVIDER"
-        assert len(clients) == 2
-    finally:
-        manager.close()
-
-
-def test_close_releases_waiters_immediately_and_never_reopens_the_manager():
-    clock = Clock()
-    started, release = Event(), Event()
-
-    def load():
-        started.set()
-        assert release.wait(3)
-        return CacheEntry("late", clock.now + 300, clock.now + 240)
-
-    cache = RefreshingCache(load, **clock.options)
-    future = cache.refresh()
-    try:
-        assert started.wait(3)
-        cache.close()
-        with pytest.raises(ValueError, match="unavailable"):
-            future.result(timeout=0.1)
-        assert clock.timer_count == 0
-    finally:
-        release.set()
-        cache.close()
-
-    secrets = Mock(resolve=Mock(return_value="PRIVATE-KEY"))
-    manager = ProviderCredentials(secrets, cache_options=clock.options)
-    auth = {"mode": "apiKey", "key_vault_secret_name": "key"}
-    config = read_config({"KEY_VAULT_URL": "https://unit.vault.azure.net"})
-    manager.resolve(auth, config)
+def test_configuration_changes_require_a_new_worker_and_stopped_cache_cannot_restart():
+    secrets = Mock(resolve=Mock(return_value="key"))
+    manager = ProviderCredentials(secrets)
+    manager.resolve(AUTH, CONFIG)
+    manager.close()
+    other = read_config({"KEY_VAULT_URL": "https://other.vault.azure.net"})
+    manager = ProviderCredentials(secrets)
+    manager.resolve(AUTH, other)
+    assert secrets.resolve.call_count == 4
     manager.close()
     manager.close()
-    for settings in (config, read_config({"KEY_VAULT_URL": "https://other.vault.azure.net"})):
+    for config in [CONFIG, other]:
         with pytest.raises(ValueError, match="unavailable"):
-            manager.resolve(auth, settings)
-    with pytest.raises(ValueError, match="unavailable"):
-        manager.resolve({"mode": "oauth"}, config)
-    secrets.resolve.assert_called_once()
-    assert clock.timer_count == 0
+            manager.resolve(AUTH, config)
+    assert secrets.resolve.call_count == 4
 
 
-def test_pending_secret_reads_remain_single_flight_after_waiters_leave():
-    clock = Clock()
-    started, release = Event(), Event()
-    calls = []
+def test_periodic_refresh_uses_the_selected_cache_and_stops(monkeypatch):
+    monkeypatch.setattr(credentials_module, "REFRESH_POLL_SECONDS", 0.02)
+    monkeypatch.setattr(credentials_module, "SECRET_REFRESH_SECONDS", 0.02)
+    secrets = Mock(resolve=Mock(return_value="key"))
+    manager = ProviderCredentials(secrets)
+    manager.resolve(AUTH, CONFIG)
+    wait_until(lambda: secrets.resolve.call_count >= 4)
+    manager.close()
+    count = secrets.resolve.call_count
+    time.sleep(0.06)
+    assert secrets.resolve.call_count == count
+    assert manager.cache.get() is None
 
-    def resolve(name):
-        calls.append(name)
-        if name == "key":
-            raise ValueError("PRIVATE-FAILURE")
-        started.set()
-        assert release.wait(3)
-        return "PRIVATE-IDENTITY"
 
-    manager = ProviderCredentials(
-        Mock(resolve=resolve), cache_options={**clock.options, "wait_timeout": 0.02},
-        report_failure=lambda kind: None,
-    )
-    auth = {"mode": "apiKey", "key_vault_secret_name": "key", "identity_key_vault_secret_name": "id"}
-    config = read_config({})
+def test_unknown_auth_mode_does_not_create_a_cache():
+    secrets = Mock()
+    manager = ProviderCredentials(secrets, report_failure=lambda _: None)
     try:
-        for _ in range(3):
-            with pytest.raises(ValueError, match="unavailable"):
-                manager.resolve(auth, config)
-            clock.advance(60)
-        assert started.is_set()
-        assert sorted(calls) == ["id", "key"]
-        assert clock.timer_count == 0
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.resolve({"mode": "unknown"}, CONFIG)
+        assert manager.cache is None
+        secrets.resolve.assert_not_called()
     finally:
         manager.close()
-        release.set()
 
 
 def test_pending_secret_reads_do_not_block_process_shutdown():
@@ -438,9 +303,7 @@ def test_pending_secret_reads_do_not_block_process_shutdown():
         manager.close()
         print("main-finished", flush=True)
     """)
-    result = subprocess.run(
-        [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1],
-        capture_output=True, text=True, timeout=10,
-    )
+    result = subprocess.run([sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1],
+                            capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == ["main-finished", "shutdown-complete"]

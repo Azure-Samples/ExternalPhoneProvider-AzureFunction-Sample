@@ -92,6 +92,8 @@ def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, m
         connection_timeout=2.5, read_timeout=2.5, logging_enable=False)
     managed.get_token.assert_called_with("api://AzureADTokenExchange/.default", logging_enable=False)
     engine.env["EPP_OUTBOUND_CLIENT_ID"] = "second-calling-app"
+    engine.close()
+    engine = DispatchEngine(engine.registry, engine.secrets, engine.env)
     assert engine.dispatch(_request(), "request")[0] == 200
     assert len(clients) == 2
     dispatch_module.requests.request.reset_mock()
@@ -113,6 +115,7 @@ def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, m
             assert "private" not in json.dumps(body)
     engine.secrets.resolve.assert_not_called()
     dispatch_module.requests.request.assert_not_called()
+    engine.close()
 
 
 def test_soprano_oauth_sdk_logs_stay_private_without_muting_other_requests(engine, monkeypatch, caplog):
@@ -131,7 +134,8 @@ def test_soprano_oauth_sdk_logs_stay_private_without_muting_other_requests(engin
         logger.warning("PRIVATE-ACCOUNT-ERROR")
         raise RuntimeError("PRIVATE-TOKEN-EXCEPTION")
 
-    monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock())
+    monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock(return_value=Mock(
+        spec=["get_token"], get_token=Mock(return_value=SimpleNamespace(token="assertion", expires_on=time.time() + 3600)))))
     monkeypatch.setattr(credentials_module, "ClientAssertionCredential",
                         Mock(return_value=Mock(spec=["get_token"], get_token=fail)))
     try:

@@ -6,3 +6,4 @@ azure-identity>=1.16,<2
 azure-keyvault-secrets>=4.8,<5
 requests>=2.31,<3
 jwcrypto>=1.5,<2
+cachetools>=5.5,<6

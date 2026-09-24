@@ -113,21 +113,16 @@ there is no API-key fallback. Evaluation skips acquisition. A provider rejection
 Tokens are treated as opaque: the Function checks SDK expiry metadata, not custom JWT claims.
 Soprano remains responsible for signature, issuer, audience, expiry, permissions, and account validation.
 
-Credential instances are reused for the configured tenant/application/identity. Separate
-[worker-local caches](#credential-caching-and-refresh) hold the managed-identity assertion and the
-final provider token for each selected scope. A usable final token avoids both SDK acquisition calls
-on the delivery path. Each cache owns its refresh independently, so one waiting caller cannot cancel
-an assertion refresh another caller needs. JavaScript and .NET bound each acquisition to 2.5 seconds;
-JavaScript links that cancellation through an SDK HTTP-client wrapper, including the managed-identity
-transport, rather than relying on `getToken` options or policies the SDK can replace.
-Python bounds each wait to 2.5 seconds and uses 2.5-second
-connect/read inactivity timeouts; its shared refresh may finish after a waiter leaves.
+Credential instances and their SDK caches are reused for the configured tenant/application/identity.
+One [worker-local refresh loop](#credential-caching-and-refresh) warms both exchange stages; a
+snapshot of the latest provider token keeps refresh off the delivery path. JavaScript and .NET
+bound the shared acquisition to 2.5 seconds, independent of individual waiters. JavaScript links
+cancellation through an SDK HTTP-client wrapper because `getToken` options alone are insufficient
+in the installed SDK. Python bounds caller waits and SDK connect/read inactivity to 2.5 seconds;
+shared synchronous retrieval may finish after a waiter leaves. It uses `get_token_info` for refresh
+hints when supported, otherwise `get_token`; a failed acquisition never falls back to another API.
 
-Python uses `get_token_info` when the installed SDK supports it, preserving the `refresh_on` hint.
-Older supported SDKs expose only expiry metadata through `get_token`; those versions retain the
-five-minute pre-expiry refresh target. An acquisition failure never falls back to another token API.
-
-Credential SDK transport retries are disabled; failed refreshes use the bounded backoff described
+Credential SDK transport retries are disabled; failed refreshes use the fixed polling cadence described
 below. These are not end-to-end delivery deadlines. JavaScript suppresses SDK logs in the
 acquisition's asynchronous context. Python filters Azure Identity/Core/MSAL records on configured
 handlers in that context; configure logging sinks before handling requests. .NET disables credential
@@ -344,60 +339,41 @@ when credentials are fetched, not the HTTP/nonce contract, caller authentication
 selection or provider request format. The decryption-key Key Vault reference remains separate and
 is still resolved by the platform; this cache does not rotate or replace JWE keys.
 
-| Cache | Refresh target | Hard usability boundary |
+The selected provider's manifest determines which of two concrete cache classes is created:
+
+| Authentication mode | Cache | Acquisition |
 |---|---|---|
-| Key Vault API-key bundle | Four minutes after successful retrieval. Required key and customer-ID secrets are fetched concurrently and published together only when both reads succeed and values are nonblank. | Five minutes after retrieval; failed refreshes never extend the old bundle's lifetime. |
-| Managed-identity assertion | Five minutes before SDK expiry, or an earlier SDK refresh hint when available. | SDK expiry minus 30 seconds. |
-| Final Entra provider token | Five minutes before SDK expiry, or an earlier SDK refresh hint when available, separately for each scope. | SDK expiry minus 30 seconds. |
+| `apiKey` | `ApiKeyCache` | Fetch the manifest's Key Vault secrets using managed identity. Cache the complete key/customer-ID bundle in .NET `MemoryCache`, JavaScript `lru-cache`, or Python `cachetools.TTLCache`. |
+| `oauth` | `AccessTokenCache` | Reuse Azure Identity's managed-identity and client-assertion credentials and their SDK caches. Retain only the latest usable provider token. No Key Vault access. |
 
-These are in-memory caches, one per worker process, not distributed caches or persisted token
-stores. API-key entries are isolated by vault, managed identity and manifest secret names. OAuth
-state is isolated by provider tenant, application and managed identity, with separate final-token
-entries for different scopes. A change of credential configuration stops the old entries; deploy
-app-setting changes normally with a worker restart rather than mutating process environment in place.
-Configuration replacement clears old entries without shutting down the manager. Explicit
-`close()`/`Dispose()` is terminal: a stopped manager cannot acquire credentials again. Create a
-new manager or restart the worker instead of reusing a stopped instance. Timing values are named
-policy constants in each runtime's refreshing-cache implementation, not additional app settings.
+Only the selected cache starts. Its credential configuration is bound on first use; app-setting
+changes require a worker restart, not live cache switching. API-key bundles are published only
+after all required reads succeed. Refresh targets four minutes after retrieval and hard expiry
+is five minutes; reads or failed refreshes never extend the lifetime. Provider tokens retain their
+original SDK expiry and are unusable with 30 seconds or less remaining. Tokens are never persisted.
 
-Concurrent cache misses share **one in-progress acquisition per entry**. A request with a still-usable
-cached credential returns it immediately while a due refresh proceeds separately. Refresh failures
-retain that credential only until its original hard expiry. Once expired, callers join the shared
-refresh or fail closed with the existing sanitized credential error; no stale-success fallback is
-introduced. This does not deduplicate provider deliveries or change caller/provider retry behavior.
+The shared coordinator prepares credentials at startup and polls the selected cache every 30 seconds.
+`ApiKeyCache` skips retrieval until its refresh target is due; `AccessTokenCache` consults both SDK
+credentials and lets the SDK decide whether network acquisition is needed. There is no separate MI
+cache, adaptive expiry timer, or exponential retry policy. Failures retry on a later poll; requests
+cannot start another acquisition within the same 30-second window. This is best-effort scheduling,
+not an exact refresh deadline. Timing policy uses named constants, not extra app settings.
 
-An SDK refresh can return the same token from its own cache. The manager preserves the token's
-original expiry instead of treating it as a new token. If the suggested refresh time is already past,
-the next check is delayed by half the remaining usable lifetime, bounded to 1-60 seconds, preventing
-an immediate refresh loop. Failed refreshes back off exponentially from 5 seconds to a 60-second
-base, plus up to 20% jitter. Requests do not bypass that backoff and repeatedly hit a failing
-dependency. Successful refresh resets it.
+Concurrent cold requests share one acquisition. Requests with usable cached credentials do not
+wait for background refresh. After hard expiry, they join the shared acquisition or fail closed.
+JavaScript's app-start hook, Python's initialization thread and .NET's hosted service start only
+credential preparation, never provider delivery. Shutdown stops polling and prevents late
+publication; `close()`/`Dispose()` is terminal. JavaScript and .NET propagate the 2.5-second
+acquisition deadline to SDK HTTP. Python bounds caller waits and SDK connect/read inactivity to
+2.5 seconds but cannot forcibly cancel synchronous I/O; daemon secret reads stay shared until
+both finish and cannot block process exit. Missing/broken provider configuration does not prevent
+evaluation.
 
-JavaScript's app-start hook, Python's worker-module initialization thread, and .NET's hosted service
-start credential preparation. Each entry then owns its refresh timer; a single distributed timer
-trigger would not populate every worker's memory. JavaScript timers are unreferenced and Python
-threads are daemon threads; termination hooks/`atexit`/hosted-service shutdown cancel scheduled
-work and discard entries. Late completion cannot repopulate a stopped cache. A cold Python caller
-can stop waiting without cancelling the shared retrieval. Failed or absent provider configuration
-does not prevent evaluation from working.
-
-Python uses explicitly owned daemon threads for parallel secret reads, not executor workers that
-are joined before application `atexit` handlers. A bundle keeps ownership of both reads until they
-finish, so a waiting caller's timeout or one failed read cannot start overlapping retries. Shutdown
-releases pending cache waiters immediately. Synchronous Python SDK I/O is not forcibly cancelled;
-unfinished reads cannot publish late values or block normal process exit.
-
-**This is not a guarantee that the first request after a cold start meets the caller's budget.**
-Initialization can itself be on that first request's critical path, and a worker may receive traffic
-before preparation finishes. Existing Always On/minimum-instance settings can help, but readiness,
-scale-out and caller-observed latency must be measured in the deployment. A warm final token avoids
-the Entra exchange; warming only the managed-identity assertion would not achieve that.
-
-Background failures emit a compact `credential_refresh_failed` service event with `cacheKind`
-(`key_vault`, `managed_identity`, `provider_token`, `configuration`, or `initialization`) and the
-fixed reason `credential_unavailable`. They do not carry a request's tracing IDs or secret values.
-The existing per-request `providerCredentialElapsedMs` still measures the resolution observed by
-that caller. No per-operation MI/Entra timing diagnostics are added.
+**Prewarming does not guarantee the first request meets the caller's timeout.** Worker readiness,
+scale-out and ingress overhead still matter. Refresh does not retry or deduplicate provider sends.
+Background failures log only `credential_refresh_failed`, `cacheKind` and the fixed
+`credential_unavailable` reason, without request IDs, credential values or SDK exception details.
+Per-request `providerCredentialElapsedMs` continues to measure the caller's resolution time.
 
 ---
 
@@ -559,8 +535,8 @@ Each language keeps lightweight offline tests covering representative applicatio
 - Awaited delivery, nonce acknowledgement and privacy-safe logging, including the shared
   service-event order and summary field set in [contract.json](../tests/fixtures/contract.json),
   identifier provenance, error paths, provider-body timeouts and concurrent request isolation.
-- Single-flight credential retrieval, automatic refresh, stale-value expiry, token lifetime
-  preservation, failure backoff, configuration isolation and cleanup using controlled clocks and
+- Selected-cache-only startup, shared credential retrieval, fixed refresh/retry cadence, hard expiry,
+  token lifetime preservation and shutdown using controlled clocks and
   fake dependencies. JavaScript tests also exercise cancellation through the actual SDK pipeline.
 
 The sample deliberately omits exhaustive input permutations and SDK internals. These tests use

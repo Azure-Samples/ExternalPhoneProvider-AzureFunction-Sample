@@ -6,8 +6,6 @@ from unittest.mock import Mock
 
 import requests
 import pytest
-from azure.identity import ClientAssertionCredential
-
 import src.credentials as credentials_module
 from src.config import read_config
 from src.credentials import ProviderCredentials
@@ -51,7 +49,10 @@ def test_real_provider_sdk_reuses_tokens_and_preserves_refresh_metadata(monkeypa
     monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock(
         return_value=Mock(spec=["get_token"], get_token=Mock(side_effect=managed))))
     secrets = Mock()
-    manager = ProviderCredentials(secrets)
+    now = time.time()
+    manager = ProviderCredentials(secrets, cache_options={
+        "clock": lambda: now,
+    })
     config = read_config({
         "EPP_PROVIDER_TENANT_ID": "11111111-1111-1111-1111-111111111111",
         "EPP_OUTBOUND_CLIENT_ID": "22222222-2222-2222-2222-222222222222",
@@ -63,18 +64,14 @@ def test_real_provider_sdk_reuses_tokens_and_preserves_refresh_metadata(monkeypa
             results = list(pool.map(lambda _: manager.resolve({"mode": "oauth"}, config), range(10)))
         assert all(value["access_token"] == "PRIVATE-PROVIDER" for value in results)
         assert len(token_endpoint_calls) == 1
-        assert len(mi_calls) == 1
+        assert len(mi_calls) == 2
         assert manager.resolve({"mode": "oauth"}, config)["access_token"] == "PRIVATE-PROVIDER"
-        assert len(token_endpoint_calls) == len(mi_calls) == 1
-        entry = manager._state.tokens[config.provider_scope]._entry
-        if refresh_in is not None and hasattr(ClientAssertionCredential, "get_token_info"):
-            info = manager._state.credential.get_token_info(config.provider_scope)
-            assert info.refresh_on is not None
-            assert entry.refresh_at == info.refresh_on
-            assert entry.refresh_at < entry.expires_at - 3000
-        else:
-            assert entry.refresh_at == entry.value.expires_on - 300
-        assert len(token_endpoint_calls) == len(mi_calls) == 1
+        assert len(token_endpoint_calls) == 1 and len(mi_calls) == 2
+        assert len(token_endpoint_calls) == 1 and len(mi_calls) == 2
+        now += 60
+        assert manager.resolve({"mode": "oauth"}, config)["access_token"] == "PRIVATE-PROVIDER"
+        manager.refresh().result(timeout=3)
+        assert len(token_endpoint_calls) == 1
         secrets.resolve.assert_not_called()
     finally:
         manager.close()

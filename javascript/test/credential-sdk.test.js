@@ -98,7 +98,10 @@ function config() {
 }
 
 test('real SDK sees one initial Entra exchange and none on concurrent or later warm requests', async () => {
-    const manager = new ProviderCredentials();
+    let now = Date.now();
+    const manager = new ProviderCredentials({
+        cacheOptions: { now: () => now, schedule: () => ({ unref() {} }), cancel() {} },
+    });
     const settings = config();
     try {
         const tokens = await Promise.all(Array.from({ length: 20 }, () => manager.resolve({ mode: 'oauth' }, settings)));
@@ -106,6 +109,11 @@ test('real SDK sees one initial Entra exchange and none on concurrent or later w
         assert.equal(state.tokenCalls, 1);
         assert.equal(state.miCalls, 1);
         await manager.resolve({ mode: 'oauth' }, settings);
+        assert.equal(state.tokenCalls, 1);
+        assert.equal(state.miCalls, 1);
+        now += 60000;
+        assert.equal((await manager.resolve({ mode: 'oauth' }, settings)).accessToken, 'PRIVATE-TOKEN');
+        await manager.refresh();
         assert.equal(state.tokenCalls, 1);
         assert.equal(state.miCalls, 1);
     } finally { manager.close(); }
@@ -117,7 +125,7 @@ test('the cache-owned acquisition budget aborts actual SDK transport and does no
     const settings = config();
     state.wait = 10000;
     try {
-        await assert.rejects(manager.resolve({ mode: 'oauth' }, settings), /^Error: provider OAuth token unavailable$/);
+        await assert.rejects(manager.resolve({ mode: 'oauth' }, settings), /^Error: provider credential unavailable$/);
         await new Promise(setImmediate);
         assert.ok(state.requests.some((request) => !request.managedIdentity && request.aborted));
         assert.deepEqual(failures, ['provider_token']);
@@ -127,28 +135,30 @@ test('the cache-owned acquisition budget aborts actual SDK transport and does no
     } finally { manager.close(); }
 });
 
-test('changing configuration cancels old work without publishing its token into the replacement cache', async () => {
+test('restarting with new configuration cancels old work without publishing into the replacement cache', async () => {
     const manager = new ProviderCredentials({ reportFailure: () => {} });
     const settings = config();
     state.wait = 10000;
     const first = manager.resolve({ mode: 'oauth' }, settings);
     const firstRejected = assert.rejects(first, /unavailable/);
     await waitForRequest(false);
+    manager.close();
     state.wait = 5;
-    const result = await manager.resolve({ mode: 'oauth' }, { ...settings, outboundClientId: crypto.randomUUID() });
+    const replacement = new ProviderCredentials({ reportFailure() {} });
+    const result = await replacement.resolve({ mode: 'oauth' }, { ...settings, outboundClientId: crypto.randomUUID() });
     await firstRejected;
     try {
         assert.equal(result.accessToken, 'PRIVATE-TOKEN');
         assert.ok(state.requests.some((request) => !request.managedIdentity && request.aborted));
         assert.equal(state.tokenCalls, 2);
-    } finally { manager.close(); }
+    } finally { manager.close(); replacement.close(); }
 });
 
 test('the acquisition deadline aborts real managed-identity transport before another refresh starts', async () => {
     let now = Date.now();
     const manager = new ProviderCredentials({
         reportFailure: () => {},
-        cacheOptions: { now: () => now, random: () => 0, schedule: () => ({ unref() {} }), cancel() {} },
+        cacheOptions: { now: () => now, schedule: () => ({ unref() {} }), cancel() {} },
     });
     const settings = config();
     state.miWait = 10000;
@@ -158,7 +168,7 @@ test('the acquisition deadline aborts real managed-identity transport before ano
         assert.equal(state.miCalls, 1);
         assert.ok(state.requests.every((request) => request.completed && request.aborted));
         assert.equal(state.tokenCalls, 0);
-        now += 10000;
+        now += 30000;
         state.miWait = 5;
         assert.equal((await manager.resolve({ mode: 'oauth' }, settings)).accessToken, 'PRIVATE-TOKEN');
         assert.equal(state.miCalls, 2);

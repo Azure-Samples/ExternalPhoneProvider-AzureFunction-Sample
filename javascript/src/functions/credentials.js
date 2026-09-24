@@ -3,42 +3,33 @@
 
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { inspect } = require('node:util');
+const { LRUCache } = require('lru-cache');
 const { createDefaultHttpClient } = require('@azure/core-rest-pipeline');
-const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
+const { AzureAuthorityHosts, ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { AzureLogger } = require('@azure/logger');
-const { CACHE_POLICY, RefreshingCache, tokenEntry } = require('./refreshingCache');
 
-/**
- * @template T
- * @typedef {InstanceType<typeof RefreshingCache<T>>} CredentialCache
- */
-
-/**
- * @typedef {ReturnType<typeof import('./config').readConfig>} AppConfig
- * @typedef {{mode?: string, keyVaultSecretName?: string, identityKeyVaultSecretName?: string}} AuthConfig
- * @typedef {{mode: 'apiKey', secret: string, identity: string}} ApiKeyCredential
- * @typedef {{mode: 'oauth', accessToken: string}} OAuthCredential
- * @typedef {import('@azure/core-auth').AccessToken} AccessToken
- * @typedef {{mode: 'apiKey', bundle: CredentialCache<ApiKeyCredential>}} ApiKeyState
- * @typedef {object} OAuthState
- * @property {'oauth'} mode
- * @property {CredentialCache<AccessToken>} assertion
- * @property {ClientAssertionCredential} credential
- * @property {Map<string, CredentialCache<AccessToken>>} tokens
- */
-
+const API_KEY_MODE = 'apiKey';
+const OAUTH_MODE = 'oauth';
+const BUNDLE_KEY = 'bundle';
+const TOKEN_EXCHANGE_SCOPE = 'api://AzureADTokenExchange/.default';
+const ACQUISITION_TIMEOUT_MS = 2500;
+const REFRESH_POLL_MS = 30000;
+const SECRET_TTL_MS = 300000;
+const SECRET_REFRESH_MS = 240000;
+const TOKEN_SKEW_MS = 30000;
+const unavailable = () => new Error('provider credential unavailable');
 /** @type {AsyncLocalStorage<AbortSignal>} */
 const acquisition = new AsyncLocalStorage();
 /** @type {typeof AzureLogger.log | undefined} */
 let filteredLogger;
 
-/** @param {string} cacheKind */
 function reportRefreshFailure(cacheKind) {
     console.warn(JSON.stringify({ logType: 'service', eventName: 'credential_refresh_failed',
         cacheKind, failureReason: 'credential_unavailable' }));
 }
 
+// The installed identity SDK does not propagate every getToken abort signal to HTTP.
 /** @returns {import('@azure/core-rest-pipeline').HttpClient} */
 function credentialHttpClient() {
     const client = createDefaultHttpClient();
@@ -64,215 +55,188 @@ function credentialHttpClient() {
     };
 }
 
-/**
- * @template T
- * @param {AbortSignal} signal
- * @param {(signal: AbortSignal) => Promise<T>} load
- * @returns {Promise<T>}
- */
-async function acquireBounded(signal, load) {
-    if (AzureLogger.log !== filteredLogger) {
-        const previous = AzureLogger.log;
-        filteredLogger = (...args) => { if (!acquisition.getStore()) previous(...args); };
-        AzureLogger.log = filteredLogger;
-    }
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    signal.addEventListener('abort', abort, { once: true });
-    if (signal.aborted) abort();
-    let timeout;
-    /** @type {Promise<never>} */
-    const interrupted = new Promise((_, reject) => {
-        const fail = () => reject(new Error('provider credential unavailable'));
-        controller.signal.addEventListener('abort', fail, { once: true });
-        if (controller.signal.aborted) fail();
-        timeout = setTimeout(abort, CACHE_POLICY.acquisitionTimeoutMs);
-    });
-    try {
-        return await acquisition.run(controller.signal, () => Promise.race([
-            Promise.resolve().then(() => {
-                controller.signal.throwIfAborted();
-                return load(controller.signal);
-            }),
-            interrupted,
-        ]));
-    } finally {
-        clearTimeout(timeout);
-        signal.removeEventListener('abort', abort);
-    }
+const sdkOptions = () => ({ retryOptions: { maxRetries: 0 }, httpClient: credentialHttpClient() });
+/** @param {import('@azure/core-auth').AccessToken | null} token */
+function checkToken(token, now) {
+    if (typeof token?.token !== 'string' || !token.token.trim() || !Number.isFinite(token.expiresOnTimestamp)
+        || token.expiresOnTimestamp <= now + TOKEN_SKEW_MS) throw unavailable();
+    return token;
 }
 
-// ManagedIdentityCredential replaces additionalPolicies, but preserves the supplied HTTP client.
-const sdkOptions = () => ({
-    retryOptions: { maxRetries: 0 },
-    httpClient: credentialHttpClient(),
-});
+/**
+ * @typedef {{mode: 'apiKey', secret: string, identity: string}} ApiKeyCredential
+ * @typedef {{mode: 'oauth', accessToken: string}} OAuthCredential
+ * @typedef {ReturnType<typeof import('./config').readConfig>} AppConfig
+ * @typedef {{mode?: string, keyVaultSecretName?: string, identityKeyVaultSecretName?: string}} AuthConfig
+ * @typedef {{now?: () => number, schedule?: typeof setInterval, cancel?: typeof clearInterval}} RefreshOptions
+ */
 
-class ProviderCredentials {
-    /**
-     * @param {{cacheOptions?: import('./refreshingCache').CacheOptions,
-     *     reportFailure?: (kind: string) => void}} [options]
-     */
-    constructor({ cacheOptions = {}, reportFailure = reportRefreshFailure } = {}) {
-        this.cacheOptions = cacheOptions;
-        this.now = cacheOptions.now || Date.now;
-        this.reportFailure = reportFailure;
-        /** @type {ApiKeyState | OAuthState | null} */
-        this.current = null;
-        /** @type {string | null} */
-        this.currentKey = null;
+class ApiKeyCache {
+    /** @param {AuthConfig} auth @param {AppConfig} config */
+    constructor(auth, config, now = Date.now) {
+        this.now = now;
+        this.auth = { ...auth };
+        this.vaultUrl = config.keyVaultUrl;
+        this.identityClientId = config.managedIdentityClientId;
+        /** @type {SecretClient | undefined} */
+        this.client = undefined;
+        /** @type {LRUCache<string, {value: ApiKeyCredential, expiresAt: number}>} */
+        this.values = new LRUCache({ max: 1, ttlResolution: 0 });
+        this.refreshAt = 0;
+        this.stage = 'key_vault';
         this.closed = false;
     }
-
-    [inspect.custom]() { return '[ProviderCredentials]'; }
-    toJSON() { return '[ProviderCredentials]'; }
-
-    /**
-     * @template T
-     * @param {string} kind
-     * @param {(signal: AbortSignal) => Promise<import('./refreshingCache').CacheEntry<T>>} load
-     * @returns {CredentialCache<T>}
-     */
-    cache(kind, load) {
-        return new RefreshingCache((signal) => acquireBounded(signal, load),
-            { ...this.cacheOptions, onFailure: () => this.reportFailure(kind) });
+    get() {
+        const entry = this.closed ? undefined : this.values.get(BUNDLE_KEY);
+        return entry && entry.expiresAt > this.now() ? entry.value : null;
     }
-
-    /**
-     * @param {AuthConfig} auth
-     * @param {AppConfig} config
-     * @returns {Promise<ApiKeyCredential | OAuthCredential>}
-     */
-    resolve(auth, config) {
-        if (this.closed) return Promise.reject(new Error('provider credential unavailable'));
-        const mode = auth?.mode || 'apiKey';
-        if (mode === 'oauth' && (!config.providerTenantId || !config.providerScope
-            || !config.outboundClientId || !config.outboundManagedIdentityClientId)) {
-            this.#clear();
-            return Promise.reject(new Error('provider OAuth token unavailable'));
+    async refresh(signal) {
+        if (this.closed) throw unavailable();
+        if (this.get() && this.refreshAt > this.now()) return;
+        const { keyVaultSecretName: key, identityKeyVaultSecretName: account } = this.auth;
+        if (!key || !this.vaultUrl) throw unavailable();
+        this.client ??= new SecretClient(this.vaultUrl,
+            new ManagedIdentityCredential({ clientId: this.identityClientId || undefined, ...sdkOptions() }), sdkOptions());
+        const [secret, identity] = await Promise.all([
+            this.client.getSecret(key, { abortSignal: signal }),
+            account ? this.client.getSecret(account, { abortSignal: signal }) : null,
+        ]);
+        const now = this.now();
+        let expiresAt = now + SECRET_TTL_MS;
+        for (const item of [secret, identity]) {
+            if (!item) continue;
+            if (!item.value?.trim() || item.properties?.enabled === false || item.properties?.notBefore?.getTime() > now) throw unavailable();
+            if (item.properties?.expiresOn) expiresAt = Math.min(expiresAt, item.properties.expiresOn.getTime());
         }
-        if (mode !== 'oauth' && mode !== 'apiKey') {
-            this.#clear();
-            return Promise.reject(new Error('provider credential unavailable'));
-        }
-        let key;
-        if (mode === 'apiKey') {
-            key = JSON.stringify([
-                mode, config.keyVaultUrl, config.managedIdentityClientId,
-                auth.keyVaultSecretName, auth.identityKeyVaultSecretName,
-            ]);
-        } else {
-            key = JSON.stringify([
-                mode, config.providerTenantId, config.outboundClientId, config.outboundManagedIdentityClientId,
-            ]);
-        }
-        if (this.currentKey !== key) {
-            this.#clear();
-            if (mode === 'apiKey') {
-                this.current = this.apiKeyState(auth, config);
-            } else {
-                this.current = this.oauthState(config);
-            }
-            this.currentKey = key;
-        }
-        const state = this.current;
-        if (!state) return Promise.reject(new Error('provider credential unavailable'));
-        if (state.mode === 'apiKey') return state.bundle.get();
-        let tokenCache = state.tokens.get(config.providerScope);
-        if (!tokenCache) {
-            const scope = config.providerScope;
-            tokenCache = this.cache('provider_token', async (signal) =>
-                tokenEntry(await state.credential.getToken(scope, { abortSignal: signal }), this.now()));
-            state.tokens.set(scope, tokenCache);
-        }
-        return tokenCache.get().then((token) => {
-            /** @type {OAuthCredential} */
-            const credential = { mode: 'oauth', accessToken: token.token };
-            Object.defineProperty(credential, 'accessToken', { enumerable: false, writable: false, configurable: false });
-            return credential;
-        }).catch(() => { throw new Error('provider OAuth token unavailable'); });
+        if (!secret.value?.trim() || (account && !identity?.value?.trim())
+            || !Number.isFinite(expiresAt) || expiresAt <= now || this.closed) throw unavailable();
+        signal.throwIfAborted();
+        this.values.set(BUNDLE_KEY, { value: Object.freeze({ mode: API_KEY_MODE, secret: secret.value, identity: identity?.value || '' }),
+            expiresAt }, { ttl: expiresAt - now });
+        this.refreshAt = Math.min(now + SECRET_REFRESH_MS, expiresAt - TOKEN_SKEW_MS);
     }
+    stop() { this.closed = true; this.values.clear(); }
+    [inspect.custom]() { return '[ApiKeyCache]'; }
+    toJSON() { return '[ApiKeyCache]'; }
+}
 
-    /**
-     * @param {AuthConfig} auth
-     * @param {AppConfig} config
-     * @returns {ApiKeyState}
-     */
-    apiKeyState(auth, config) {
-        /** @type {SecretClient | undefined} */
-        let client;
-        const bundle = this.cache('key_vault', async (signal) => {
-            if (!auth.keyVaultSecretName || !config.keyVaultUrl) throw new Error('provider credential unavailable');
-            if (!client) {
-                const identity = config.managedIdentityClientId
-                    ? new ManagedIdentityCredential(config.managedIdentityClientId, sdkOptions())
-                    : new ManagedIdentityCredential(sdkOptions());
-                client = new SecretClient(config.keyVaultUrl, identity, sdkOptions());
-            }
-            const [secret, identity] = await Promise.all([
-                client.getSecret(auth.keyVaultSecretName, { abortSignal: signal }),
-                auth.identityKeyVaultSecretName ? client.getSecret(auth.identityKeyVaultSecretName, { abortSignal: signal }) : null,
-            ]);
-            if (!secret.value?.trim() || (auth.identityKeyVaultSecretName && !identity?.value?.trim())) {
-                throw new Error('provider credential unavailable');
-            }
-            const now = this.now();
-            let expiresAt = now + CACHE_POLICY.secretTtlMs;
-            for (const item of [secret, identity]) {
-                if (!item) continue;
-                const notBefore = item.properties?.notBefore?.getTime();
-                if (item.properties?.enabled === false
-                    || (notBefore !== undefined && notBefore > now)) throw new Error('provider credential unavailable');
-                if (item.properties?.expiresOn) expiresAt = Math.min(expiresAt, item.properties.expiresOn.getTime());
-            }
-            /** @type {ApiKeyCredential} */
-            const credential = { mode: 'apiKey', secret: secret.value, identity: identity?.value || '' };
-            return {
-                value: Object.freeze(credential),
-                expiresAt,
-                refreshAt: Math.min(now + CACHE_POLICY.secretRefreshIntervalMs, expiresAt - CACHE_POLICY.secretExpiryRefreshLeadMs),
-            };
-        });
-        return { mode: 'apiKey', bundle };
+class AccessTokenCache {
+    /** @param {AppConfig} config */
+    constructor(config, now = Date.now) {
+        if (!config.providerTenantId || !config.providerScope || !config.outboundClientId
+            || !config.outboundManagedIdentityClientId) throw unavailable();
+        this.now = now;
+        this.scope = config.providerScope;
+        this.identity = new ManagedIdentityCredential({ clientId: config.outboundManagedIdentityClientId, ...sdkOptions() });
+        this.credential = new ClientAssertionCredential(config.providerTenantId, config.outboundClientId,
+            async () => (await this.assertion(acquisition.getStore())).token,
+            { authorityHost: AzureAuthorityHosts.AzurePublicCloud, ...sdkOptions() });
+        /** @type {import('@azure/core-auth').AccessToken | null} */
+        this.token = null;
+        this.stage = 'provider_token';
+        this.closed = false;
     }
-
-    /**
-     * @param {AppConfig} config
-     * @returns {OAuthState}
-     */
-    oauthState(config) {
-        /** @type {ManagedIdentityCredential | undefined} */
-        let identity;
-        const assertion = this.cache('managed_identity', async (signal) => {
-            identity ??= new ManagedIdentityCredential({ clientId: config.outboundManagedIdentityClientId, ...sdkOptions() });
-            return tokenEntry(await identity.getToken('api://AzureADTokenExchange/.default', { abortSignal: signal }), this.now());
-        });
-        const credential = new ClientAssertionCredential(config.providerTenantId, config.outboundClientId,
-            async () => {
-                const value = await assertion.get();
-                acquisition.getStore()?.throwIfAborted();
-                return value.token;
-            }, { authorityHost: 'https://login.microsoftonline.com', ...sdkOptions() });
-        return { mode: 'oauth', assertion, credential, tokens: new Map() };
+    get() {
+        if (this.closed || !this.token || this.token.expiresOnTimestamp <= this.now() + TOKEN_SKEW_MS) return null;
+        /** @type {OAuthCredential} */
+        const value = { mode: OAUTH_MODE, accessToken: this.token.token };
+        return Object.defineProperty(value, 'accessToken', { enumerable: false });
     }
+    async assertion(signal) {
+        return checkToken(await this.identity.getToken(TOKEN_EXCHANGE_SCOPE, { abortSignal: signal }), this.now());
+    }
+    async refresh(signal) {
+        if (this.closed) throw unavailable();
+        this.stage = 'managed_identity';
+        await this.assertion(signal);
+        this.stage = 'provider_token';
+        const token = checkToken(await this.credential.getToken(this.scope, { abortSignal: signal }), this.now());
+        signal.throwIfAborted();
+        if (this.closed) throw unavailable();
+        this.token = token;
+    }
+    stop() { this.closed = true; this.token = null; }
+    [inspect.custom]() { return '[AccessTokenCache]'; }
+    toJSON() { return '[AccessTokenCache]'; }
+}
 
-    #clear() {
-        const state = this.current;
-        if (state?.mode === 'apiKey') {
-            state.bundle.close();
-        } else if (state?.mode === 'oauth') {
-            state.assertion.close();
-            for (const cache of state.tokens.values()) cache.close();
-        }
+// Owns one selected cache and one periodic refresh; configuration changes require a worker restart.
+class ProviderCredentials {
+    /** @param {{cacheOptions?: RefreshOptions, reportFailure?: (kind: string) => void}} [options] */
+    constructor({ cacheOptions = {}, reportFailure = reportRefreshFailure } = {}) {
+        this.now = cacheOptions.now || Date.now;
+        this.schedule = cacheOptions.schedule || setInterval;
+        this.cancel = cacheOptions.cancel || clearInterval;
+        this.reportFailure = reportFailure;
+        /** @type {ApiKeyCache | AccessTokenCache | null} */
         this.current = null;
-        this.currentKey = null;
+        /** @type {Promise<void> | null} */
+        this.pending = null;
+        /** @type {ReturnType<typeof setInterval> | null} */
+        this.timer = null;
+        /** @type {AbortController | null} */
+        this.controller = null;
+        this.nextAttemptAt = 0;
+        this.closed = false;
     }
-
+    /** @param {AuthConfig} auth @param {AppConfig} config */
+    async resolve(auth, config) {
+        if (this.closed) throw unavailable();
+        if (!this.current) {
+            try {
+                switch (auth.mode || API_KEY_MODE) {
+                    case API_KEY_MODE: this.current = new ApiKeyCache(auth, config, this.now); break;
+                    case OAUTH_MODE: this.current = new AccessTokenCache(config, this.now); break;
+                    default: throw unavailable();
+                }
+                this.timer = this.schedule(() => { void this.refresh().catch(() => {}); }, REFRESH_POLL_MS);
+                this.timer.unref?.();
+            } catch { this.reportFailure('configuration'); throw unavailable(); }
+        }
+        const cached = this.current.get();
+        if (cached) return cached;
+        await this.refresh();
+        const value = this.current.get();
+        if (!value) throw unavailable();
+        return value;
+    }
+    refresh() {
+        if (this.closed || !this.current) return Promise.reject(unavailable());
+        if (this.pending) return this.pending;
+        if (this.nextAttemptAt > this.now()) return Promise.reject(unavailable());
+        this.nextAttemptAt = this.now() + REFRESH_POLL_MS;
+        const cache = this.current;
+        const controller = this.controller = new AbortController();
+        if (AzureLogger.log !== filteredLogger) {
+            const previous = AzureLogger.log;
+            filteredLogger = (...args) => { if (!acquisition.getStore()) previous(...args); };
+            AzureLogger.log = filteredLogger;
+        }
+        const timeout = setTimeout(() => controller.abort(), ACQUISITION_TIMEOUT_MS);
+        const interrupted = new Promise((_, reject) =>
+            controller.signal.addEventListener('abort', () => reject(unavailable()), { once: true }));
+        this.pending = acquisition.run(controller.signal, () => Promise.race([
+            Promise.resolve().then(() => { controller.signal.throwIfAborted(); return cache.refresh(controller.signal); }), interrupted,
+        ])).catch(() => {
+            controller.abort();
+            if (!this.closed) this.reportFailure(cache.stage);
+            throw unavailable();
+        }).finally(() => {
+            clearTimeout(timeout);
+            this.pending = null;
+            this.controller = null;
+        });
+        return this.pending;
+    }
     close() {
         this.closed = true;
-        this.#clear();
+        if (this.timer) this.cancel(this.timer);
+        this.controller?.abort();
+        this.current?.stop();
     }
+    [inspect.custom]() { return '[ProviderCredentials]'; }
+    toJSON() { return '[ProviderCredentials]'; }
 }
 
 const providerCredentials = new ProviderCredentials();
-module.exports = { ProviderCredentials, providerCredentials, reportRefreshFailure };
+module.exports = { ApiKeyCache, AccessTokenCache, ProviderCredentials, providerCredentials, reportRefreshFailure };
