@@ -99,12 +99,21 @@ retries. The shared contract defines validation, HTTP outcomes and privacy-safe 
 
 ## Source and extension points
 
+The app-start hook selects `ApiKeyCache` or `AccessTokenCache` from the provider manifest's auth mode.
+Only that cache starts: API keys use Key Vault and `lru-cache`; access tokens use the MI/Entra SDKs,
+without Key Vault. One shared 30-second refresh loop and one in-flight acquisition keep warm reads
+nonblocking. Configuration changes require restart; failures never extend expiry. A small HTTP-client
+wrapper propagates cancellation to the installed identity SDK. Shutdown prevents late publication. See the
+[refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh). Leave the provider unset for
+local evaluation-only use without credential acquisition; prewarming never sends an OTP.
+
 | Source | Purpose |
 |---|---|
 | [src/functions/SendOtp.js](src/functions/SendOtp.js) | HTTP handler |
 | [src/functions/config.js](src/functions/config.js) | Shared deployment settings |
 | [src/functions/models.js](src/functions/models.js) | Delivery context, normalized `ParsedResponse`, and documented request objects |
 | [src/functions/dispatch.js](src/functions/dispatch.js) | Envelope/JWE handling, registry and dispatch |
+| [src/functions/credentials.js](src/functions/credentials.js) | `ApiKeyCache`, `AccessTokenCache` and their shared refresh coordinator |
 | [src/functions/requestLog.js](src/functions/requestLog.js) | Request-scoped [service events and summaries](../docs/CONTRACT.md#application-logs) with explicit ID sources |
 | [src/functions/providers/](src/functions/providers/) | Adapter manifests and API-specific implementations |
 | [test/](test/) | Representative offline checks |

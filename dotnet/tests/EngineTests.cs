@@ -35,19 +35,47 @@ public class EngineTests
     }
 
     [Fact]
-    public async Task SopranoOAuthUsesSetupIdentitiesScopeAndOneBoundedExchange()
+    public async Task StartupPreparesOnlyCredentialsAndWarmRequestsReuseTheBundle()
+    {
+        using var rig = new HandlerRig();
+        await rig.Engine.StartCredentialRefreshAsync();
+        Assert.Equal(1, rig.Secrets.Calls);
+        Assert.Equal(0, rig.Http.Calls);
+        Assert.Equal(0, rig.Keys.Calls);
+        AssertAccepted(await rig.Invoke("evaluation"));
+        Assert.Equal(1, rig.Secrets.Calls);
+        Assert.Equal(0, rig.Http.Calls);
+        AssertAccepted(await rig.Invoke());
+        Assert.Equal(1, rig.Secrets.Calls);
+        Assert.Equal(1, rig.Http.Calls);
+    }
+
+    [Fact]
+    public async Task StartupWithoutProviderConfigurationKeepsEvaluationIndependent()
+    {
+        using var rig = new HandlerRig();
+        rig.Env.Clear();
+        await rig.Engine.StartCredentialRefreshAsync();
+        Assert.Equal(0, rig.Secrets.Calls);
+        Assert.Equal(0, rig.Http.Calls);
+        AssertAccepted(await rig.Invoke("evaluation"));
+    }
+
+    [Theory]
+    [InlineData("api://provider/.default")]
+    [InlineData("api://second/.default")]
+    public async Task SopranoOAuthUsesSetupIdentitiesScopeAndOneBoundedExchange(string scope)
     {
         var scopes = new List<string>();
         var identities = new List<string>();
         var applications = new List<(string Tenant, string Application)>();
-        CancellationToken outerCancellation = default;
         using var rig = new HandlerRig(identity =>
         {
             identities.Add(identity);
             return new TestTokenCredential((context, cancellation) =>
             {
                 Assert.Equal("api://AzureADTokenExchange/.default", Assert.Single(context.Scopes));
-                Assert.Equal(outerCancellation, cancellation);
+                Assert.True(cancellation.CanBeCanceled);
                 return ValueTask.FromResult(new AccessToken("private-assertion", DateTimeOffset.UtcNow.AddHours(1)));
             });
         }, (tenant, application, assertion) =>
@@ -56,13 +84,13 @@ public class EngineTests
             return new TestTokenCredential(async (context, cancellation) =>
             {
                 Assert.True(cancellation.CanBeCanceled);
-                outerCancellation = cancellation;
                 scopes.Add(Assert.Single(context.Scopes));
                 Assert.Equal("private-assertion", await assertion(cancellation));
                 return new AccessToken("private-provider-token", DateTimeOffset.UtcNow.AddHours(1));
             });
         });
         ConfigureSoprano(rig);
+        rig.Env["EPP_PROVIDER_SCOPE"] = scope;
         AssertAccepted(await rig.Invoke("evaluation"));
         Assert.Empty(applications);
         foreach (var channel in new[] { "sms", "voice" })
@@ -90,15 +118,12 @@ public class EngineTests
             }
         }
         rig.Env["EPP_PROVIDER_CHANNEL"] = "sms";
-        rig.Env["EPP_PROVIDER_SCOPE"] = "api://second/.default";
         AssertAccepted(await rig.Invoke());
         Assert.Single(applications);
-        Assert.Equal(new[] { "api://provider/.default", "api://provider/.default", "api://second/.default" }, scopes);
-        rig.Env["EPP_OUTBOUND_CLIENT_ID"] = "second-application";
-        AssertAccepted(await rig.Invoke());
-        Assert.Equal(new[] { ("provider-tenant", "calling-application"), ("provider-tenant", "second-application") }, applications);
+        Assert.Equal(new[] { scope }, scopes);
+        Assert.Equal(new[] { ("provider-tenant", "calling-application") }, applications);
         Assert.All(identities, identity => Assert.Equal("outbound-identity", identity));
-        Assert.Equal(4, rig.Http.Calls);
+        Assert.Equal(3, rig.Http.Calls);
         Assert.Equal(0, rig.Secrets.Calls);
         Assert.DoesNotContain("private-provider-token", string.Join("\n", rig.Log.Messages));
         var credential = new ProviderCredential("oauth", AccessToken: "private-provider-token");
@@ -130,7 +155,7 @@ public class EngineTests
     {
         CancellationToken observed = default;
         var waitForCancellation = true;
-        using var rig = new HandlerRig(_ => new TestTokenCredential(async (_, cancellation) =>
+        TokenCredential CreateIdentity(string _) => new TestTokenCredential(async (_, cancellation) =>
         {
             if (waitForCancellation)
             {
@@ -138,19 +163,27 @@ public class EngineTests
                 await Task.Delay(Timeout.Infinite, cancellation);
             }
             return new AccessToken("assertion", DateTimeOffset.UtcNow.AddHours(1));
-        }), (_, _, assertion) => new TestTokenCredential(async (_, cancellation) =>
+        });
+        TokenCredential CreateProvider(string tenant, string application, Func<CancellationToken, Task<string>> assertion) =>
+            new TestTokenCredential(async (_, cancellation) =>
         {
             await assertion(cancellation);
             return new AccessToken("token", DateTimeOffset.UtcNow.AddHours(1));
-        }));
+        });
+        using var rig = new HandlerRig(CreateIdentity, CreateProvider);
         ConfigureSoprano(rig);
         AssertFailure(rig, await rig.Invoke().WaitAsync(TimeSpan.FromSeconds(10)), 502);
         Assert.True(observed.IsCancellationRequested);
         Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
         waitForCancellation = false;
-        rig.Http.Respond = _ => Task.FromResult(Json(401, "{\"status\":\"REJECTED\"}"));
-        AssertFailure(rig, await rig.Invoke(), 401);
-        Assert.Equal((1, 0), (rig.Http.Calls, rig.Secrets.Calls));
+        rig.Engine.Dispose();
+        AssertFailure(rig, await rig.Invoke(), 502);
+        Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
+        using var replacement = new HandlerRig(CreateIdentity, CreateProvider);
+        ConfigureSoprano(replacement);
+        replacement.Http.Respond = _ => Task.FromResult(Json(401, "{\"status\":\"REJECTED\"}"));
+        AssertFailure(replacement, await replacement.Invoke(), 401);
+        Assert.Equal((1, 0), (replacement.Http.Calls, replacement.Secrets.Calls));
     }
 
     private sealed class TestTokenCredential(Func<TokenRequestContext, CancellationToken, ValueTask<AccessToken>> acquire) : TokenCredential
@@ -800,6 +833,7 @@ public class EngineTests
         public TestHttp Http { get; } = new();
         public TestKeys Keys { get; } = new();
         public CapturingLogger Log { get; } = new();
+        public DispatchEngine Engine { get; }
         public HandlerRig(Func<string, TokenCredential>? createIdentity = null,
             Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential>? createOAuth = null)
         {
@@ -813,6 +847,7 @@ public class EngineTests
                 { new InfobipProvider(), new TelesignProvider(), new SopranoProvider(), new SinchProvider() });
             var engine = createIdentity is null ? new DispatchEngine(registry, Secrets, Http, Env)
                 : new DispatchEngine(registry, Secrets, Http, Env, createIdentity, createOAuth!);
+            Engine = engine;
             _function = new SendOtp(engine,
                 new JweDecryptor(Keys), Env, Log);
         }
@@ -843,7 +878,7 @@ public class EngineTests
                 foreach (var (key, value) in headers) request.Headers[key] = value;
             return Assert.IsAssignableFrom<ObjectResult>(await _function.Run(request));
         }
-        public void Dispose() { Keys.Dispose(); Http.Dispose(); }
+        public void Dispose() { Engine.Dispose(); Keys.Dispose(); Http.Dispose(); }
     }
 
     private sealed class TestSecrets : ISecretResolver
@@ -852,7 +887,7 @@ public class EngineTests
         public string Secret { get; set; } = "private-api-key";
         public string Identity { get; set; } = "private-api-id";
         public Exception? Error { get; set; }
-        public Task<string> ResolveAsync(string? name)
+        public Task<string> ResolveAsync(string? name, CancellationToken cancellationToken = default)
         {
             Calls++;
             if (Error is not null) throw Error;

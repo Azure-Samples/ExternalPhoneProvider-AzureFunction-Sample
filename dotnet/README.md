@@ -90,16 +90,26 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 
 ## Source
 
+The hosted service selects `ApiKeyCache` or `AccessTokenCache` from the provider manifest's auth mode.
+Only the selected cache starts: API keys use Key Vault and framework `MemoryCache`; access tokens
+use the MI/Entra SDKs without Key Vault. One periodic timer polls every 30 seconds. Configuration
+changes require restart. Each shared acquisition owns
+its cancellation budget; a waiter cannot cancel another request's retrieval. Disposal stops refresh
+and prevents late publication. See the [refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh)
+for expiry, sanitized failure logs and cold-start limits. Evaluation remains independent.
+
 | Source | Purpose |
 |---|---|
 | [Program.cs](Program.cs) | Host and adapter registration |
 | [Functions/SendOtp.cs](Functions/SendOtp.cs) | HTTP handler |
 | [Src/AppConfig.cs](Src/AppConfig.cs) | Shared deployment settings |
 | [Src/DispatchEngine.cs](Src/DispatchEngine.cs) | Envelope/JWE handling and dispatch |
+| [Src/ProviderCredentials.cs](Src/ProviderCredentials.cs) | `ApiKeyCache`, `AccessTokenCache` and their shared refresh coordinator |
+| [Src/CredentialRefreshService.cs](Src/CredentialRefreshService.cs) | Per-worker startup and shutdown integration |
 | [Src/RequestLog.cs](Src/RequestLog.cs) | Request-scoped [service events and summaries](../docs/CONTRACT.md#application-logs) with explicit ID sources |
 | [Src/ProviderRegistry.cs](Src/ProviderRegistry.cs), [Src/IProviderAdapter.cs](Src/IProviderAdapter.cs) | Adapter lookup and contract |
 | [Src/Providers/](Src/Providers/) | Adapter manifests and API-specific implementations |
-| [Src/SecretResolver.cs](Src/SecretResolver.cs) | Cached Key Vault access via managed identity |
+| [Src/SecretResolver.cs](Src/SecretResolver.cs) | Key Vault transport; `ISecretResolver.ResolveAsync` accepts cancellation and `ApiKeyCache` owns the bundle |
 | [Src/OutcomeMapper.cs](Src/OutcomeMapper.cs), [Src/Models.cs](Src/Models.cs) | Outcomes and shared records |
 
 Implement `IProviderAdapter` and register it in [Program.cs](Program.cs) without adding provider-specific

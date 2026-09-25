@@ -43,6 +43,8 @@ def _isolate(monkeypatch):
     engine._resolve_credential = Mock(return_value={"mode": "oauth", "access_token": "provider-token"})
     monkeypatch.setattr(function_app, "_engine", engine)
     monkeypatch.setattr(dispatch_module.requests, "request", Mock())
+    yield
+    engine.close()
 
 
 def _request(body, headers=None):
@@ -67,7 +69,7 @@ def _envelope(**overrides):
 
 
 def _records(caplog):
-    return [json.loads(record.getMessage()) for record in caplog.records]
+    return [value for record in caplog.records if (value := json.loads(record.getMessage())).get("functionName")]
 
 
 def _summary(caplog):

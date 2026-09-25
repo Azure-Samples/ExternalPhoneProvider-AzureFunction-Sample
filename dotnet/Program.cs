@@ -26,5 +26,6 @@ builder.Services.AddSingleton<IProviderAdapter, SinchProvider>();
 
 builder.Services.AddSingleton<ProviderRegistry>();
 builder.Services.AddSingleton<DispatchEngine>();
+builder.Services.AddHostedService<CredentialRefreshService>();
 
 builder.Build().Run();

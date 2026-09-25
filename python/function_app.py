@@ -1,6 +1,8 @@
+import atexit
 import json
 import os
 import uuid
+from threading import Thread
 
 import azure.functions as func
 
@@ -106,3 +108,9 @@ def send_otp(req: func.HttpRequest, context: func.Context = None) -> func.HttpRe
         return respond(500, {"error": "delivery_failed", "correlationId": correlation_id, "requestId": request_id})
     finally:
         log.complete(http_status)
+
+
+# Each worker owns its own memory cache; a timer trigger would only warm one worker.
+atexit.register(_engine.close)
+if os.environ.get("EPP_PROVIDER_NAME", "").strip():
+    Thread(target=_engine.start_credential_refresh, daemon=True).start()

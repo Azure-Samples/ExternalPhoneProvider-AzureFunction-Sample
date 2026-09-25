@@ -11,6 +11,7 @@ import pytest
 from urllib3.exceptions import ReadTimeoutError
 
 import src.dispatch as dispatch_module
+import src.credentials as credentials_module
 from src.config import AppConfig, read_config
 from src.dispatch import DispatchEngine, DispatchRequest, ProviderRegistry
 from src.models import DeliveryContext, Envelope, TextToVoice
@@ -33,7 +34,8 @@ def engine(monkeypatch):
         "EPP_PROVIDER_CHANNEL": "sms",
     })
     result._resolve_credential = Mock(return_value={"mode": "oauth", "access_token": "provider-token"})
-    return result
+    yield result
+    result.close()
 
 
 def test_missing_oauth_configuration_never_sends(engine):
@@ -56,7 +58,7 @@ def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, m
     engine._resolve_credential = DispatchEngine._resolve_credential.__get__(engine, DispatchEngine)
     assertion = SimpleNamespace(token="private-assertion", expires_on=time.time() + 3600)
     access = SimpleNamespace(token="private-token", expires_on=time.time() + 3600)
-    managed = Mock(get_token=Mock(side_effect=lambda *args, **kwargs: assertion))
+    managed = Mock(spec=["get_token"], get_token=Mock(side_effect=lambda *args, **kwargs: assertion))
     identity_factory = Mock(return_value=managed)
     clients = []
 
@@ -71,12 +73,12 @@ def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, m
             assert kwargs["func"]() == "private-assertion"
             return access
 
-        client = Mock(get_token=Mock(side_effect=get_token))
+        client = Mock(spec=["get_token"], get_token=Mock(side_effect=get_token))
         clients.append(client)
         return client
 
-    monkeypatch.setattr(dispatch_module, "ManagedIdentityCredential", identity_factory)
-    monkeypatch.setattr(dispatch_module, "ClientAssertionCredential", create_client)
+    monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", identity_factory)
+    monkeypatch.setattr(credentials_module, "ClientAssertionCredential", create_client)
     dispatch_module.requests.request.return_value = Mock(status_code=201, json=Mock(return_value={"status": "ENROUTE"}))
     for scope in ("api://provider/.default", "api://second/.default"):
         engine.env["EPP_PROVIDER_SCOPE"] = scope
@@ -90,6 +92,8 @@ def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, m
         connection_timeout=2.5, read_timeout=2.5, logging_enable=False)
     managed.get_token.assert_called_with("api://AzureADTokenExchange/.default", logging_enable=False)
     engine.env["EPP_OUTBOUND_CLIENT_ID"] = "second-calling-app"
+    engine.close()
+    engine = DispatchEngine(engine.registry, engine.secrets, engine.env)
     assert engine.dispatch(_request(), "request")[0] == 200
     assert len(clients) == 2
     dispatch_module.requests.request.reset_mock()
@@ -102,11 +106,16 @@ def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, m
             else:
                 access = SimpleNamespace(token="private-token", expires_on=time.time() + 3600)
                 assertion = invalid
-            status, body = engine.dispatch(_request(), "request")
+            candidate = DispatchEngine(engine.registry, engine.secrets, engine.env)
+            try:
+                status, body = candidate.dispatch(_request(), "request")
+            finally:
+                candidate.close()
             assert status == 502 and body["reason"] == "provider credential unavailable"
             assert "private" not in json.dumps(body)
     engine.secrets.resolve.assert_not_called()
     dispatch_module.requests.request.assert_not_called()
+    engine.close()
 
 
 def test_soprano_oauth_sdk_logs_stay_private_without_muting_other_requests(engine, monkeypatch, caplog):
@@ -125,8 +134,10 @@ def test_soprano_oauth_sdk_logs_stay_private_without_muting_other_requests(engin
         logger.warning("PRIVATE-ACCOUNT-ERROR")
         raise RuntimeError("PRIVATE-TOKEN-EXCEPTION")
 
-    monkeypatch.setattr(dispatch_module, "ManagedIdentityCredential", Mock())
-    monkeypatch.setattr(dispatch_module, "ClientAssertionCredential", Mock(return_value=Mock(get_token=fail)))
+    monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock(return_value=Mock(
+        spec=["get_token"], get_token=Mock(return_value=SimpleNamespace(token="assertion", expires_on=time.time() + 3600)))))
+    monkeypatch.setattr(credentials_module, "ClientAssertionCredential",
+                        Mock(return_value=Mock(spec=["get_token"], get_token=fail)))
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
             pending = pool.submit(engine.dispatch, _request(), "request")

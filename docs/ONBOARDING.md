@@ -175,3 +175,14 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
    caller received the response. Credential resolution can use caches. `providerEndpoint` contains the
    base URL and API path only, without query strings, userinfo or fragments; support IDs remain raw
    so customers can share the exact reference with Microsoft/provider support.
+
+   Provider credentials are [prewarmed and refreshed per worker](CONTRACT.md#credential-caching-and-refresh)
+   automatically when a provider is configured. This contacts Key Vault or Entra without sending an OTP.
+   Evaluation requests still skip those dependencies, but independent background preparation may run
+   alongside them. For local evaluation-only use without managed identity, leave `EPP_PROVIDER_NAME`
+   unset. Check for `credential_refresh_failed` warnings before live testing.
+
+   Compare fresh-worker, warm, expiry/rotation and concurrent-request behavior. A warmup or passing
+   offline test does not prove the first live request fits the caller's timeout. Background refresh
+   does not retry or deduplicate a provider send. Do not rerun provisioning or change FIC, app
+   registration, provider settings or decryption keys to deploy this code-only improvement.
