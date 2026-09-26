@@ -25,6 +25,10 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
    preview to its home tenant plus the selected provider tenant. It then deploys the Function and
    configures Easy Auth. It does not purchase the provider offer, grant provider API consent/roles,
    or activate the EPP policy.
+   The encryption certificate is issued inside Key Vault, not on the setup workstation. Setup
+   registers its public certificate in Entra and pins the Function to its PEM backing secret version.
+   Renewal remains manual; see the [certificate lifecycle](../setup/docs/README.md#encryption-certificate-lifecycle)
+   for same-key renewal and the separate Entra update.
 
 3. **Complete provider authentication and settings.**
 

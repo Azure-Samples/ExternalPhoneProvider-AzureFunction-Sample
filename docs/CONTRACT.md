@@ -67,6 +67,12 @@ verified before any plaintext is used. Decrypted plaintext = `DeliveryContext`:
 The original compact JWE is passed unchanged to the JOSE library. Parsing header fields for the
 advisory key-ID check must not replace the original protected-header bytes used for authentication.
 
+`EPP_DECRYPTION_KEY_PEM` accepts a private-key PEM alone or a PEM certificate bundle containing the
+private key, in plain text or base64 form. Guided setup issues the certificate inside Key Vault and
+pins a reference to its PEM backing secret version. Certificate renewal is manual and does not
+automatically update Entra or select another decryption key; see the
+[certificate lifecycle](../setup/docs/README.md#encryption-certificate-lifecycle).
+
 All three HTTP-handler suites use [shared policy cases](../tests/fixtures/contract.json): the allowed
 pair succeeds, while `RSA-OAEP`, `A128GCM` and `A256CBC-HS512` alternatives return `400 decryption_failed`
 without provider I/O. Decryption uses the same policy before live/evaluation branching, so the matrix

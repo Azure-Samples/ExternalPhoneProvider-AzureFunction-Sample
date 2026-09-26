@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using Xunit;
@@ -7,6 +8,31 @@ namespace Epp.Otp.Tests;
 
 public class EnvelopeTests
 {
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public void KeyVaultPemCertificateBundleDecrypts(bool certificateFirst, bool base64Encoded)
+    {
+        using var rsa = RSA.Create(2048);
+        var request = new CertificateRequest("CN=EPP-test", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddDays(1));
+        var publicPem = certificate.ExportCertificatePem();
+        var privatePem = rsa.ExportPkcs8PrivateKeyPem();
+        var bundle = certificateFirst ? $"{publicPem}\n{privatePem}" : $"{privatePem}\n{publicPem}";
+        var env = new TestEnv
+        {
+            ["EPP_DECRYPTION_KEY_PEM"] = base64Encoded ? Convert.ToBase64String(Encoding.UTF8.GetBytes(bundle)) : bundle
+        };
+        var provider = new EnvJweKeyProvider(env);
+        using var imported = provider.GetPrivateKey("test-key");
+        var compact = Jose.JWT.Encode("{\"nonce\":\"test-nonce\"}", rsa,
+            Jose.JweAlgorithm.RSA_OAEP_256, Jose.JweEncryption.A256GCM);
+        Assert.Equal("test-nonce", new JweDecryptor(provider).Decrypt(compact).Context.Nonce);
+        Assert.Same(imported, provider.GetPrivateKey("test-key"));
+    }
+
     [Theory]
     [InlineData("\"channel\":1,\"mode\":2,\"ttlSeconds\":60", "sms", 2, 60)]
     [InlineData("\"channel\":\"VOICE\",\"mode\":\"Live\"", "voice", 1, null)]

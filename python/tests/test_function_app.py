@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
@@ -10,6 +11,9 @@ from unittest.mock import Mock
 import azure.functions as func
 import pytest
 from jwcrypto import jwe, jwk
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.x509.oid import NameOID
 
 import function_app
 import src.dispatch as dispatch_module
@@ -159,6 +163,28 @@ def test_jwe_authenticates_original_protected_header_bytes():
     assert response.status_code == 400 and json.loads(response.get_body())["error"] == "decryption_failed"
     function_app._engine.secrets.resolve.assert_not_called()
     dispatch_module.requests.request.assert_not_called()
+
+
+@pytest.mark.parametrize("certificate_first", [True, False])
+@pytest.mark.parametrize("base64_encoded", [True, False])
+def test_evaluation_accepts_key_vault_pem_bundle(monkeypatch, certificate_first, base64_encoded):
+    private_pem = _PRIVATE_PEM.encode()
+    private_key = serialization.load_pem_private_key(private_pem, password=None)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "EPP-test")])
+    certificate = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject)
+                   .public_key(private_key.public_key()).serial_number(x509.random_serial_number())
+                   .not_valid_before(datetime.now(timezone.utc) - timedelta(minutes=1))
+                   .not_valid_after(datetime.now(timezone.utc) + timedelta(days=1))
+                   .sign(private_key, hashes.SHA256()).public_bytes(serialization.Encoding.PEM))
+    bundle = certificate + private_pem if certificate_first else private_pem + certificate
+    value = base64.b64encode(bundle).decode() if base64_encoded else bundle.decode()
+    monkeypatch.setattr(function_app, "_key_provider",
+                        dispatch_module.make_key_provider({"EPP_DECRYPTION_KEY_PEM": value}))
+    response = _HANDLER(_request(_envelope(mode="evaluation")))
+    assert response.status_code == 200
+    assert json.loads(response.get_body())["nonce"] == _NONCE
+    dispatch_module.requests.request.assert_not_called()
+    function_app._engine._resolve_credential.assert_not_called()
 
 
 def test_evaluation_decrypts_without_provider_configuration_or_work(monkeypatch, caplog):

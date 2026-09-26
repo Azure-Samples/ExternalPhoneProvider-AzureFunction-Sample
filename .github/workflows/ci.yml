@@ -14,6 +14,9 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test certificate setup without Azure access
+        shell: pwsh
+        run: ./setup/tests/Certificates.Tests.ps1
       - name: Compile Bicep without deploying
         shell: pwsh
         run: |
