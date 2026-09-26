@@ -33,7 +33,9 @@ from the same commit. Customers select a language, provider, SMS or voice, Globa
 and a resource prefix, then approve one complete plan. Manual Step 1 only creates the dedicated app
 registration; PowerShell configures its service principals, `Epp.Invoke`, Microsoft caller access,
 Graph `Application.Read.All`, the provider-tenant allowlist preview, encryption certificate, and
-Easy Auth. The home tenant remains allowed by Entra. Policy activation remains manual.
+Easy Auth. The encryption certificate is issued inside Key Vault after infrastructure deployment;
+setup downloads only its public certificate and pins the Function to its PEM secret version.
+Certificate renewal and policy activation remain manual. The home tenant remains allowed by Entra.
 
 ## Download a Function ZIP
 
@@ -148,7 +150,7 @@ how code accesses configuration, not the environment-variable names.
 |---|---|---|
 | `AzureWebJobsStorage` | Functions host storage | Local sample: `UseDevelopmentStorage=true` with Azurite running. Configure Azure host storage separately for the selected plan. |
 | `FUNCTIONS_WORKER_RUNTIME` | Functions host | `node`, `python`, or `dotnet-isolated`. Choose the value matching your implementation. |
-| `EPP_DECRYPTION_KEY_PEM` | Every request | Local test PEM or base64 PEM. In Azure, use a Key Vault reference resolving to the private-key secret. |
+| `EPP_DECRYPTION_KEY_PEM` | Every request | Local test PEM or base64 PEM. In Azure, use a Key Vault reference resolving to the private-key secret. Guided setup pins the PEM backing secret of its Key Vault certificate. |
 | `EPP_ENCRYPTION_KEY_ID` | Optional | Expected encryption key ID; mismatch only produces an advisory warning. |
 | `EPP_PROVIDER_NAME` | Live delivery | Selected adapter's manifest ID. No default provider. |
 | `EPP_PROVIDER_ENDPOINT` | Live delivery | Complete provider-approved HTTPS request URL selected from the provider profile. |
@@ -188,6 +190,10 @@ work without credential acquisition. No extra refresh app settings are required.
 Core Tools does not resolve Azure Key Vault reference expressions locally. Supply the local test PEM
 or base64 PEM directly; use a reference such as `@Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/<private-key-secret>/)`
 for `EPP_DECRYPTION_KEY_PEM` in Azure app settings, where the platform resolves it.
+Guided setup instead uses a **versioned** reference to
+`secrets/phone-provider-encryption/<version>`, containing a certificate and its exportable RSA private
+key in PEM format. A new Key Vault certificate version does not automatically switch the Function
+or update Entra. See [certificate lifecycle](setup/docs/README.md#encryption-certificate-lifecycle).
 
 Configure inbound issuer/audience/caller trust in **Easy Auth**, not these application variables.
 Incoming `tenantId`, `channel`, `mode` and `ttlSeconds` are request data and never override the
