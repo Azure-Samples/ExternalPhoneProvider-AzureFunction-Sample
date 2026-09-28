@@ -230,6 +230,21 @@ test('JWE authenticates the original protected-header bytes, not reserialized JS
     assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
 });
 
+test('evaluation accepts a Key Vault PEM certificate bundle in either order and base64 form', async () => {
+    const certificate = require('node:tls').rootCertificates[0];
+    const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+    for (const bundle of [`${certificate}\n${pem}`, `${pem}\n${certificate}`]) {
+        for (const value of [bundle, Buffer.from(bundle).toString('base64')]) {
+            process.env.EPP_DECRYPTION_KEY_PEM = value;
+            const result = await invoke(await envelope({ mode: 'evaluation' }));
+            assert.equal(result.status, 200);
+            assert.equal(result.jsonBody.nonce, delivery.nonce);
+        }
+    }
+    assert.equal(getSecret.mock.callCount(), 0);
+    assert.equal(fetchMock.mock.callCount(), 0);
+});
+
 test('evaluation decrypts without provider config or I/O and checks the advisory key ID', async () => {
     for (const key of ['EPP_PROVIDER_NAME', 'EPP_PROVIDER_ENDPOINT', 'KEY_VAULT_URL']) delete process.env[key];
     for (const expectedKeyId of ['', 'PRIVATE-KID', 'private-kid']) {

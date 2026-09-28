@@ -37,6 +37,7 @@ var queueDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization
 var tableDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3')
 var keyVaultSecretsUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
 var keyVaultSecretsOfficerRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
+var keyVaultCertificatesOfficerRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a4417e6f-fecd-4de8-b567-7b0420556985')
 var monitoringMetricsPublisherRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')
 
 resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -180,7 +181,7 @@ resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     APPLICATIONINSIGHTS_CONNECTION_STRING: insights.properties.ConnectionString
     APPLICATIONINSIGHTS_AUTHENTICATION_STRING: 'Authorization=AAD'
     KEY_VAULT_URL: vault.properties.vaultUri
-    EPP_DECRYPTION_KEY_PEM: '@Microsoft.KeyVault(SecretUri=${vault.properties.vaultUri}secrets/phone-provider-decryption-key)'
+    // Setup pins the encryption settings after Key Vault issues the certificate.
     EPP_OUTBOUND_CLIENT_ID: applicationId
     EPP_OUTBOUND_MI_CLIENT_ID: outboundIdentity.properties.clientId
     EPP_EXPECTED_AUDIENCE: audience
@@ -277,6 +278,16 @@ resource vaultWriteRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     principalId: deployerObjectId
     principalType: 'User'
     roleDefinitionId: keyVaultSecretsOfficerRoleId
+  }
+}
+
+resource vaultCertificateRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(vault.id, deployerObjectId, keyVaultCertificatesOfficerRoleId)
+  scope: vault
+  properties: {
+    principalId: deployerObjectId
+    principalType: 'User'
+    roleDefinitionId: keyVaultCertificatesOfficerRoleId
   }
 }
 

@@ -51,8 +51,9 @@ disclosed outbound managed-identity federated credential.
 
 ## Prerequisites for Step 2
 
-- **Windows with PowerShell 7+**. Certificate generation/reuse uses the current user's Windows
-  certificate store; this is not an Azure Cloud Shell or Linux customer deployment script.
+- **Windows with PowerShell 7+** is the supported customer deployment environment. Certificate
+  issuance now happens inside Key Vault, without Windows certificate cmdlets or the local certificate
+  store. End-to-end deployment from Linux or Azure Cloud Shell has not been validated.
 - Azure CLI **2.48.1+** on `PATH`, with access to GitHub, Azure, Microsoft Graph, and Key Vault.
   Setup installs the Azure CLI Bicep component after confirmation when it is missing. Azure CLI itself
   must be installed before running the script. Python additionally needs network access to SCM.
@@ -60,7 +61,9 @@ disclosed outbound managed-identity federated credential.
   `Microsoft.Graph.Applications`. Setup installs missing 2.x+ modules from PSGallery for CurrentUser
   after a separate confirmation.
 - An Azure **user** account permitted to deploy at subscription scope, create the listed resources,
-  and create the scoped Azure role assignments.
+  and create the scoped Azure role assignments. Bicep grants the operator **Key Vault Certificates
+  Officer** for issuance and **Key Vault Secrets Officer** for provider credentials,
+  scoped to this deployment's vault.
 - A Microsoft Entra **Privileged Role Administrator** for granting the Microsoft first-party service
   principal Graph `Application.Read.All`, plus delegated Graph scopes `User.Read`,
   `Application.ReadWrite.All`, `Application.Read.All`, and `AppRoleAssignment.ReadWrite.All`.
@@ -186,22 +189,64 @@ outbound managed identity, diagnostics, Easy Auth, and scoped role assignments. 
 access uses managed identity, not account keys or SAS. Telemetry uses the system identity; the
 outbound identity is selected explicitly, not through a global `AZURE_CLIENT_ID`.
 
-The Function starts with public ingress disabled. Setup stores the private key in Key Vault and
-configures application trust. It **reads back and verifies Easy Auth before enabling ingress**.
+The Function starts with public ingress disabled. After Bicep creates the vault and permissions,
+setup asks Key Vault to issue or reuse `phone-provider-encryption`, a self-signed, exportable RSA-2048
+certificate. Its subject and Entra certificate display name are both **`CN=ExternalPhoneProvider`**,
+without an application ID, resource prefix, or thumbprint in the name. Setup registers the public
+certificate in Entra with `Usage=Encrypt` and pins `EPP_DECRYPTION_KEY_PEM` to its **versioned PEM
+backing secret**. It **reads back and verifies Easy Auth before enabling ingress**.
 Python requires this access for its Entra-authenticated SCM remote build; SCM basic authentication
 stays disabled. Setup validates the built Python payload, stores it in private Blob storage, and
 switches to managed-identity run-from-package. It never mounts the unbuilt Python source ZIP.
 For every language, setup restarts, synchronizes triggers, and verifies that `SendOtp` is registered.
 On publication/startup failure it disables public ingress again; failure to close ingress is reported
 explicitly rather than hidden.
+App-setting changes refresh Key Vault references through App Service. Setup does not separately poll
+secret-resolution status; the required deployed evaluation request verifies decryption before policy activation.
 
 The public certificate and a timestamped identifier
 summary are saved to `epp-output` beside the downloaded script, or to `-OutputDirectory`.
-Private keys remain in the user's certificate store and Key Vault, not in that summary.
+The summary includes certificate/secret version identifiers, thumbprint, expiry, and manual renewal
+mode. Setup never downloads, writes, or imports the private key locally: only the Function receives
+it through its managed-identity Key Vault reference. Certificate creation automatically supplies the
+backing secret; setup no longer writes a separate `phone-provider-decryption-key` secret.
 
 For unattended runs, supply every input, authenticate both clients first, and explicitly authorize
 the whole displayed plan with **both** `-NonInteractive -ApproveDeployment`. `-NonInteractive`
 alone never approves changes. There is no `-Stage`, `-Resume`, `-ConfigPath`, or policy-approval switch.
+
+### Encryption certificate lifecycle
+
+The issuance policy uses **12-month validity, key reuse, and manual renewal**. It specifies
+`EmailContacts` 30 days before expiry, **not `AutoRenew`**. Email is sent only if the customer
+separately configures Key Vault certificate contacts; setup does not create contacts or guarantee
+notifications. Track the saved expiry and arrange renewal before the certificate expires.
+
+Reruns reuse a valid matching cloud certificate. Only a certificate-not-found response triggers
+`az keyvault certificate create`; Azure CLI waits for self-signed issuance. Other errors, including
+pending-operation conflicts, stop setup rather than starting a custom recovery workflow. Disabled,
+incompatible, or near-expiry certificates also stop setup. Keep more than 30 days of validity remaining.
+Certificates issued with an earlier per-application subject require a coordinated manual reissuance
+with `CN=ExternalPhoneProvider`, retaining the same RSA key. Renaming the Entra display name alone
+does not change the signed certificate's subject.
+
+For a planned renewal, coordinate with the EPP owner, create a new version in Key Vault using the same
+policy with **reuse key enabled**, then rerun setup before the old certificate expires. Setup verifies
+that the RSA public key still matches every registered encryption credential, pins the Function to the
+new secret version, and adds the renewed public certificate to Entra while preserving existing
+credentials. It does not automatically remove old versions or Entra credentials. Validate evaluation
+requests before an administrator retires old credentials through the supported EPP procedure.
+
+Key Vault renewal alone does **not** update the uploaded Entra certificate or its expiration.
+Version-pinning deliberately prevents an unattended secret switch. Do not enable `AutoRenew` or
+generate a different RSA key without implementing coordinated Entra updates and overlapping
+decryption-key support. The Function still decrypts in-process with a single private key.
+
+**Existing local-certificate deployments are not automatically migrated.** Coordinate migration with
+the EPP owner before running this setup on an active endpoint. After infrastructure deployment,
+setup refuses to update Entra or the Function's encryption settings if the public key differs from
+an existing encryption credential. This is not a pre-deployment migration check: resources may already
+be updated and ingress disabled when it stops. Do not delete encryption credentials to bypass it.
 
 ### Source versioning
 
@@ -216,6 +261,20 @@ For a fully repeatable deployment, use both a reviewed full commit SHA and
 redirect execution to another script. Download failures stop setup, and temporary downloads are
 removed on completion or failure. Select only a repository whose code you trust: its supporting
 PowerShell is executed locally.
+
+### Offline setup checks
+
+From the repository root, run the certificate regression suite without Azure sign-in or resource
+changes, then compile the infrastructure:
+
+```powershell
+pwsh -NoProfile -File .\setup\tests\Certificates.Tests.ps1
+az bicep build --file .\setup\infra\main.bicep --outfile "$env:TEMP\epp-main.json"
+```
+
+The focused tests replace certificate/Graph calls and verify creation, reuse, errors, naming, key
+mismatch, and versioned settings. CI runs them on Windows and Linux. They do not simulate the full
+deployment or certify live RBAC propagation, Key Vault issuance, Entra behavior, or provider delivery.
 
 ## Step 3 - manually validate and activate policy
 
