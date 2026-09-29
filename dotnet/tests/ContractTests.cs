@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using Epp.Otp.Providers;
@@ -7,27 +8,26 @@ namespace Epp.Otp.Tests;
 
 public class ContractTests
 {
-    private static DispatchRequest Request(string channel = "sms") =>
+    private static OtpDelivery Delivery(string channel = "sms") =>
         new("+15551234567", "  Your code is 918273.\nDo not share.  ", channel, "message-id", "correlation-id", "en-US");
 
     [Theory]
     [InlineData("sms")]
     [InlineData("voice")]
-    public void SopranoUsesSelectedEndpointAndOAuth(string channel)
+    public async Task SopranoUsesSelectedEndpointOAuthAndExactJson(string channel)
     {
-        var dispatch = Request(channel) with
+        var delivery = Delivery(channel) with
         {
             Locale = channel == "voice" ? "fr-FR" : "en-US",
-            TextToVoice = new TextToVoice("ignored", "001234", "override"),
         };
-        var request = new SopranoProvider().BuildRequest(channel, "https://provider.example/oauth/messages", dispatch,
-            new ProviderCredential("oauth", AccessToken: "provider-token"), new TestEnv());
-        Assert.Equal("https://provider.example/oauth/messages", request.Url);
-        Assert.Equal("POST", request.Method);
-        Assert.Equal(3, request.Headers.Count);
-        Assert.Equal("Bear" + "er provider-token", request.Headers["Authorization"]);
-        Assert.Equal("application/json", request.Headers["Accept"]);
-        Assert.Equal("application/json", request.Headers["Content-Type"]);
+        using var request = new SopranoProvider().CreateRequest(
+            channel,
+            "https://provider.example/oauth/messages",
+            delivery,
+            new ProviderCredentials("oauth", AccessToken: "provider-token"),
+            new TestEnv());
+
+        AssertJsonRequest(request, "https://provider.example/oauth/messages", "Bearer provider-token");
         var expected = new Dictionary<string, object?>
         {
             ["destination"] = "15551234567",
@@ -49,20 +49,23 @@ public class ContractTests
                 },
             };
         else
-            expected["text"] = Request().Message;
-        Assert.Equal(JsonSerializer.Serialize(expected), request.Body);
+            expected["text"] = Delivery().Message;
+        Assert.Equal(JsonSerializer.Serialize(expected), await request.Content!.ReadAsStringAsync());
     }
 
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public void SopranoVoiceDefaultsLanguageWithoutLocale(string? locale)
+    public async Task SopranoVoiceDefaultsLanguageWithoutLocale(string? locale)
     {
-        var request = new SopranoProvider().BuildRequest("voice", "https://provider.example/oauth/messages",
-            Request("voice") with { Locale = locale }, new ProviderCredential("oauth", AccessToken: "provider-token"),
+        using var request = new SopranoProvider().CreateRequest(
+            "voice",
+            "https://provider.example/oauth/messages",
+            Delivery("voice") with { Locale = locale },
+            new ProviderCredentials("oauth", AccessToken: "provider-token"),
             new TestEnv());
-        using var body = JsonDocument.Parse(request.Body);
+        using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
         Assert.Equal("en-US", body.RootElement.GetProperty("voice").GetProperty("text2voice")
             .GetProperty("language").GetString());
     }
@@ -70,50 +73,142 @@ public class ContractTests
     [Fact]
     public void SopranoVoiceRequiresSixDigitPasscode()
     {
-        var dispatch = Request("voice") with { Message = "Your code is unavailable." };
-        var error = Assert.Throws<InvalidOperationException>(() => new SopranoProvider().BuildRequest(
-            "voice", "https://provider.example/oauth/messages", dispatch,
-            new ProviderCredential("oauth", AccessToken: "provider-token"), new TestEnv()));
+        var delivery = Delivery("voice") with { Message = "Your code is unavailable." };
+        var error = Assert.Throws<InvalidOperationException>(() => new SopranoProvider().CreateRequest(
+            "voice",
+            "https://provider.example/oauth/messages",
+            delivery,
+            new ProviderCredentials("oauth", AccessToken: "provider-token"),
+            new TestEnv()));
         Assert.Contains("six-digit passcode", error.Message);
     }
 
-    [Fact]
-    public void ProviderStatusesMapToExpectedOutcomesAndHttpCodes()
+    [Theory]
+    [InlineData("{\"id\":12,\"state\":\"enroute\"}", "12", "ENROUTE", Outcome.Continue, true)]
+    [InlineData("[{\"messageId\":\"provider-id\",\"status\":\"accepted\"}]", "provider-id", "ACCEPTED", Outcome.Continue, true)]
+    [InlineData("{\"status\":\"FILTERED\"}", null, "FILTERED", Outcome.Fail, true)]
+    [InlineData("{\"status\":\"unknown\"}", null, "UNKNOWN", Outcome.Fail, false)]
+    [InlineData("{\"status\":123,\"state\":\"ACCEPTED\"}", null, "UNKNOWN", Outcome.Fail, false)]
+    [InlineData("{\"status\":false,\"state\":\"ACCEPTED\"}", null, "UNKNOWN", Outcome.Fail, false)]
+    [InlineData("[]", null, "UNKNOWN", Outcome.Fail, false)]
+    public async Task SopranoTypedResponseSupportsObjectAndArrayAndFailsClosed(
+        string body, string? messageId, string status, Outcome expected, bool recognized)
     {
-        var adapter = new SopranoProvider();
-        Outcome Parse(string body)
-        {
-            using var json = JsonDocument.Parse(body);
-            var response = adapter.ParseResponse(200, true, json.RootElement);
-            Assert.Equal(nameof(ParsedResponse), response.ToString());
-            return OutcomeMapper.ResolveOutcome(adapter.Manifest, response);
-        }
-        Assert.Equal(Outcome.Continue, Parse("[{\"id\":12,\"state\":\"enroute\"}]"));
-        Assert.Equal(Outcome.Fail, Parse("{\"status\":\"FILTERED\"}"));
-        Assert.Equal(Outcome.Fail, Parse("{\"status\":\"unknown\"}"));
-        Assert.Equal(Outcome.Fail, Parse("{\"status\":123,\"state\":\"ACCEPTED\"}"));
-        Assert.Equal(Outcome.Fail, Parse("{\"status\":false,\"state\":\"ACCEPTED\"}"));
-        Assert.Equal(403, OutcomeMapper.ToHttpStatus(Outcome.Block, 200));
-        Assert.Equal(409, OutcomeMapper.ToHttpStatus(Outcome.StepUp, 200));
-        Assert.Equal(429, OutcomeMapper.ToHttpStatus(Outcome.Fail, 429));
+        var provider = new SopranoProvider();
+        using var response = JsonResponse(200, body);
+        var result = await provider.SendResponseAsync(response, default);
+        Assert.Equal(nameof(ProviderResult), result.ToString());
+        Assert.Equal(messageId, result.ProviderMessageId);
+        Assert.Equal(status, result.ProviderStatusName);
+        Assert.Equal(expected, result.Outcome);
+        Assert.Equal(recognized, result.StatusRecognized);
+    }
+
+    [Theory]
+    [InlineData("ENROUTE", Outcome.Continue)]
+    [InlineData("ACCEPTED", Outcome.Continue)]
+    [InlineData("SUBMITTED", Outcome.Continue)]
+    [InlineData("SENT", Outcome.Continue)]
+    [InlineData("DELIVERED", Outcome.Continue)]
+    [InlineData("QUEUED", Outcome.Continue)]
+    [InlineData("BLOCKED", Outcome.Block)]
+    [InlineData("FAILED", Outcome.Fail)]
+    [InlineData("REJECTED", Outcome.Fail)]
+    [InlineData("FILTERED", Outcome.Fail)]
+    public async Task SopranoOwnsEveryRecognizedStatusMapping(string status, Outcome expected)
+    {
+        using var response = JsonResponse(200, JsonSerializer.Serialize(new { status }));
+        var result = await new SopranoProvider().SendResponseAsync(response, default);
+        Assert.Equal(expected, result.Outcome);
+        Assert.True(result.StatusRecognized);
     }
 
     [Fact]
-    public void OtherProvidersKeepTheirStaticAuthenticationAndProtocols()
+    public async Task InfobipRequestsKeepExactSmsAndVoiceWireContracts()
     {
         var env = new TestEnv { ["EPP_PROVIDER_ACCOUNT_NAME"] = "Verify" };
-        var credential = new ProviderCredential("apiKey", "test-key", "test-id");
-        var sms = new InfobipProvider().BuildRequest("sms", "https://provider.example", Request(), credential, env);
-        Assert.Equal("App test-key", sms.Headers["Authorization"]);
-        Assert.EndsWith("/sms/3/messages", sms.Url);
-        using var smsJson = JsonDocument.Parse(sms.Body);
-        Assert.Equal(Request().Message, smsJson.RootElement.GetProperty("messages")[0].GetProperty("content").GetProperty("text").GetString());
+        var credential = new ProviderCredentials("apiKey", "test-key", "test-id");
 
-        var call = new SinchProvider().BuildRequest("voice", "https://provider.example", Request("voice"), credential, env);
-        Assert.Equal("Bearer test-key", call.Headers["Authorization"]); // Static provider credential.
-        Assert.Equal("https://calling.api.sinch.com/calling/v1/callouts", call.Url);
-        using var callJson = JsonDocument.Parse(call.Body);
-        Assert.Equal(Request().Message, callJson.RootElement.GetProperty("ttsCallout").GetProperty("text").GetString());
+        using var sms = new InfobipProvider().CreateRequest(
+            "sms", "https://provider.example", Delivery(), credential, env);
+        AssertJsonRequest(sms, "https://provider.example/sms/3/messages", "App test-key");
+        var expectedSms = new
+        {
+            messages = new[]
+            {
+                new
+                {
+                    sender = "Verify",
+                    destinations = new[] { new { to = Delivery().PhoneNumber, messageId = "correlation-id" } },
+                    content = new { text = Delivery().Message },
+                },
+            },
+        };
+        Assert.Equal(JsonSerializer.Serialize(expectedSms), await sms.Content!.ReadAsStringAsync());
+
+        using var voice = new InfobipProvider().CreateRequest(
+            "voice", "https://provider.example", Delivery("voice"), credential, env);
+        AssertJsonRequest(voice, "https://provider.example/tts/3/advanced", "App test-key");
+        var expectedVoice = new
+        {
+            messages = new[]
+            {
+                new
+                {
+                    from = "Verify",
+                    destinations = new[] { new { to = Delivery().PhoneNumber, messageId = "correlation-id" } },
+                    text = Delivery().Message,
+                    language = "en-US",
+                    voice = new { name = "Joanna", gender = "female" },
+                },
+            },
+        };
+        Assert.Equal(JsonSerializer.Serialize(expectedVoice), await voice.Content!.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task SinchRequestsKeepExactSmsAndVoiceWireContracts()
+    {
+        var env = new TestEnv
+        {
+            ["EPP_PROVIDER_ACCOUNT_NAME"] = "Verify",
+            ["SINCH_SERVICE_PLAN_ID"] = "service-plan",
+            ["SINCH_VOICE_ENDPOINT"] = "https://calling.example",
+        };
+        var credential = new ProviderCredentials("apiKey", "test-key", "test-id");
+
+        using var sms = new SinchProvider().CreateRequest(
+            "sms", "https://provider.example", Delivery(), credential, env);
+        AssertJsonRequest(
+            sms,
+            "https://provider.example/xms/v1/service-plan/batches",
+            "******");
+        Assert.Equal(
+            JsonSerializer.Serialize(new
+            {
+                from = "Verify",
+                to = new[] { Delivery().PhoneNumber },
+                body = Delivery().Message,
+                client_reference = "correlation-id",
+            }),
+            await sms.Content!.ReadAsStringAsync());
+
+        using var voice = new SinchProvider().CreateRequest(
+            "voice", "https://provider.example", Delivery("voice"), credential, env);
+        AssertJsonRequest(voice, "https://calling.example/calling/v1/callouts", "******");
+        Assert.Equal(
+            JsonSerializer.Serialize(new
+            {
+                method = "ttsCallout",
+                ttsCallout = new
+                {
+                    destination = new { type = "number", endpoint = Delivery().PhoneNumber },
+                    text = Delivery().Message,
+                    locale = "en-US",
+                    custom = "correlation-id",
+                },
+            }),
+            await voice.Content!.ReadAsStringAsync());
     }
 
     [Theory]
@@ -122,39 +217,46 @@ public class ContractTests
     [InlineData("sms", null)]
     [InlineData("sms", "")]
     [InlineData("sms", " ")]
-    public void TelesignUsesEppJsonContract(string channel, string? locale)
+    public async Task TelesignUsesExactEppJsonContract(string channel, string? locale)
     {
-        var dispatch = Request(channel) with { Locale = locale };
-        var request = new TelesignProvider().BuildRequest(channel, $"https://verify.telesign.com/epp/{channel}", dispatch,
-            new ProviderCredential("apiKey", "test-key", "test-id"), new TestEnv());
-        Assert.Equal($"https://verify.telesign.com/epp/{channel}", request.Url);
-        Assert.Equal("POST", request.Method);
-        Assert.Equal(3, request.Headers.Count);
-        Assert.Equal("Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("test-id:test-key")), request.Headers["Authorization"]);
-        Assert.Equal("application/json", request.Headers["Content-Type"]);
-        Assert.Equal("application/json", request.Headers["Accept"]);
+        var delivery = Delivery(channel) with { Locale = locale };
+        using var request = new TelesignProvider().CreateRequest(
+            channel,
+            $"https://verify.telesign.com/epp/{channel}",
+            delivery,
+            new ProviderCredentials("apiKey", "test-key", "test-id"),
+            new TestEnv());
+        AssertJsonRequest(
+            request,
+            $"https://verify.telesign.com/epp/{channel}",
+            "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("test-id:test-key")));
         var expectedText = channel == "voice"
             ? "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.   "
               + "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.  "
-            : dispatch.Message;
+            : delivery.Message;
         var message = new Dictionary<string, string?> { ["text"] = expectedText };
         if (locale == "en") message["language"] = locale;
-        var expected = new { recipient = new { phone_number = dispatch.Destination }, message,
-            channels = new[] { new { channel } }, correlation_id = dispatch.CorrelationId };
-        Assert.Equal(JsonSerializer.Serialize(expected), request.Body);
+        var expected = new
+        {
+            recipient = new { phone_number = delivery.PhoneNumber },
+            message,
+            channels = new[] { new { channel } },
+            correlation_id = delivery.CorrelationId,
+        };
+        Assert.Equal(JsonSerializer.Serialize(expected), await request.Content!.ReadAsStringAsync());
     }
 
     [Fact]
-    public void TelesignVoicePacesOnlySixDigitNumericRunsAndRepeatsMessage()
+    public async Task TelesignVoicePacesOnlySixDigitNumericRunsAndRepeatsMessage()
     {
-        var dispatch = Request("voice") with { Message = "Code 001234; ref 1234567; alternate 654321." };
-        var request = new TelesignProvider().BuildRequest(
+        var delivery = Delivery("voice") with { Message = "Code 001234; ref 1234567; alternate 654321." };
+        using var request = new TelesignProvider().CreateRequest(
             "voice",
             "https://verify.telesign.com/epp/voice",
-            dispatch,
-            new ProviderCredential("apiKey", "test-key", "test-id"),
+            delivery,
+            new ProviderCredentials("apiKey", "test-key", "test-id"),
             new TestEnv());
-        using var body = JsonDocument.Parse(request.Body);
+        using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
         Assert.Equal(
             "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1. "
             + "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1.",
@@ -162,41 +264,298 @@ public class ContractTests
     }
 
     [Fact]
-    public void TelesignValidatesRecipientAndFallsBackToMessageId()
+    public async Task TelesignValidatesRecipientAndFallsBackToMessageId()
     {
-        var adapter = new TelesignProvider();
-        var credential = new ProviderCredential("apiKey", "key", "id");
-        foreach (var destination in new[] { "15551234567", "+0123", "+1", "+1234567890123456", "+123\n", "+123\r", "+12 34" })
-            Assert.Throws<InvalidOperationException>(() => adapter.BuildRequest("sms", "https://verify.telesign.com",
-                Request() with { Destination = destination }, credential, new TestEnv()));
-        Assert.Throws<InvalidOperationException>(() => adapter.BuildRequest("email", "https://verify.telesign.com", Request(), credential, new TestEnv()));
-        var request = adapter.BuildRequest("sms", "https://verify.telesign.com", Request() with { CorrelationId = null }, credential, new TestEnv());
-        using var json = JsonDocument.Parse(request.Body);
-        Assert.Equal(Request().MessageId, json.RootElement.GetProperty("correlation_id").GetString());
+        var provider = new TelesignProvider();
+        var credential = new ProviderCredentials("apiKey", "key", "id");
+        foreach (var phoneNumber in new[] { "15551234567", "+0123", "+1", "+1234567890123456", "+123\n", "+123\r", "+12 34" })
+            Assert.Throws<InvalidOperationException>(() => provider.CreateRequest(
+                "sms",
+                "https://verify.telesign.com",
+                Delivery() with { PhoneNumber = phoneNumber },
+                credential,
+                new TestEnv()));
+        Assert.Throws<InvalidOperationException>(() => provider.CreateRequest(
+            "email", "https://verify.telesign.com", Delivery(), credential, new TestEnv()));
+        using var request = provider.CreateRequest(
+            "sms",
+            "https://verify.telesign.com",
+            Delivery() with { CorrelationId = null },
+            credential,
+            new TestEnv());
+        using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+        Assert.Equal(Delivery().MessageId, json.RootElement.GetProperty("correlation_id").GetString());
     }
 
     [Theory]
-    [InlineData("{}", true, Outcome.Fail)]
-    [InlineData("{\"status\":[]}", true, Outcome.Fail)]
-    [InlineData("{\"status\":{\"code\":true}}", true, Outcome.Fail)]
-    [InlineData("{\"status\":{\"code\":\"290\"}}", true, Outcome.Fail)]
-    [InlineData("{\"status\":{\"code\":999}}", true, Outcome.Fail)]
-    [InlineData("{\"status\":{\"code\":290}}", false, Outcome.Fail)]
-    [InlineData("{\"status\":{\"code\":290}}", true, Outcome.Continue)]
-    [InlineData("{\"status\":{\"code\":100}}", true, Outcome.Continue)]
-    [InlineData("{\"status\":{\"code\":3001}}", true, Outcome.Continue)]
-    [InlineData("{\"status\":{\"code\":3001}}", false, Outcome.Fail)]
-    public void TelesignStatusFailsClosed(string payload, bool ok, Outcome expected)
+    [InlineData("{}", true, Outcome.Fail, false)]
+    [InlineData("{\"status\":{\"code\":999}}", true, Outcome.Fail, false)]
+    [InlineData("{\"status\":{\"code\":290}}", false, Outcome.Fail, true)]
+    [InlineData("{\"status\":{\"code\":290}}", true, Outcome.Continue, true)]
+    [InlineData("{\"status\":{\"code\":100}}", true, Outcome.Continue, true)]
+    [InlineData("{\"status\":{\"code\":3001}}", true, Outcome.Continue, true)]
+    [InlineData("{\"status\":{\"code\":3001}}", false, Outcome.Fail, true)]
+    public async Task TelesignMapsTypedStatus(
+        string payload, bool ok, Outcome expected, bool recognized)
     {
-        var adapter = new TelesignProvider();
-        using var json = JsonDocument.Parse(payload);
-        var parsed = adapter.ParseResponse(ok ? 200 : 500, ok, json.RootElement);
-        Assert.Equal(expected, OutcomeMapper.ResolveOutcome(adapter.Manifest, parsed));
+        var provider = new TelesignProvider();
+        using var response = JsonResponse(ok ? 200 : 500, payload);
+        var result = await provider.SendResponseAsync(response, default);
+        Assert.Equal(expected, result.Outcome);
+        Assert.Equal(recognized, result.StatusRecognized);
     }
 
+    [Theory]
+    [InlineData("{\"status\":[]}")]
+    [InlineData("{\"status\":{\"code\":true}}")]
+    [InlineData("{\"status\":{\"code\":\"290\"}}")]
+    public async Task TelesignRejectsWronglyTypedStatus(string payload)
+    {
+        using var response = JsonResponse(200, payload);
+        var error = await Assert.ThrowsAsync<PhoneProviderBase.ProviderSendException>(
+            async () => await new TelesignProvider().SendResponseAsync(response, default));
+        Assert.Equal(502, error.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(200)]
+    [InlineData(203)]
+    [InlineData(290)]
+    [InlineData(291)]
+    [InlineData(292)]
+    [InlineData(100)]
+    [InlineData(101)]
+    [InlineData(102)]
+    [InlineData(103)]
+    [InlineData(3001)]
+    public async Task TelesignOwnsEveryContinueStatusMapping(int status)
+    {
+        using var response = JsonResponse(200, JsonSerializer.Serialize(new { status = new { code = status } }));
+        var result = await new TelesignProvider().SendResponseAsync(response, default);
+        Assert.Equal(Outcome.Continue, result.Outcome);
+        Assert.True(result.StatusRecognized);
+    }
+
+    [Theory]
+    [InlineData("ACCEPTED", Outcome.Continue)]
+    [InlineData("PENDING", Outcome.Continue)]
+    [InlineData("DELIVERED", Outcome.Continue)]
+    [InlineData("REJECTED", Outcome.Fail)]
+    [InlineData("EXPIRED", Outcome.Fail)]
+    [InlineData("UNDELIVERABLE", Outcome.Fail)]
+    public async Task InfobipOwnsEveryRecognizedStatusMapping(string status, Outcome expected)
+    {
+        using var response = JsonResponse(200, JsonSerializer.Serialize(new
+        {
+            messages = new[] { new { messageId = "provider-id", status = new { groupName = status } } },
+        }));
+        var result = await new InfobipProvider().SendResponseAsync(response, default);
+        Assert.Equal(expected, result.Outcome);
+        Assert.True(result.StatusRecognized);
+    }
+
+    [Theory]
+    [InlineData("Dispatched", Outcome.Continue)]
+    [InlineData("Delivered", Outcome.Continue)]
+    [InlineData("Queued", Outcome.Continue)]
+    [InlineData("Failed", Outcome.Fail)]
+    [InlineData("Rejected", Outcome.Fail)]
+    public async Task SinchOwnsEveryRecognizedStatusMapping(string status, Outcome expected)
+    {
+        using var response = JsonResponse(200, JsonSerializer.Serialize(new { id = "provider-id", status }));
+        var result = await new SinchProvider().SendResponseAsync(response, default);
+        Assert.Equal(expected, result.Outcome);
+        Assert.True(result.StatusRecognized);
+    }
+
+    [Fact]
+    public async Task TypedProviderResponsesNormalizeIdsStatusesAndDescriptions()
+    {
+        var cases = new (PhoneProviderBase Provider, string Json, string Id, string Status, string Description)[]
+        {
+            (
+                new InfobipProvider(),
+                "{\"messages\":[{\"messageId\":\"infobip-id\",\"status\":{\"name\":\"pending\",\"description\":\"queued\"}}]}",
+                "infobip-id",
+                "PENDING",
+                "queued"),
+            (
+                new SinchProvider(),
+                "{\"callId\":\"sinch-id\",\"text\":\"queued\"}",
+                "sinch-id",
+                "Dispatched",
+                "queued"),
+            (
+                new TelesignProvider(),
+                "{\"reference_id\":\"telesign-id\",\"status\":{\"code\":3001,\"description\":\"queued\"}}",
+                "telesign-id",
+                "3001",
+                "queued"),
+        };
+
+        foreach (var item in cases)
+        {
+            using var response = JsonResponse(200, item.Json);
+            var result = await item.Provider.SendResponseAsync(response, default);
+            Assert.Equal(item.Id, result.ProviderMessageId);
+            Assert.Equal(item.Status, result.ProviderStatusName ?? result.ProviderStatusCode);
+            Assert.Equal(item.Description, result.ProviderStatusDescription);
+            Assert.Equal(Outcome.Continue, result.Outcome);
+            Assert.True(result.StatusRecognized);
+        }
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("null")]
+    public async Task MissingProviderResponseDataFailsClosed(string payload)
+    {
+        PhoneProviderBase[] providers =
+        [
+            new InfobipProvider(),
+            new SinchProvider(),
+            new TelesignProvider(),
+            new SopranoProvider(),
+        ];
+        foreach (var provider in providers)
+        {
+            using var response = JsonResponse(200, payload);
+            var result = await provider.SendResponseAsync(response, default);
+            Assert.Equal(Outcome.Fail, result.Outcome);
+            Assert.False(result.StatusRecognized);
+        }
+    }
+
+    [Fact]
+    public async Task MalformedAndValidButUnbindableProviderJsonReturnProviderFailures()
+    {
+        var provider = new InfobipProvider();
+        using var malformed = JsonResponse(200, "{\"messages\":[");
+        var malformedResult = await provider.SendResponseAsync(malformed, default);
+        Assert.Equal(Outcome.Fail, malformedResult.Outcome);
+        Assert.False(malformedResult.StatusRecognized);
+
+        using var wrongType = JsonResponse(
+            200,
+            "{\"messages\":[{\"messageId\":123,\"status\":{\"groupName\":\"PENDING\"}}]}");
+        var wrongTypeError = await Assert.ThrowsAsync<PhoneProviderBase.ProviderSendException>(
+            async () => await provider.SendResponseAsync(wrongType, default));
+        Assert.Equal(502, wrongTypeError.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("{\"messages\":[{\"messageId\":\"id\",\"status\":{\"groupName\":123}}]}")]
+    [InlineData("{\"messages\":[{\"messageId\":\"id\",\"status\":[]}]}")]
+    [InlineData("{\"id\":\"id\",\"status\":123}")]
+    public async Task WronglyTypedProviderStatusesFailClosed(string payload)
+    {
+        PhoneProviderBase provider = payload.Contains("\"messages\"", StringComparison.Ordinal)
+            ? new InfobipProvider()
+            : new SinchProvider();
+        using var response = JsonResponse(200, payload);
+        var result = await provider.SendResponseAsync(response, default);
+        Assert.Equal(Outcome.Fail, result.Outcome);
+        Assert.False(result.StatusRecognized);
+    }
+
+    [Fact]
+    public async Task HttpFailureCannotBecomeSuccessFromProviderBody()
+    {
+        var cases = new (PhoneProviderBase Provider, string Body)[]
+        {
+            (new InfobipProvider(), "{\"messages\":[{\"messageId\":\"id\",\"status\":{\"groupName\":\"PENDING\"}}]}"),
+            (new SopranoProvider(), "{\"messageId\":\"id\",\"status\":\"ACCEPTED\"}"),
+            (new TelesignProvider(), "{\"reference_id\":\"id\",\"status\":{\"code\":290}}"),
+            (new SinchProvider(), "{\"id\":\"id\",\"status\":\"Delivered\"}"),
+        };
+
+        foreach (var item in cases)
+        {
+            using var response = JsonResponse(503, item.Body);
+            var result = await item.Provider.SendResponseAsync(response, default);
+            Assert.Equal(Outcome.Fail, result.Outcome);
+            Assert.True(result.StatusRecognized);
+        }
+    }
+
+    private static void AssertJsonRequest(
+        HttpRequestMessage request, string expectedUrl, string expectedAuthorization)
+    {
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal(expectedUrl, request.RequestUri?.AbsoluteUri);
+        Assert.Equal(expectedAuthorization, Assert.Single(request.Headers.GetValues("Authorization")));
+        Assert.Equal("application/json", Assert.Single(request.Headers.Accept).MediaType);
+        Assert.Equal(
+            new[] { "Accept", "Authorization" },
+            request.Headers.Select(header => header.Key).OrderBy(name => name));
+        Assert.NotNull(request.Content);
+        Assert.Equal("application/json", request.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(
+            new[] { "Content-Type" },
+            request.Content.Headers.Select(header => header.Key).OrderBy(name => name));
+    }
+
+    private static HttpResponseMessage JsonResponse(int status, string body) =>
+        new((HttpStatusCode)status)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        };
 }
 
 internal sealed class TestEnv : Dictionary<string, string?>, IEnv
 {
     public string? Get(string key) => TryGetValue(key, out var value) ? value : null;
+}
+
+internal static class PhoneProviderTestExtensions
+{
+    public static async ValueTask<ProviderResult> SendResponseAsync(
+        this PhoneProviderBase provider,
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var client = new HttpClient(new ResponseHandler(
+            () => new HttpResponseMessage(response.StatusCode)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            }));
+        var env = new TestEnv
+        {
+            ["EPP_PROVIDER_ACCOUNT_NAME"] = "Verify",
+            ["SINCH_SERVICE_PLAN_ID"] = "service-plan",
+        };
+        var endpoint = provider.Name switch
+        {
+            "infobip" => "https://provider.example",
+            "sinch" => "https://provider.example",
+            "telesign" => "https://verify.telesign.com/epp/sms",
+            _ => "https://provider.example/oauth/messages",
+        };
+        var credentials = provider.AuthenticationMode == "oauth"
+            ? new ProviderCredentials("oauth", AccessToken: "provider-token")
+            : new ProviderCredentials("apiKey", "provider-secret", "provider-identity");
+        return await provider.SendOtpAsync(
+            "sms",
+            endpoint,
+            new OtpDelivery(
+                "+15551234567",
+                "Your code is 918273.",
+                "sms",
+                "message-id",
+                "correlation-id",
+                "en-US"),
+            credentials,
+            env,
+            client,
+            1500);
+    }
+
+    private sealed class ResponseHandler(Func<HttpResponseMessage> createResponse) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(createResponse());
+    }
 }

@@ -20,7 +20,7 @@
     <PackageReference Include="jose-jwt" Version="5.1.0" />
   </ItemGroup>
 
-  <!-- Compile the real HTTP handler and engine directly without starting the Functions host. -->
+  <!-- Compile the real HTTP/provider flow directly without starting the Functions host. -->
   <ItemGroup>
     <Compile Include="..\Src\**\*.cs" />
     <Compile Include="..\Functions\SendOtp.cs" />

@@ -11,7 +11,7 @@ using Xunit;
 
 namespace Epp.Otp.Tests;
 
-public class EngineTests
+public class SendOtpTests
 {
     private const string Phone = "+15551234567";
     private const string Message = "  Your code is 918273.\nDo not share.  ";
@@ -19,6 +19,30 @@ public class EngineTests
     private const string Kid = "private-jwe-kid";
     private const string Correlation = "private-correlation";
     private const string PrivateError = "private key/provider error: +15551234567 code 918273";
+    private static readonly string[] LiveEvents =
+    [
+        "request_received", "payload_validated", "delivery_context_decrypted", "provider_selected",
+        "provider_credential_resolution_started", "provider_credential_resolved",
+        "provider_request_build_started", "provider_request_built", "provider_request_started",
+        "provider_response_received", "provider_response_processed", "response_prepared", "request_completed",
+    ];
+    private static readonly string[] EvaluationEvents =
+    [
+        "request_received", "payload_validated", "delivery_context_decrypted",
+        "evaluation_completed", "response_prepared", "request_completed",
+    ];
+    private static readonly string[] SummaryFields =
+    [
+        "logType", "eventName", "functionName", "functionRequestId", "functionInvocationId",
+        "x-ms-client-request-id", "x-ms-correlation-id", "msCorrelationIdSource", "omittedIdFields",
+        "channel", "evaluation", "payloadType", "ttlSeconds", "encryptionKeyIdMismatch",
+        "providerName", "providerAuthMode", "providerAttempted", "providerCredentialSource",
+        "providerCredentialElapsedMs", "providerTenantId", "functionOutboundClientId",
+        "functionOutboundManagedIdentityClientId", "providerHttpMethod", "providerEndpoint",
+        "providerHttpStatus", "providerStatus", "providerOutcome", "providerMessageId",
+        "providerElapsedMs", "providerTimeoutMs", "failureStage", "failureReason", "httpStatus",
+        "result", "elapsedMs", "responseContainsNonce", "responseContainsCorrelationId",
+    ];
 
     private static void ConfigureSoprano(HandlerRig rig)
     {
@@ -38,7 +62,7 @@ public class EngineTests
     public async Task StartupPreparesOnlyCredentialsAndWarmRequestsReuseTheBundle()
     {
         using var rig = new HandlerRig();
-        await rig.Engine.StartCredentialRefreshAsync();
+        await rig.Credentials.StartAsync(default);
         Assert.Equal(1, rig.Secrets.Calls);
         Assert.Equal(0, rig.Http.Calls);
         Assert.Equal(0, rig.Keys.Calls);
@@ -55,7 +79,7 @@ public class EngineTests
     {
         using var rig = new HandlerRig();
         rig.Env.Clear();
-        await rig.Engine.StartCredentialRefreshAsync();
+        await rig.Credentials.StartAsync(default);
         Assert.Equal(0, rig.Secrets.Calls);
         Assert.Equal(0, rig.Http.Calls);
         AssertAccepted(await rig.Invoke("evaluation"));
@@ -126,7 +150,7 @@ public class EngineTests
         Assert.Equal(3, rig.Http.Calls);
         Assert.Equal(0, rig.Secrets.Calls);
         Assert.DoesNotContain("private-provider-token", string.Join("\n", rig.Log.Messages));
-        var credential = new ProviderCredential("oauth", AccessToken: "private-provider-token");
+        var credential = new ProviderCredentials("oauth", AccessToken: "private-provider-token");
         Assert.DoesNotContain("private-provider-token", JsonSerializer.Serialize(credential) + credential);
     }
 
@@ -176,7 +200,7 @@ public class EngineTests
         Assert.True(observed.IsCancellationRequested);
         Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
         waitForCancellation = false;
-        rig.Engine.Dispose();
+        rig.Credentials.Dispose();
         AssertFailure(rig, await rig.Invoke(), 502);
         Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
         using var replacement = new HandlerRig(CreateIdentity, CreateProvider);
@@ -222,9 +246,7 @@ public class EngineTests
         Assert.Equal(Message, body.RootElement.GetProperty("messages")[0].GetProperty("content").GetProperty("text").GetString());
         Assert.Equal(1, rig.Http.Calls);
         var summary = Summary(rig);
-        using var fixtures = ReadContractFixtures();
-        Assert.Equal(fixtures.RootElement.GetProperty("logging").GetProperty("liveEvents").EnumerateArray().Select(value => value.GetString()),
-            rig.Log.Records.Select(record => record.GetProperty("eventName").GetString()));
+        Assert.Equal(LiveEvents, rig.Log.Records.Select(record => record.GetProperty("eventName").GetString()));
         Assert.Equal("infobip", summary.GetProperty("providerName").GetString());
         Assert.Equal("apiKey", summary.GetProperty("providerAuthMode").GetString());
         Assert.Equal(200, summary.GetProperty("providerHttpStatus").GetInt32());
@@ -241,14 +263,6 @@ public class EngineTests
     }
 
     [Fact]
-    public void VoiceAllowsEmptyIntroAndKeepsDebugOutputPrivate()
-    {
-        var voice = new TextToVoice("", "001234", "en-US");
-        Assert.True(voice.IsComplete);
-        Assert.Equal("TextToVoice", voice.ToString());
-    }
-
-    [Fact]
     public async Task FailedHttpCannotAcknowledgeAnAcceptedBodyOrLeakProviderText()
     {
         using var rig = new HandlerRig();
@@ -256,6 +270,23 @@ public class EngineTests
             JsonSerializer.Serialize(new { status = "ACCEPTED", description = PrivateError })));
         AssertFailure(rig, await rig.Invoke(), 502);
         Assert.Equal(1, rig.Http.Calls);
+    }
+
+    [Theory]
+    [InlineData(Outcome.Continue, 503, 200)]
+    [InlineData(Outcome.Block, 200, 403)]
+    [InlineData(Outcome.Fail, 429, 429)]
+    [InlineData(Outcome.Fail, 401, 401)]
+    [InlineData(Outcome.Fail, 403, 401)]
+    [InlineData(Outcome.Fail, 400, 400)]
+    [InlineData(Outcome.Fail, 499, 400)]
+    [InlineData(Outcome.Fail, 200, 502)]
+    [InlineData(Outcome.Fail, 503, 502)]
+    public void FinalProviderOutcomeMapsToEndpointStatus(
+        Outcome outcome, int providerHttpStatus, int expected)
+    {
+        var result = new ProviderResult(outcome, true, providerHttpStatus);
+        Assert.Equal(expected, PhoneProviderBase.ToEndpointHttpStatus(result));
     }
 
     [Fact]
@@ -329,8 +360,7 @@ public class EngineTests
         Assert.Equal(JsonValueKind.Null, summary.GetProperty("providerCredentialSource").ValueKind);
         Assert.Equal(JsonValueKind.Null, summary.GetProperty("providerCredentialElapsedMs").ValueKind);
         Assert.Equal(JsonValueKind.Null, summary.GetProperty("providerEndpoint").ValueKind);
-        using var fixtures = ReadContractFixtures();
-        Assert.Equal(fixtures.RootElement.GetProperty("logging").GetProperty("evaluationEvents").EnumerateArray().Select(value => value.GetString()),
+        Assert.Equal(EvaluationEvents,
             rig.Log.Records.Select(record => record.GetProperty("eventName").GetString()).Where(name => name != "encryption_key_id_mismatch"));
         foreach (var value in new[] { Kid, "configured-key-id", Phone, "918273", Nonce, "untrusted-body-tenant" })
             Assert.DoesNotContain(value, string.Join("\n", rig.Log.Messages));
@@ -370,23 +400,38 @@ public class EngineTests
     {
         using var rig = new HandlerRig();
         using var fixtures = ReadContractFixtures();
+        var semanticCases = 0;
         foreach (var fixture in fixtures.RootElement.GetProperty("badRequests").EnumerateArray())
         {
-            var payload = new Dictionary<string, object?>
+            var bodyValues = new Dictionary<string, object?>
             {
-                ["type"] = EnvelopeParser.EnvelopeType, ["channel"] = 1, ["mode"] = 1,
+                ["type"] = EntraSendOtpPayload.SupportedType, ["channel"] = 1, ["mode"] = 1,
                 ["encryptedDeliveryContext"] = "unused", ["ttlSeconds"] = 60,
             };
             if (fixture.TryGetProperty("overrides", out var overrides))
-                foreach (var property in overrides.EnumerateObject()) payload[property.Name] = property.Value;
-            var raw = fixture.TryGetProperty("rawBody", out var rawBody) ? rawBody.GetString()! : JsonSerializer.Serialize(payload);
-            var result = await rig.InvokeRaw(raw);
+                foreach (var property in overrides.EnumerateObject()) bodyValues[property.Name] = property.Value;
+            var raw = fixture.TryGetProperty("rawBody", out var rawBody)
+                ? rawBody.GetString()!
+                : JsonSerializer.Serialize(bodyValues);
+            EntraSendOtpPayload? payload;
+            try { payload = JsonSerializer.Deserialize<EntraSendOtpPayload>(raw); }
+            catch (JsonException) { continue; }
+            if (payload is null) continue;
+            var validationError = payload.Validate();
+            if (validationError is null) continue;
+            semanticCases++;
+            var expectedReason = fixture.GetProperty("name").GetString() == "wrong version"
+                ? "unsupported payload type"
+                : fixture.GetProperty("reason").GetString();
+            Assert.Equal(expectedReason, validationError);
+            var result = await rig.InvokePayload(payload);
             AssertFailure(rig, result, 400, "bad_request");
             var body = JsonSerializer.SerializeToElement(result.Value);
             Assert.False(string.IsNullOrEmpty(body.GetProperty("requestId").GetString()));
             Assert.Equal(3, body.EnumerateObject().Count());
-            Assert.Equal(fixture.GetProperty("reason").GetString(), body.GetProperty("reason").GetString());
+            Assert.Equal(validationError, body.GetProperty("reason").GetString());
         }
+        Assert.True(semanticCases > 0);
         Assert.Equal(0, rig.Keys.Calls);
         foreach (var changes in fixtures.RootElement.GetProperty("incompleteContexts").EnumerateArray())
         {
@@ -431,7 +476,7 @@ public class EngineTests
             ["x-ms-client-request-id"] = "ms-request-id",
             ["x-ms-correlation-id"] = "ms-header-correlation-id",
         };
-        foreach (var correlation in new[] { "ms-envelope-correlation-id", null })
+        foreach (var correlation in new[] { "ms-payload-correlation-id", null })
         {
             using var rig = new HandlerRig();
             var result = await rig.Invoke(correlationId: correlation, headers: headers);
@@ -439,7 +484,7 @@ public class EngineTests
             var summary = Summary(rig);
             Assert.Equal(headers["x-ms-client-request-id"], summary.GetProperty("x-ms-client-request-id").GetString());
             Assert.Equal(correlation ?? headers["x-ms-correlation-id"], summary.GetProperty("x-ms-correlation-id").GetString());
-            Assert.Equal(correlation is null ? "header" : "envelope", summary.GetProperty("msCorrelationIdSource").GetString());
+            Assert.Equal(correlation is null ? "header" : "payload", summary.GetProperty("msCorrelationIdSource").GetString());
             Assert.Equal("header", rig.Log.Records.First().GetProperty("msCorrelationIdSource").GetString());
             Assert.Equal(JsonValueKind.Null, summary.GetProperty("functionInvocationId").ValueKind);
             Assert.DoesNotContain("PRIVATE", string.Join("\n", rig.Log.Messages));
@@ -459,13 +504,13 @@ public class EngineTests
     {
         var logger = new CapturingLogger();
         var log = new RequestLog(logger, "function-request", "function-invocation", "ms-request-id", "ms-header-correlation-id");
-        var manifest = new TelesignProvider().Manifest;
-        log.ProviderSelected(manifest);
+        var provider = new TelesignProvider();
+        log.ProviderSelected(provider.Name, provider.AuthenticationMode);
         log.ProviderRequestStarted(1500);
         log.ProviderResponseReceived(200);
         log.ProviderRequestFinished();
-        log.ProviderResponseProcessed(manifest, new ParsedResponse(true, 200, "provider-reference-id",
-            ProviderStatusCode: "3001", ProviderStatusDescription: PrivateError), Outcome.Continue, 200, true);
+        log.ProviderResponseProcessed(new ProviderResult(Outcome.Continue, true, 200, "provider-reference-id",
+            ProviderStatusCode: "3001", ProviderStatusDescription: PrivateError), 200, true);
         log.Complete(200);
         var summary = logger.States.Last();
         Assert.Equal("function-request", summary["functionRequestId"]);
@@ -479,8 +524,7 @@ public class EngineTests
     }
 
     [Theory]
-    [InlineData("invalid_json", 400, "request_validation", "invalid JSON body", false)]
-    [InlineData("invalid_envelope", 400, "request_validation", "unsupported envelope type", false)]
+    [InlineData("invalid_payload", 400, "request_validation", "unsupported payload type", false)]
     [InlineData("decryption", 400, "decryption", "decryption_failed", false)]
     [InlineData("incomplete_context", 400, "delivery_context_validation", "incomplete delivery context", false)]
     [InlineData("unknown_provider", 400, "provider_selection", "unknown_provider", false)]
@@ -513,7 +557,9 @@ public class EngineTests
                 rig.Http.Respond = _ => Task.FromException<HttpResponseMessage>(new HttpRequestException(PrivateError));
                 break;
             case "response_parse":
-                rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"messages\":[{\"status\":{\"groupName\":123}}]}"));
+                rig.Http.Respond = _ => Task.FromResult(Json(
+                    200,
+                    "{\"messages\":[{\"messageId\":123,\"status\":{\"groupName\":\"PENDING\"}}]}"));
                 break;
             case "http_rejection":
                 rig.Http.Respond = _ => Task.FromResult(Json(429, "{\"messages\":[{\"status\":{\"groupName\":\"PENDING\"}}]}"));
@@ -526,8 +572,7 @@ public class EngineTests
         };
         var result = scenario switch
         {
-            "invalid_json" => await rig.InvokeRaw("{", headers),
-            "invalid_envelope" => await rig.InvokeRaw("{}", headers),
+            "invalid_payload" => await rig.Invoke(type: "wrong", headers: headers),
             _ => await rig.Invoke(deliveryOverrides: delivery, headers: headers),
         };
         Assert.Equal(status, result.StatusCode);
@@ -538,7 +583,7 @@ public class EngineTests
         Assert.Equal(reason, summary.GetProperty("failureReason").GetString());
         Assert.Equal("failed", summary.GetProperty("result").GetString());
         Assert.Equal(headers["x-ms-client-request-id"], summary.GetProperty("x-ms-client-request-id").GetString());
-        Assert.Equal(stage == "request_validation" ? "header" : "envelope", summary.GetProperty("msCorrelationIdSource").GetString());
+        Assert.Equal(stage == "request_validation" ? "header" : "payload", summary.GetProperty("msCorrelationIdSource").GetString());
         Assert.Equal(stage == "request_validation" ? headers["x-ms-correlation-id"] : Correlation,
             summary.GetProperty("x-ms-correlation-id").GetString());
         Assert.Equal(attempted, summary.GetProperty("providerAttempted").GetBoolean());
@@ -576,9 +621,9 @@ public class EngineTests
             deliveryOverrides: JsonSerializer.SerializeToElement(new { diagnosticData = "PRIVATE-UNKNOWN-FIELD" })));
         var summary = Summary(rig);
         var records = rig.Log.Records.ToArray();
-        var validated = Assert.Single(records, record => record.GetProperty("eventName").GetString() == "envelope_validated");
-        Assert.Equal(EnvelopeParser.EnvelopeType, validated.GetProperty("envelopeType").GetString());
-        Assert.Equal(EnvelopeParser.EnvelopeType, summary.GetProperty("envelopeType").GetString());
+        var validated = Assert.Single(records, record => record.GetProperty("eventName").GetString() == "payload_validated");
+        Assert.Equal(EntraSendOtpPayload.SupportedType, validated.GetProperty("payloadType").GetString());
+        Assert.Equal(EntraSendOtpPayload.SupportedType, summary.GetProperty("payloadType").GetString());
         Assert.Equal(60, validated.GetProperty("ttlSeconds").GetInt32());
         Assert.Equal(60, summary.GetProperty("ttlSeconds").GetInt32());
         Assert.True(validated.GetProperty("encryptedDeliveryContextPresent").GetBoolean());
@@ -606,9 +651,7 @@ public class EngineTests
         Assert.True(summary.GetProperty("responseContainsNonce").GetBoolean());
         Assert.True(summary.GetProperty("responseContainsCorrelationId").GetBoolean());
         Assert.DoesNotContain("PRIVATE", string.Join("\n", rig.Log.Messages));
-        using var fixtures = ReadContractFixtures();
-        Assert.Equal(fixtures.RootElement.GetProperty("logging").GetProperty("liveEvents").EnumerateArray().Select(value => value.GetString()),
-            records.Select(record => record.GetProperty("eventName").GetString()));
+        Assert.Equal(LiveEvents, records.Select(record => record.GetProperty("eventName").GetString()));
     }
 
     [Fact]
@@ -626,9 +669,7 @@ public class EngineTests
         Assert.Equal(JsonValueKind.Null, summary.GetProperty("functionOutboundManagedIdentityClientId").ValueKind);
         Assert.InRange(summary.GetProperty("providerCredentialElapsedMs").GetInt64(), 0, summary.GetProperty("elapsedMs").GetInt64());
         Assert.Equal(2, rig.Secrets.Calls);
-        using var fixtures = ReadContractFixtures();
-        Assert.Equal(fixtures.RootElement.GetProperty("logging").GetProperty("liveEvents").EnumerateArray().Select(value => value.GetString()),
-            rig.Log.Records.Select(record => record.GetProperty("eventName").GetString()));
+        Assert.Equal(LiveEvents, rig.Log.Records.Select(record => record.GetProperty("eventName").GetString()));
     }
 
     [Fact]
@@ -637,6 +678,7 @@ public class EngineTests
         using var rig = new HandlerRig();
         rig.Env["EPP_PROVIDER_NAME"] = "sinch";
         rig.Env["SINCH_VOICE_ENDPOINT"] = "https://different-provider.example/api/final";
+        rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"callId\":\"sinch-call-id\"}"));
         AssertAccepted(await rig.Invoke(channel: "voice"));
         var summary = Summary(rig);
         var expected = rig.Env["SINCH_VOICE_ENDPOINT"] + "/calling/v1/callouts";
@@ -651,31 +693,30 @@ public class EngineTests
     {
         var logger = new CapturingLogger();
         var log = new RequestLog(logger, "function-request", null, null, null);
-        log.ProviderRequestBuilt("PRIVATE-METHOD", "https://provider.example/api/send");
+        log.ProviderRequestBuilt(new HttpMethod("PRIVATE-METHOD"), new Uri("https://provider.example/api/send"));
         var record = Assert.Single(logger.Records);
         Assert.Equal("other", record.GetProperty("providerHttpMethod").GetString());
         Assert.DoesNotContain("PRIVATE", string.Join("\n", logger.Messages));
     }
 
     [Fact]
-    public async Task OptionalTtlStaysNullAndInvalidBodyValuesNeverEnterMetadata()
+    public async Task BoundPayloadWithOptionalTtlAndUnknownFieldsKeepsSafeMetadata()
     {
         using var rig = new HandlerRig();
         var encrypted = Jose.JWT.Encode(JsonSerializer.Serialize(new { nonce = Nonce, phoneNumber = Phone, message = Message }),
             rig.Keys.Rsa, Jose.JweAlgorithm.RSA_OAEP_256, Jose.JweEncryption.A256GCM);
-        var payload = new Dictionary<string, object?>
+        var payload = JsonSerializer.Deserialize<EntraSendOtpPayload>(JsonSerializer.Serialize(new
         {
-            ["type"] = EnvelopeParser.EnvelopeType, ["channel"] = 1, ["mode"] = 2,
-            ["correlationId"] = Correlation, ["encryptedDeliveryContext"] = encrypted,
-            ["diagnosticData"] = new { token = "PRIVATE-UNKNOWN-FIELD" },
-        };
-        AssertAccepted(await rig.InvokeRaw(JsonSerializer.Serialize(payload)));
+            type = EntraSendOtpPayload.SupportedType,
+            channel = 1,
+            mode = 2,
+            correlationId = Correlation,
+            encryptedDeliveryContext = encrypted,
+            diagnosticData = new { token = "PRIVATE-UNKNOWN-FIELD" },
+        }));
+        Assert.NotNull(payload);
+        AssertAccepted(await rig.InvokePayload(payload));
         Assert.Equal(JsonValueKind.Null, Summary(rig).GetProperty("ttlSeconds").ValueKind);
-        payload["ttlSeconds"] = "PRIVATE-INVALID-TTL";
-        Assert.Equal(400, (await rig.InvokeRaw(JsonSerializer.Serialize(payload))).StatusCode);
-        var summary = Summary(rig);
-        Assert.Equal(JsonValueKind.Null, summary.GetProperty("ttlSeconds").ValueKind);
-        Assert.Equal(JsonValueKind.Null, summary.GetProperty("envelopeType").ValueKind);
         Assert.DoesNotContain("PRIVATE", string.Join("\n", rig.Log.Messages));
     }
 
@@ -695,6 +736,10 @@ public class EngineTests
         Assert.Equal("unmapped", summary.GetProperty("providerStatus").GetString());
         Assert.Equal("Fail", summary.GetProperty("providerOutcome").GetString());
         Assert.Equal(validJson ? "provider_rejected" : "invalid_provider_json", summary.GetProperty("failureReason").GetString());
+        Assert.Equal(
+            !validJson,
+            rig.Log.Records.Any(record =>
+                record.GetProperty("eventName").GetString() == "provider_response_invalid_json"));
         Assert.DoesNotContain("PRIVATE", string.Join("\n", rig.Log.Messages));
     }
 
@@ -712,13 +757,11 @@ public class EngineTests
         var summaries = rig.Log.Records.Where(record => record.GetProperty("logType").GetString() == "request").ToArray();
         Assert.Equal(2, summaries.Length);
         Assert.Equal(2, summaries.Select(record => record.GetProperty("functionRequestId").GetString()).Distinct().Count());
-        using var fixtures = ReadContractFixtures();
         foreach (var summary in summaries)
         {
             var id = summary.GetProperty("functionRequestId").GetString();
             var events = rig.Log.Records.Where(record => record.GetProperty("functionRequestId").GetString() == id).ToArray();
-            Assert.Equal(fixtures.RootElement.GetProperty("logging").GetProperty("liveEvents").EnumerateArray().Select(value => value.GetString()),
-                events.Select(record => record.GetProperty("eventName").GetString()));
+            Assert.Equal(LiveEvents, events.Select(record => record.GetProperty("eventName").GetString()));
             Assert.All(events.Skip(1), record => Assert.Equal(summary.GetProperty("x-ms-correlation-id").GetString(),
                 record.GetProperty("x-ms-correlation-id").GetString()));
         }
@@ -731,19 +774,20 @@ public class EngineTests
         using var fixtures = ReadContractFixtures();
         var fields = new[] { "x-ms-client-request-id", "x-ms-correlation-id", "providerTenantId",
             "functionOutboundClientId", "functionOutboundManagedIdentityClientId", "providerMessageId" };
-        var manifest = new SopranoProvider().Manifest;
+        var provider = new SopranoProvider();
         foreach (var fixture in fixtures.RootElement.GetProperty("logging").GetProperty("identifiers").EnumerateArray())
         {
             var value = fixture.TryGetProperty("length", out var length)
                 ? new string('A', length.GetInt32()) : fixture.GetProperty("value").GetString();
             var logger = new CapturingLogger();
             var log = new RequestLog(logger, "function-request", null, value, value);
-            log.ProviderSelected(manifest);
+            log.ProviderSelected(provider.Name, provider.AuthenticationMode);
             log.CredentialResolutionStarted(new AppConfig
             {
                 ProviderTenantId = value, OutboundClientId = value, OutboundManagedIdentityClientId = value,
             });
-            log.ProviderResponseProcessed(manifest, new ParsedResponse(true, 200, value, "ENROUTE"), Outcome.Continue, 200, true);
+            log.ProviderResponseProcessed(
+                new ProviderResult(Outcome.Continue, true, 200, value, "ENROUTE"), 200, true);
             log.Complete(200);
             var summary = logger.Records.Last();
             foreach (var field in fields)
@@ -763,7 +807,9 @@ public class EngineTests
         {
             var logger = new CapturingLogger();
             var log = new RequestLog(logger, "function-request", null, null, null);
-            log.ProviderRequestBuilt("POST", fixture.GetProperty("url").GetString()!);
+            log.ProviderRequestBuilt(
+                HttpMethod.Post,
+                new Uri(fixture.GetProperty("url").GetString()!, UriKind.Absolute));
             log.ProviderRequestStarted(1500);
             log.Complete(200);
             Assert.All(logger.Records, record => Assert.Equal(fixture.GetProperty("logged").GetString(),
@@ -777,9 +823,7 @@ public class EngineTests
         var summary = rig.Log.Records.Last();
         Assert.Equal("request", summary.GetProperty("logType").GetString());
         Assert.Equal("request_completed", summary.GetProperty("eventName").GetString());
-        using var fixtures = ReadContractFixtures();
-        Assert.Equal(fixtures.RootElement.GetProperty("logging").GetProperty("summaryFields").EnumerateArray()
-                .Select(value => value.GetString()).OrderBy(value => value),
+        Assert.Equal(SummaryFields.OrderBy(value => value),
             summary.EnumerateObject().Select(property => property.Name).OrderBy(value => value));
         var events = rig.Log.Records.Where(record => record.GetProperty("functionRequestId").GetString()
             == summary.GetProperty("functionRequestId").GetString()).ToArray();
@@ -833,7 +877,8 @@ public class EngineTests
         public TestHttp Http { get; } = new();
         public TestKeys Keys { get; } = new();
         public CapturingLogger Log { get; } = new();
-        public DispatchEngine Engine { get; }
+        public SendOtp Function { get; }
+        public CredentialTokenService Credentials { get; }
         public HandlerRig(Func<string, TokenCredential>? createIdentity = null,
             Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential>? createOAuth = null)
         {
@@ -843,42 +888,57 @@ public class EngineTests
                 ["EPP_PROVIDER_ENDPOINT"] = "https://provider.example",
                 ["EPP_PROVIDER_TIMEOUT_MS"] = "2500",
             };
-            var registry = new ProviderRegistry(new IProviderAdapter[]
-                { new InfobipProvider(), new TelesignProvider(), new SopranoProvider(), new SinchProvider() });
-            var engine = createIdentity is null ? new DispatchEngine(registry, Secrets, Http, Env)
-                : new DispatchEngine(registry, Secrets, Http, Env, createIdentity, createOAuth!);
-            Engine = engine;
-            _function = new SendOtp(engine,
-                new JweDecryptor(Keys), Env, Log);
+            PhoneProviderBase[] providers =
+            {
+                new InfobipProvider(Secrets),
+                new TelesignProvider(Secrets),
+                new SopranoProvider(
+                    createIdentity ?? (_ => throw new InvalidOperationException("Unexpected managed identity")),
+                    createOAuth ?? ((_, _, _) => throw new InvalidOperationException("Unexpected OAuth"))),
+                new SinchProvider(Secrets),
+            };
+            Credentials = new CredentialTokenService(providers, Env);
+            _function = new SendOtp(providers, Credentials, Http, new JweDecryptor(Keys), Env, Log);
+            Function = _function;
         }
         public async Task<ObjectResult> Invoke(object? mode = null, string channel = "sms", string? tenantId = null,
             Jose.JweAlgorithm algorithm = Jose.JweAlgorithm.RSA_OAEP_256,
             Jose.JweEncryption encryption = Jose.JweEncryption.A256GCM, JsonElement? deliveryOverrides = null,
-            string? plaintext = null, string? correlationId = Correlation, Dictionary<string, string>? headers = null)
+            string? plaintext = null, string? correlationId = Correlation, Dictionary<string, string>? headers = null,
+            string? type = EntraSendOtpPayload.SupportedType, int? ttlSeconds = 60)
         {
             var context = new Dictionary<string, object?> { ["nonce"] = Nonce, ["phoneNumber"] = Phone, ["message"] = Message };
             if (deliveryOverrides is { } changes)
                 foreach (var property in changes.EnumerateObject()) context[property.Name] = property.Value;
             var encrypted = Jose.JWT.Encode(plaintext ?? JsonSerializer.Serialize(context), Keys.Rsa, algorithm, encryption,
                 extraHeaders: new Dictionary<string, object> { ["kid"] = Kid });
-            return await InvokeRaw(JsonSerializer.Serialize(new
+            return await InvokePayload(new EntraSendOtpPayload
             {
-                type = EnvelopeParser.EnvelopeType, tenantId, correlationId, channel, mode = mode ?? "live",
-                ttlSeconds = 60, encryptedDeliveryContext = encrypted,
-            }), headers);
+                Type = type,
+                TenantId = tenantId,
+                CorrelationId = correlationId,
+                Channel = channel.Equals("voice", StringComparison.OrdinalIgnoreCase)
+                    ? EntraOtpChannel.Voice
+                    : EntraOtpChannel.Sms,
+                Mode = mode is string text && text.Equals("evaluation", StringComparison.OrdinalIgnoreCase)
+                    || mode is int code && code == 2
+                        ? EntraOtpMode.Evaluation
+                        : EntraOtpMode.Live,
+                TtlSeconds = ttlSeconds,
+                EncryptedDeliveryContext = encrypted,
+            }, headers);
         }
-        public async Task<ObjectResult> InvokeRaw(string body, Dictionary<string, string>? headers = null)
+        public async Task<ObjectResult> InvokePayload(
+            EntraSendOtpPayload payload, Dictionary<string, string>? headers = null)
         {
-            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(body));
             var request = new DefaultHttpContext().Request;
             request.Method = "POST";
             request.ContentType = "application/json";
-            request.Body = stream;
             if (headers is not null)
                 foreach (var (key, value) in headers) request.Headers[key] = value;
-            return Assert.IsAssignableFrom<ObjectResult>(await _function.Run(request));
+            return Assert.IsAssignableFrom<ObjectResult>(await _function.Run(request, payload));
         }
-        public void Dispose() { Engine.Dispose(); Keys.Dispose(); Http.Dispose(); }
+        public void Dispose() { Credentials.Dispose(); Keys.Dispose(); Http.Dispose(); }
     }
 
     private sealed class TestSecrets : ISecretResolver

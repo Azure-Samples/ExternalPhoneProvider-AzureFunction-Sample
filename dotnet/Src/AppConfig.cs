@@ -12,7 +12,7 @@ public sealed class AppConfig
     public string? ProviderScope { get; init; }
     public string? OutboundClientId { get; init; }
     public string? OutboundManagedIdentityClientId { get; init; }
-    // Keep the raw value; DispatchEngine owns timeout normalization.
+    // Keep the raw value; SendOtp owns timeout normalization.
     public string? ProviderTimeoutMs { get; init; }
 
     public static AppConfig Read(IEnv env) => new()

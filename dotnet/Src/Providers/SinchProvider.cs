@@ -1,69 +1,146 @@
+using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Epp.Otp.Providers;
 
-public sealed class SinchProvider : IProviderAdapter
+public sealed class SinchProvider : PhoneProviderBase
 {
-    public ProviderManifest Manifest { get; } = new(
-        Id: "sinch",
-        Auth: new AuthConfig("apiKey", KeyVaultSecretName: "sinch-api-token"),
-        ResponseMapping: new Dictionary<string, Outcome>
-        {
-            ["Dispatched"] = Outcome.Continue,
-            ["Delivered"] = Outcome.Continue,
-            ["Queued"] = Outcome.Continue,
-            ["Failed"] = Outcome.Fail,
-            ["Rejected"] = Outcome.Fail,
-            ["default"] = Outcome.Fail,
-        });
+    private readonly ISecretResolver? _secrets;
 
-    public ProviderHttpRequest BuildRequest(string channel, string endpoint, DispatchRequest dispatch, ProviderCredential credential, IEnv env)
+    public SinchProvider(ISecretResolver? secrets = null) => _secrets = secrets;
+
+    public override string Name => "sinch";
+    public override string AuthenticationMode => "apiKey";
+
+    public override Task<ProviderResult> SendOtpAsync(
+        string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credentials,
+        IEnv env, HttpClient client, int timeoutMs, RequestLog? log = null) =>
+        SendJsonAsync<Response>(
+            () => CreateRequest(channel, endpoint, delivery, credentials, env),
+            MapResponse,
+            client,
+            timeoutMs,
+            log);
+
+    public override HttpRequestMessage CreateRequest(
+        string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credential, IEnv env)
     {
-        var headers = new Dictionary<string, string>
-        {
-            ["Authorization"] = $"Bearer {credential.Secret}",
-            ["Content-Type"] = "application/json",
-            ["Accept"] = "application/json",
-        };
-        var reference = dispatch.CorrelationId ?? dispatch.MessageId;
+        var reference = delivery.CorrelationId ?? delivery.MessageId;
+        object body;
+        string url;
 
         if (channel == "voice")
         {
             var voiceBase = env.Get("SINCH_VOICE_ENDPOINT") ?? "https://calling.api.sinch.com";
-            var voiceBody = new
-            {
-                method = "ttsCallout",
-                ttsCallout = new
-                {
-                    destination = new { type = "number", endpoint = dispatch.Destination },
-                    text = dispatch.Message,
-                    locale = dispatch.Locale ?? "en-US",
-                    custom = reference,
-                },
-            };
-            return new ProviderHttpRequest($"{voiceBase}/calling/v1/callouts", "POST", headers, JsonSerializer.Serialize(voiceBody));
+            body = new VoiceRequest(
+                "ttsCallout",
+                new TtsCallout(
+                    new Destination("number", delivery.PhoneNumber),
+                    delivery.Message,
+                    delivery.Locale ?? "en-US",
+                    reference));
+            url = $"{voiceBase}/calling/v1/callouts";
+        }
+        else
+        {
+            var servicePlanId = env.Get("SINCH_SERVICE_PLAN_ID") ?? string.Empty;
+            body = new SmsRequest(
+                env.Get("EPP_PROVIDER_ACCOUNT_NAME") ?? "Verify",
+                [delivery.PhoneNumber],
+                delivery.Message,
+                reference);
+            url = $"{endpoint}/xms/v1/{servicePlanId}/batches";
         }
 
-        var servicePlanId = env.Get("SINCH_SERVICE_PLAN_ID") ?? string.Empty;
-        var body = new
+        var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
-            from = env.Get("EPP_PROVIDER_ACCOUNT_NAME") ?? "Verify",
-            to = new[] { dispatch.Destination },
-            body = dispatch.Message,
-            client_reference = reference,
+            Content = JsonContent.Create(body),
         };
-        return new ProviderHttpRequest($"{endpoint}/xms/v1/{servicePlanId}/batches", "POST", headers, JsonSerializer.Serialize(body));
+        request.Headers.TryAddWithoutValidation("Authorization", "******");
+        request.Headers.Accept.ParseAdd("application/json");
+        return request;
     }
 
-    public ParsedResponse ParseResponse(int httpStatus, bool ok, JsonElement json)
+    private static ProviderResult MapResponse(Response? payload, HttpStatusCode httpStatus)
     {
-        string? id = null, desc = null;
-        if (json.ValueKind == JsonValueKind.Object)
+        var id = payload?.Id ?? payload?.CallId;
+        var status = payload?.Status?.Value;
+        var successful = (int)httpStatus is >= 200 and < 300;
+        if (payload?.Status is null && successful && !string.IsNullOrWhiteSpace(id))
+            status = "Dispatched";
+        var (outcome, recognized) = MapStatus(status);
+        return new ProviderResult(
+            successful && !string.IsNullOrWhiteSpace(id) ? outcome : Outcome.Fail,
+            recognized,
+            (int)httpStatus,
+            id,
+            status,
+            ProviderStatusDescription: payload?.Text);
+    }
+
+    public override async Task<ProviderCredentials> FetchCredentialsAsync(
+        AppConfig config, CancellationToken cancellationToken = default)
+    {
+        if (_secrets is null) throw CredentialTokenService.Unavailable();
+        var secret = await _secrets.ResolveAsync(
+            "sinch-api-token", cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(secret)) throw CredentialTokenService.Unavailable();
+        return new ProviderCredentials(
+            AuthenticationMode,
+            Secret: secret,
+            ExpiresOn: DateTimeOffset.UtcNow.AddMinutes(5));
+    }
+
+    private static (Outcome Outcome, bool Recognized) MapStatus(string? status) => status switch
+    {
+        "Dispatched" or "Delivered" or "Queued" => (Outcome.Continue, true),
+        "Failed" or "Rejected" => (Outcome.Fail, true),
+        _ => (Outcome.Fail, false),
+    };
+
+    private sealed record VoiceRequest(
+        [property: JsonPropertyName("method")] string Method,
+        [property: JsonPropertyName("ttsCallout")] TtsCallout Callout);
+
+    private sealed record TtsCallout(
+        [property: JsonPropertyName("destination")] Destination Destination,
+        [property: JsonPropertyName("text")] string? Text,
+        [property: JsonPropertyName("locale")] string Locale,
+        [property: JsonPropertyName("custom")] string Custom);
+
+    private sealed record Destination(
+        [property: JsonPropertyName("type")] string Type,
+        [property: JsonPropertyName("endpoint")] string Endpoint);
+
+    private sealed record SmsRequest(
+        [property: JsonPropertyName("from")] string From,
+        [property: JsonPropertyName("to")] IReadOnlyList<string> To,
+        [property: JsonPropertyName("body")] string? Body,
+        [property: JsonPropertyName("client_reference")] string ClientReference);
+
+    private sealed record Response(
+        [property: JsonPropertyName("id")] string? Id,
+        [property: JsonPropertyName("callId")] string? CallId,
+        [property: JsonPropertyName("text")] string? Text,
+        [property: JsonPropertyName("status")] ResponseString? Status);
+
+    [JsonConverter(typeof(ResponseStringConverter))]
+    private sealed record ResponseString(string? Value);
+
+    private sealed class ResponseStringConverter : JsonConverter<ResponseString>
+    {
+        public override ResponseString Read(
+            ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         {
-            if (json.TryGetProperty("id", out var idElement)) id = idElement.ToString();
-            else if (json.TryGetProperty("callId", out var callIdElement)) id = callIdElement.ToString();
-            if (json.TryGetProperty("text", out var textElement)) desc = textElement.GetString();
+            if (reader.TokenType == JsonTokenType.String)
+                return new ResponseString(reader.GetString());
+            reader.Skip();
+            return new ResponseString(null);
         }
-        return new ParsedResponse(ok, httpStatus, id, ok ? "Dispatched" : null, null, desc);
+
+        public override void Write(Utf8JsonWriter writer, ResponseString value, JsonSerializerOptions options) =>
+            throw new NotSupportedException();
     }
 }

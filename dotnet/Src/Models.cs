@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace Epp.Otp;
 
-public enum Outcome { Continue, Fail, Block, StepUp }
+public enum Outcome { Continue, Fail, Block }
 
 public sealed record EndpointSuccessResponse(
     [property: JsonPropertyName("nonce")] string Nonce,
@@ -18,52 +18,35 @@ public sealed record EndpointErrorResponse(
     [property: JsonPropertyName("reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Reason = null,
     [property: JsonPropertyName("correlationId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CorrelationId = null);
 
-public sealed record DispatchRequest(
-    string Destination,
+public sealed record OtpDelivery(
+    string PhoneNumber,
     string? Message,
     string Channel,
     string MessageId,
     string? CorrelationId,
-    string? Locale,
-    TextToVoice? TextToVoice = null);
+    string? Locale);
 
-public sealed record TextToVoice(
-    [property: JsonPropertyName("beforePasswordText")] string? BeforePasswordText,
-    [property: JsonPropertyName("password")] string? Password,
-    [property: JsonPropertyName("language")] string? Language)
+public sealed record ProviderCredentials(
+    string Mode,
+    string? Secret = null,
+    string? Identity = null,
+    [property: JsonIgnore] string? AccessToken = null,
+    [property: JsonIgnore] DateTimeOffset ExpiresOn = default)
 {
-    [JsonIgnore]
-    public bool IsComplete => BeforePasswordText is not null
-        && !string.IsNullOrWhiteSpace(Password) && !string.IsNullOrWhiteSpace(Language);
-
-    public override string ToString() => nameof(TextToVoice);
+    public override string ToString() => nameof(ProviderCredentials);
 }
 
-public sealed record ProviderCredential(string Mode, string? Secret = null, string? Identity = null,
-    [property: JsonIgnore] string? AccessToken = null)
-{
-    public override string ToString() => nameof(ProviderCredential);
-}
-
-public sealed record ProviderHttpRequest(string Url, string Method, Dictionary<string, string> Headers, string Body);
-
-public sealed record ParsedResponse(
-    bool Success,
+public sealed record ProviderResult(
+    Outcome Outcome,
+    bool StatusRecognized,
     int ProviderHttpStatus,
     string? ProviderMessageId = null,
     string? ProviderStatusName = null,
     string? ProviderStatusCode = null,
     string? ProviderStatusDescription = null)
 {
-    public override string ToString() => nameof(ParsedResponse);
+    public override string ToString() => nameof(ProviderResult);
 }
-
-public sealed record AuthConfig(string Mode, string? KeyVaultSecretName = null, string? IdentityKeyVaultSecretName = null);
-
-public sealed record ProviderManifest(string Id, AuthConfig Auth, IReadOnlyDictionary<string, Outcome> ResponseMapping,
-    bool RequiresTextToVoice = false);
-
-public sealed record DispatchResult(int HttpStatus, object Body);
 
 public interface IEnv { string? Get(string key); }
 

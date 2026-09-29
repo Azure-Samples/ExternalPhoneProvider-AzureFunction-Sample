@@ -42,7 +42,7 @@ public sealed class RequestLog
             ["x-ms-correlation-id"] = null,
             ["msCorrelationIdSource"] = "none",
             ["omittedIdFields"] = Array.Empty<string>(),
-            ["envelopeType"] = null,
+            ["payloadType"] = null,
             ["ttlSeconds"] = null,
             ["channel"] = null,
             ["evaluation"] = null,
@@ -92,17 +92,17 @@ public sealed class RequestLog
         Write(level, eventName, record);
     }
 
-    public void EnvelopeValidated(Envelope envelope, string? correlationId, string source)
+    public void PayloadValidated(EntraSendOtpPayload payload, string? correlationId, string correlationSource)
     {
-        _data["envelopeType"] = envelope.Type;
-        _data["ttlSeconds"] = envelope.TtlSeconds;
-        _data["channel"] = EnvelopeParser.ChannelName(envelope.Channel);
-        _data["evaluation"] = envelope.Mode == EnvelopeParser.ModeEvaluation;
+        _data["payloadType"] = payload.Type;
+        _data["ttlSeconds"] = payload.TtlSeconds;
+        _data["channel"] = payload.ChannelName;
+        _data["evaluation"] = payload.IsEvaluation;
         SetIdentifier("x-ms-correlation-id", correlationId);
-        _data["msCorrelationIdSource"] = _data["x-ms-correlation-id"] is null ? "none" : source;
-        Service("envelope_validated", new()
+        _data["msCorrelationIdSource"] = _data["x-ms-correlation-id"] is null ? "none" : correlationSource;
+        Service("payload_validated", new()
         {
-            ["envelopeType"] = _data["envelopeType"],
+            ["payloadType"] = _data["payloadType"],
             ["ttlSeconds"] = _data["ttlSeconds"],
             ["encryptedDeliveryContextPresent"] = true,
         });
@@ -114,10 +114,10 @@ public sealed class RequestLog
         Service("encryption_key_id_mismatch", level: LogLevel.Warning);
     }
 
-    public void ProviderSelected(ProviderManifest manifest)
+    public void ProviderSelected(string providerName, string authenticationMode)
     {
-        _data["providerName"] = manifest.Id;
-        _data["providerAuthMode"] = manifest.Auth.Mode is "apiKey" or "oauth" ? manifest.Auth.Mode : "unsupported";
+        _data["providerName"] = providerName;
+        _data["providerAuthMode"] = authenticationMode is "apiKey" or "oauth" ? authenticationMode : "unsupported";
         Service("provider_selected", new() { ["providerAuthMode"] = _data["providerAuthMode"] });
     }
 
@@ -157,13 +157,13 @@ public sealed class RequestLog
         Service("provider_credential_resolved", details);
     }
 
-    public void ProviderRequestBuilt(string? method, string endpoint)
+    public void ProviderRequestBuilt(HttpMethod? method, Uri endpoint)
     {
-        var normalized = method?.ToUpperInvariant();
+        var normalized = method?.Method.ToUpperInvariant();
         _data["providerHttpMethod"] = normalized is "GET" or "HEAD" or "POST" or "PUT" or "DELETE"
             or "CONNECT" or "OPTIONS" or "TRACE" or "PATCH" ? normalized : "other";
-        var uri = new Uri(endpoint, UriKind.Absolute);
-        _data["providerEndpoint"] = uri.GetComponents(UriComponents.SchemeAndServer, UriFormat.UriEscaped) + uri.AbsolutePath;
+        _data["providerEndpoint"] = endpoint.GetComponents(UriComponents.SchemeAndServer, UriFormat.UriEscaped)
+            + endpoint.AbsolutePath;
         Service("provider_request_built", new()
         {
             ["providerHttpMethod"] = _data["providerHttpMethod"],
@@ -199,14 +199,13 @@ public sealed class RequestLog
         _providerStarted = null;
     }
 
-    public void ProviderResponseProcessed(ProviderManifest manifest, ParsedResponse parsed, Outcome outcome, int httpStatus, bool validJson)
+    public void ProviderResponseProcessed(ProviderResult result, int httpStatus, bool validJson)
     {
-        var status = parsed.ProviderStatusName ?? parsed.ProviderStatusCode;
-        var known = status is not null && status != "default" && manifest.ResponseMapping.ContainsKey(status);
-        _data["providerStatus"] = known ? status : "unmapped";
-        _data["providerOutcome"] = outcome.ToString();
-        SetIdentifier("providerMessageId", parsed.ProviderMessageId);
-        if (outcome != Outcome.Continue)
+        var status = result.ProviderStatusName ?? result.ProviderStatusCode;
+        _data["providerStatus"] = result.StatusRecognized && status is not null ? status : "unmapped";
+        _data["providerOutcome"] = result.Outcome.ToString();
+        SetIdentifier("providerMessageId", result.ProviderMessageId);
+        if (result.Outcome != Outcome.Continue)
         {
             _data["failureStage"] = "provider_response";
             _data["failureReason"] = validJson ? "provider_rejected" : "invalid_provider_json";
