@@ -68,6 +68,17 @@ function Select-EppOption {
     }
 }
 
+function Get-EppServicePlan {
+    param([string] $ServicePlan, [switch] $NonInteractive)
+
+    Write-Host "`nService plan selection" -ForegroundColor Cyan
+    Write-Host 'Flex Consumption has a free usage grant, not a zero-cost guarantee. Additional usage, Key Vault, storage, and telemetry can incur charges.'
+    return Select-EppOption -Entries @(
+        @{ id = 'FC1'; displayName = 'Flex Consumption FC1 (free grant, cold starts, cache settings false)' }
+        @{ id = 'EP1'; displayName = 'Premium EP1 (warm instance, cache settings true)' }
+    ) -Name ServicePlan -PromptName 'Service plan' -Value $ServicePlan -NonInteractive:$NonInteractive
+}
+
 function Read-EppInput {
     param(
         [string] $Name, [string] $Value, [string] $Hint,
@@ -665,6 +676,41 @@ function Assert-EppPremiumLocation {
     }
 }
 
+function Assert-EppServicePlanLocation {
+    param([hashtable] $Inputs)
+
+    if ($Inputs.ServicePlan -eq 'EP1') {
+        Assert-EppPremiumLocation -Inputs $Inputs
+        return
+    }
+    if ($Inputs.ServicePlan -ne 'FC1') { throw "Unknown service plan '$($Inputs.ServicePlan)'." }
+    $regions = Invoke-EppAz functionapp list-flexconsumption-locations --subscription $Inputs.SubscriptionId --output json |
+        ConvertFrom-Json -AsHashtable -NoEnumerate
+    if ($regions -isnot [Array]) { throw 'Azure returned an invalid Flex Consumption region response.' }
+    if (-not @($regions | Where-Object {
+        $_ -and $_['name'] -is [string] -and ($_['name'] -replace '[^a-zA-Z0-9]', '') -ieq $Inputs.Location
+    }).Count) {
+        throw "Linux Flex Consumption FC1 is unavailable in '$($Inputs.Location)'. Choose another location or EP1."
+    }
+}
+
+function Assert-EppExistingServicePlan {
+    param([hashtable] $Inputs, [Collections.IDictionary] $Names, [Collections.IDictionary] $Tags)
+
+    if ($Tags['eppServicePlan'] -and $Tags['eppServicePlan'] -ne $Inputs.ServicePlan) {
+        throw "This prefix already uses '$($Tags['eppServicePlan'])'. Use a different prefix for '$($Inputs.ServicePlan)'; in-place plan migration is not supported."
+    }
+    # Older EP1 deployments have no plan tag; verify the actual SKU before any writes.
+    $allPlans = Invoke-EppAz appservice plan list --resource-group $Names.resourceGroup --subscription $Inputs.SubscriptionId --output json |
+        ConvertFrom-Json -AsHashtable -NoEnumerate
+    if ($allPlans -isnot [Array]) { throw 'Azure returned an invalid hosting-plan list.' }
+    $plans = @($allPlans | Where-Object name -eq $Names.hostingPlan)
+    if ($plans.Count -gt 1) { throw 'Azure returned multiple hosting plans with the approved name.' }
+    if ($plans.Count -eq 1 -and $plans[0].sku.name -ne $Inputs.ServicePlan) {
+        throw "The existing hosting plan uses '$($plans[0].sku.name)'. Use a different prefix for '$($Inputs.ServicePlan)'; in-place plan migration is not supported."
+    }
+}
+
 function Test-EppRegistrationDelay {
     param([string] $Message)
 
@@ -714,7 +760,7 @@ function Initialize-EppResourceProviders {
             $_.RegistrationState -eq 'NotRegistered' -or -not (Test-EppProviderLocation $_ $Inputs.Location)
         })
         if (-not $pending.Count) {
-            Invoke-EppRegistrationRetry -Operation { Assert-EppPremiumLocation -Inputs $Inputs } | Out-Null
+            Invoke-EppRegistrationRetry -Operation { Assert-EppServicePlanLocation -Inputs $Inputs } | Out-Null
             return
         }
         if ($attempt -eq $MaxAttempts) {
@@ -739,8 +785,9 @@ function Connect-EppContext {
         throw "Azure CLI is not installed or not on PATH. Install Azure CLI, open a new PowerShell 7 window, and rerun setup."
     }
     $cliVersion = Invoke-EppAz version --output json | ConvertFrom-Json
-    if ([Version]$cliVersion.'azure-cli' -lt [Version]'2.48.1') {
-        throw 'Azure CLI 2.48.1 or newer is required for deployment with SCM basic authentication disabled.'
+    $minimumCliVersion = if ($Inputs.ServicePlan -eq 'FC1') { [Version]'2.60.0' } else { [Version]'2.48.1' }
+    if ([Version]$cliVersion.'azure-cli' -lt $minimumCliVersion) {
+        throw "Azure CLI $minimumCliVersion or newer is required for $($Inputs.ServicePlan) deployment with SCM basic authentication disabled."
     }
     Initialize-EppBicep -NonInteractive:$NonInteractive -InstallPrerequisites:$InstallPrerequisites
     Import-EppGraphModules -NonInteractive:$NonInteractive -InstallPrerequisites:$InstallPrerequisites
@@ -795,6 +842,7 @@ function Connect-EppContext {
         if ($tags['eppLanguage'] -and $tags['eppLanguage'] -ne $Inputs.Language) {
             throw "This prefix already hosts '$($tags['eppLanguage'])'. Use a different prefix for '$($Inputs.Language)' instead of switching a running app's runtime."
         }
+        Assert-EppExistingServicePlan -Inputs $Inputs -Names $Names -Tags $tags
     }
     elseif ($groupExists -ne 'false') { throw 'Azure returned an invalid resource-group existence result.' }
 
@@ -802,7 +850,7 @@ function Connect-EppContext {
     Assert-EppProviderLocations -Providers $resourceProviders -Location $Inputs.Location
     $web = $resourceProviders | Where-Object Namespace -eq 'Microsoft.Web'
     if ($web.RegistrationState -eq 'Registered') {
-        try { Assert-EppPremiumLocation -Inputs $Inputs }
+        try { Assert-EppServicePlanLocation -Inputs $Inputs }
         catch {
             if (-not (Test-EppRegistrationDelay $_.Exception.Message)) { throw }
             Write-Warning 'Azure resource-provider registration is still reaching this region. Availability will be checked again after approval.'
@@ -822,12 +870,16 @@ function Connect-EppContext {
 }
 
 function Get-EppResourceRows {
-    param([Collections.IDictionary] $Names)
+    param([Collections.IDictionary] $Names, [ValidateSet('FC1', 'EP1')][string] $ServicePlan)
+
+    $planDescription = if ($ServicePlan -eq 'FC1') {
+        'Linux Flex Consumption FC1, 2048 MB, up to 40 on-demand instances, zero always-ready instances.'
+    } else { 'Linux Premium EP1 compute with one warm instance for the Function App.' }
 
     return @(
         [pscustomobject]@{ Resource = 'Resource group'; Name = $Names.resourceGroup; Description = 'Contains all Azure resources created by this deployment.' }
         [pscustomobject]@{ Resource = 'Function App'; Name = $Names.functionApp; Description = 'Hosts the External Phone Provider endpoint.' }
-        [pscustomobject]@{ Resource = 'Hosting plan'; Name = $Names.hostingPlan; Description = 'Linux Premium EP1 compute for the Function App.' }
+        [pscustomobject]@{ Resource = 'Hosting plan'; Name = $Names.hostingPlan; Description = $planDescription }
         [pscustomobject]@{ Resource = 'Storage account'; Name = $Names.storageAccount; Description = 'Provides Function host storage and private package storage.' }
         [pscustomobject]@{ Resource = 'Blob container'; Name = 'packages'; Description = 'Stores the verified deployment package privately.' }
         [pscustomobject]@{ Resource = 'Key Vault'; Name = $Names.keyVault; Description = 'Stores the encryption private key and provider credentials.' }
@@ -848,6 +900,10 @@ function Show-EppPlan {
     Write-Host "Application:  $($Inputs.ApplicationId)"
     Write-Host "Location:     $($Inputs.Location)"
     Write-Host "Platform:     $($Inputs.Platform)"
+    Write-Host "Service plan: $($Inputs.ServicePlan)"
+    $cacheEnabled = ($Inputs.ServicePlan -eq 'EP1').ToString().ToLowerInvariant()
+    Write-Host "Cache app settings: EPP_KEY_VAULT_CACHE_ENABLED=$cacheEnabled; EPP_ACCESS_TOKEN_CACHE_ENABLED=$cacheEnabled"
+    Write-Host 'Runtime dependency: these settings do not control caching until the part 2 runtime package is released and deployed.' -ForegroundColor Yellow
     Write-Host "Provider:     $($ProviderConfiguration.DisplayName)"
     Write-Host "Channel:      $($ProviderConfiguration.Channel)"
     $tenantScope = if ($ProviderConfiguration.EndpointRegion -eq 'eu') { 'EU' } else { 'Global' }
@@ -869,7 +925,7 @@ function Show-EppPlan {
     Write-Host "Source:       $SourceBaseUri"
 
     Write-Host "`nAzure resources and configuration" -ForegroundColor Cyan
-    Get-EppResourceRows -Names $Names |
+    Get-EppResourceRows -Names $Names -ServicePlan $Inputs.ServicePlan |
         Format-Table Resource, Name, Description -AutoSize | Out-String -Width 240 | Write-Host
     Write-Host '  - Required Azure resource providers are checked before deployment; existing registrations are reused.'
     $Context.ResourceProviders | Select-Object Namespace, RegistrationState | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
@@ -912,10 +968,16 @@ function Show-EppPlan {
 
     Write-Host "`nDeployment notes" -ForegroundColor Cyan
     Write-Host '  - Deploy the verified package, synchronize Function triggers, and enable HTTPS ingress after Easy Auth is verified.'
-    if ($Inputs.BuildStrategy -eq 'remote-build') {
+    if ($Inputs.ServicePlan -eq 'FC1') {
+        Write-Host '  - Flex Consumption: publish through One Deploy; Python builds remotely in Azure. No always-ready instances.'
+        Write-Host '  - FC1 includes a free usage grant. Usage beyond the grant, Key Vault, storage, and telemetry can incur charges.' -ForegroundColor Yellow
+    }
+    elseif ($Inputs.BuildStrategy -eq 'remote-build') {
         Write-Host '  - Python: use the Entra-protected SCM endpoint for remote build, then save only the built output in private package storage.'
     }
-    Write-Host '  - Premium EP1, storage, and telemetry incur Azure charges.' -ForegroundColor Yellow
+    if ($Inputs.ServicePlan -eq 'EP1') {
+        Write-Host '  - Premium EP1, Key Vault, storage, and telemetry incur Azure charges.' -ForegroundColor Yellow
+    }
     Write-Host '  - Rerunning setup can restart the Function App.' -ForegroundColor Yellow
     Write-Host '  - Failed deployments are not automatically rolled back, and resources are not automatically deleted.' -ForegroundColor Yellow
 
@@ -942,9 +1004,10 @@ function Show-EppDeploymentResult {
 
     Write-Host "`nDeployment completed" -ForegroundColor Green
     Write-Host "`nAzure resources created or updated" -ForegroundColor Cyan
-    Get-EppResourceRows -Names $Names |
+    Get-EppResourceRows -Names $Names -ServicePlan $Inputs.ServicePlan |
         Format-Table Resource, Name -AutoSize | Out-String -Width 160 | Write-Host
     Write-Host "Function endpoint: $EndpointUrl" -ForegroundColor Green
+    Write-Host "Service plan: $($Inputs.ServicePlan)"
     Write-Host "Deployment details: $ResultPath"
     Write-Host 'Certificate renewal is manual. Track the expiry in the deployment details and coordinate the Entra certificate update before expiry.' -ForegroundColor Yellow
 
@@ -1419,6 +1482,7 @@ function Invoke-EppDeployment {
         packageBlobName = @{ value = "$($Inputs.PackageSha256).zip" }
         language = @{ value = $Inputs.Language }
         remoteBuild = @{ value = [bool]$Package.RequiresRemoteBuild }
+        servicePlan = @{ value = $Inputs.ServicePlan }
     }
     $parameterPath = Join-Path $AssetDirectory 'deployment.parameters.json'
     @{ '$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'; contentVersion = '1.0.0.0'; parameters = $parameters } |
@@ -1452,54 +1516,17 @@ function Invoke-EppDeployment {
     $graphAccess = Assert-EppGraphAccess -Inputs $Inputs -Certificate $certificate -KeyId $keyId `
         -IdentifierUri $outputs.identifierUri.value
     $siteId = "/subscriptions/$($Inputs.SubscriptionId)/resourceGroups/$($Names.resourceGroup)/providers/Microsoft.Web/sites/$($Names.functionApp)"
-    $ingressOpened = $false
-    try {
-        Assert-EppAuthentication -SiteId $siteId -Inputs $Inputs -Context $Context -IdentifierUri $outputs.identifierUri.value
-        $packagePath = $Package.Path
-        if ($Package.RequiresRemoteBuild) {
-            $ingressOpened = $true
-            Set-EppPublicAccess -SiteId $siteId -SubscriptionId $Inputs.SubscriptionId -Access Enabled
-            $packagePath = Build-EppPythonPackage -Inputs $Inputs -Names $Names -SiteId $siteId -SourcePath $Package.Path -Directory $AssetDirectory
-            $Inputs.PackageSha256 = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
-        }
-        Write-Host 'Publishing the ready-to-run Function package...' -ForegroundColor Cyan
-        Invoke-EppDataOperation {
-            Invoke-EppAz storage blob upload --account-name $Names.storageAccount --container-name packages `
-                --name "$($Inputs.PackageSha256).zip" --file $packagePath --auth-mode login --overwrite true `
-                --subscription $Inputs.SubscriptionId --output none
-        } | Out-Null
-        if ($Package.RequiresRemoteBuild) {
-            if ($outputs.packageContainerUrl.value -cne "https://$($Names.storageAccount).blob.core.windows.net/packages/") {
-                throw 'Azure returned an unexpected package storage URL. The app will not mount it.'
-            }
-            $packageUrl = "$($outputs.packageContainerUrl.value)$($Inputs.PackageSha256).zip"
-            Assert-EppHttpsUrl $packageUrl
-            Set-EppPackageSettings -SiteId $siteId -SubscriptionId $Inputs.SubscriptionId -PackageUrl $packageUrl -Directory $AssetDirectory
-        }
-        if (-not $ingressOpened) {
-            $ingressOpened = $true
-            Set-EppPublicAccess -SiteId $siteId -SubscriptionId $Inputs.SubscriptionId -Access Enabled
-        }
-        Invoke-EppAz functionapp restart --resource-group $Names.resourceGroup --name $Names.functionApp `
-            --subscription $Inputs.SubscriptionId --output none | Out-Null
-        Sync-EppFunctionTriggers -SiteId $siteId -SubscriptionId $Inputs.SubscriptionId
-        Assert-EppFunctionPublished -Inputs $Inputs -Names $Names
-    }
-    catch {
-        $deploymentError = $_
-        if ($ingressOpened) {
-            try { Set-EppPublicAccess -SiteId $siteId -SubscriptionId $Inputs.SubscriptionId -Access Disabled }
-            catch { throw [AggregateException]::new('Deployment failed and public ingress could not be disabled. Inspect the Function App immediately.', [Exception[]]@($deploymentError.Exception, $_.Exception)) }
-        }
-        throw $deploymentError
-    }
+    $Inputs.PackageSha256 = Publish-EppFunction -Inputs $Inputs -Names $Names -Context $Context -Outputs $outputs `
+        -SiteId $siteId -Package $Package -Directory $AssetDirectory
     $result = [ordered]@{
         tenantId = $Inputs.TenantId; subscriptionId = $Inputs.SubscriptionId; applicationId = $Inputs.ApplicationId
         provider = $ProviderConfiguration.Id; channel = $ProviderConfiguration.Channel
         endpointRegion = $ProviderConfiguration.EndpointRegion; providerAuthentication = $Inputs.ProviderAuthentication
         providerTenantId = $Inputs.ProviderTenantId
         resourcePrefix = $Inputs.ResourcePrefix; resources = $Names
-        language = $Inputs.Language
+        language = $Inputs.Language; servicePlan = $Inputs.ServicePlan
+        keyVaultCacheEnabled = $Inputs.ServicePlan -eq 'EP1'
+        accessTokenCacheEnabled = $Inputs.ServicePlan -eq 'EP1'
         endpointUrl = $outputs.endpointUrl.value; identifierUri = $outputs.identifierUri.value
         encryptionKeyId = $keyId; certificateThumbprint = $certificate.Thumbprint
         certificateId = $issued.CertificateId; certificateSecretId = $issued.SecretId
@@ -1521,6 +1548,70 @@ function Invoke-EppDeployment {
     return [pscustomobject]$result
 }
 
+function Publish-EppFunction {
+    param(
+        [hashtable] $Inputs, [Collections.IDictionary] $Names, $Context, $Outputs,
+        [string] $SiteId, $Package, [string] $Directory
+    )
+
+    if ($Inputs.ServicePlan -notin @('FC1', 'EP1')) { throw "Unknown service plan '$($Inputs.ServicePlan)'." }
+    $ingressOpened = $false
+    $deployedHash = $Inputs.PackageSha256
+    try {
+        Assert-EppAuthentication -SiteId $SiteId -Inputs $Inputs -Context $Context -IdentifierUri $Outputs.identifierUri.value
+        if ($Inputs.ServicePlan -eq 'FC1') {
+            $ingressOpened = $true
+            Set-EppPublicAccess -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId -Access Enabled
+            Write-Host 'Publishing the Function package through Flex Consumption One Deploy...' -ForegroundColor Cyan
+            $remoteBuild = ([bool]$Package.RequiresRemoteBuild).ToString().ToLowerInvariant()
+            Invoke-EppAz functionapp deployment source config-zip --resource-group $Names.resourceGroup --name $Names.functionApp `
+                --subscription $Inputs.SubscriptionId --src $Package.Path --build-remote $remoteBuild --timeout 1800 --output none | Out-Null
+            # One Deploy builds and stores Python output in Azure; its bytes are not downloaded or hashed locally.
+            if ($Package.RequiresRemoteBuild) { $deployedHash = $null }
+        }
+        else {
+            $packagePath = $Package.Path
+            if ($Package.RequiresRemoteBuild) {
+                $ingressOpened = $true
+                Set-EppPublicAccess -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId -Access Enabled
+                $packagePath = Build-EppPythonPackage -Inputs $Inputs -Names $Names -SiteId $SiteId -SourcePath $Package.Path -Directory $Directory
+                $deployedHash = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            Write-Host 'Publishing the ready-to-run Function package...' -ForegroundColor Cyan
+            Invoke-EppDataOperation {
+                Invoke-EppAz storage blob upload --account-name $Names.storageAccount --container-name packages `
+                    --name "$deployedHash.zip" --file $packagePath --auth-mode login --overwrite true `
+                    --subscription $Inputs.SubscriptionId --output none
+            } | Out-Null
+            if ($Package.RequiresRemoteBuild) {
+                if ($Outputs.packageContainerUrl.value -cne "https://$($Names.storageAccount).blob.core.windows.net/packages/") {
+                    throw 'Azure returned an unexpected package storage URL. The app will not mount it.'
+                }
+                $packageUrl = "$($Outputs.packageContainerUrl.value)$deployedHash.zip"
+                Assert-EppHttpsUrl $packageUrl
+                Set-EppPackageSettings -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId -PackageUrl $packageUrl -Directory $Directory
+            }
+            if (-not $ingressOpened) {
+                $ingressOpened = $true
+                Set-EppPublicAccess -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId -Access Enabled
+            }
+            Invoke-EppAz functionapp restart --resource-group $Names.resourceGroup --name $Names.functionApp `
+                --subscription $Inputs.SubscriptionId --output none | Out-Null
+            Sync-EppFunctionTriggers -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId
+        }
+        Assert-EppFunctionPublished -Inputs $Inputs -Names $Names
+    }
+    catch {
+        $deploymentError = $_
+        if ($ingressOpened) {
+            try { Set-EppPublicAccess -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId -Access Disabled }
+            catch { throw [AggregateException]::new('Deployment failed and public ingress could not be disabled. Inspect the Function App immediately.', [Exception[]]@($deploymentError.Exception, $_.Exception)) }
+        }
+        throw $deploymentError
+    }
+    return $deployedHash
+}
+
 function Invoke-EppSetup {
     [CmdletBinding()]
     param(
@@ -1528,6 +1619,7 @@ function Invoke-EppSetup {
         [string] $Provider, [string] $Channel, [string] $EndpointRegion,
         [string] $ResourcePrefix,
         [string] $Language,
+        [string] $ServicePlan,
         [string] $OutputDirectory, [string] $AssetDirectory, [string] $SourceBaseUri,
         [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
         [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample',
@@ -1563,6 +1655,8 @@ function Invoke-EppSetup {
     $inputs.Platform = $selection.DisplayName
     $inputs.PackageUrl = $selection.Url
     $inputs.BuildStrategy = $selection.BuildStrategy
+    $plan = Get-EppServicePlan -ServicePlan $ServicePlan -NonInteractive:$NonInteractive
+    $inputs.ServicePlan = $plan.id
     $inputs.ResourcePrefix = Read-EppInput ResourcePrefix $ResourcePrefix -Kind Prefix `
         -Hint 'All resources created by this script will start with this prefix' -NonInteractive:$NonInteractive
     $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix $inputs.ResourcePrefix

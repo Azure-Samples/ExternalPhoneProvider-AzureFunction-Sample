@@ -30,7 +30,12 @@ and deploying, step by step.
 Use **[setup](setup/docs/README.md)** for **Step 2: endpoint deployment**. Download only
 `Setup-Epp.ps1`; it downloads its supporting PowerShell, Bicep, package catalog, and provider JSON
 from the same commit. Customers select a language, provider, SMS or voice, Global or EU endpoint,
-and a resource prefix, then approve one complete plan. Manual Step 1 only creates the dedicated app
+a service plan, and a resource prefix, then approve one complete plan. **Flex Consumption (FC1)** uses
+zero always-ready instances and writes both credential-cache app settings as `false`; **Premium EP1**
+writes them as `true`. These settings do not control existing runtime caches until the supporting
+runtime package from part 2 is released and deployed.
+FC1 has a free usage grant, not a guarantee of zero Azure charges.
+Manual Step 1 only creates the dedicated app
 registration; PowerShell configures its service principals, `Epp.Invoke`, Microsoft caller access,
 Graph `Application.Read.All`, the provider-tenant allowlist preview, encryption certificate, and
 Easy Auth. The encryption certificate is issued inside Key Vault after infrastructure deployment;

@@ -17,7 +17,11 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
    Use the [guided EPP setup](../setup/docs/README.md) after manually creating only the dedicated
    endpoint application registration. Download only `setup/Setup-Epp.ps1`; it retrieves commit-pinned support scripts,
    Bicep, provider profiles, and the selected language package. Choose a provider, SMS or voice,
-   Global or EU, and a resource prefix, then approve one complete deployment plan.
+   Global or EU, a service plan, and a resource prefix, then approve one complete deployment plan.
+   **Flex Consumption FC1** uses a free usage grant, zero always-ready instances, and cache app settings
+   set to `false`. **Premium EP1** keeps a warm instance and sets both to `true`. The existing runtimes
+   ignore these settings until the supporting runtime package from part 2 is released and deployed.
+   The free grant does not cover all Azure usage or supporting services.
 
    After approval, the script configures the app registration and enterprise application, creates
    the Microsoft phone-provider service principal, assigns `Epp.Invoke`, grants it Microsoft Graph
