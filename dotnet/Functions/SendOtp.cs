@@ -109,10 +109,11 @@ public sealed class SendOtp
         log.PayloadValidated(payload, payload.CorrelationId ?? headerCorrelationId,
             payload.CorrelationId is not null ? "payload" : "header");
 
-        (string? Kid, DeliveryContext Context) decrypted;
+        DecryptedPayload<DeliveryContext> decrypted;
         try
         {
-            decrypted = _decryptor.Decrypt(payload.EncryptedDeliveryContext!);
+            decrypted = _decryptor.Decrypt<DeliveryContext>(
+                payload.EncryptedDeliveryContext!);
         }
         catch
         {
@@ -123,10 +124,10 @@ public sealed class SendOtp
         log.Service("delivery_context_decrypted");
 
         if (!string.IsNullOrEmpty(config.ExpectedKeyId)
-            && !string.Equals(config.ExpectedKeyId, decrypted.Kid, StringComparison.Ordinal))
+            && !string.Equals(config.ExpectedKeyId, decrypted.KeyId, StringComparison.Ordinal))
             log.KeyIdMismatch();
 
-        var context = decrypted.Context;
+        var context = decrypted.Value;
         if (!context.IsComplete)
         {
             log.Failure("delivery_context_validation", "incomplete delivery context", 400);

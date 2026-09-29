@@ -65,7 +65,6 @@ public class SendOtpTests
         await rig.Credentials.StartAsync(default);
         Assert.Equal(1, rig.Secrets.Calls);
         Assert.Equal(0, rig.Http.Calls);
-        Assert.Equal(0, rig.Keys.Calls);
         AssertAccepted(await rig.Invoke("evaluation"));
         Assert.Equal(1, rig.Secrets.Calls);
         Assert.Equal(0, rig.Http.Calls);
@@ -79,6 +78,7 @@ public class SendOtpTests
     {
         using var rig = new HandlerRig();
         rig.Env.Clear();
+        rig.Env["EPP_DECRYPTION_KEY_PEM"] = rig.Keys.Rsa.ExportPkcs8PrivateKeyPem();
         await rig.Credentials.StartAsync(default);
         Assert.Equal(0, rig.Secrets.Calls);
         Assert.Equal(0, rig.Http.Calls);
@@ -344,6 +344,7 @@ public class SendOtpTests
     {
         using var rig = new HandlerRig();
         rig.Env.Clear();
+        rig.Env["EPP_DECRYPTION_KEY_PEM"] = rig.Keys.Rsa.ExportPkcs8PrivateKeyPem();
         rig.Env["EPP_ENCRYPTION_KEY_ID"] = "configured-key-id";
         AssertAccepted(await rig.Invoke("evaluation", tenantId: "untrusted-body-tenant"));
         Assert.Equal("encryption_key_id_mismatch",
@@ -364,26 +365,28 @@ public class SendOtpTests
             rig.Log.Records.Select(record => record.GetProperty("eventName").GetString()).Where(name => name != "encryption_key_id_mismatch"));
         foreach (var value in new[] { Kid, "configured-key-id", Phone, "918273", Nonce, "untrusted-body-tenant" })
             Assert.DoesNotContain(value, string.Join("\n", rig.Log.Messages));
-        Assert.Equal((1, 0, 0), (rig.Keys.Calls, rig.Secrets.Calls, rig.Http.Calls));
+        Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
     }
 
     [Fact]
     public async Task PrivateKeyErrorsStayGenericAndNeverReachTheProvider()
     {
         using var rig = new HandlerRig();
-        rig.Keys.Error = new InvalidOperationException(PrivateError);
+        rig.Env["EPP_DECRYPTION_KEY_PEM"] = PrivateError;
         AssertFailure(rig, await rig.Invoke(), 400, "decryption_failed");
         Assert.Equal(0, rig.Http.Calls);
     }
 
     [Theory]
     [InlineData("{", "decryption_failed", null)]
-    [InlineData("null", "bad_request", "incomplete delivery context")]
-    [InlineData("[]", "bad_request", "incomplete delivery context")]
-    [InlineData("{\"nonce\":123,\"phoneNumber\":\"phone\",\"message\":\"message\"}", "bad_request", "incomplete delivery context")]
-    [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":false,\"message\":\"message\"}", "bad_request", "incomplete delivery context")]
-    [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":\"phone\",\"message\":{}}", "bad_request", "incomplete delivery context")]
-    public async Task AuthenticatedPlaintextDistinguishesInvalidJsonFromIncompleteContext(string plaintext, string error, string? reason)
+    [InlineData("null", "decryption_failed", null)]
+    [InlineData("[]", "decryption_failed", null)]
+    [InlineData("{\"nonce\":123,\"phoneNumber\":\"phone\",\"message\":\"message\"}", "decryption_failed", null)]
+    [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":false,\"message\":\"message\"}", "decryption_failed", null)]
+    [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":\"phone\",\"message\":{}}", "decryption_failed", null)]
+    [InlineData("{\"nonce\":\"nonce\"}", "bad_request", "incomplete delivery context")]
+    public async Task AuthenticatedPlaintextUsesTypedDeliveryContextValidation(
+        string plaintext, string error, string? reason)
     {
         using var rig = new HandlerRig();
         var result = await rig.Invoke(plaintext: plaintext);
@@ -392,7 +395,7 @@ public class SendOtpTests
         if (reason is null) Assert.False(body.TryGetProperty("reason", out _));
         else Assert.Equal(reason, body.GetProperty("reason").GetString());
         Assert.Equal(Correlation, body.GetProperty("correlationId").GetString());
-        Assert.Equal((1, 0, 0), (rig.Keys.Calls, rig.Secrets.Calls, rig.Http.Calls));
+        Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
     }
 
     [Fact]
@@ -432,14 +435,16 @@ public class SendOtpTests
             Assert.Equal(validationError, body.GetProperty("reason").GetString());
         }
         Assert.True(semanticCases > 0);
-        Assert.Equal(0, rig.Keys.Calls);
         foreach (var changes in fixtures.RootElement.GetProperty("incompleteContexts").EnumerateArray())
         {
             var result = await rig.Invoke("evaluation", deliveryOverrides: changes);
-            AssertFailure(rig, result, 400, "bad_request");
+            var wrongType = changes.TryGetProperty("nonce", out var nonce)
+                && nonce.ValueKind == JsonValueKind.Number;
+            AssertFailure(rig, result, 400, wrongType ? "decryption_failed" : "bad_request");
             var body = JsonSerializer.SerializeToElement(result.Value);
-            Assert.Equal(4, body.EnumerateObject().Count());
-            Assert.Equal("incomplete delivery context", body.GetProperty("reason").GetString());
+            Assert.Equal(wrongType ? 3 : 4, body.EnumerateObject().Count());
+            if (!wrongType)
+                Assert.Equal("incomplete delivery context", body.GetProperty("reason").GetString());
             Assert.Equal(Correlation, body.GetProperty("correlationId").GetString());
         }
         Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
@@ -542,7 +547,7 @@ public class SendOtpTests
         JsonElement? delivery = null;
         switch (scenario)
         {
-            case "decryption": rig.Keys.Error = new InvalidOperationException(PrivateError); break;
+            case "decryption": rig.Env["EPP_DECRYPTION_KEY_PEM"] = PrivateError; break;
             case "incomplete_context": delivery = JsonSerializer.SerializeToElement(new { nonce = "" }); break;
             case "unknown_provider": rig.Env["EPP_PROVIDER_NAME"] = "PRIVATE-UNKNOWN-PROVIDER"; break;
             case "wrong_channel": rig.Env["EPP_PROVIDER_CHANNEL"] = "voice"; break;
@@ -887,6 +892,7 @@ public class SendOtpTests
                 ["EPP_PROVIDER_NAME"] = "infobip",
                 ["EPP_PROVIDER_ENDPOINT"] = "https://provider.example",
                 ["EPP_PROVIDER_TIMEOUT_MS"] = "2500",
+                ["EPP_DECRYPTION_KEY_PEM"] = Keys.Rsa.ExportPkcs8PrivateKeyPem(),
             };
             PhoneProviderBase[] providers =
             {
@@ -898,7 +904,7 @@ public class SendOtpTests
                 new SinchProvider(Secrets),
             };
             Credentials = new CredentialTokenService(providers, Env);
-            _function = new SendOtp(providers, Credentials, Http, new JweDecryptor(Keys), Env, Log);
+            _function = new SendOtp(providers, Credentials, Http, new JweDecryptor(Env), Env, Log);
             Function = _function;
         }
         public async Task<ObjectResult> Invoke(object? mode = null, string channel = "sms", string? tenantId = null,

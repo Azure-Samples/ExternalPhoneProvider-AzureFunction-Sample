@@ -16,7 +16,6 @@ builder.Services.AddHttpClient(SendOtp.ProviderHttpClientName)
 	.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<IEnv, ProcessEnv>();
 builder.Services.AddSingleton<ISecretResolver, SecretResolver>();
-builder.Services.AddSingleton<IJweKeyProvider, EnvJweKeyProvider>();
 builder.Services.AddSingleton<JweDecryptor>();
 builder.Services.AddSingleton<PhoneProviderBase, InfobipProvider>();
 builder.Services.AddSingleton<PhoneProviderBase, TelesignProvider>();
