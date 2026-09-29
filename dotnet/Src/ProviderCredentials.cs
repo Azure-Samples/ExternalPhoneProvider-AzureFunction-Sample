@@ -121,7 +121,7 @@ internal sealed class AccessTokenCache : ICredentialCache
     }
 }
 
-// One selected cache and one periodic refresh; configuration changes require a worker restart.
+// Optional worker-local caching; disabled caches acquire and discard credentials per request.
 internal sealed class ProviderCredentials : IDisposable
 {
     internal const string ApiKeyMode = "apiKey";
@@ -136,7 +136,7 @@ internal sealed class ProviderCredentials : IDisposable
     private readonly TimeProvider _clock;
     private ICredentialCache? _cache;
     private Task<ProviderCredential>? _pending;
-    private CancellationTokenSource? _acquisition;
+    private readonly HashSet<CancellationTokenSource> _acquisitions = new();
     private ITimer? _timer;
     private DateTimeOffset _nextAttempt;
     private bool _disposed;
@@ -167,26 +167,50 @@ internal sealed class ProviderCredentials : IDisposable
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_cache is null)
+            Task<ProviderCredential> pending;
+            try
             {
-                try
+                if (!IsCacheEnabled(auth, config))
                 {
-                    _cache = auth.Mode switch
-                    {
-                        ApiKeyMode => new ApiKeyCache(_secrets, auth, _clock),
-                        OAuthMode => new AccessTokenCache(config, _createIdentity, _createCredential, _clock),
-                        _ => throw Unavailable(),
-                    };
-                    _timer = _clock.CreateTimer(_ => Tick(), null, PollInterval, PollInterval);
+                    pending = Acquire(CreateCache(auth, config), shared: false);
                 }
-                catch (Exception) { ReportFailure("configuration"); return Task.FromException<ProviderCredential>(Unavailable()); }
+                else
+                {
+                    if (_cache is null)
+                    {
+                        _cache = CreateCache(auth, config);
+                        _timer = _clock.CreateTimer(_ => Tick(), null, PollInterval, PollInterval);
+                    }
+                    var cached = _cache.Get();
+                    if (cached is not null) return Task.FromResult(cached);
+                    pending = Refresh();
+                }
             }
-            var cached = _cache.Get();
-            if (cached is not null) return Task.FromResult(cached);
-            var pending = Refresh();
+            catch (Exception) { ReportFailure("configuration"); return Task.FromException<ProviderCredential>(Unavailable()); }
             return cancellation.CanBeCanceled ? pending.WaitAsync(cancellation) : pending;
         }
     }
+    internal static bool IsCacheEnabled(AuthConfig auth, AppConfig config)
+    {
+        var setting = auth.Mode switch
+        {
+            ApiKeyMode => config.KeyVaultCacheEnabled,
+            OAuthMode => config.AccessTokenCacheEnabled,
+            _ => throw Unavailable(),
+        };
+        return setting?.Trim().ToLowerInvariant() switch
+        {
+            null or "true" => true,
+            "false" => false,
+            _ => throw Unavailable(),
+        };
+    }
+    private ICredentialCache CreateCache(AuthConfig auth, AppConfig config) => auth.Mode switch
+    {
+        ApiKeyMode => new ApiKeyCache(_secrets, auth, _clock),
+        OAuthMode => new AccessTokenCache(config, _createIdentity, _createCredential, _clock),
+        _ => throw Unavailable(),
+    };
     private void Tick()
     {
         lock (_gate) { if (!_disposed) _ = ObserveAsync(Refresh()); }
@@ -198,13 +222,19 @@ internal sealed class ProviderCredentials : IDisposable
         if (_disposed || _cache is null || _nextAttempt > _clock.GetUtcNow())
             return Task.FromException<ProviderCredential>(Unavailable());
         _nextAttempt = _clock.GetUtcNow() + PollInterval;
+        return Acquire(_cache, shared: true);
+    }
+    private Task<ProviderCredential> Acquire(ICredentialCache cache, bool shared)
+    {
         var completion = new TaskCompletionSource<ProviderCredential>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pending = completion.Task;
-        var cancellation = _acquisition = new CancellationTokenSource(AcquisitionTimeout, _clock);
-        _ = RunAsync(_cache, completion, cancellation);
+        if (shared) _pending = completion.Task;
+        var cancellation = new CancellationTokenSource(AcquisitionTimeout, _clock);
+        _acquisitions.Add(cancellation);
+        _ = RunAsync(cache, completion, cancellation, shared);
         return completion.Task;
     }
-    private async Task RunAsync(ICredentialCache cache, TaskCompletionSource<ProviderCredential> completion, CancellationTokenSource cancellation)
+    private async Task RunAsync(ICredentialCache cache, TaskCompletionSource<ProviderCredential> completion,
+        CancellationTokenSource cancellation, bool shared)
     {
         ProviderCredential? value = null;
         try
@@ -216,8 +246,9 @@ internal sealed class ProviderCredentials : IDisposable
         lock (_gate)
         {
             if (_disposed || cancellation.IsCancellationRequested) value = null;
-            _pending = null;
-            _acquisition = null;
+            if (shared) _pending = null;
+            else cache.Dispose();
+            _acquisitions.Remove(cancellation);
             cancellation.Dispose();
             if (value is null)
             {
@@ -234,7 +265,7 @@ internal sealed class ProviderCredentials : IDisposable
         {
             _disposed = true;
             _timer?.Dispose();
-            _acquisition?.Cancel();
+            foreach (var acquisition in _acquisitions.ToArray()) acquisition.Cancel();
             _cache?.Dispose();
         }
     }

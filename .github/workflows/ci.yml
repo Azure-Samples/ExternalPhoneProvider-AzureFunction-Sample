@@ -24,6 +24,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           az bicep build --file (Join-Path $env:GITHUB_WORKSPACE 'setup/infra/main.bicep') --outfile (Join-Path $env:RUNNER_TEMP 'epp-main.json')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test service plans without Azure access
+        shell: pwsh
+        run: ./setup/tests/ServicePlans.Tests.ps1 -TemplatePath (Join-Path $env:RUNNER_TEMP 'epp-main.json')
 
   javascript:
     name: JavaScript (Node.js)

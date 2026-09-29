@@ -12,7 +12,7 @@ from jwcrypto import jwk
 from urllib3.exceptions import ReadTimeoutError
 
 from .config import read_config
-from .credentials import ProviderCredentials, report_refresh_failure
+from .credentials import ProviderCredentials, report_refresh_failure, is_cache_enabled
 from .models import DeliveryContext, DispatchRequest, Envelope, ParsedResponse, TextToVoice
 from .request_log import RequestLog
 
@@ -256,6 +256,8 @@ class DispatchEngine:
             report_refresh_failure("configuration")
             return
         try:
+            if not is_cache_enabled(adapter.manifest["auth"], config):
+                return
             self._resolve_credential(adapter.manifest["auth"], config)
         except Exception:
             report_refresh_failure("initialization")

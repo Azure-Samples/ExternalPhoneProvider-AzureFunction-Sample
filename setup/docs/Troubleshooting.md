@@ -1,5 +1,36 @@
 # Troubleshooting Step 2
 
+## Service plan selection or availability fails
+
+Choose `-ServicePlan FC1` for Flex Consumption or `-ServicePlan EP1` for Premium. The parameter is
+required in noninteractive mode. FC1 requires Azure CLI **2.60.0+**, while EP1 keeps **2.48.1+**.
+FC1 regional checks use `az functionapp list-flexconsumption-locations`; EP1 uses its existing ARM
+check below. Availability in one plan does not imply availability in the other.
+
+FC1 offers a free usage grant, not a zero-cost guarantee. It configures zero always-ready instances;
+supporting services and usage beyond the grant can still incur charges.
+
+Setup refuses to switch an existing prefix between FC1 and EP1. Use a different prefix and validate
+the new endpoint before manually changing policy. For an active endpoint, also onboard a new
+dedicated application or coordinate key continuity; a new prefix creates a different encryption key
+and cannot bypass the existing application's certificate checks.
+For older deployments without a service-plan tag,
+preflight checks the actual hosting-plan SKU. Use `-ServicePlan EP1` when rerunning an existing EP1
+deployment; do not delete tags to bypass the migration guard.
+
+## Credential caching does not match the selected plan
+
+Check `EPP_KEY_VAULT_CACHE_ENABLED` and `EPP_ACCESS_TOKEN_CACHE_ENABLED` on the serving Function App.
+Setup writes both as `"false"` for FC1 or `"true"` for EP1. The values must be `true` or `false`
+(case-insensitive, trimmed); an absent value defaults to enabled. Invalid explicit values cause the
+selected credential path to fail closed. Restart the worker after edits and deploy a current Function
+package; older code cannot honor these switches.
+
+Only the selected provider's switch matters. With it disabled, live requests still acquire credentials
+on demand, but there is no startup preparation, periodic refresh, cross-request reuse, or retry
+cooldown. This does not disable the platform's private-key Key Vault reference, enforce a cold start,
+or guarantee that a live request meets the caller's timeout.
+
 ## appservice list-locations rejects EP1
 
 `EP1` is an Azure Functions Elastic Premium plan SKU, but older Azure CLI versions do not accept
@@ -92,12 +123,19 @@ represent different artifacts; setup computes the built artifact's hash itself.
 
 ## Python remote build fails
 
-Use Azure CLI **2.48.1+** with a user account allowed to publish to the Function App and network
+**FC1:** use Azure CLI **2.60.0+** and One Deploy with `--build-remote true`. Flex stores the Azure-built
+payload in its configured managed-identity deployment container. Do not add
+`SCM_DO_BUILD_DURING_DEPLOYMENT`, `ENABLE_ORYX_BUILD`, `FUNCTIONS_WORKER_RUNTIME`, or
+`WEBSITE_RUN_FROM_PACKAGE`; these are not Flex configuration. The source hash is recorded, while the
+built-output hash is left null because the setup workstation does not download it.
+
+**EP1:** use Azure CLI **2.48.1+** with a user account allowed to publish to the Function App and network
 access to its SCM endpoint. Setup enables `SCM_DO_BUILD_DURING_DEPLOYMENT` and `ENABLE_ORYX_BUILD`,
 without `WEBSITE_RUN_FROM_PACKAGE` during the build, and requests Azure remote build explicitly.
 It never installs Windows Python dependencies for the Linux app.
 
-SCM basic authentication remains disabled. The CLI uses Microsoft Entra authentication. The built
+SCM basic authentication remains disabled for both plans. The CLI uses Microsoft Entra authentication.
+For EP1, the built
 `site/wwwroot` snapshot must include the Python Functions dependency payload; an unbuilt source
 archive is rejected even when an upload command returned success. The built output is then stored
 in private Blob storage, and temporary remote-build settings are cleared.
@@ -177,7 +215,7 @@ app to another runtime with the same prefix.
 
 Some resources can remain. No automatic deletion, vault purge/recovery, policy activation, or
 rollback occurs. Inspect the named Azure deployment and the reported error, then rerun with the
-same tenant, subscription, application, language, and prefix after correcting it.
+same tenant, subscription, application, language, service plan, and prefix after correcting it.
 
 Recognized storage/Key Vault RBAC propagation errors are retried for at most twelve attempts.
 Transient Function startup errors also have bounded retries. This includes the specific ARM

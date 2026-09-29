@@ -11,6 +11,9 @@
     Public GitHub owner/repository containing the setup files. Use with SourceRef to test a fork.
 .PARAMETER PackageReleaseTag
     Optional stable epp-packages release tag. By default, setup uses the latest stable CI package release.
+.PARAMETER ServicePlan
+    FC1 for Flex Consumption with a free usage grant and disabled credential caches, or EP1 for
+    Premium with enabled credential caches. Prompts when omitted; required for unattended setup.
 .PARAMETER InstallPrerequisites
     Install missing Microsoft Graph modules and the Azure CLI Bicep component after explicit opt-in.
 .PARAMETER ForceAuthentication
@@ -31,6 +34,7 @@ param(
     [string] $EndpointRegion,
     [string] $ResourcePrefix,
     [string] $Language,
+    [string] $ServicePlan,
     [string] $OutputDirectory = (Join-Path $PSScriptRoot 'epp-output'),
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
     [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample',

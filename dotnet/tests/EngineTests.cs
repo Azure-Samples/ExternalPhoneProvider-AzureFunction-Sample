@@ -34,6 +34,49 @@ public class EngineTests
         rig.Http.Respond = _ => Task.FromResult(Json(201, "{\"status\":\"ENROUTE\"}"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DisabledCacheSkipsStartupAndEvaluationButResolvesEachLiveRequest(bool oauth)
+    {
+        var providerCalls = 0;
+        using var rig = new HandlerRig(_ => new TestTokenCredential((_, _) =>
+            ValueTask.FromResult(new AccessToken("assertion", DateTimeOffset.UtcNow.AddHours(1)))),
+            (_, _, assertion) => new TestTokenCredential(async (_, cancellation) =>
+            {
+                providerCalls++;
+                await assertion(cancellation);
+                return new("provider-token", DateTimeOffset.UtcNow.AddHours(1));
+            }));
+        if (oauth) ConfigureSoprano(rig);
+        rig.Env[oauth ? "EPP_ACCESS_TOKEN_CACHE_ENABLED" : "EPP_KEY_VAULT_CACHE_ENABLED"] = "false";
+        rig.Env[oauth ? "EPP_KEY_VAULT_CACHE_ENABLED" : "EPP_ACCESS_TOKEN_CACHE_ENABLED"] = "true";
+        await rig.Engine.StartCredentialRefreshAsync();
+        Assert.Equal(0, rig.Secrets.Calls);
+        Assert.Equal(0, providerCalls);
+        Assert.Equal(0, rig.Http.Calls);
+        AssertAccepted(await rig.Invoke("evaluation"));
+        Assert.Equal(0, rig.Secrets.Calls);
+        Assert.Equal(0, providerCalls);
+        AssertAccepted(await rig.Invoke());
+        AssertAccepted(await rig.Invoke());
+        Assert.Equal(oauth ? 0 : 2, rig.Secrets.Calls);
+        Assert.Equal(oauth ? 2 : 0, providerCalls);
+        Assert.Equal(2, rig.Http.Calls);
+    }
+
+    [Fact]
+    public async Task InvalidCacheSettingFailsLiveCredentialsWithoutBreakingEvaluation()
+    {
+        using var rig = new HandlerRig();
+        rig.Env["EPP_KEY_VAULT_CACHE_ENABLED"] = "PRIVATE-INVALID";
+        await rig.Engine.StartCredentialRefreshAsync();
+        AssertAccepted(await rig.Invoke("evaluation"));
+        AssertFailure(rig, await rig.Invoke(), 502);
+        Assert.Equal(0, rig.Secrets.Calls);
+        Assert.Equal(0, rig.Http.Calls);
+    }
+
     [Fact]
     public async Task StartupPreparesOnlyCredentialsAndWarmRequestsReuseTheBundle()
     {

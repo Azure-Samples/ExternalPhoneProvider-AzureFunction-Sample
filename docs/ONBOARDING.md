@@ -17,7 +17,10 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
    Use the [guided EPP setup](../setup/docs/README.md) after manually creating only the dedicated
    endpoint application registration. Download only `setup/Setup-Epp.ps1`; it retrieves commit-pinned support scripts,
    Bicep, provider profiles, and the selected language package. Choose a provider, SMS or voice,
-   Global or EU, and a resource prefix, then approve one complete deployment plan.
+   Global or EU, a service plan, and a resource prefix, then approve one complete deployment plan.
+   **Flex Consumption FC1** uses a free usage grant, zero always-ready instances, and disabled
+   credential caches. **Premium EP1** keeps a warm instance and enables both caches. The free
+   grant does not cover all Azure usage or supporting services.
 
    After approval, the script configures the app registration and enterprise application, creates
    the Microsoft phone-provider service principal, assigns `Epp.Invoke`, grants it Microsoft Graph
@@ -67,6 +70,7 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
 	| `EPP_OUTBOUND_CLIENT_ID` | Existing calling application's Application (client) ID used during setup, not its Object ID or Soprano's API ID. |
 	| `EPP_OUTBOUND_MI_CLIENT_ID` | Setup-created outbound user-assigned identity's Client ID, not its principal/Object ID. |
 	| `EPP_PROVIDER_TIMEOUT_MS`, `EPP_PROVIDER_RETRY_INTERVAL_MS` | Selected profile values, as strings. The retry interval does not enable runtime retries or shutter mode. |
+	| `EPP_KEY_VAULT_CACHE_ENABLED`, `EPP_ACCESS_TOKEN_CACHE_ENABLED` | Setup selects `"false"` for FC1 or `"true"` for EP1. Each controls its provider credential cache, startup preparation, and refresh independently; unset defaults to enabled. |
 	| `KEY_VAULT_URL` | Setup-created or explicitly selected credential vault URL, not a secret value. |
 
 	The outbound IDs are used only for Soprano OAuth; leave them blank for local API-key-only
@@ -181,12 +185,17 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
    so customers can share the exact reference with Microsoft/provider support.
 
    Provider credentials are [prewarmed and refreshed per worker](CONTRACT.md#credential-caching-and-refresh)
-   automatically when a provider is configured. This contacts Key Vault or Entra without sending an OTP.
+   automatically when a provider is configured and its cache switch is enabled. This contacts Key Vault or Entra without sending an OTP.
    Evaluation requests still skip those dependencies, but independent background preparation may run
    alongside them. For local evaluation-only use without managed identity, leave `EPP_PROVIDER_NAME`
-   unset. Check for `credential_refresh_failed` warnings before live testing.
+   unset or disable its cache. When disabled, live requests still acquire credentials on demand,
+   with no cross-request reuse or background refresh. Check for `credential_refresh_failed`
+   warnings before live testing; explicit switch values must be `true` or `false`.
 
    Compare fresh-worker, warm, expiry/rotation and concurrent-request behavior. A warmup or passing
    offline test does not prove the first live request fits the caller's timeout. Background refresh
    does not retry or deduplicate a provider send. Do not rerun provisioning or change FIC, app
-   registration, provider settings or decryption keys to deploy this code-only improvement.
+   registration, provider settings or decryption keys merely to change the cache switches.
+   Switching between FC1 and EP1 requires a separately onboarded endpoint, not an in-place plan
+   conversion. Follow the [service-plan migration guidance](../setup/docs/README.md#service-plan-selection);
+   a new prefix alone does not satisfy an existing application's encryption-key continuity checks.

@@ -12,12 +12,14 @@ import pytest
 
 import src.credentials as credentials_module
 from src.config import read_config
-from src.credentials import ApiKeyCache, AccessTokenCache, ProviderCredentials
+from src.credentials import ApiKeyCache, AccessTokenCache, ProviderCredentials, is_cache_enabled
 from src.dispatch import DispatchEngine, ProviderRegistry
+from src.providers.soprano import SopranoProvider
 from src.providers.telesign import TelesignProvider
 
 AUTH = {"mode": "apiKey", "key_vault_secret_name": "key", "identity_key_vault_secret_name": "id"}
-CONFIG = read_config({"KEY_VAULT_URL": "https://unit.vault.azure.net"})
+CONFIG = read_config({"KEY_VAULT_URL": "https://unit.vault.azure.net", "EPP_KEY_VAULT_CACHE_ENABLED": "true",
+                      "EPP_ACCESS_TOKEN_CACHE_ENABLED": "false"})
 
 
 def wait_until(predicate):
@@ -37,6 +39,191 @@ class Clock:
 
     def advance(self, seconds):
         self.now += seconds
+
+
+@pytest.mark.parametrize(("value", "expected"), [(None, True), ("true", True), (" TRUE ", True),
+                                                ("false", False), (" FaLsE ", False)])
+def test_cache_switches_default_to_enabled_and_parse_boolean_strings(value, expected):
+    env = {} if value is None else {"EPP_KEY_VAULT_CACHE_ENABLED": value, "EPP_ACCESS_TOKEN_CACHE_ENABLED": value}
+    config = read_config(env)
+    assert is_cache_enabled(AUTH, config) is expected
+    assert is_cache_enabled({"mode": "oauth"}, config) is expected
+
+
+@pytest.mark.parametrize("value", ["", "1", "0", "yes", "PRIVATE-INVALID"])
+@pytest.mark.parametrize("mode", ["apiKey", "oauth"])
+def test_invalid_cache_switch_fails_before_acquisition_or_scheduling(value, mode):
+    secrets, failures = Mock(), []
+    config = read_config({"EPP_KEY_VAULT_CACHE_ENABLED": value, "EPP_ACCESS_TOKEN_CACHE_ENABLED": value})
+    manager = ProviderCredentials(secrets, report_failure=failures.append)
+    try:
+        with pytest.raises(ValueError, match="^provider credential unavailable$"):
+            manager.resolve({**AUTH, "mode": mode}, config)
+        assert failures == ["configuration"]
+        assert manager.cache is None and manager._pending is None and not manager._requests
+        secrets.resolve.assert_not_called()
+    finally:
+        manager.close()
+
+
+def test_disabled_key_vault_cache_reads_each_bundle_without_polling_stale_fallback_or_cooldown(monkeypatch):
+    clock = Clock()
+    version, fail = 1, False
+
+    def read(name):
+        if fail and name == "id":
+            raise ValueError("PRIVATE-FAILURE")
+        return f"{name}-{version}"
+
+    secrets, failures = Mock(resolve=Mock(side_effect=read)), []
+    manager = ProviderCredentials(secrets, cache_options=clock.options, report_failure=failures.append)
+    loop = Mock(side_effect=AssertionError("Disabled cache must not poll"))
+    monkeypatch.setattr(manager, "_loop", loop)
+    config = read_config({"EPP_KEY_VAULT_CACHE_ENABLED": "false", "EPP_ACCESS_TOKEN_CACHE_ENABLED": "PRIVATE-UNUSED"})
+    try:
+        assert manager.resolve(AUTH, config)["secret"] == "key-1"
+        version = 2
+        assert manager.resolve(AUTH, config) == {"mode": "apiKey", "secret": "key-2", "identity": "id-2"}
+        fail = True
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.resolve(AUTH, config)
+        fail, version = False, 3
+        assert manager.resolve(AUTH, config)["identity"] == "id-3"
+        assert secrets.resolve.call_count == 8 and failures == ["key_vault"]
+        assert manager.cache is None and manager._pending is None and not manager._requests
+        loop.assert_not_called()
+        clock.advance(300)
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.refresh()
+        assert secrets.resolve.call_count == 8
+    finally:
+        manager.close()
+
+
+def test_disabled_access_token_cache_creates_and_closes_request_scoped_sdk_clients(monkeypatch):
+    clock = Clock()
+    identities, clients = [], []
+
+    def create_identity(**_):
+        client = Mock(spec=["get_token_info", "close"], get_token_info=Mock(
+            return_value=SimpleNamespace(token="assertion", expires_on=clock.now + 3600)))
+        identities.append(client)
+        return client
+
+    def create_credential(**kwargs):
+        generation = len(clients) + 1
+
+        def get_token_info(_):
+            assert kwargs["func"]() == "assertion"
+            return SimpleNamespace(token=f"PRIVATE-TOKEN-{generation}", expires_on=clock.now + 3600)
+
+        client = Mock(spec=["get_token_info", "close"], get_token_info=Mock(side_effect=get_token_info))
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", create_identity)
+    monkeypatch.setattr(credentials_module, "ClientAssertionCredential", create_credential)
+    config = read_config({"EPP_PROVIDER_TENANT_ID": "tenant", "EPP_OUTBOUND_CLIENT_ID": "app",
+                          "EPP_OUTBOUND_MI_CLIENT_ID": "identity", "EPP_PROVIDER_SCOPE": "scope",
+                          "EPP_ACCESS_TOKEN_CACHE_ENABLED": "false", "EPP_KEY_VAULT_CACHE_ENABLED": "PRIVATE-UNUSED"})
+    secrets = Mock()
+    manager = ProviderCredentials(secrets, cache_options=clock.options)
+    loop = Mock(side_effect=AssertionError("Disabled cache must not poll"))
+    monkeypatch.setattr(manager, "_loop", loop)
+    try:
+        assert manager.resolve({"mode": "oauth"}, config)["access_token"] == "PRIVATE-TOKEN-1"
+        assert manager.resolve({"mode": "oauth"}, config)["access_token"] == "PRIVATE-TOKEN-2"
+        assert len(clients) == len(identities) == 2
+        for client in clients:
+            client.get_token_info.assert_called_once()
+        for client in clients + identities:
+            client.close.assert_called_once()
+        assert manager.cache is None and not manager._requests
+        secrets.resolve.assert_not_called()
+        loop.assert_not_called()
+    finally:
+        manager.close()
+
+
+def test_disabled_cache_requests_are_independent_and_shutdown_rejects_all_late_results():
+    release = Event()
+    calls = []
+
+    def read(name):
+        calls.append(name)
+        assert release.wait(3)
+        return "PRIVATE-LATE-KEY"
+
+    manager = ProviderCredentials(Mock(resolve=read))
+    config = read_config({"EPP_KEY_VAULT_CACHE_ENABLED": "false"})
+    try:
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            requests = [pool.submit(manager.resolve, AUTH, config) for _ in range(5)]
+            wait_until(lambda: len(calls) == 10)
+            manager.close()
+            for request in requests:
+                with pytest.raises(ValueError, match="unavailable"):
+                    request.result(timeout=1)
+            release.set()
+        wait_until(lambda: not manager._requests)
+        assert manager.cache is None
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.resolve(AUTH, config)
+    finally:
+        release.set()
+        manager.close()
+
+
+def test_disabled_cache_wait_timeout_discards_late_values_and_next_request_has_no_cooldown():
+    release = Event()
+    secrets = Mock(resolve=Mock(side_effect=lambda _: release.wait(3) and "value"))
+    manager = ProviderCredentials(secrets, cache_options={"wait_timeout": 0.02}, report_failure=lambda _: None)
+    config = read_config({"EPP_KEY_VAULT_CACHE_ENABLED": "false"})
+    try:
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.resolve(AUTH, config)
+        release.set()
+        wait_until(lambda: not manager._requests)
+        assert manager.cache is None
+        assert manager.resolve(AUTH, config)["secret"] == "value"
+        assert secrets.resolve.call_count == 4
+    finally:
+        release.set()
+        manager.close()
+
+
+@pytest.mark.parametrize(("provider", "mode", "switch"), [
+    ("telesign", "apiKey", "EPP_KEY_VAULT_CACHE_ENABLED"),
+    ("soprano", "oauth", "EPP_ACCESS_TOKEN_CACHE_ENABLED"),
+])
+def test_disabled_cache_startup_never_calls_the_selected_credential_resolver(provider, mode, switch):
+    engine = DispatchEngine(ProviderRegistry([TelesignProvider(), SopranoProvider()]), Mock(),
+                            {"EPP_PROVIDER_NAME": provider, "EPP_PROVIDER_AUTH_MODE": mode, switch: "false"})
+    engine._resolve_credential = Mock(side_effect=AssertionError("Disabled startup must not acquire credentials"))
+    try:
+        engine.start_credential_refresh()
+        engine._resolve_credential.assert_not_called()
+        assert engine._credentials.cache is None
+    finally:
+        engine.close()
+
+
+def test_disabled_cache_skips_configured_provider_startup_and_independent_switches_are_respected():
+    secrets = Mock(resolve=Mock(return_value="test-key"))
+    config = {"EPP_PROVIDER_NAME": "telesign", "EPP_PROVIDER_AUTH_MODE": "apiKey",
+              "EPP_KEY_VAULT_CACHE_ENABLED": "false", "EPP_ACCESS_TOKEN_CACHE_ENABLED": "true"}
+    engine = DispatchEngine(ProviderRegistry([TelesignProvider()]), secrets, config)
+    try:
+        engine.start_credential_refresh()
+        secrets.resolve.assert_not_called()
+        assert engine._credentials.cache is None
+        for _ in range(2):
+            assert engine._resolve_credential(TelesignProvider.manifest["auth"], read_config(config))["secret"] == "test-key"
+        assert secrets.resolve.call_count == 4
+        assert not is_cache_enabled(AUTH, read_config(config))
+        assert is_cache_enabled({"mode": "oauth"}, read_config(config))
+    finally:
+        engine.close()
 
 
 def test_library_cache_shares_parallel_reads_and_serves_a_complete_pair_during_refresh(monkeypatch):
@@ -183,7 +370,8 @@ def test_access_token_cache_uses_sdk_refresh_metadata_and_preserves_original_exp
     secrets = Mock(resolve=Mock(side_effect=AssertionError("OAuth must not read Key Vault")))
     manager = ProviderCredentials(secrets, cache_options=clock.options, report_failure=lambda _: None)
     config = read_config({"EPP_PROVIDER_TENANT_ID": "tenant", "EPP_OUTBOUND_CLIENT_ID": "app",
-                          "EPP_OUTBOUND_MI_CLIENT_ID": "identity", "EPP_PROVIDER_SCOPE": "scope"})
+                          "EPP_OUTBOUND_MI_CLIENT_ID": "identity", "EPP_PROVIDER_SCOPE": "scope",
+                          "EPP_ACCESS_TOKEN_CACHE_ENABLED": "true", "EPP_KEY_VAULT_CACHE_ENABLED": "false"})
     try:
         with ThreadPoolExecutor(max_workers=10) as pool:
             results = list(pool.map(lambda _: manager.resolve({"mode": "oauth"}, config), range(10)))

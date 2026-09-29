@@ -30,7 +30,10 @@ and deploying, step by step.
 Use **[setup](setup/docs/README.md)** for **Step 2: endpoint deployment**. Download only
 `Setup-Epp.ps1`; it downloads its supporting PowerShell, Bicep, package catalog, and provider JSON
 from the same commit. Customers select a language, provider, SMS or voice, Global or EU endpoint,
-and a resource prefix, then approve one complete plan. Manual Step 1 only creates the dedicated app
+a service plan, and a resource prefix, then approve one complete plan. **Flex Consumption (FC1)** uses
+zero always-ready instances and disables provider credential caches; **Premium EP1** keeps them enabled.
+FC1 has a free usage grant, not a guarantee of zero Azure charges.
+Manual Step 1 only creates the dedicated app
 registration; PowerShell configures its service principals, `Epp.Invoke`, Microsoft caller access,
 Graph `Application.Read.All`, the provider-tenant allowlist preview, encryption certificate, and
 Easy Auth. The encryption certificate is issued inside Key Vault after infrastructure deployment;
@@ -160,6 +163,8 @@ how code accesses configuration, not the environment-variable names.
 | `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE` | Soprano OAuth | Provider tenant and selected API scope. |
 | `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | Soprano OAuth | Existing multitenant application and outbound user-assigned managed identity used for client-assertion exchange. |
 | `EPP_PROVIDER_TIMEOUT_MS` | Optional | Decimal milliseconds. Defaults to `1500`, capped at `2500`; not an end-to-end deadline. |
+| `EPP_KEY_VAULT_CACHE_ENABLED` | Optional | `true` enables provider API-key bundle caching and background refresh; `false` reads the secrets for each live request. Setup sets `false` for FC1 and `true` for EP1. Unset defaults to `true`. |
+| `EPP_ACCESS_TOKEN_CACHE_ENABLED` | Optional | `true` enables Soprano token caching and background refresh; `false` uses request-scoped MI/Entra credentials. Setup sets `false` for FC1 and `true` for EP1. Unset defaults to `true`. |
 | `EPP_PROVIDER_ACCOUNT_NAME` | Adapter-dependent | Sender/account metadata, not an API key or credential identity. |
 | `KEY_VAULT_URL` | Provider credential lookup | URI of the vault containing the manifest-named provider secrets. Separate from the encryption-key reference. |
 | `AZURE_CLIENT_ID` | Optional | User-assigned managed identity's client ID for Key Vault. Leave unset for system-assigned identity. |
@@ -180,12 +185,18 @@ login; ordinary local machines have no managed-identity endpoint. Use offline te
 evaluation locally, or an explicitly injected test resolver for integration work. Never commit local
 settings, keys or test credentials.
 
-Configured providers are [prepared automatically per worker](docs/CONTRACT.md#credential-caching-and-refresh):
+When the corresponding cache switch is enabled, configured providers are
+[prepared automatically per worker](docs/CONTRACT.md#credential-caching-and-refresh):
 Telesign's Key Vault credentials, Soprano's managed-identity assertion, and its final Entra access
 token are cached and refreshed before expiry. Refresh never sends an OTP. Evaluation handling still
 skips provider work, but a worker with a configured provider can independently acquire credentials
-at startup or during background refresh. Leave `EPP_PROVIDER_NAME` unset for local evaluation-only
-work without credential acquisition. No extra refresh app settings are required.
+at startup or during background refresh. Disabling a cache also disables its startup preparation,
+polling, and cross-request reuse; it does not disable live credential acquisition. Each switch accepts
+trimmed, case-insensitive `true` or `false`; an invalid value fails the selected live credential path
+closed without preventing evaluation. Restart the worker after changing settings.
+Leave `EPP_PROVIDER_NAME` unset, or disable its corresponding cache, for local evaluation-only work
+without credential acquisition. Refresh timing is fixed; these switches do not change the
+platform-resolved decryption-key reference or guarantee cold-start latency.
 
 Core Tools does not resolve Azure Key Vault reference expressions locally. Supply the local test PEM
 or base64 PEM directly; use a reference such as `@Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/<private-key-secret>/)`

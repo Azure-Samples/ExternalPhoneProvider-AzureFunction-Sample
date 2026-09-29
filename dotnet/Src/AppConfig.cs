@@ -14,6 +14,9 @@ public sealed class AppConfig
     public string? OutboundManagedIdentityClientId { get; init; }
     // Keep the raw value; DispatchEngine owns timeout normalization.
     public string? ProviderTimeoutMs { get; init; }
+    // Validate cache switches only on credential paths; evaluation needs neither cache.
+    public string? KeyVaultCacheEnabled { get; init; }
+    public string? AccessTokenCacheEnabled { get; init; }
 
     public static AppConfig Read(IEnv env) => new()
     {
@@ -28,5 +31,7 @@ public sealed class AppConfig
         OutboundClientId = env.Get("EPP_OUTBOUND_CLIENT_ID")?.Trim(),
         OutboundManagedIdentityClientId = env.Get("EPP_OUTBOUND_MI_CLIENT_ID")?.Trim(),
         ProviderTimeoutMs = env.Get("EPP_PROVIDER_TIMEOUT_MS"),
+        KeyVaultCacheEnabled = env.Get("EPP_KEY_VAULT_CACHE_ENABLED"),
+        AccessTokenCacheEnabled = env.Get("EPP_ACCESS_TOKEN_CACHE_ENABLED"),
     };
 }

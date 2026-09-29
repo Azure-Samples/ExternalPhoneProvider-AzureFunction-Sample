@@ -35,7 +35,7 @@ try {
 const envKeys = ['EPP_ENCRYPTION_KEY_ID', 'AZURE_CLIENT_ID', 'EPP_PROVIDER_NAME', 'EPP_PROVIDER_ENDPOINT', 'EPP_PROVIDER_CHANNEL',
     'EPP_PROVIDER_TIMEOUT_MS', 'EPP_PROVIDER_AUTH_MODE', 'EPP_PROVIDER_TENANT_ID', 'EPP_PROVIDER_SCOPE',
     'EPP_OUTBOUND_CLIENT_ID', 'EPP_OUTBOUND_MI_CLIENT_ID', 'EPP_LOG_PLAINTEXT', 'KEY_VAULT_URL',
-    'EPP_DECRYPTION_KEY_PEM'];
+    'EPP_DECRYPTION_KEY_PEM', 'EPP_KEY_VAULT_CACHE_ENABLED', 'EPP_ACCESS_TOKEN_CACHE_ENABLED'];
 let savedEnv;
 let fetchMock;
 let getSecret;
@@ -136,6 +136,43 @@ function assertFailure(result, status, error = 'provider_delivery_failed') {
     assert.equal(result.jsonBody.nonce, undefined);
     assert.doesNotMatch(JSON.stringify(result.jsonBody), /PRIVATE|accepted/);
 }
+
+for (const provider of ['telesign', 'soprano']) {
+    test(`${provider}: disabled cache skips startup/evaluation acquisition and resolves each live request`, async () => {
+        const apiKey = provider === 'telesign';
+        process.env.EPP_PROVIDER_NAME = provider;
+        process.env.EPP_PROVIDER_AUTH_MODE = apiKey ? 'apiKey' : 'oauth';
+        process.env[apiKey ? 'EPP_KEY_VAULT_CACHE_ENABLED' : 'EPP_ACCESS_TOKEN_CACHE_ENABLED'] = 'false';
+        if (apiKey) fetchMock.mock.mockImplementation(async () => ({
+            ok: true, status: 200, text: async () => JSON.stringify({ status: { code: 3001 }, reference_id: 'reference' }),
+        }));
+        await startHook();
+        assert.equal(getSecret.mock.callCount(), 0);
+        assert.equal(getToken.mock.callCount(), 0);
+        assert.equal(fetchMock.mock.callCount(), 0);
+        assert.equal((await invoke(await envelope({ mode: 2 }))).status, 200);
+        assert.equal(getSecret.mock.callCount(), 0);
+        assert.equal(getToken.mock.callCount(), 0);
+        assert.equal((await invoke(await envelope())).status, 200);
+        assert.equal((await invoke(await envelope())).status, 200);
+        assert.equal(getSecret.mock.callCount(), apiKey ? 4 : 0);
+        assert.equal(getToken.mock.callCount(), apiKey ? 0 : 2);
+        assert.equal(fetchMock.mock.callCount(), 2);
+        assert.equal(credentials.current, null);
+        assert.equal(credentials.timer, null);
+    });
+}
+
+test('malformed cache settings fail live credentials without breaking evaluation or leaking the setting', async () => {
+    process.env.EPP_ACCESS_TOKEN_CACHE_ENABLED = 'PRIVATE-INVALID';
+    mock.method(console, 'warn', () => {});
+    await startHook();
+    assert.equal((await invoke(await envelope({ mode: 2 }))).status, 200);
+    assertFailure(await invoke(await envelope()), 502);
+    assert.equal(getToken.mock.callCount(), 0);
+    assert.equal(getSecret.mock.callCount(), 0);
+    assert.equal(fetchMock.mock.callCount(), 0);
+});
 
 test('worker startup preloads credentials without delivery and leaves evaluation independent', async () => {
     await startHook();

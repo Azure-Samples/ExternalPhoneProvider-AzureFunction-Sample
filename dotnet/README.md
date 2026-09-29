@@ -90,8 +90,13 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 
 ## Source
 
-The hosted service selects `ApiKeyCache` or `AccessTokenCache` from the provider manifest's auth mode.
-Only the selected cache starts: API keys use Key Vault and framework `MemoryCache`; access tokens
+The hosted service selects `ApiKeyCache` or `AccessTokenCache` from the provider manifest's auth mode
+only when `EPP_KEY_VAULT_CACHE_ENABLED` or `EPP_ACCESS_TOKEN_CACHE_ENABLED`, respectively, is enabled.
+Both default to `true`; guided setup sets both to `false` for FC1 and `true` for EP1.
+With the selected switch set to `false`, each live request acquires credentials on demand, discards
+request-scoped state afterward, and starts no prewarming or refresh loop. Values must be `true` or
+`false` (case-insensitive, surrounding whitespace ignored).
+When enabled, only the selected cache starts: API keys use Key Vault and framework `MemoryCache`; access tokens
 use the MI/Entra SDKs without Key Vault. One periodic timer polls every 30 seconds. Configuration
 changes require restart. Each shared acquisition owns
 its cancellation budget; a waiter cannot cancel another request's retrieval. Disposal stops refresh
