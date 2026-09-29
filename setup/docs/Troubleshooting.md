@@ -21,15 +21,10 @@ deployment; do not delete tags to bypass the migration guard.
 ## Credential caching does not match the selected plan
 
 Check `EPP_KEY_VAULT_CACHE_ENABLED` and `EPP_ACCESS_TOKEN_CACHE_ENABLED` on the serving Function App.
-Setup writes both as `"false"` for FC1 or `"true"` for EP1.
-**This setup-only change does not implement runtime cache control.** Existing runtimes ignore these
-settings, so `"false"` alone does not disable their caches. The supporting runtime package from part 2
-must be released and deployed before the settings take effect.
-
-With that package deployed, the values must be `true` or `false`
+Setup writes both as `"false"` for FC1 or `"true"` for EP1. The values must be `true` or `false`
 (case-insensitive, trimmed); an absent value defaults to enabled. Invalid explicit values cause the
-selected credential path to fail closed. Restart the worker after edits; older code cannot honor
-these switches.
+selected credential path to fail closed. Restart the worker after edits and deploy a current Function
+package; older code cannot honor these switches.
 
 Only the selected provider's switch matters. With it disabled, live requests still acquire credentials
 on demand, but there is no startup preparation, periodic refresh, cross-request reuse, or retry

@@ -100,6 +100,21 @@ def _summary(caplog):
     return summary
 
 
+@pytest.mark.parametrize("value", ["false", "PRIVATE-INVALID"])
+def test_cache_switches_do_not_make_evaluation_depend_on_credentials(monkeypatch, caplog, value):
+    monkeypatch.setenv("EPP_KEY_VAULT_CACHE_ENABLED", value)
+    monkeypatch.setenv("EPP_ACCESS_TOKEN_CACHE_ENABLED", value)
+    function_app._engine.env["EPP_ACCESS_TOKEN_CACHE_ENABLED"] = value
+    function_app._engine.start_credential_refresh()
+    response = _HANDLER(_request(_envelope(mode=2)))
+    assert response.status_code == 200
+    assert json.loads(response.get_body())["nonce"] == _NONCE
+    function_app._engine._resolve_credential.assert_not_called()
+    function_app._engine.secrets.resolve.assert_not_called()
+    dispatch_module.requests.request.assert_not_called()
+    assert "PRIVATE" not in caplog.text
+
+
 def test_jwe_tag_tampering_and_missing_segments_fail_before_provider_io(monkeypatch, caplog):
     monkeypatch.setenv("EPP_ENCRYPTION_KEY_ID", "configured-key-id")
     segments = _encrypt().split(".")

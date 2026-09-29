@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const { compactDecrypt } = require('jose');
 const { readConfig } = require('./config');
 const { DeliveryContext, TextToVoice } = require('./models');
-const { providerCredentials, reportRefreshFailure } = require('./credentials');
+const { providerCredentials, reportRefreshFailure, isCacheEnabled } = require('./credentials');
 
 const CHANNEL_BY_CODE = Object.freeze({ 1: 'sms', 2: 'voice' });
 const CHANNEL_BY_NAME = Object.freeze({ sms: 1, voice: 2 });
@@ -170,6 +170,7 @@ async function startProviderCredentialRefresh() {
         return;
     }
     try {
+        if (!isCacheEnabled(provider.manifest.auth, config)) return;
         await resolveProviderCredential(provider.manifest.auth, config);
     } catch {
         // The cache reports acquisition failures; also report configurations rejected before caching.

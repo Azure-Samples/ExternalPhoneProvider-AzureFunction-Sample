@@ -74,8 +74,8 @@ function Get-EppServicePlan {
     Write-Host "`nService plan selection" -ForegroundColor Cyan
     Write-Host 'Flex Consumption has a free usage grant, not a zero-cost guarantee. Additional usage, Key Vault, storage, and telemetry can incur charges.'
     return Select-EppOption -Entries @(
-        @{ id = 'FC1'; displayName = 'Flex Consumption FC1 (free grant, cold starts, cache settings false)' }
-        @{ id = 'EP1'; displayName = 'Premium EP1 (warm instance, cache settings true)' }
+        @{ id = 'FC1'; displayName = 'Flex Consumption FC1 (free grant, cold starts, credential caches disabled)' }
+        @{ id = 'EP1'; displayName = 'Premium EP1 (warm instance, credential caches enabled)' }
     ) -Name ServicePlan -PromptName 'Service plan' -Value $ServicePlan -NonInteractive:$NonInteractive
 }
 
@@ -902,8 +902,7 @@ function Show-EppPlan {
     Write-Host "Platform:     $($Inputs.Platform)"
     Write-Host "Service plan: $($Inputs.ServicePlan)"
     $cacheEnabled = ($Inputs.ServicePlan -eq 'EP1').ToString().ToLowerInvariant()
-    Write-Host "Cache app settings: EPP_KEY_VAULT_CACHE_ENABLED=$cacheEnabled; EPP_ACCESS_TOKEN_CACHE_ENABLED=$cacheEnabled"
-    Write-Host 'Runtime dependency: these settings do not control caching until the part 2 runtime package is released and deployed.' -ForegroundColor Yellow
+    Write-Host "Credential caches: EPP_KEY_VAULT_CACHE_ENABLED=$cacheEnabled; EPP_ACCESS_TOKEN_CACHE_ENABLED=$cacheEnabled"
     Write-Host "Provider:     $($ProviderConfiguration.DisplayName)"
     Write-Host "Channel:      $($ProviderConfiguration.Channel)"
     $tenantScope = if ($ProviderConfiguration.EndpointRegion -eq 'eu') { 'EU' } else { 'Global' }
@@ -969,7 +968,7 @@ function Show-EppPlan {
     Write-Host "`nDeployment notes" -ForegroundColor Cyan
     Write-Host '  - Deploy the verified package, synchronize Function triggers, and enable HTTPS ingress after Easy Auth is verified.'
     if ($Inputs.ServicePlan -eq 'FC1') {
-        Write-Host '  - Flex Consumption: publish through One Deploy; Python builds remotely in Azure. No always-ready instances.'
+        Write-Host '  - Flex Consumption: publish through One Deploy; Python builds remotely in Azure. No always-ready instances or background credential refresh.'
         Write-Host '  - FC1 includes a free usage grant. Usage beyond the grant, Key Vault, storage, and telemetry can incur charges.' -ForegroundColor Yellow
     }
     elseif ($Inputs.BuildStrategy -eq 'remote-build') {

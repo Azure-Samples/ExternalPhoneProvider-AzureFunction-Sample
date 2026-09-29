@@ -119,7 +119,8 @@ there is no API-key fallback. Evaluation skips acquisition. A provider rejection
 Tokens are treated as opaque: the Function checks SDK expiry metadata, not custom JWT claims.
 Soprano remains responsible for signature, issuer, audience, expiry, permissions, and account validation.
 
-Credential instances and their SDK caches are reused for the configured tenant/application/identity.
+With `EPP_ACCESS_TOKEN_CACHE_ENABLED=true` (the default), credential instances and their SDK caches
+are reused for the configured tenant/application/identity.
 One [worker-local refresh loop](#credential-caching-and-refresh) warms both exchange stages; a
 snapshot of the latest provider token keeps refresh off the delivery path. JavaScript and .NET
 bound the shared acquisition to 2.5 seconds, independent of individual waiters. JavaScript links
@@ -192,9 +193,11 @@ are needed. Platform authentication and resolution of the decryption-key referen
 network access. Core Tools has no Easy Auth; local evaluation must remain loopback-only, without tunnels.
 
 This describes the evaluation **request path**. Independently, workers with a configured provider
-automatically prewarm and refresh credentials, even if their current traffic is evaluation-only.
+and its corresponding credential cache enabled automatically prewarm and refresh credentials,
+even if their current traffic is evaluation-only.
 No background task dispatches an OTP. A worker without `EPP_PROVIDER_NAME` performs no credential
-prewarming, and evaluation does not require that prewarming succeed.
+prewarming, and evaluation does not require that prewarming succeed. Setting the selected provider's
+cache switch to `false` also suppresses this independent credential work.
 
 There is no diagnostic environment flag. A live request is not an evaluation request. Adapter-specific
 wire fields, where required by an API, remain internal and cannot enable a separate non-delivery mode.
@@ -301,6 +304,8 @@ Set by provisioning. **Identical names across all languages.**
 | `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | client application and user-assigned identity used for Soprano client-assertion exchange |
 | `EPP_PROVIDER_ACCOUNT_NAME` | sender/source only when required by the selected adapter |
 | `EPP_PROVIDER_TIMEOUT_MS` | trimmed ASCII decimal milliseconds; default 1500 for missing/invalid/nonpositive values; capped at 2500. Not a whole-invocation deadline |
+| `EPP_KEY_VAULT_CACHE_ENABLED` | `true`/`false`: provider API-key bundle cache, startup preparation, and background refresh; unset defaults to `true` |
+| `EPP_ACCESS_TOKEN_CACHE_ENABLED` | `true`/`false`: provider OAuth token cache, startup preparation, and background refresh; unset defaults to `true` |
 | `EPP_DECRYPTION_KEY_PEM` | single RSA private key for JWE decryption, PEM or base64-encoded PEM; use a Key Vault secret reference in Azure, not a plaintext private key in shared settings |
 | `EPP_ENCRYPTION_KEY_ID` | optional expected JWE `kid`; after successful decryption, a mismatch emits only `encryption_key_id_mismatch`. Advisory, not a key selector or authentication check |
 | `KEY_VAULT_URL` | Key Vault URI for API-key providers |
@@ -340,7 +345,25 @@ subscription activation and changing tenant policy belong to provisioning, not t
 
 ### Credential caching and refresh
 
-Provider credential management is automatic for configured providers in every runtime. It changes
+Provider credential caching is controlled by the same two environment variables in every runtime.
+Guided setup selects **Flex Consumption FC1** with both switches set to `false`, or **Premium EP1**
+with both set to `true`. Existing deployments that omit the switches retain enabled caching.
+The switches are independent: `apiKey` providers consult only `EPP_KEY_VAULT_CACHE_ENABLED`, while
+`oauth` providers consult only `EPP_ACCESS_TOKEN_CACHE_ENABLED`.
+Values are trimmed, case-insensitive `true` or `false`; blank or other explicit values fail the
+selected credential path closed and produce a sanitized configuration warning. They do not prevent
+evaluation. Change app settings and restart the worker rather than changing them during execution.
+
+With caching **disabled**, there is no startup credential acquisition, periodic refresh, retry
+cooldown, or cross-request credential sharing. Each live request retrieves a complete Key Vault
+secret bundle or uses fresh request-scoped managed-identity/client-assertion SDK credential instances
+for OAuth. The same credential validation and bounded acquisition waits apply. Request-scoped state
+is discarded on completion, failure, or shutdown; Python SDK clients close when their synchronous
+acquisition finishes. Azure's own managed-identity service and platform Key Vault-reference caching
+remain outside these application switches. A scaled-to-zero app can cold-start, but disabling
+caching does not force every invocation onto a new worker.
+
+With caching **enabled**, credential management is automatic for configured providers. It changes
 when credentials are fetched, not the HTTP/nonce contract, caller authentication, FIC, provider
 selection or provider request format. The decryption-key Key Vault reference remains separate and
 is still resolved by the platform; this cache does not rotate or replace JWE keys.
@@ -349,8 +372,8 @@ The selected provider's manifest determines which of two concrete cache classes 
 
 | Authentication mode | Cache | Acquisition |
 |---|---|---|
-| `apiKey` | `ApiKeyCache` | Fetch the manifest's Key Vault secrets using managed identity. Cache the complete key/customer-ID bundle in .NET `MemoryCache`, JavaScript `lru-cache`, or Python `cachetools.TTLCache`. |
-| `oauth` | `AccessTokenCache` | Reuse Azure Identity's managed-identity and client-assertion credentials and their SDK caches. Retain only the latest usable provider token. No Key Vault access. |
+| `apiKey` | `ApiKeyCache` | When enabled, fetch the manifest's Key Vault secrets using managed identity and cache the complete key/customer-ID bundle in .NET `MemoryCache`, JavaScript `lru-cache`, or Python `cachetools.TTLCache`. |
+| `oauth` | `AccessTokenCache` | When enabled, reuse Azure Identity's managed-identity and client-assertion credentials and their SDK caches. Retain only the latest usable provider token. No Key Vault access. |
 
 Only the selected cache starts. Its credential configuration is bound on first use; app-setting
 changes require a worker restart, not live cache switching. API-key bundles are published only
@@ -544,6 +567,8 @@ Each language keeps lightweight offline tests covering representative applicatio
 - Selected-cache-only startup, shared credential retrieval, fixed refresh/retry cadence, hard expiry,
   token lifetime preservation and shutdown using controlled clocks and
   fake dependencies. JavaScript tests also exercise cancellation through the actual SDK pipeline.
+- Independent cache switches, uncached per-request acquisition without startup/polling, configuration
+  errors, failure recovery, concurrent-request isolation, deadlines, and shutdown.
 
 The sample deliberately omits exhaustive input permutations and SDK internals. These tests use
 local keys and mocked external services; they do not send SMS and **do not test Easy Auth or platform

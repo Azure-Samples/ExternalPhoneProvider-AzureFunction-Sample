@@ -12,9 +12,8 @@
 .PARAMETER PackageReleaseTag
     Optional stable epp-packages release tag. By default, setup uses the latest stable CI package release.
 .PARAMETER ServicePlan
-    FC1 for Flex Consumption with a free usage grant and cache settings set to false, or EP1 for
-    Premium with cache settings set to true. Prompts when omitted; required for unattended setup.
-    Existing runtimes ignore these settings until the part 2 runtime package is released and deployed.
+    FC1 for Flex Consumption with a free usage grant and disabled credential caches, or EP1 for
+    Premium with enabled credential caches. Prompts when omitted; required for unattended setup.
 .PARAMETER InstallPrerequisites
     Install missing Microsoft Graph modules and the Azure CLI Bicep component after explicit opt-in.
 .PARAMETER ForceAuthentication

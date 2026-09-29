@@ -90,8 +90,13 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 
 ## Source
 
-Worker initialization selects `ApiKeyCache` or `AccessTokenCache` from the provider manifest's auth mode.
-Only the selected cache starts: API keys use Key Vault and `cachetools.TTLCache`; access tokens use
+Worker initialization selects `ApiKeyCache` or `AccessTokenCache` from the provider manifest's auth mode
+only when `EPP_KEY_VAULT_CACHE_ENABLED` or `EPP_ACCESS_TOKEN_CACHE_ENABLED`, respectively, is enabled.
+Both default to `true`; guided setup sets both to `false` for FC1 and `true` for EP1.
+With the selected switch set to `false`, each live request acquires credentials on demand, discards
+request-scoped state afterward, and starts no prewarming or refresh loop. Values must be `true` or
+`false` (case-insensitive, surrounding whitespace ignored).
+When enabled, only the selected cache starts: API keys use Key Vault and `cachetools.TTLCache`; access tokens use
 the MI/Entra SDKs without Key Vault. One daemon loop polls every 30 seconds. Configuration changes
 require restart. Callers can stop waiting without abandoning shared reads; synchronous SDK I/O uses connect/read
 timeouts, not a total transport deadline. `atexit` stops refresh and releases waiters; unfinished

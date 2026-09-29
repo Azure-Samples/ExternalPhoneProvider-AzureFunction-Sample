@@ -7,6 +7,150 @@ namespace Epp.Otp.Tests;
 
 public class CredentialCacheTests
 {
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("true", true)]
+    [InlineData(" TRUE ", true)]
+    [InlineData("false", false)]
+    [InlineData(" FaLsE ", false)]
+    public void CacheSwitchesDefaultToEnabledAndParseBooleanStrings(string? value, bool expected)
+    {
+        var config = AppConfig.Read(new CacheEnv(value));
+        Assert.Equal(expected, ProviderCredentials.IsCacheEnabled(new("apiKey"), config));
+        Assert.Equal(expected, ProviderCredentials.IsCacheEnabled(new("oauth"), config));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("1")]
+    [InlineData("0")]
+    [InlineData("yes")]
+    [InlineData("PRIVATE-INVALID")]
+    public async Task InvalidCacheSwitchesFailBeforeAcquisitionOrScheduling(string value)
+    {
+        foreach (var mode in new[] { "apiKey", "oauth" })
+        {
+            var clock = new ManualClock();
+            var log = new CredentialLogger();
+            using var manager = new ProviderCredentials(new Secrets((_, _) => throw new Exception("Unexpected Key Vault")),
+                _ => throw new Exception("Unexpected MI"), (_, _, _) => throw new Exception("Unexpected OAuth"), log, clock);
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                manager.ResolveAsync(new(mode, "key"), AppConfig.Read(new CacheEnv(value))));
+            Assert.Equal("provider credential unavailable", error.Message);
+            Assert.Equal("configuration", Assert.Single(log.Entries).State["cacheKind"]);
+            Assert.Equal(0, clock.TimerCount);
+        }
+    }
+
+    [Fact]
+    public async Task DisabledKeyVaultCacheReadsEveryBundleWithoutStaleFallbackPollingOrCooldown()
+    {
+        var clock = new ManualClock();
+        var version = 1;
+        var fail = false;
+        var calls = 0;
+        var log = new CredentialLogger();
+        using var manager = new ProviderCredentials(new Secrets((name, _) =>
+        {
+            calls++;
+            if (fail && name == "id") throw new InvalidOperationException("PRIVATE-FAILURE");
+            return Task.FromResult($"{name}-{version}");
+        }), _ => throw new Exception("Unexpected MI"), (_, _, _) => throw new Exception("Unexpected OAuth"), log, clock);
+        var config = new AppConfig { KeyVaultCacheEnabled = "false", AccessTokenCacheEnabled = "PRIVATE-UNUSED" };
+        Task<ProviderCredential> Get() => manager.ResolveAsync(new("apiKey", "key", "id"), config);
+        Assert.Equal("key-1", (await Get()).Secret);
+        version = 2;
+        var pair = await Get();
+        Assert.Equal("key-2", pair.Secret);
+        Assert.Equal("id-2", pair.Identity);
+        fail = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(Get);
+        fail = false;
+        version = 3;
+        Assert.Equal("id-3", (await Get()).Identity);
+        Assert.Equal("key_vault", Assert.Single(log.Entries).State["cacheKind"]);
+        Assert.Equal(8, calls);
+        Assert.Equal(0, clock.TimerCount);
+        clock.Advance(TimeSpan.FromMinutes(5));
+        Assert.Equal(8, calls);
+    }
+
+    [Fact]
+    public async Task DisabledAccessTokenCacheCreatesFreshSdkClientsWithoutPollingOrKeyVault()
+    {
+        var clock = new ManualClock();
+        var identityInstances = 0;
+        var credentialInstances = 0;
+        using var manager = new ProviderCredentials(new Secrets((_, _) => throw new Exception("Unexpected Key Vault")),
+            _ =>
+            {
+                identityInstances++;
+                return new Token((_, _) => ValueTask.FromResult(new AccessToken("assertion", clock.GetUtcNow().AddHours(1))));
+            }, (_, _, assertion) =>
+            {
+                var generation = ++credentialInstances;
+                return new Token(async (_, cancellation) =>
+                {
+                    Assert.Equal("assertion", await assertion(cancellation));
+                    return new($"PRIVATE-TOKEN-{generation}", clock.GetUtcNow().AddHours(1));
+                });
+            }, clock: clock);
+        var config = Config(cacheEnabled: "false");
+        Assert.Equal("PRIVATE-TOKEN-1", (await manager.ResolveAsync(new("oauth"), config)).AccessToken);
+        Assert.Equal("PRIVATE-TOKEN-2", (await manager.ResolveAsync(new("oauth"), config)).AccessToken);
+        Assert.Equal(2, identityInstances);
+        Assert.Equal(2, credentialInstances);
+        Assert.Equal(0, clock.TimerCount);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(2, credentialInstances);
+    }
+
+    [Fact]
+    public async Task DisabledCacheRequestsAreIndependentAndShutdownCancelsEveryAcquisition()
+    {
+        var clock = new ManualClock();
+        var release = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellations = new List<CancellationToken>();
+        using var manager = new ProviderCredentials(new Secrets((_, cancellation) =>
+        {
+            cancellations.Add(cancellation);
+            return release.Task;
+        }), _ => throw new Exception("Unexpected MI"), (_, _, _) => throw new Exception("Unexpected OAuth"), clock: clock);
+        var config = new AppConfig { KeyVaultCacheEnabled = "false" };
+        var requests = Enumerable.Range(0, 5).Select(_ => manager.ResolveAsync(new("apiKey", "key"), config)).ToArray();
+        Assert.Equal(5, cancellations.Count);
+        manager.Dispose();
+        foreach (var request in requests) await Assert.ThrowsAsync<InvalidOperationException>(() => request);
+        Assert.All(cancellations, cancellation => Assert.True(cancellation.IsCancellationRequested));
+        release.SetResult("PRIVATE-LATE-KEY");
+        Assert.Equal(0, clock.TimerCount);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => manager.ResolveAsync(new("apiKey", "key"), config));
+    }
+
+    [Fact]
+    public async Task DisabledCacheStillHasAnAcquisitionDeadlineAndNoRetryCooldown()
+    {
+        var clock = new ManualClock();
+        var release = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        CancellationToken observed = default;
+        using var manager = new ProviderCredentials(new Secrets((_, cancellation) =>
+        {
+            calls++;
+            observed = cancellation;
+            return release.Task;
+        }), _ => throw new Exception("Unexpected MI"), (_, _, _) => throw new Exception("Unexpected OAuth"), clock: clock);
+        var config = new AppConfig { KeyVaultCacheEnabled = "false" };
+        var pending = manager.ResolveAsync(new("apiKey", "key"), config);
+        clock.Advance(TimeSpan.FromSeconds(2.5));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => pending);
+        Assert.True(observed.IsCancellationRequested);
+        release.SetResult("ready");
+        Assert.Equal("ready", (await manager.ResolveAsync(new("apiKey", "key"), config)).Secret);
+        Assert.Equal(2, calls);
+        Assert.Equal(0, clock.TimerCount);
+    }
+
     [Fact]
     public async Task ColdReadersShareOneFetchAndValidValuesRemainAvailableDuringRefresh()
     {
@@ -19,7 +163,8 @@ public class CredentialCacheTests
             await release.Task;
             return "value";
         }), _ => throw new Exception(), (_, _, _) => throw new Exception(), clock: clock);
-        Task<ProviderCredential> Get() => manager.ResolveAsync(new("apiKey", "key"), new AppConfig());
+        Task<ProviderCredential> Get() => manager.ResolveAsync(new("apiKey", "key"),
+            new AppConfig { KeyVaultCacheEnabled = "true", AccessTokenCacheEnabled = "false" });
         var readers = Enumerable.Range(0, 20).Select(_ => Get()).ToArray();
         Assert.Equal(1, calls);
         release.SetResult();
@@ -184,7 +329,7 @@ public class CredentialCacheTests
                     return new("PRIVATE-PROVIDER", clock.GetUtcNow().AddHours(1));
                 });
             }, clock: clock);
-        var config = Config();
+        var config = Config(cacheEnabled: "true");
         var initial = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => manager.ResolveAsync(new("oauth"), config)));
         Assert.All(initial, result => Assert.Equal("PRIVATE-PROVIDER", result.AccessToken));
         Assert.Equal(3, identityCalls);
@@ -319,11 +464,18 @@ public class CredentialCacheTests
         Assert.DoesNotContain("PRIVATE", entry.Message);
     }
 
-    private static AppConfig Config(string scope = "api://provider/.default", string application = "app") => new()
+    private static AppConfig Config(string scope = "api://provider/.default", string application = "app",
+        string? cacheEnabled = null) => new()
     {
         ProviderTenantId = "tenant", ProviderScope = scope, OutboundClientId = application,
         OutboundManagedIdentityClientId = "identity",
+        AccessTokenCacheEnabled = cacheEnabled,
     };
+
+    private sealed class CacheEnv(string? value) : IEnv
+    {
+        public string? Get(string name) => name is "EPP_KEY_VAULT_CACHE_ENABLED" or "EPP_ACCESS_TOKEN_CACHE_ENABLED" ? value : null;
+    }
 
     private static async Task Until(Func<bool> condition)
     {

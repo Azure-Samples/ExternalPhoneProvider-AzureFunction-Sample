@@ -3,17 +3,19 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { inspect } = require('node:util');
-const { ApiKeyCache, AccessTokenCache, ProviderCredentials } = require('../src/functions/credentials');
+const { ApiKeyCache, AccessTokenCache, ProviderCredentials, isCacheEnabled } = require('../src/functions/credentials');
 const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { readConfig } = require('../src/functions/config');
 
 const flush = () => new Promise(setImmediate);
 const auth = { mode: 'apiKey', keyVaultSecretName: 'key', identityKeyVaultSecretName: 'id' };
-const config = readConfig({ KEY_VAULT_URL: 'https://unit.vault.azure.net' });
+const config = readConfig({ KEY_VAULT_URL: 'https://unit.vault.azure.net', EPP_KEY_VAULT_CACHE_ENABLED: 'true',
+    EPP_ACCESS_TOKEN_CACHE_ENABLED: 'false' });
 const oauth = readConfig({
     EPP_PROVIDER_TENANT_ID: 'tenant', EPP_OUTBOUND_CLIENT_ID: 'app',
     EPP_OUTBOUND_MI_CLIENT_ID: 'identity', EPP_PROVIDER_SCOPE: 'scope',
+    EPP_ACCESS_TOKEN_CACHE_ENABLED: 'true', EPP_KEY_VAULT_CACHE_ENABLED: 'false',
 });
 function clock() {
     let time = 1700000000000;
@@ -42,6 +44,127 @@ function clock() {
         },
     };
 }
+
+test('cache switches default to enabled and accept only trimmed true or false independently', () => {
+    for (const [value, expected] of [[undefined, true], ['true', true], [' TRUE ', true], ['false', false], [' FaLsE ', false]]) {
+        const settings = readConfig({ EPP_KEY_VAULT_CACHE_ENABLED: value, EPP_ACCESS_TOKEN_CACHE_ENABLED: value });
+        assert.equal(isCacheEnabled(auth, settings), expected);
+        assert.equal(isCacheEnabled({ mode: 'oauth' }, settings), expected);
+    }
+    const mixed = readConfig({ EPP_KEY_VAULT_CACHE_ENABLED: 'false', EPP_ACCESS_TOKEN_CACHE_ENABLED: 'true' });
+    assert.equal(isCacheEnabled(auth, mixed), false);
+    assert.equal(isCacheEnabled({ mode: 'oauth' }, mixed), true);
+});
+
+test('invalid cache switches fail before I/O or scheduling rather than silently enabling a cache', async (t) => {
+    const time = clock();
+    const vault = t.mock.method(SecretClient.prototype, 'getSecret', () => assert.fail('Unexpected Key Vault'));
+    const token = t.mock.method(ClientAssertionCredential.prototype, 'getToken', () => assert.fail('Unexpected OAuth'));
+    for (const mode of ['apiKey', 'oauth']) {
+        for (const value of ['', '1', '0', 'yes', 'PRIVATE-INVALID']) {
+            const failures = [];
+            const manager = new ProviderCredentials({ cacheOptions: time.options, reportFailure: (kind) => failures.push(kind) });
+            const settings = readConfig({ ...oauth.env, ...config.env,
+                EPP_KEY_VAULT_CACHE_ENABLED: value, EPP_ACCESS_TOKEN_CACHE_ENABLED: value });
+            try {
+                await assert.rejects(manager.resolve({ ...auth, mode }, settings), /^Error: provider credential unavailable$/);
+                assert.deepEqual(failures, ['configuration']);
+                assert.equal(manager.current, null);
+                assert.equal(time.timerCount, 0);
+            } finally { manager.close(); }
+        }
+    }
+    assert.equal(vault.mock.callCount(), 0);
+    assert.equal(token.mock.callCount(), 0);
+});
+
+test('disabled Key Vault cache fetches each complete bundle without shared state, polling, or failure cooldown', async (t) => {
+    const time = clock();
+    let version = 1;
+    let fail = false;
+    const vault = t.mock.method(SecretClient.prototype, 'getSecret', async (name) => {
+        if (fail && name === 'id') throw new Error('PRIVATE-FAILURE');
+        return { value: `${name}-${version}` };
+    });
+    const settings = readConfig({ ...config.env, EPP_KEY_VAULT_CACHE_ENABLED: 'false',
+        EPP_ACCESS_TOKEN_CACHE_ENABLED: 'PRIVATE-UNUSED' });
+    const failures = [];
+    const manager = new ProviderCredentials({ cacheOptions: time.options, reportFailure: (kind) => failures.push(kind) });
+    try {
+        assert.equal((await manager.resolve(auth, settings)).secret, 'key-1');
+        version = 2;
+        const pair = await manager.resolve(auth, settings);
+        assert.deepEqual(pair, { mode: 'apiKey', secret: 'key-2', identity: 'id-2' });
+        fail = true;
+        await assert.rejects(manager.resolve(auth, settings), /unavailable/);
+        fail = false;
+        version = 3;
+        assert.equal((await manager.resolve(auth, settings)).identity, 'id-3');
+        assert.equal(vault.mock.callCount(), 8);
+        assert.deepEqual(failures, ['key_vault']);
+        assert.equal(manager.current, null);
+        assert.equal(manager.pending, null);
+        assert.equal(manager.controllers.size, 0);
+        assert.equal(time.timerCount, 0);
+        await time.advance(300000);
+        assert.equal(vault.mock.callCount(), 8);
+    } finally { manager.close(); }
+});
+
+test('disabled access-token cache creates fresh SDK credentials per request without Key Vault or polling', async (t) => {
+    const time = clock();
+    t.mock.method(ManagedIdentityCredential.prototype, 'getToken', async () => ({
+        token: 'assertion', expiresOnTimestamp: time.now + 3600000,
+    }));
+    let generation = 0;
+    const token = t.mock.method(ClientAssertionCredential.prototype, 'getToken', async function () {
+        await this.getAssertion();
+        return { token: `PRIVATE-TOKEN-${++generation}`, expiresOnTimestamp: time.now + 3600000 };
+    });
+    const vault = t.mock.method(SecretClient.prototype, 'getSecret', () => assert.fail('Unexpected Key Vault'));
+    const settings = readConfig({ ...oauth.env, EPP_ACCESS_TOKEN_CACHE_ENABLED: 'false',
+        EPP_KEY_VAULT_CACHE_ENABLED: 'PRIVATE-UNUSED' });
+    const manager = new ProviderCredentials({ cacheOptions: time.options });
+    try {
+        assert.equal((await manager.resolve({ mode: 'oauth' }, settings)).accessToken, 'PRIVATE-TOKEN-1');
+        const next = await manager.resolve({ mode: 'oauth' }, settings);
+        assert.equal(next.accessToken, 'PRIVATE-TOKEN-2');
+        assert.equal(JSON.stringify(next), '{"mode":"oauth"}');
+        assert.notEqual(token.mock.calls[0].this, token.mock.calls[1].this);
+        assert.equal(manager.current, null);
+        assert.equal(time.timerCount, 0);
+        await time.advance(30000);
+        assert.equal(token.mock.callCount(), 2);
+        assert.equal(vault.mock.callCount(), 0);
+    } finally { manager.close(); }
+});
+
+test('disabled caches isolate concurrent requests and shutdown cancels every outstanding acquisition', async (t) => {
+    const time = clock();
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const vault = t.mock.method(SecretClient.prototype, 'getSecret', async () => {
+        await gate;
+        return { value: 'PRIVATE-LATE-KEY' };
+    });
+    const settings = readConfig({ ...config.env, EPP_KEY_VAULT_CACHE_ENABLED: 'false' });
+    const manager = new ProviderCredentials({ cacheOptions: time.options });
+    try {
+        const requests = Array.from({ length: 5 }, () => manager.resolve(auth, settings));
+        const rejected = requests.map((request) => assert.rejects(request, /unavailable/));
+        await flush();
+        assert.equal(vault.mock.callCount(), 10);
+        assert.equal(manager.controllers.size, 5);
+        assert.equal(time.timerCount, 0);
+        manager.close();
+        await Promise.all(rejected);
+        release();
+        await flush();
+        assert.equal(manager.current, null);
+        assert.equal(manager.controllers.size, 0);
+        await assert.rejects(manager.resolve(auth, settings), /unavailable/);
+    } finally { release(); manager.close(); }
+});
 
 test('library-backed bundle shares concurrent reads, serves during refresh, and publishes pairs atomically', async (t) => {
     const time = clock();

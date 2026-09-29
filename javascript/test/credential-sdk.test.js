@@ -119,6 +119,40 @@ test('real SDK sees one initial Entra exchange and none on concurrent or later w
     } finally { manager.close(); }
 });
 
+test('disabled token caching performs a new Entra exchange for each request through the real SDK', async () => {
+    const manager = new ProviderCredentials();
+    const settings = config();
+    settings.accessTokenCacheEnabled = 'false';
+    try {
+        for (let i = 0; i < 2; i++) {
+            assert.equal((await manager.resolve({ mode: 'oauth' }, settings)).accessToken, 'PRIVATE-TOKEN');
+        }
+        assert.equal(state.tokenCalls, 2);
+        assert.equal(state.vaultCalls, 0);
+        assert.equal(manager.current, null);
+        assert.equal(manager.timer, null);
+    } finally { manager.close(); }
+});
+
+test('disabled token caching retains the SDK transport deadline without imposing a retry cooldown', async () => {
+    const failures = [];
+    const manager = new ProviderCredentials({ reportFailure: (kind) => failures.push(kind) });
+    const settings = config();
+    settings.accessTokenCacheEnabled = 'false';
+    state.wait = 10000;
+    try {
+        await assert.rejects(manager.resolve({ mode: 'oauth' }, settings), /^Error: provider credential unavailable$/);
+        await new Promise(setImmediate);
+        assert.ok(state.requests.some((request) => !request.managedIdentity && request.aborted));
+        assert.deepEqual(failures, ['provider_token']);
+        state.wait = 5;
+        assert.equal((await manager.resolve({ mode: 'oauth' }, settings)).accessToken, 'PRIVATE-TOKEN');
+        assert.equal(state.tokenCalls, 2);
+        assert.equal(manager.current, null);
+        assert.equal(manager.timer, null);
+    } finally { manager.close(); }
+});
+
 test('the cache-owned acquisition budget aborts actual SDK transport and does not cache a late token', async () => {
     const failures = [];
     const manager = new ProviderCredentials({ reportFailure: (kind) => failures.push(kind) });

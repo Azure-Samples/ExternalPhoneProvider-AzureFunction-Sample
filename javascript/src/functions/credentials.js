@@ -71,6 +71,17 @@ function checkToken(token, now) {
  * @typedef {{now?: () => number, schedule?: typeof setInterval, cancel?: typeof clearInterval}} RefreshOptions
  */
 
+/** @param {AuthConfig} auth @param {AppConfig} config */
+function isCacheEnabled(auth, config) {
+    const mode = auth.mode || API_KEY_MODE;
+    if (mode !== API_KEY_MODE && mode !== OAUTH_MODE) throw unavailable();
+    const setting = mode === API_KEY_MODE ? config.keyVaultCacheEnabled : config.accessTokenCacheEnabled;
+    if (setting == null) return true;
+    const value = setting.trim().toLowerCase();
+    if (value !== 'true' && value !== 'false') throw unavailable();
+    return value === 'true';
+}
+
 class ApiKeyCache {
     /** @param {AuthConfig} auth @param {AppConfig} config */
     constructor(auth, config, now = Date.now) {
@@ -160,7 +171,7 @@ class AccessTokenCache {
     toJSON() { return '[AccessTokenCache]'; }
 }
 
-// Owns one selected cache and one periodic refresh; configuration changes require a worker restart.
+// Optional worker-local caching; disabled caches acquire and discard credentials per request.
 class ProviderCredentials {
     /** @param {{cacheOptions?: RefreshOptions, reportFailure?: (kind: string) => void}} [options] */
     constructor({ cacheOptions = {}, reportFailure = reportRefreshFailure } = {}) {
@@ -174,24 +185,30 @@ class ProviderCredentials {
         this.pending = null;
         /** @type {ReturnType<typeof setInterval> | null} */
         this.timer = null;
-        /** @type {AbortController | null} */
-        this.controller = null;
+        /** @type {Set<AbortController>} */
+        this.controllers = new Set();
         this.nextAttemptAt = 0;
         this.closed = false;
     }
     /** @param {AuthConfig} auth @param {AppConfig} config */
     async resolve(auth, config) {
         if (this.closed) throw unavailable();
-        if (!this.current) {
+        let enabled;
+        try { enabled = isCacheEnabled(auth, config); }
+        catch { this.reportFailure('configuration'); throw unavailable(); }
+        if (!enabled) {
+            const requestCache = this.createCache(auth, config);
             try {
-                switch (auth.mode || API_KEY_MODE) {
-                    case API_KEY_MODE: this.current = new ApiKeyCache(auth, config, this.now); break;
-                    case OAUTH_MODE: this.current = new AccessTokenCache(config, this.now); break;
-                    default: throw unavailable();
-                }
-                this.timer = this.schedule(() => { void this.refresh().catch(() => {}); }, REFRESH_POLL_MS);
-                this.timer.unref?.();
-            } catch { this.reportFailure('configuration'); throw unavailable(); }
+                await this.acquire(requestCache);
+                const value = requestCache.get();
+                if (!value || this.closed) throw unavailable();
+                return value;
+            } finally { requestCache.stop(); }
+        }
+        if (!this.current) {
+            this.current = this.createCache(auth, config);
+            this.timer = this.schedule(() => { void this.refresh().catch(() => {}); }, REFRESH_POLL_MS);
+            this.timer.unref?.();
         }
         const cached = this.current.get();
         if (cached) return cached;
@@ -200,13 +217,28 @@ class ProviderCredentials {
         if (!value) throw unavailable();
         return value;
     }
+    /** @param {AuthConfig} auth @param {AppConfig} config */
+    createCache(auth, config) {
+        try {
+            switch (auth.mode || API_KEY_MODE) {
+                case API_KEY_MODE: return new ApiKeyCache(auth, config, this.now);
+                case OAUTH_MODE: return new AccessTokenCache(config, this.now);
+                default: throw unavailable();
+            }
+        } catch { this.reportFailure('configuration'); throw unavailable(); }
+    }
     refresh() {
         if (this.closed || !this.current) return Promise.reject(unavailable());
         if (this.pending) return this.pending;
         if (this.nextAttemptAt > this.now()) return Promise.reject(unavailable());
         this.nextAttemptAt = this.now() + REFRESH_POLL_MS;
-        const cache = this.current;
-        const controller = this.controller = new AbortController();
+        this.pending = this.acquire(this.current).finally(() => { this.pending = null; });
+        return this.pending;
+    }
+    /** @param {ApiKeyCache | AccessTokenCache} cache */
+    acquire(cache) {
+        const controller = new AbortController();
+        this.controllers.add(controller);
         if (AzureLogger.log !== filteredLogger) {
             const previous = AzureLogger.log;
             filteredLogger = (...args) => { if (!acquisition.getStore()) previous(...args); };
@@ -215,7 +247,7 @@ class ProviderCredentials {
         const timeout = setTimeout(() => controller.abort(), ACQUISITION_TIMEOUT_MS);
         const interrupted = new Promise((_, reject) =>
             controller.signal.addEventListener('abort', () => reject(unavailable()), { once: true }));
-        this.pending = acquisition.run(controller.signal, () => Promise.race([
+        return acquisition.run(controller.signal, () => Promise.race([
             Promise.resolve().then(() => { controller.signal.throwIfAborted(); return cache.refresh(controller.signal); }), interrupted,
         ])).catch(() => {
             controller.abort();
@@ -223,15 +255,13 @@ class ProviderCredentials {
             throw unavailable();
         }).finally(() => {
             clearTimeout(timeout);
-            this.pending = null;
-            this.controller = null;
+            this.controllers.delete(controller);
         });
-        return this.pending;
     }
     close() {
         this.closed = true;
         if (this.timer) this.cancel(this.timer);
-        this.controller?.abort();
+        for (const controller of this.controllers) controller.abort();
         this.current?.stop();
     }
     [inspect.custom]() { return '[ProviderCredentials]'; }
@@ -239,4 +269,4 @@ class ProviderCredentials {
 }
 
 const providerCredentials = new ProviderCredentials();
-module.exports = { ApiKeyCache, AccessTokenCache, ProviderCredentials, providerCredentials, reportRefreshFailure };
+module.exports = { ApiKeyCache, AccessTokenCache, ProviderCredentials, providerCredentials, reportRefreshFailure, isCacheEnabled };

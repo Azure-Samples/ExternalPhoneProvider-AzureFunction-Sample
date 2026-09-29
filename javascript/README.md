@@ -99,8 +99,13 @@ retries. The shared contract defines validation, HTTP outcomes and privacy-safe 
 
 ## Source and extension points
 
-The app-start hook selects `ApiKeyCache` or `AccessTokenCache` from the provider manifest's auth mode.
-Only that cache starts: API keys use Key Vault and `lru-cache`; access tokens use the MI/Entra SDKs,
+The app-start hook selects `ApiKeyCache` or `AccessTokenCache` from the provider manifest's auth mode
+only when `EPP_KEY_VAULT_CACHE_ENABLED` or `EPP_ACCESS_TOKEN_CACHE_ENABLED`, respectively, is enabled.
+Both default to `true`; guided setup sets both to `false` for FC1 and `true` for EP1.
+With the selected switch set to `false`, each live request acquires credentials on demand, discards
+request-scoped state afterward, and starts no prewarming or refresh loop. Values must be `true` or
+`false` (case-insensitive, surrounding whitespace ignored).
+When enabled, only that cache starts: API keys use Key Vault and `lru-cache`; access tokens use the MI/Entra SDKs,
 without Key Vault. One shared 30-second refresh loop and one in-flight acquisition keep warm reads
 nonblocking. Configuration changes require restart; failures never extend expiry. A small HTTP-client
 wrapper propagates cancellation to the installed identity SDK. Shutdown prevents late publication. See the

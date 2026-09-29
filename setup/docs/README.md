@@ -28,7 +28,7 @@ Unpublished worktree changes are not downloadable from GitHub.
 
 ## Service plan selection
 
-Setup offers these two Linux hosting plans, with the same cache app settings for every language:
+Setup offers these two Linux hosting plans, with the same cache switches in every language:
 
 | Option | Hosting | `EPP_KEY_VAULT_CACHE_ENABLED` | `EPP_ACCESS_TOKEN_CACHE_ENABLED` |
 |---|---|---|---|
@@ -38,17 +38,11 @@ Setup offers these two Linux hosting plans, with the same cache app settings for
 **FC1 is not an always-free deployment.** Its on-demand compute has a
 [free usage grant](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan#billing);
 usage beyond the grant, Key Vault, storage, telemetry, and provider services can incur charges.
-FC1 can scale to zero and cold-start; these settings do not remove cold-start latency or force a
-new worker on every invocation.
+FC1 can scale to zero and cold-start. Disabling credential caches avoids background preparation but
+does not remove cold-start latency or force a new worker on every invocation.
 
-**Runtime dependency (part 2 of 2):** this setup-only change writes the cache app settings.
-The existing JavaScript, Python, and .NET runtimes do not read them, so FC1 does **not** disable
-their existing cache managers. The supporting runtime package from part 2 must be released and
-deployed before these settings take effect.
-
-With that runtime support deployed and a cache disabled, live requests still read the provider's
-Key Vault secrets or acquire its OAuth token on demand. They do not share cached credentials,
-prewarm at startup, or poll for refresh.
+With a cache disabled, live requests still read the provider's Key Vault secrets or acquire its OAuth
+token on demand. They do not share cached credentials, prewarm at startup, or poll for refresh.
 The decryption-key Key Vault reference remains platform-managed and is not disabled.
 You can change either switch independently in Function App environment variables and restart the
 worker. Values must be `true` or `false` (case-insensitive, trimmed); unset defaults to `true` for
@@ -189,7 +183,7 @@ The flow is:
    `-PackageReleaseTag epp-packages-<run>-<attempt>` to pin a previous CI release. Malformed or
    disabled profiles still fail before resource creation.
 4. **Service plan selection:** choose **Flex Consumption FC1** (free usage grant, zero always-ready
-   instances, both cache settings `"false"`) or **Premium EP1** (warm instance, both cache settings `"true"`).
+   instances, both credential caches disabled) or **Premium EP1** (warm instance, both caches enabled).
    Supply `-ServicePlan FC1` or `-ServicePlan EP1` to reuse a known selection.
 5. **Enter a resource prefix**, such as `contoso`. All resources created by the script start with
    this prefix. Use 2-8 lowercase letters or digits, starting with a letter. Every top-level
@@ -263,8 +257,7 @@ secret-resolution status; the required deployed evaluation request verifies decr
 The public certificate and a timestamped identifier
 summary are saved to `epp-output` beside the downloaded script, or to `-OutputDirectory`.
 The summary includes certificate/secret version identifiers, thumbprint, expiry, and manual renewal
-mode. Its service-plan and cache fields record configured settings, not verified runtime cache behavior.
-Setup never downloads, writes, or imports the private key locally: only the Function receives
+mode. Setup never downloads, writes, or imports the private key locally: only the Function receives
 it through its managed-identity Key Vault reference. Certificate creation automatically supplies the
 backing secret; setup no longer writes a separate `phone-provider-decryption-key` secret.
 

@@ -257,7 +257,11 @@ public sealed class DispatchEngine : IDisposable
             _credentials.ReportFailure("configuration");
             return;
         }
-        try { await _credentials.ResolveAsync(adapter.Manifest.Auth, config, cancellation).ConfigureAwait(false); }
+        try
+        {
+            if (!ProviderCredentials.IsCacheEnabled(adapter.Manifest.Auth, config)) return;
+            await _credentials.ResolveAsync(adapter.Manifest.Auth, config, cancellation).ConfigureAwait(false);
+        }
         catch (Exception) { _credentials.ReportFailure("initialization"); }
     }
 
