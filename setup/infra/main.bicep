@@ -13,6 +13,8 @@ param packageBlobName string
 @allowed(['javascript', 'dotnet', 'python'])
 param language string
 param remoteBuild bool
+@allowed(['FC1', 'EP1'])
+param servicePlan string = 'EP1'
 
 @allowed([1, 2])
 param tokenVersion int
@@ -24,6 +26,7 @@ resource resourceGroup 'Microsoft.Resources/resourceGroups@2024-03-01' = {
     managedBy: 'EPP-Setup'
     eppApplicationId: applicationId
     eppLanguage: language
+    eppServicePlan: servicePlan
   }
 }
 
@@ -42,6 +45,7 @@ module endpoint 'resources.bicep' = {
     packageBlobName: packageBlobName
     language: language
     remoteBuild: remoteBuild
+    servicePlan: servicePlan
   }
 }
 
