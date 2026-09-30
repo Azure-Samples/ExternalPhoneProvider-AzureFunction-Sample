@@ -70,13 +70,14 @@ internal static partial class OtpLog
     internal static partial void ProviderResponseInvalidJson(ILogger logger);
 
     [LoggerMessage(EventId = 1205, EventName = "provider_response_processed",
-        Message = "Processed provider response: HTTP {ProviderHttpStatus}, status {ProviderStatus}, outcome {ProviderOutcome}, elapsed {ElapsedMs} ms")]
+        Message = "Processed provider response: HTTP {ProviderHttpStatus}, status {ProviderStatus}, outcome {ProviderOutcome}, failure {FailureReason}, elapsed {ElapsedMs} ms")]
     internal static partial void ProviderResponseProcessed(
         ILogger logger,
         LogLevel level,
         int providerHttpStatus,
         string providerStatus,
         string providerOutcome,
+        string? failureReason,
         long elapsedMs);
 
     [LoggerMessage(EventId = 1300, EventName = "request_failed",

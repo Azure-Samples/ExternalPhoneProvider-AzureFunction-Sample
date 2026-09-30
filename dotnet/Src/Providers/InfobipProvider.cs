@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 
@@ -71,15 +70,19 @@ public sealed class InfobipProvider : PhoneProviderBase
     {
         var message = payload?.Messages?.FirstOrDefault();
         var status = message?.Status;
-        var statusName = (status?.GroupName?.Value ?? status?.Name?.Value)?.ToUpperInvariant();
+        var statusName = (status?.GroupName ?? status?.Name)?.ToUpperInvariant();
         var (outcome, recognized) = MapStatus(statusName);
+        var finalOutcome = (int)httpStatus is >= 200 and < 300 ? outcome : Outcome.Fail;
         return new ProviderResult(
-            (int)httpStatus is >= 200 and < 300 ? outcome : Outcome.Fail,
+            finalOutcome,
             recognized,
             (int)httpStatus,
             message?.MessageId,
             statusName,
-            ProviderStatusDescription: status?.Description?.Value);
+            ProviderStatusDescription: status?.Description)
+        {
+            FailureReason = ClassifyFailure(httpStatus, finalOutcome, recognized),
+        };
     }
 
     public override async Task<ProviderCredentials> FetchCredentialsAsync(
@@ -138,51 +141,8 @@ public sealed class InfobipProvider : PhoneProviderBase
         [property: JsonPropertyName("messageId")] string? MessageId,
         [property: JsonPropertyName("status")] ResponseStatus? Status);
 
-    [JsonConverter(typeof(ResponseStatusConverter))]
     private sealed record ResponseStatus(
-        [property: JsonPropertyName("groupName")] ResponseString? GroupName,
-        [property: JsonPropertyName("name")] ResponseString? Name,
-        [property: JsonPropertyName("description")] ResponseString? Description);
-
-    private sealed record ResponseStatusProperties(
-        [property: JsonPropertyName("groupName")] ResponseString? GroupName,
-        [property: JsonPropertyName("name")] ResponseString? Name,
-        [property: JsonPropertyName("description")] ResponseString? Description);
-
-    [JsonConverter(typeof(ResponseStringConverter))]
-    private sealed record ResponseString(string? Value);
-
-    private sealed class ResponseStatusConverter : JsonConverter<ResponseStatus>
-    {
-        public override ResponseStatus Read(
-            ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-        {
-            if (reader.TokenType != JsonTokenType.StartObject)
-            {
-                reader.Skip();
-                return new ResponseStatus(null, null, null);
-            }
-
-            var value = JsonSerializer.Deserialize<ResponseStatusProperties>(ref reader, options);
-            return new ResponseStatus(value?.GroupName, value?.Name, value?.Description);
-        }
-
-        public override void Write(Utf8JsonWriter writer, ResponseStatus value, JsonSerializerOptions options) =>
-            throw new NotSupportedException();
-    }
-
-    private sealed class ResponseStringConverter : JsonConverter<ResponseString>
-    {
-        public override ResponseString Read(
-            ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-        {
-            if (reader.TokenType == JsonTokenType.String)
-                return new ResponseString(reader.GetString());
-            reader.Skip();
-            return new ResponseString(null);
-        }
-
-        public override void Write(Utf8JsonWriter writer, ResponseString value, JsonSerializerOptions options) =>
-            throw new NotSupportedException();
-    }
+        [property: JsonPropertyName("groupName")] string? GroupName,
+        [property: JsonPropertyName("name")] string? Name,
+        [property: JsonPropertyName("description")] string? Description);
 }

@@ -497,7 +497,7 @@ public class SendOtpTests
                    ["MsCorrelationId"] = "ms-header-correlation-id",
                }))
             OtpLog.ProviderResponseProcessed(
-                logger, LogLevel.Information, 200, "3001", "Continue", 10);
+                logger, LogLevel.Information, 200, "3001", "Continue", null, 10);
 
         var entry = Assert.Single(logger.Entries);
         Assert.Equal("function-request", entry.Scope["FunctionRequestId"]);
@@ -521,7 +521,7 @@ public class SendOtpTests
     [InlineData("request_build", 502, "provider_request_build", "request_build_failed", false)]
     [InlineData("network", 502, "provider_transport", "provider_network_error", true)]
     [InlineData("response_parse", 502, "provider_response", "response_parse_failed", true)]
-    [InlineData("http_rejection", 429, "provider_response", "provider_rejected", true)]
+    [InlineData("http_rejection", 429, "provider_response", "provider_http_error", true)]
     public async Task FailuresEmitSeparateServiceEventsAndCompleteSummaries(string scenario, int status, string stage, string reason, bool attempted)
     {
         using var rig = new HandlerRig();
@@ -716,7 +716,12 @@ public class SendOtpTests
         var summary = Summary(rig);
         Assert.Equal("unmapped", summary.GetProperty("providerStatus").GetString());
         Assert.Equal("Fail", summary.GetProperty("providerOutcome").GetString());
-        Assert.Equal(validJson ? "provider_rejected" : "invalid_provider_json", summary.GetProperty("failureReason").GetString());
+        Assert.Equal(
+            validJson ? "unrecognized_provider_status" : "invalid_provider_json",
+            summary.GetProperty("failureReason").GetString());
+        Assert.Equal(
+            validJson ? "unrecognized_provider_status" : "invalid_provider_json",
+            rig.Log.Entry("provider_response_processed").State["FailureReason"]);
         Assert.Equal(
             !validJson,
             rig.Log.Records.Any(record =>

@@ -434,6 +434,11 @@ A successful .NET live request emits:
 `request_completed`.
 
 Failures emit `request_failed` with fixed `FailureStage`, `FailureReason` and `HttpStatus` values.
+Provider results retain the coarse endpoint `Outcome` plus a safe diagnostic classification:
+`provider_http_error`, `provider_rejected`, `unrecognized_provider_status`,
+`missing_provider_message_id` or `invalid_provider_json`. The structured
+`provider_response_processed` event includes this classification together with the upstream HTTP
+status and normalized provider status; raw provider descriptions and bodies remain excluded.
 Credential refresh failures use `credential_refresh_failed`; unexpected unclassified failures use
 `unexpected_error`. Typed event arguments are explicitly allowlisted and never include request
 bodies, decrypted delivery fields, credentials, provider response bodies, query strings or private

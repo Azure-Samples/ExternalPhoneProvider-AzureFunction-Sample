@@ -90,7 +90,10 @@ public abstract class PhoneProviderBase
                         result = new ProviderResult(
                             Outcome.Fail,
                             false,
-                            (int)response.StatusCode);
+                            (int)response.StatusCode)
+                        {
+                            FailureReason = "invalid_provider_json",
+                        };
                         validJson = false;
                     }
 
@@ -123,6 +126,7 @@ public abstract class PhoneProviderBase
                     result.ProviderHttpStatus,
                     status,
                     result.Outcome.ToString(),
+                    result.FailureReason,
                     providerStarted.ElapsedMilliseconds);
             }
             return result!;
@@ -172,6 +176,20 @@ public abstract class PhoneProviderBase
         Outcome.Fail when result.ProviderHttpStatus >= 400 && result.ProviderHttpStatus < 500 => 400,
         _ => 502,
     };
+
+    protected static string? ClassifyFailure(
+        HttpStatusCode httpStatus,
+        Outcome outcome,
+        bool statusRecognized)
+    {
+        if ((int)httpStatus is < 200 or >= 300)
+            return "provider_http_error";
+        if (outcome != Outcome.Fail)
+            return null;
+        return statusRecognized
+            ? "provider_rejected"
+            : "unrecognized_provider_status";
+    }
 
     internal sealed class ProviderSendException(int statusCode) : Exception
     {

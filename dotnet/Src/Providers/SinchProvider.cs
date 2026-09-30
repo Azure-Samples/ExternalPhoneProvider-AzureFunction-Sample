@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 
@@ -67,18 +66,26 @@ public sealed class SinchProvider : PhoneProviderBase
     private static ProviderResult MapResponse(Response? payload, HttpStatusCode httpStatus)
     {
         var id = payload?.Id ?? payload?.CallId;
-        var status = payload?.Status?.Value;
+        var status = payload?.Status;
         var successful = (int)httpStatus is >= 200 and < 300;
         if (payload?.Status is null && successful && !string.IsNullOrWhiteSpace(id))
             status = "Dispatched";
         var (outcome, recognized) = MapStatus(status);
+        var hasMessageId = !string.IsNullOrWhiteSpace(id);
+        var finalOutcome = successful && hasMessageId ? outcome : Outcome.Fail;
+        var failureReason = successful && !hasMessageId
+            ? "missing_provider_message_id"
+            : ClassifyFailure(httpStatus, finalOutcome, recognized);
         return new ProviderResult(
-            successful && !string.IsNullOrWhiteSpace(id) ? outcome : Outcome.Fail,
+            finalOutcome,
             recognized,
             (int)httpStatus,
             id,
             status,
-            ProviderStatusDescription: payload?.Text);
+            ProviderStatusDescription: payload?.Text)
+        {
+            FailureReason = failureReason,
+        };
     }
 
     public override async Task<ProviderCredentials> FetchCredentialsAsync(
@@ -125,23 +132,5 @@ public sealed class SinchProvider : PhoneProviderBase
         [property: JsonPropertyName("id")] string? Id,
         [property: JsonPropertyName("callId")] string? CallId,
         [property: JsonPropertyName("text")] string? Text,
-        [property: JsonPropertyName("status")] ResponseString? Status);
-
-    [JsonConverter(typeof(ResponseStringConverter))]
-    private sealed record ResponseString(string? Value);
-
-    private sealed class ResponseStringConverter : JsonConverter<ResponseString>
-    {
-        public override ResponseString Read(
-            ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
-        {
-            if (reader.TokenType == JsonTokenType.String)
-                return new ResponseString(reader.GetString());
-            reader.Skip();
-            return new ResponseString(null);
-        }
-
-        public override void Write(Utf8JsonWriter writer, ResponseString value, JsonSerializerOptions options) =>
-            throw new NotSupportedException();
-    }
+        [property: JsonPropertyName("status")] string? Status);
 }

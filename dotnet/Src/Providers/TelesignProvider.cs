@@ -71,13 +71,17 @@ public sealed class TelesignProvider : PhoneProviderBase
     {
         var statusCode = payload?.Status?.Code?.ToString(CultureInfo.InvariantCulture) ?? "UNKNOWN";
         var (outcome, recognized) = MapStatus(statusCode);
+        var finalOutcome = (int)httpStatus is >= 200 and < 300 ? outcome : Outcome.Fail;
         return new ProviderResult(
-            (int)httpStatus is >= 200 and < 300 ? outcome : Outcome.Fail,
+            finalOutcome,
             recognized,
             (int)httpStatus,
             payload?.ReferenceId,
             ProviderStatusCode: statusCode,
-            ProviderStatusDescription: payload?.Status?.Description);
+            ProviderStatusDescription: payload?.Status?.Description)
+        {
+            FailureReason = ClassifyFailure(httpStatus, finalOutcome, recognized),
+        };
     }
 
     public override async Task<ProviderCredentials> FetchCredentialsAsync(

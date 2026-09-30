@@ -100,12 +100,16 @@ public sealed class SopranoProvider : PhoneProviderBase
             : payload.Status.Value;
         status = string.IsNullOrWhiteSpace(status) ? "UNKNOWN" : status.ToUpperInvariant();
         var (outcome, recognized) = MapStatus(status);
+        var finalOutcome = (int)httpStatus is >= 200 and < 300 ? outcome : Outcome.Fail;
         return new ProviderResult(
-            (int)httpStatus is >= 200 and < 300 ? outcome : Outcome.Fail,
+            finalOutcome,
             recognized,
             (int)httpStatus,
             payload?.Id?.Value ?? payload?.MessageId?.Value,
-            status);
+            status)
+        {
+            FailureReason = ClassifyFailure(httpStatus, finalOutcome, recognized),
+        };
     }
 
     public override async Task<ProviderCredentials> FetchCredentialsAsync(

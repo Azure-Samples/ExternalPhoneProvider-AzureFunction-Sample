@@ -45,6 +45,7 @@ public sealed record ProviderResult(
     string? ProviderStatusCode = null,
     string? ProviderStatusDescription = null)
 {
+    public string? FailureReason { get; init; }
     public override string ToString() => nameof(ProviderResult);
 }
 

@@ -281,11 +281,7 @@ public sealed class SendOtp
                 Failure(
                     status,
                     "provider_response",
-                    result.StatusRecognized
-                    || result.ProviderStatusCode is not null
-                    || result.ProviderStatusName is not null
-                        ? "provider_rejected"
-                        : "invalid_provider_json");
+                    result.FailureReason ?? "provider_rejected");
             return status;
         }
         catch (PhoneProviderBase.ProviderSendException exception)

@@ -85,15 +85,20 @@ public class ContractTests
     }
 
     [Theory]
-    [InlineData("{\"id\":12,\"state\":\"enroute\"}", "12", "ENROUTE", Outcome.Continue, true)]
-    [InlineData("[{\"messageId\":\"provider-id\",\"status\":\"accepted\"}]", "provider-id", "ACCEPTED", Outcome.Continue, true)]
-    [InlineData("{\"status\":\"FILTERED\"}", null, "FILTERED", Outcome.Fail, true)]
-    [InlineData("{\"status\":\"unknown\"}", null, "UNKNOWN", Outcome.Fail, false)]
-    [InlineData("{\"status\":123,\"state\":\"ACCEPTED\"}", null, "UNKNOWN", Outcome.Fail, false)]
-    [InlineData("{\"status\":false,\"state\":\"ACCEPTED\"}", null, "UNKNOWN", Outcome.Fail, false)]
-    [InlineData("[]", null, "UNKNOWN", Outcome.Fail, false)]
+    [InlineData("{\"id\":12,\"state\":\"enroute\"}", "12", "ENROUTE", Outcome.Continue, true, null)]
+    [InlineData("[{\"messageId\":\"provider-id\",\"status\":\"accepted\"}]", "provider-id", "ACCEPTED", Outcome.Continue, true, null)]
+    [InlineData("{\"status\":\"FILTERED\"}", null, "FILTERED", Outcome.Fail, true, "provider_rejected")]
+    [InlineData("{\"status\":\"unknown\"}", null, "UNKNOWN", Outcome.Fail, false, "unrecognized_provider_status")]
+    [InlineData("{\"status\":123,\"state\":\"ACCEPTED\"}", null, "UNKNOWN", Outcome.Fail, false, "unrecognized_provider_status")]
+    [InlineData("{\"status\":false,\"state\":\"ACCEPTED\"}", null, "UNKNOWN", Outcome.Fail, false, "unrecognized_provider_status")]
+    [InlineData("[]", null, "UNKNOWN", Outcome.Fail, false, "unrecognized_provider_status")]
     public async Task SopranoTypedResponseSupportsObjectAndArrayAndFailsClosed(
-        string body, string? messageId, string status, Outcome expected, bool recognized)
+        string body,
+        string? messageId,
+        string status,
+        Outcome expected,
+        bool recognized,
+        string? failureReason)
     {
         var provider = new SopranoProvider();
         using var response = JsonResponse(200, body);
@@ -103,25 +108,56 @@ public class ContractTests
         Assert.Equal(status, result.ProviderStatusName);
         Assert.Equal(expected, result.Outcome);
         Assert.Equal(recognized, result.StatusRecognized);
+        Assert.Equal(failureReason, result.FailureReason);
     }
 
     [Theory]
-    [InlineData("ENROUTE", Outcome.Continue)]
-    [InlineData("ACCEPTED", Outcome.Continue)]
-    [InlineData("SUBMITTED", Outcome.Continue)]
-    [InlineData("SENT", Outcome.Continue)]
-    [InlineData("DELIVERED", Outcome.Continue)]
-    [InlineData("QUEUED", Outcome.Continue)]
-    [InlineData("BLOCKED", Outcome.Block)]
-    [InlineData("FAILED", Outcome.Fail)]
-    [InlineData("REJECTED", Outcome.Fail)]
-    [InlineData("FILTERED", Outcome.Fail)]
-    public async Task SopranoOwnsEveryRecognizedStatusMapping(string status, Outcome expected)
+    [InlineData("ENROUTE", Outcome.Continue, null)]
+    [InlineData("ACCEPTED", Outcome.Continue, null)]
+    [InlineData("SUBMITTED", Outcome.Continue, null)]
+    [InlineData("SENT", Outcome.Continue, null)]
+    [InlineData("DELIVERED", Outcome.Continue, null)]
+    [InlineData("QUEUED", Outcome.Continue, null)]
+    [InlineData("BLOCKED", Outcome.Block, null)]
+    [InlineData("FAILED", Outcome.Fail, "provider_rejected")]
+    [InlineData("REJECTED", Outcome.Fail, "provider_rejected")]
+    [InlineData("FILTERED", Outcome.Fail, "provider_rejected")]
+    public async Task SopranoOwnsEveryRecognizedStatusMapping(
+        string status,
+        Outcome expected,
+        string? failureReason)
     {
         using var response = JsonResponse(200, JsonSerializer.Serialize(new { status }));
         var result = await new SopranoProvider().SendResponseAsync(response, default);
         Assert.Equal(expected, result.Outcome);
         Assert.True(result.StatusRecognized);
+        Assert.Equal(failureReason, result.FailureReason);
+    }
+
+    [Fact]
+    public void ProviderResultKeepsExistingConstructorAndDeconstructionShape()
+    {
+        var result = new ProviderResult(
+            Outcome.Fail,
+            true,
+            400,
+            "message-id",
+            "REJECTED",
+            "400",
+            "description")
+        {
+            FailureReason = "provider_rejected",
+        };
+
+        var (outcome, recognized, httpStatus, messageId, statusName, statusCode, description) = result;
+        Assert.Equal(Outcome.Fail, outcome);
+        Assert.True(recognized);
+        Assert.Equal(400, httpStatus);
+        Assert.Equal("message-id", messageId);
+        Assert.Equal("REJECTED", statusName);
+        Assert.Equal("400", statusCode);
+        Assert.Equal("description", description);
+        Assert.Equal("provider_rejected", result.FailureReason);
     }
 
     [Fact]
@@ -454,15 +490,15 @@ public class ContractTests
     [InlineData("{\"messages\":[{\"messageId\":\"id\",\"status\":{\"groupName\":123}}]}")]
     [InlineData("{\"messages\":[{\"messageId\":\"id\",\"status\":[]}]}")]
     [InlineData("{\"id\":\"id\",\"status\":123}")]
-    public async Task WronglyTypedProviderStatusesFailClosed(string payload)
+    public async Task WronglyTypedProviderStatusesAreParseFailures(string payload)
     {
         PhoneProviderBase provider = payload.Contains("\"messages\"", StringComparison.Ordinal)
             ? new InfobipProvider()
             : new SinchProvider();
         using var response = JsonResponse(200, payload);
-        var result = await provider.SendResponseAsync(response, default);
-        Assert.Equal(Outcome.Fail, result.Outcome);
-        Assert.False(result.StatusRecognized);
+        var error = await Assert.ThrowsAsync<PhoneProviderBase.ProviderSendException>(
+            async () => await provider.SendResponseAsync(response, default));
+        Assert.Equal(502, error.StatusCode);
     }
 
     [Fact]
@@ -482,6 +518,7 @@ public class ContractTests
             var result = await item.Provider.SendResponseAsync(response, default);
             Assert.Equal(Outcome.Fail, result.Outcome);
             Assert.True(result.StatusRecognized);
+            Assert.Equal("provider_http_error", result.FailureReason);
         }
     }
 
