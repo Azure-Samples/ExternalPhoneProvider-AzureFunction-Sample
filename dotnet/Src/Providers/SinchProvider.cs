@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 
 namespace Epp.Otp.Providers;
 
@@ -16,15 +17,15 @@ public sealed class SinchProvider : PhoneProviderBase
 
     public override Task<ProviderResult> SendOtpAsync(
         string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credentials,
-        IEnv env, HttpClient client, int timeoutMs, RequestLog? log = null) =>
+        IEnv env, HttpClient client, int timeoutMs, ILogger? logger = null) =>
         SendJsonAsync<Response>(
             () => CreateRequest(channel, endpoint, delivery, credentials, env),
             MapResponse,
             client,
             timeoutMs,
-            log);
+            logger);
 
-    public override HttpRequestMessage CreateRequest(
+    private static HttpRequestMessage CreateRequest(
         string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credential, IEnv env)
     {
         var reference = delivery.CorrelationId ?? delivery.MessageId;

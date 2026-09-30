@@ -1,4 +1,5 @@
 using System.Net;
+using System.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Functions.Worker;
@@ -7,7 +8,7 @@ using WorkerFromBody = Microsoft.Azure.Functions.Worker.Http.FromBodyAttribute;
 
 namespace Epp.Otp;
 
-// Echo the nonce only on acceptance; keep service events and the request summary PII-safe.
+// Echo the nonce only on acceptance; keep structured service events PII-safe.
 public sealed class SendOtp
 {
     public const string ProviderHttpClientName = "otp-provider";
@@ -38,17 +39,35 @@ public sealed class SendOtp
         [WorkerFromBody] EntraSendOtpPayload payload,
         FunctionContext? functionContext = null)
     {
+        var started = Stopwatch.StartNew();
         var requestId = Guid.NewGuid().ToString("n");
-        var msRequestId = req.Headers["x-ms-client-request-id"].FirstOrDefault();
-        var headerCorrelationId = req.Headers["x-ms-correlation-id"].FirstOrDefault();
-        var log = new RequestLog(_log, requestId, functionContext?.InvocationId, msRequestId, headerCorrelationId);
+        var msRequestId = OtpLog.SafeIdentifier(
+            req.Headers["x-ms-client-request-id"].FirstOrDefault());
+        var headerCorrelationId = OtpLog.SafeIdentifier(
+            req.Headers["x-ms-correlation-id"].FirstOrDefault());
+        var payloadError = payload?.Validate();
+        var payloadCorrelationId = payloadError is null
+            ? OtpLog.SafeIdentifier(payload?.CorrelationId)
+            : null;
+        using var scope = _log.BeginScope(new Dictionary<string, object?>
+        {
+            ["FunctionName"] = "SendOtp",
+            ["FunctionRequestId"] = requestId,
+            ["FunctionInvocationId"] = functionContext?.InvocationId,
+            ["MsClientRequestId"] = msRequestId,
+            ["MsCorrelationId"] = payloadCorrelationId ?? headerCorrelationId,
+            ["MsCorrelationIdSource"] = payloadCorrelationId is not null
+                ? "payload"
+                : headerCorrelationId is not null ? "header" : "none",
+        });
         int statusCode;
         object body;
 
         try
         {
+            OtpLog.RequestReceived(_log);
             body = await ProcessAsync(
-                payload, requestId, msRequestId, headerCorrelationId, log).ConfigureAwait(false);
+                payload, payloadError, requestId, msRequestId, headerCorrelationId).ConfigureAwait(false);
             statusCode = 200;
         }
         catch (InvalidRequestException exception)
@@ -62,7 +81,7 @@ public sealed class SendOtp
         }
         catch (Exception exception)
         {
-            if (!log.HasFailure) log.Failure("handler", "unexpected_error", 500);
+            OtpLog.UnexpectedError(_log);
             statusCode = exception is HttpRequestException { StatusCode: { } status }
                 && (int)status >= 500
                     ? (int)status
@@ -73,41 +92,55 @@ public sealed class SendOtp
                 CorrelationId: payload?.CorrelationId ?? headerCorrelationId ?? requestId);
         }
 
-        log.ResponsePrepared(
+        var containsNonce = body is EndpointSuccessResponse;
+        var containsCorrelationId =
+            body is EndpointSuccessResponse or EndpointErrorResponse { CorrelationId: not null };
+        OtpLog.ResponsePrepared(
+            _log,
             statusCode,
-            body is EndpointSuccessResponse,
-            body is EndpointSuccessResponse or EndpointErrorResponse { CorrelationId: not null });
-        log.Complete(statusCode);
+            containsNonce,
+            containsCorrelationId);
+        OtpLog.RequestCompleted(
+            _log,
+            statusCode,
+            statusCode == 200
+                ? payload?.IsEvaluation == true ? "evaluated" : "accepted"
+                : "failed",
+            started.ElapsedMilliseconds);
         return new ObjectResult(body) { StatusCode = statusCode };
     }
 
     private async Task<EndpointSuccessResponse> ProcessAsync(
         EntraSendOtpPayload? payload,
+        string? payloadError,
         string requestId,
         string? msRequestId,
-        string? headerCorrelationId,
-        RequestLog log)
+        string? headerCorrelationId)
     {
-        log.Service("request_received");
         var config = AppConfig.Read(_env);
         var clientRequestId = msRequestId ?? requestId;
 
         if (payload is null)
         {
             const string error = "invalid payload";
-            log.Failure("request_validation", error, 400);
+            OtpLog.RequestFailed(
+                _log, LogLevel.Warning, "request_validation", error, 400);
             throw new InvalidRequestException(400, "bad_request", error);
         }
-        var payloadError = payload.Validate();
         if (payloadError is not null)
         {
-            log.Failure("request_validation", payloadError, 400);
+            OtpLog.RequestFailed(
+                _log, LogLevel.Warning, "request_validation", payloadError, 400);
             throw new InvalidRequestException(400, "bad_request", payloadError);
         }
 
         var correlationId = payload.CorrelationId ?? headerCorrelationId ?? requestId;
-        log.PayloadValidated(payload, payload.CorrelationId ?? headerCorrelationId,
-            payload.CorrelationId is not null ? "payload" : "header");
+        OtpLog.PayloadValidated(
+            _log,
+            payload.Type,
+            payload.ChannelName,
+            payload.IsEvaluation,
+            payload.TtlSeconds);
 
         DecryptedPayload<DeliveryContext> decrypted;
         try
@@ -117,20 +150,26 @@ public sealed class SendOtp
         }
         catch
         {
-            log.Failure("decryption", "decryption_failed", 400);
+            OtpLog.RequestFailed(
+                _log, LogLevel.Warning, "decryption", "decryption_failed", 400);
             throw new InvalidRequestException(
                 400, "decryption_failed", correlationId: correlationId);
         }
-        log.Service("delivery_context_decrypted");
+        OtpLog.DeliveryContextDecrypted(_log);
 
         if (!string.IsNullOrEmpty(config.ExpectedKeyId)
             && !string.Equals(config.ExpectedKeyId, decrypted.KeyId, StringComparison.Ordinal))
-            log.KeyIdMismatch();
+            OtpLog.EncryptionKeyIdMismatch(_log);
 
         var context = decrypted.Value;
         if (!context.IsComplete)
         {
-            log.Failure("delivery_context_validation", "incomplete delivery context", 400);
+            OtpLog.RequestFailed(
+                _log,
+                LogLevel.Warning,
+                "delivery_context_validation",
+                "incomplete delivery context",
+                400);
             throw new InvalidRequestException(
                 400,
                 "bad_request",
@@ -141,7 +180,7 @@ public sealed class SendOtp
         // Evaluation proves validation/decryption without requiring any provider configuration.
         if (payload.IsEvaluation)
         {
-            log.Service("evaluation_completed");
+            OtpLog.EvaluationCompleted(_log);
             return new EndpointSuccessResponse(context.Nonce!, correlationId);
         }
 
@@ -154,24 +193,24 @@ public sealed class SendOtp
             Locale: context.Locale);
 
         // A nonce acknowledges delivery, not just decryption. Wait for the bounded provider call.
-        var providerStatus = await SendToProviderAsync(delivery, log).ConfigureAwait(false);
-        if (providerStatus is >= 400 and < 500)
+        var providerStatus = await SendToProviderAsync(delivery).ConfigureAwait(false);
+        if (providerStatus >= 400)
             throw new InvalidRequestException(
                 providerStatus, "provider_delivery_failed", correlationId: correlationId);
-        if (providerStatus >= 500)
-            throw new HttpRequestException(
-                "provider_delivery_failed",
-                inner: null,
-                (HttpStatusCode)providerStatus);
 
         return new EndpointSuccessResponse(context.Nonce!, correlationId);
     }
 
-    private async Task<int> SendToProviderAsync(OtpDelivery delivery, RequestLog? log = null)
+    private async Task<int> SendToProviderAsync(OtpDelivery delivery)
     {
         int Failure(int status, string stage, string reason)
         {
-            log?.Failure(stage, reason, status);
+            OtpLog.RequestFailed(
+                _log,
+                status >= 500 ? LogLevel.Error : LogLevel.Warning,
+                stage,
+                reason,
+                status);
             return status;
         }
 
@@ -180,7 +219,7 @@ public sealed class SendOtp
         if (provider is null)
             return Failure(400, "provider_selection", "unknown_provider");
 
-        log?.ProviderSelected(provider.Name, provider.AuthenticationMode);
+        OtpLog.ProviderSelected(_log, provider.Name, provider.AuthenticationMode);
         var channel = (delivery.Channel ?? "sms").ToLowerInvariant();
 
         if (channel is not ("sms" or "voice"))
@@ -192,9 +231,15 @@ public sealed class SendOtp
             return Failure(502, "provider_configuration", "authentication_mode_mismatch");
 
         ProviderCredentials credential;
+        var credentialStarted = Stopwatch.StartNew();
         try
         {
-            log?.CredentialResolutionStarted(config);
+            OtpLog.CredentialResolutionStarted(
+                _log,
+                provider.Name,
+                provider.AuthenticationMode == "oauth"
+                    ? "managed_identity_client_assertion"
+                    : "key_vault");
             credential = await _credentials.GetCredentialsAsync(provider, config);
         }
         catch
@@ -210,7 +255,10 @@ public sealed class SendOtp
         };
         if (credentialUnavailable)
             return Failure(502, "provider_credentials", "credential_unavailable");
-        log?.CredentialResolved();
+        OtpLog.CredentialResolved(
+            _log,
+            provider.Name,
+            credentialStarted.ElapsedMilliseconds);
 
         var endpoint = config.ProviderEndpoint;
         if (!PhoneProviderBase.IsHttpsEndpoint(endpoint))
@@ -227,8 +275,18 @@ public sealed class SendOtp
                 _env,
                 client,
                 NormalizeProviderTimeoutMs(config.ProviderTimeoutMs),
-                log).ConfigureAwait(false);
-            return PhoneProviderBase.ToEndpointHttpStatus(result);
+                _log).ConfigureAwait(false);
+            var status = PhoneProviderBase.ToEndpointHttpStatus(result);
+            if (status >= 400)
+                Failure(
+                    status,
+                    "provider_response",
+                    result.StatusRecognized
+                    || result.ProviderStatusCode is not null
+                    || result.ProviderStatusName is not null
+                        ? "provider_rejected"
+                        : "invalid_provider_json");
+            return status;
         }
         catch (PhoneProviderBase.ProviderSendException exception)
         {

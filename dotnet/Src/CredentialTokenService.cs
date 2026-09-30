@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -92,22 +91,7 @@ public sealed class CredentialTokenService : IHostedService, IDisposable
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     private void ReportFailure(string kind)
-    {
-        const string eventName = "credential_refresh_failed";
-        var record = new Dictionary<string, object?>
-        {
-            ["logType"] = "service",
-            ["eventName"] = eventName,
-            ["cacheKind"] = kind,
-            ["failureReason"] = "credential_unavailable",
-        };
-        _log.Log(
-            LogLevel.Warning,
-            new EventId(0, eventName),
-            record,
-            null,
-            static (state, _) => JsonSerializer.Serialize(state));
-    }
+        => OtpLog.CredentialRefreshFailed(_log, kind);
 
     internal static InvalidOperationException Unavailable() =>
         new("provider credential unavailable");

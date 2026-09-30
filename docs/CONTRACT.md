@@ -390,8 +390,9 @@ Per-request `providerCredentialElapsedMs` continues to measure the caller's reso
   set, else system-assigned). No static credentials.
 - **Privacy**: never log phone numbers, passcodes, nonce values, bearer tokens, API keys, JWE headers/payloads,
   raw exceptions, provider descriptions/responses or endpoint query strings. There is no plaintext diagnostic
-  override. Each handler emits separate service events and one [request summary](#application-logs),
-  with generated Function IDs distinguished from raw Microsoft/provider support IDs. Original wire IDs
+  override. Each handler emits separate service events. JavaScript and Python also emit one
+  [request summary](#application-logs); .NET uses standard structured `ILogger` events and scopes instead.
+  Generated Function IDs remain distinguished from raw Microsoft/provider support IDs. Original wire IDs
   and the required nonce echo remain unchanged. Support IDs can correlate customer activity; restrict
   log access and retention. Endpoint logs contain only scheme, host/port and API path, never userinfo,
   query strings or fragments. A configured encryption-key-ID mismatch adds a correlated fixed warning,
@@ -413,13 +414,34 @@ Per-request `providerCredentialElapsedMs` continues to measure the caller's reso
 
 ### Application logs
 
-All three implementations emit JSON records with the same field names. .NET also supplies these
-fields as structured `ILogger` state. Service events have `logType: "service"` and an individual
-`eventName`: they are emitted as the work happens, **not buffered or combined into a multi-step log**.
-Each handler invocation ends with exactly one `logType: "request"`, `eventName: "request_completed"`
-summary, including validation failures, evaluation and provider failures.
+JavaScript and Python emit JSON records with the shared fields described below. Service events have
+`logType: "service"` and an individual `eventName`; each invocation ends with one
+`logType: "request"`, `eventName: "request_completed"` summary.
 
-A successful live request emits these separate service events, followed by the request summary:
+.NET uses the standard `ILogger` pipeline instead of manually serializing JSON. `OtpLog` defines
+source-generated events with stable IDs and names, while `ILogger.BeginScope` supplies
+`FunctionName`, `FunctionRequestId`, `FunctionInvocationId`, `MsClientRequestId`,
+`MsCorrelationId` and `MsCorrelationIdSource`. The configured logging provider owns output
+formatting and export. .NET emits `request_completed` as an ordinary typed event rather than a
+mutable comprehensive summary.
+
+A successful .NET live request emits:
+
+`request_received`, `payload_validated`, `delivery_context_decrypted`, `provider_selected`,
+`provider_credential_resolution_started`, `provider_credential_resolved`,
+`provider_request_build_started`, `provider_request_built`, `provider_request_started`,
+`provider_response_received`, `provider_response_processed`, `response_prepared`,
+`request_completed`.
+
+Failures emit `request_failed` with fixed `FailureStage`, `FailureReason` and `HttpStatus` values.
+Credential refresh failures use `credential_refresh_failed`; unexpected unclassified failures use
+`unexpected_error`. Typed event arguments are explicitly allowlisted and never include request
+bodies, decrypted delivery fields, credentials, provider response bodies, query strings or private
+exception messages. Endpoint values contain only scheme, host/port and path. Evaluation omits all
+provider events and emits `evaluation_completed`.
+
+A successful JavaScript or Python live request emits these separate service events, followed by the
+request summary:
 
 | Service event | Safe information recorded |
 |---|---|
@@ -464,7 +486,7 @@ such as `decryption_failed`, `provider_credentials_failed` or `provider_transpor
 A parsed provider rejection uses `provider_response_processed` with its non-success outcome and
 fixed failure reason.
 
-Every service event carries the Function request/invocation IDs, the Microsoft trace IDs available
+In JavaScript and Python, every service event carries the Function request/invocation IDs, the Microsoft trace IDs available
 at that point, and the known channel, evaluation flag and selected provider. The initial event can
 only know header trace IDs; a valid envelope can subsequently supply the selected correlation.
 The generated Function request ID joins these events even when Microsoft IDs are absent or change
@@ -496,7 +518,7 @@ These are tracing fields, not authentication assertions. In particular, an incom
 does not become a trusted tenant identity in logs. The existing wire correlation precedence,
 provider request IDs and public responses are unchanged.
 
-The request summary contains:
+The JavaScript and Python request summary contains:
 
 | Fields | Purpose |
 |---|---|

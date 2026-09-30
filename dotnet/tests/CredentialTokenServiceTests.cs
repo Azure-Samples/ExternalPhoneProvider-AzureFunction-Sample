@@ -139,9 +139,8 @@ public class CredentialTokenServiceTests
         Assert.Equal(LogLevel.Warning, entry.Level);
         Assert.Equal("credential_refresh_failed", entry.EventId.Name);
         Assert.Null(entry.Error);
-        Assert.Equal("credential_unavailable", entry.State["failureReason"]);
-        using var json = JsonDocument.Parse(entry.Message);
-        Assert.Equal("credential_unavailable", json.RootElement.GetProperty("failureReason").GetString());
+        Assert.Equal("provider", entry.State["CacheKind"]);
+        Assert.Contains("credential unavailable", entry.Message);
         Assert.DoesNotContain("PRIVATE", entry.Message);
     }
 
@@ -172,13 +171,6 @@ public class CredentialTokenServiceTests
             AppConfig config,
             CancellationToken cancellationToken = default) =>
             fetch(cancellationToken);
-        public override HttpRequestMessage CreateRequest(
-            string channel,
-            string endpoint,
-            OtpDelivery delivery,
-            ProviderCredentials credential,
-            IEnv env) =>
-            throw new NotSupportedException();
         public override Task<ProviderResult> SendOtpAsync(
             string channel,
             string endpoint,
@@ -187,7 +179,7 @@ public class CredentialTokenServiceTests
             IEnv env,
             HttpClient client,
             int timeoutMs,
-            RequestLog? log = null) =>
+            ILogger? logger = null) =>
             throw new NotSupportedException();
     }
 
@@ -224,7 +216,9 @@ public class CredentialTokenServiceTests
             Exception? error,
             Func<TState, Exception?, string> formatter)
         {
-            var record = Assert.IsAssignableFrom<IReadOnlyDictionary<string, object?>>(state);
+            var record = Assert.IsAssignableFrom<IEnumerable<KeyValuePair<string, object?>>>(state)
+                .Where(pair => pair.Key != "{OriginalFormat}")
+                .ToDictionary(pair => pair.Key, pair => pair.Value);
             Entries.Add(new(level, eventId, record, error, formatter(state, error)));
         }
     }

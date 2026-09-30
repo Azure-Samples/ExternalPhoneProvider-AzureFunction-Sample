@@ -20,7 +20,7 @@ public class ContractTests
         {
             Locale = channel == "voice" ? "fr-FR" : "en-US",
         };
-        using var request = new SopranoProvider().CreateRequest(
+        var request = await new SopranoProvider().CaptureRequestAsync(
             channel,
             "https://provider.example/oauth/messages",
             delivery,
@@ -50,7 +50,7 @@ public class ContractTests
             };
         else
             expected["text"] = Delivery().Message;
-        Assert.Equal(JsonSerializer.Serialize(expected), await request.Content!.ReadAsStringAsync());
+        Assert.Equal(JsonSerializer.Serialize(expected), request.Body);
     }
 
     [Theory]
@@ -59,28 +59,29 @@ public class ContractTests
     [InlineData("   ")]
     public async Task SopranoVoiceDefaultsLanguageWithoutLocale(string? locale)
     {
-        using var request = new SopranoProvider().CreateRequest(
+        var request = await new SopranoProvider().CaptureRequestAsync(
             "voice",
             "https://provider.example/oauth/messages",
             Delivery("voice") with { Locale = locale },
             new ProviderCredentials("oauth", AccessToken: "provider-token"),
             new TestEnv());
-        using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+        using var body = JsonDocument.Parse(request.Body);
         Assert.Equal("en-US", body.RootElement.GetProperty("voice").GetProperty("text2voice")
             .GetProperty("language").GetString());
     }
 
     [Fact]
-    public void SopranoVoiceRequiresSixDigitPasscode()
+    public async Task SopranoVoiceRequiresSixDigitPasscode()
     {
         var delivery = Delivery("voice") with { Message = "Your code is unavailable." };
-        var error = Assert.Throws<InvalidOperationException>(() => new SopranoProvider().CreateRequest(
-            "voice",
-            "https://provider.example/oauth/messages",
-            delivery,
-            new ProviderCredentials("oauth", AccessToken: "provider-token"),
-            new TestEnv()));
-        Assert.Contains("six-digit passcode", error.Message);
+        var error = await Assert.ThrowsAsync<PhoneProviderBase.ProviderSendException>(
+            () => new SopranoProvider().CaptureRequestAsync(
+                "voice",
+                "https://provider.example/oauth/messages",
+                delivery,
+                new ProviderCredentials("oauth", AccessToken: "provider-token"),
+                new TestEnv()));
+        Assert.Equal(502, error.StatusCode);
     }
 
     [Theory]
@@ -129,7 +130,7 @@ public class ContractTests
         var env = new TestEnv { ["EPP_PROVIDER_ACCOUNT_NAME"] = "Verify" };
         var credential = new ProviderCredentials("apiKey", "test-key", "test-id");
 
-        using var sms = new InfobipProvider().CreateRequest(
+        var sms = await new InfobipProvider().CaptureRequestAsync(
             "sms", "https://provider.example", Delivery(), credential, env);
         AssertJsonRequest(sms, "https://provider.example/sms/3/messages", "App test-key");
         var expectedSms = new
@@ -144,9 +145,9 @@ public class ContractTests
                 },
             },
         };
-        Assert.Equal(JsonSerializer.Serialize(expectedSms), await sms.Content!.ReadAsStringAsync());
+        Assert.Equal(JsonSerializer.Serialize(expectedSms), sms.Body);
 
-        using var voice = new InfobipProvider().CreateRequest(
+        var voice = await new InfobipProvider().CaptureRequestAsync(
             "voice", "https://provider.example", Delivery("voice"), credential, env);
         AssertJsonRequest(voice, "https://provider.example/tts/3/advanced", "App test-key");
         var expectedVoice = new
@@ -163,7 +164,7 @@ public class ContractTests
                 },
             },
         };
-        Assert.Equal(JsonSerializer.Serialize(expectedVoice), await voice.Content!.ReadAsStringAsync());
+        Assert.Equal(JsonSerializer.Serialize(expectedVoice), voice.Body);
     }
 
     [Fact]
@@ -177,7 +178,7 @@ public class ContractTests
         };
         var credential = new ProviderCredentials("apiKey", "test-key", "test-id");
 
-        using var sms = new SinchProvider().CreateRequest(
+        var sms = await new SinchProvider().CaptureRequestAsync(
             "sms", "https://provider.example", Delivery(), credential, env);
         AssertJsonRequest(
             sms,
@@ -191,9 +192,9 @@ public class ContractTests
                 body = Delivery().Message,
                 client_reference = "correlation-id",
             }),
-            await sms.Content!.ReadAsStringAsync());
+            sms.Body);
 
-        using var voice = new SinchProvider().CreateRequest(
+        var voice = await new SinchProvider().CaptureRequestAsync(
             "voice", "https://provider.example", Delivery("voice"), credential, env);
         AssertJsonRequest(voice, "https://calling.example/calling/v1/callouts", "******");
         Assert.Equal(
@@ -208,7 +209,7 @@ public class ContractTests
                     custom = "correlation-id",
                 },
             }),
-            await voice.Content!.ReadAsStringAsync());
+            voice.Body);
     }
 
     [Theory]
@@ -220,7 +221,7 @@ public class ContractTests
     public async Task TelesignUsesExactEppJsonContract(string channel, string? locale)
     {
         var delivery = Delivery(channel) with { Locale = locale };
-        using var request = new TelesignProvider().CreateRequest(
+        var request = await new TelesignProvider().CaptureRequestAsync(
             channel,
             $"https://verify.telesign.com/epp/{channel}",
             delivery,
@@ -243,20 +244,20 @@ public class ContractTests
             channels = new[] { new { channel } },
             correlation_id = delivery.CorrelationId,
         };
-        Assert.Equal(JsonSerializer.Serialize(expected), await request.Content!.ReadAsStringAsync());
+        Assert.Equal(JsonSerializer.Serialize(expected), request.Body);
     }
 
     [Fact]
     public async Task TelesignVoicePacesOnlySixDigitNumericRunsAndRepeatsMessage()
     {
         var delivery = Delivery("voice") with { Message = "Code 001234; ref 1234567; alternate 654321." };
-        using var request = new TelesignProvider().CreateRequest(
+        var request = await new TelesignProvider().CaptureRequestAsync(
             "voice",
             "https://verify.telesign.com/epp/voice",
             delivery,
             new ProviderCredentials("apiKey", "test-key", "test-id"),
             new TestEnv());
-        using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+        using var body = JsonDocument.Parse(request.Body);
         Assert.Equal(
             "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1. "
             + "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1.",
@@ -269,21 +270,27 @@ public class ContractTests
         var provider = new TelesignProvider();
         var credential = new ProviderCredentials("apiKey", "key", "id");
         foreach (var phoneNumber in new[] { "15551234567", "+0123", "+1", "+1234567890123456", "+123\n", "+123\r", "+12 34" })
-            Assert.Throws<InvalidOperationException>(() => provider.CreateRequest(
-                "sms",
-                "https://verify.telesign.com",
-                Delivery() with { PhoneNumber = phoneNumber },
-                credential,
-                new TestEnv()));
-        Assert.Throws<InvalidOperationException>(() => provider.CreateRequest(
-            "email", "https://verify.telesign.com", Delivery(), credential, new TestEnv()));
-        using var request = provider.CreateRequest(
+        {
+            var error = await Assert.ThrowsAsync<PhoneProviderBase.ProviderSendException>(
+                () => provider.CaptureRequestAsync(
+                    "sms",
+                    "https://verify.telesign.com",
+                    Delivery() with { PhoneNumber = phoneNumber },
+                    credential,
+                    new TestEnv()));
+            Assert.Equal(502, error.StatusCode);
+        }
+        var channelError = await Assert.ThrowsAsync<PhoneProviderBase.ProviderSendException>(
+            () => provider.CaptureRequestAsync(
+                "email", "https://verify.telesign.com", Delivery(), credential, new TestEnv()));
+        Assert.Equal(502, channelError.StatusCode);
+        var request = await provider.CaptureRequestAsync(
             "sms",
             "https://verify.telesign.com",
             Delivery() with { CorrelationId = null },
             credential,
             new TestEnv());
-        using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+        using var json = JsonDocument.Parse(request.Body);
         Assert.Equal(Delivery().MessageId, json.RootElement.GetProperty("correlation_id").GetString());
     }
 
@@ -479,20 +486,19 @@ public class ContractTests
     }
 
     private static void AssertJsonRequest(
-        HttpRequestMessage request, string expectedUrl, string expectedAuthorization)
+        CapturedRequest request, string expectedUrl, string expectedAuthorization)
     {
         Assert.Equal(HttpMethod.Post, request.Method);
-        Assert.Equal(expectedUrl, request.RequestUri?.AbsoluteUri);
-        Assert.Equal(expectedAuthorization, Assert.Single(request.Headers.GetValues("Authorization")));
-        Assert.Equal("application/json", Assert.Single(request.Headers.Accept).MediaType);
+        Assert.Equal(expectedUrl, request.Url);
+        Assert.Equal(expectedAuthorization, request.Authorization);
+        Assert.Equal("application/json", request.Accept);
         Assert.Equal(
             new[] { "Accept", "Authorization" },
-            request.Headers.Select(header => header.Key).OrderBy(name => name));
-        Assert.NotNull(request.Content);
-        Assert.Equal("application/json", request.Content.Headers.ContentType?.MediaType);
+            request.HeaderNames);
+        Assert.Equal("application/json", request.ContentType);
         Assert.Equal(
             new[] { "Content-Type" },
-            request.Content.Headers.Select(header => header.Key).OrderBy(name => name));
+            request.ContentHeaderNames);
     }
 
     private static HttpResponseMessage JsonResponse(int status, string body) =>
@@ -509,6 +515,27 @@ internal sealed class TestEnv : Dictionary<string, string?>, IEnv
 
 internal static class PhoneProviderTestExtensions
 {
+    public static async Task<CapturedRequest> CaptureRequestAsync(
+        this PhoneProviderBase provider,
+        string channel,
+        string endpoint,
+        OtpDelivery delivery,
+        ProviderCredentials credentials,
+        IEnv env)
+    {
+        var handler = new CapturingRequestHandler();
+        using var client = new HttpClient(handler);
+        await provider.SendOtpAsync(
+            channel,
+            endpoint,
+            delivery,
+            credentials,
+            env,
+            client,
+            1500);
+        return handler.Request ?? throw new InvalidOperationException("Provider did not send a request.");
+    }
+
     public static async ValueTask<ProviderResult> SendResponseAsync(
         this PhoneProviderBase provider,
         HttpResponseMessage response,
@@ -551,6 +578,32 @@ internal static class PhoneProviderTestExtensions
             1500);
     }
 
+    private sealed class CapturingRequestHandler : HttpMessageHandler
+    {
+        public CapturedRequest? Request { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Request = new CapturedRequest(
+                request.Method,
+                request.RequestUri?.AbsoluteUri,
+                Assert.Single(request.Headers.GetValues("Authorization")),
+                Assert.Single(request.Headers.Accept).MediaType,
+                request.Headers.Select(header => header.Key).OrderBy(name => name).ToArray(),
+                request.Content?.Headers.ContentType?.MediaType,
+                request.Content?.Headers.Select(header => header.Key).OrderBy(name => name).ToArray() ?? [],
+                request.Content is null
+                    ? string.Empty
+                    : await request.Content.ReadAsStringAsync(cancellationToken));
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+            };
+        }
+    }
+
     private sealed class ResponseHandler(Func<HttpResponseMessage> createResponse) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
@@ -559,3 +612,13 @@ internal static class PhoneProviderTestExtensions
             Task.FromResult(createResponse());
     }
 }
+
+internal sealed record CapturedRequest(
+    HttpMethod Method,
+    string? Url,
+    string Authorization,
+    string? Accept,
+    IReadOnlyList<string> HeaderNames,
+    string? ContentType,
+    IReadOnlyList<string> ContentHeaderNames,
+    string Body);

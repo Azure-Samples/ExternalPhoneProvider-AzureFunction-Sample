@@ -23,7 +23,7 @@ selected provider per deployment. Target: .NET 8 isolated worker, Azure Function
 
 	`SendOtp` uses Azure Functions `[FromBody]` binding to create `EntraSendOtpPayload`. Malformed JSON,
 	invalid enum tokens and other deserialization failures are rejected by the Functions binding/runtime
-	before `SendOtp` runs. Those failures therefore do not produce application `RequestLog` events or the
+	before `SendOtp` runs. Those failures therefore do not produce application `ILogger` events or the
 	handler's custom error response body; platform diagnostics and responses apply instead.
 4. Build [dotnet.csproj](dotnet.csproj), run the offline xUnit suites in
 	[tests/Epp.Otp.Tests.csproj](tests/Epp.Otp.Tests.csproj), and start the local Functions host from this folder.
@@ -122,7 +122,7 @@ independent.
 | [Src/EntraSendOtpPayload.cs](Src/EntraSendOtpPayload.cs) | Bound request model, strict channel/mode converters and semantic validation |
 | [Src/JweDeliveryContext.cs](Src/JweDeliveryContext.cs) | Pinned JWE decryption and decrypted delivery context |
 | [Src/CredentialTokenService.cs](Src/CredentialTokenService.cs) | Provider-supplied retrieval, one expiring `MemoryCache` value and startup warmup |
-| [Src/RequestLog.cs](Src/RequestLog.cs) | Request-scoped [service events and summaries](../docs/CONTRACT.md#application-logs) with explicit ID sources |
+| [Src/OtpLog.cs](Src/OtpLog.cs) | Source-generated, strongly typed [structured logging events](../docs/CONTRACT.md#application-logs) |
 | [Src/PhoneProviderBase.cs](Src/PhoneProviderBase.cs) | Provider extension contract and shared typed JSON/HTTP transport |
 | [Src/Providers/](Src/Providers/) | Provider identity, credential delegation and API-specific request/response protocols |
 | [Src/SecretResolver.cs](Src/SecretResolver.cs) | Key Vault transport; `ISecretResolver.ResolveAsync` accepts cancellation |

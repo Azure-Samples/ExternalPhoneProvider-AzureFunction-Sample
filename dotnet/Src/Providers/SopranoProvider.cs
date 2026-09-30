@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 
 namespace Epp.Otp.Providers;
 
@@ -43,15 +44,15 @@ public sealed class SopranoProvider : PhoneProviderBase
 
     public override Task<ProviderResult> SendOtpAsync(
         string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credentials,
-        IEnv env, HttpClient client, int timeoutMs, RequestLog? log = null) =>
+        IEnv env, HttpClient client, int timeoutMs, ILogger? logger = null) =>
         SendJsonAsync<ResponseBody>(
             () => CreateRequest(channel, endpoint, delivery, credentials, env),
             MapResponse,
             client,
             timeoutMs,
-            log);
+            logger);
 
-    public override HttpRequestMessage CreateRequest(
+    private static HttpRequestMessage CreateRequest(
         string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credential, IEnv env)
     {
         Voice? voice = null;

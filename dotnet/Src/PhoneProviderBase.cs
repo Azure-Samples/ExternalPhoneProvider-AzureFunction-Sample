@@ -1,4 +1,5 @@
 using System.Net;
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
@@ -17,14 +18,7 @@ public abstract class PhoneProviderBase
         IEnv env,
         HttpClient client,
         int timeoutMs,
-        RequestLog? log = null);
-
-    public abstract HttpRequestMessage CreateRequest(
-        string channel,
-        string endpoint,
-        OtpDelivery delivery,
-        ProviderCredentials credentials,
-        IEnv env);
+        ILogger? logger = null);
 
     public abstract Task<ProviderCredentials> FetchCredentialsAsync(
         AppConfig config,
@@ -35,35 +29,48 @@ public abstract class PhoneProviderBase
         Func<TResponse?, HttpStatusCode, ProviderResult> mapResponse,
         HttpClient client,
         int timeoutMs,
-        RequestLog? log)
+        ILogger? logger)
     {
         ProviderSendException Failure(int status, string stage, string reason)
         {
-            log?.Failure(stage, reason, status);
+            if (logger is not null)
+                OtpLog.RequestFailed(
+                    logger,
+                    status >= 500 ? LogLevel.Error : LogLevel.Warning,
+                    stage,
+                    reason,
+                    status);
             return new ProviderSendException(status);
         }
 
         var stage = "provider_request_build";
         try
         {
-            log?.Service("provider_request_build_started");
+            if (logger is not null) OtpLog.ProviderRequestBuildStarted(logger);
             using var request = createRequest();
             if (request.RequestUri is null || !IsHttpsEndpoint(request.RequestUri.AbsoluteUri))
                 throw Failure(502, stage, "invalid_provider_request_url");
-            log?.ProviderRequestBuilt(request.Method, request.RequestUri);
+            if (logger is not null)
+            {
+                var method = NormalizeHttpMethod(request.Method);
+                var endpoint = SanitizeEndpoint(request.RequestUri);
+                OtpLog.ProviderRequestBuilt(logger, method, endpoint);
+            }
 
             stage = "provider_transport";
             ProviderResult? result = null;
             var validJson = true;
             using var cts = new CancellationTokenSource(timeoutMs);
-            log?.ProviderRequestStarted(timeoutMs);
+            var providerStarted = Stopwatch.StartNew();
+            if (logger is not null) OtpLog.ProviderRequestStarted(logger, timeoutMs);
             try
             {
                 using var response = await client.SendAsync(
                     request,
                     HttpCompletionOption.ResponseHeadersRead,
                     cts.Token).ConfigureAwait(false);
-                log?.ProviderResponseReceived((int)response.StatusCode);
+                if (logger is not null)
+                    OtpLog.ProviderResponseReceived(logger, (int)response.StatusCode);
                 var bytes = await response.Content.ReadAsByteArrayAsync(cts.Token).ConfigureAwait(false);
                 try
                 {
@@ -99,15 +106,25 @@ public abstract class PhoneProviderBase
                     throw Failure(502, "provider_response", "response_parse_failed");
                 }
             }
-            finally
-            {
-                log?.ProviderRequestFinished();
-            }
+            finally { providerStarted.Stop(); }
 
             if (!validJson)
-                log?.Service("provider_response_invalid_json", level: LogLevel.Warning);
+                if (logger is not null) OtpLog.ProviderResponseInvalidJson(logger);
             var httpStatus = ToEndpointHttpStatus(result!);
-            log?.ProviderResponseProcessed(result!, httpStatus, validJson);
+            if (logger is not null)
+            {
+                var status = result!.StatusRecognized
+                    ? result.ProviderStatusName ?? result.ProviderStatusCode ?? "unmapped"
+                    : "unmapped";
+                OtpLog.ProviderResponseProcessed(
+                    logger,
+                    httpStatus >= 500 ? LogLevel.Error
+                        : httpStatus == 200 ? LogLevel.Information : LogLevel.Warning,
+                    result.ProviderHttpStatus,
+                    status,
+                    result.Outcome.ToString(),
+                    providerStarted.ElapsedMilliseconds);
+            }
             return result!;
         }
         catch (OperationCanceledException)
@@ -134,6 +151,17 @@ public abstract class PhoneProviderBase
         && uri.Port > 0
         && string.IsNullOrEmpty(uri.UserInfo)
         && string.IsNullOrEmpty(uri.Fragment);
+
+    internal static string SanitizeEndpoint(Uri endpoint) =>
+        endpoint.GetComponents(UriComponents.SchemeAndServer, UriFormat.UriEscaped)
+        + endpoint.AbsolutePath;
+
+    private static string NormalizeHttpMethod(HttpMethod? method)
+    {
+        var value = method?.Method.ToUpperInvariant();
+        return value is "GET" or "HEAD" or "POST" or "PUT" or "DELETE"
+            or "CONNECT" or "OPTIONS" or "TRACE" or "PATCH" ? value : "other";
+    }
 
     internal static int ToEndpointHttpStatus(ProviderResult result) => result.Outcome switch
     {
