@@ -1,14 +1,14 @@
 # External Phone Provider Function: C# (.NET isolated worker)
 
-Implements the shared [contract](../docs/CONTRACT.md) with one dispatch engine and one selected
-provider per deployment. Target: .NET 8 isolated worker, Azure Functions v4.
+Implements the shared [contract](../docs/CONTRACT.md) with one `SendOtp` request pipeline and one
+selected provider per deployment. Target: .NET 8 isolated worker, Azure Functions v4.
 
 ## Setup and deployment
 
 1. Follow [customer onboarding](../docs/ONBOARDING.md). Set `EPP_PROVIDER_NAME` to the selected
-	adapter's registered manifest id (`<adapter-id>` is only a placeholder).
-2. Consult the selected adapter and its manifest in [Src/Providers/](Src/Providers/) for required
-	credentials and options. Store credentials in Key Vault under the declared secret names, grant
+	adapter's `Name` (`<adapter-id>` is only a placeholder).
+2. Consult the selected adapter in [Src/Providers/](Src/Providers/) for required credentials and
+	options. Store credentials in Key Vault under the provider's secret names, grant
 	the Function's managed identity *Key Vault Secrets User*, and configure the matching endpoint/options.
 3. Base private local settings on [../docs/local.settings.sample.json](../docs/local.settings.sample.json),
 	replacing placeholders and selecting `FUNCTIONS_WORKER_RUNTIME=dotnet-isolated`. Put settings
@@ -20,6 +20,11 @@ provider per deployment. Target: .NET 8 isolated worker, Azure Functions v4.
 	endpoint-app `allowedAudiences` and a nonempty `allowedApplications` list for the authorized SAS
 	caller. Do not exclude SendOtp. There is no backup application token validation; never expose the
 	endpoint to the public internet with Easy Auth disabled or bypassed.
+
+	`SendOtp` uses Azure Functions `[FromBody]` binding to create `EntraSendOtpPayload`. Malformed JSON,
+	invalid enum tokens and other deserialization failures are rejected by the Functions binding/runtime
+	before `SendOtp` runs. Those failures therefore do not produce application `ILogger` events or the
+	handler's custom error response body; platform diagnostics and responses apply instead.
 4. Build [dotnet.csproj](dotnet.csproj), run the offline xUnit suites in
 	[tests/Epp.Otp.Tests.csproj](tests/Epp.Otp.Tests.csproj), and start the local Functions host from this folder.
 	Core Tools has no Easy Auth: bind only to loopback, with no tunnels or public forwarding.
@@ -49,7 +54,7 @@ For live delivery, add `EPP_PROVIDER_NAME`, the complete selected `EPP_PROVIDER_
 matching provider authentication settings to `Values`.
 Add `EPP_PROVIDER_ACCOUNT_NAME` and adapter-specific options only when required. Optional
 `EPP_PROVIDER_TIMEOUT_MS` is a string such as `"1500"`. Replace placeholders; store provider credentials
-under the adapter manifest's Key Vault secret names, not in local settings. See the
+under the adapter's Key Vault secret names, not in local settings. See the
 [complete variable table](../README.md#configure-environment-variables).
 
 Core Tools loads `Values` into environment variables. [AppConfig.Read](Src/AppConfig.cs) reads them
@@ -68,9 +73,10 @@ or the offline tests' injected environment and secret resolver for local develop
 
 `POST /api/SendOtp` uses the same request and trust boundaries as the other runtimes. Incoming
 `mode`, `channel`, `ttlSeconds` and `tenantId` are request data, not deployment authentication settings.
-Easy Auth authenticates and authorizes the caller before the anonymous handler validates the envelope
+Easy Auth authenticates and authorizes the caller before the anonymous handler validates the payload
 and decrypts the JWE. Incoming `Authorization` is not parsed or echoed by the handler. JWE does not
 authenticate SAS: anyone with the public key can encrypt a request, and a fixed nonce is not authentication.
+Requests that bind successfully retain the application validation, PII-safe logging and response lifecycle.
 
 Use incoming `mode: 2` or `mode: "evaluation"` as the generic shutter for every provider: platform
 authentication on Azure, handler validation and decryption run, but provider lookup, provider Key Vault
@@ -90,27 +96,43 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 
 ## Source
 
-The hosted service selects `ApiKeyCache` or `AccessTokenCache` from the provider manifest's auth mode.
-Only the selected cache starts: API keys use Key Vault and framework `MemoryCache`; access tokens
-use the MI/Entra SDKs without Key Vault. One periodic timer polls every 30 seconds. Configuration
-changes require restart. Each shared acquisition owns
-its cancellation budget; a waiter cannot cancel another request's retrieval. Disposal stops refresh
-and prevents late publication. See the [refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh)
-for expiry, sanitized failure logs and cold-start limits. Evaluation remains independent.
+`SendOtp` validates and decrypts the request, selects the configured provider in its private
+`SelectProvider` method, resolves that provider's credentials, builds and sends the common bounded HTTP
+request, asks the provider to deserialize its typed response DTO and return the final outcome, then maps that
+outcome to the endpoint HTTP status. Providers
+return standard `HttpRequestMessage` instances with typed `JsonContent`; the shared transport sends those
+messages directly with redirects disabled, `ResponseHeadersRead`, and the bounded timeout. Each provider maps
+its own normalized response status to the final outcome and reports whether that status was recognized. The
+default method selects by `EPP_PROVIDER_NAME`; replace only its body if deployment policy later needs country,
+tenant or other request-aware selection. No router or routing configuration abstraction is required.
+
+`CredentialTokenService` is the hosted startup warmer and runtime credential cache.
+It asks the selected provider for credentials at startup and on cache misses.
+Each provider owns credential acquisition and its secret names. The service stores
+the result in .NET `MemoryCache` until the credential's absolute expiry; the next request fetches a
+replacement. There is no polling timer or separate cache implementation. Each shared acquisition owns
+its cancellation budget, so a waiter cannot cancel another request's retrieval. Evaluation remains
+independent.
 
 | Source | Purpose |
 |---|---|
-| [Program.cs](Program.cs) | Host and adapter registration |
-| [Functions/SendOtp.cs](Functions/SendOtp.cs) | HTTP handler |
+| [Program.cs](Program.cs) | Host, provider, credential cache and HTTP client registration |
+| [Functions/SendOtp.cs](Functions/SendOtp.cs) | HTTP handler, provider selection, delivery orchestration and common HTTP transport |
 | [Src/AppConfig.cs](Src/AppConfig.cs) | Shared deployment settings |
-| [Src/DispatchEngine.cs](Src/DispatchEngine.cs) | Envelope/JWE handling and dispatch |
-| [Src/ProviderCredentials.cs](Src/ProviderCredentials.cs) | `ApiKeyCache`, `AccessTokenCache` and their shared refresh coordinator |
-| [Src/CredentialRefreshService.cs](Src/CredentialRefreshService.cs) | Per-worker startup and shutdown integration |
-| [Src/RequestLog.cs](Src/RequestLog.cs) | Request-scoped [service events and summaries](../docs/CONTRACT.md#application-logs) with explicit ID sources |
-| [Src/ProviderRegistry.cs](Src/ProviderRegistry.cs), [Src/IProviderAdapter.cs](Src/IProviderAdapter.cs) | Adapter lookup and contract |
-| [Src/Providers/](Src/Providers/) | Adapter manifests and API-specific implementations |
-| [Src/SecretResolver.cs](Src/SecretResolver.cs) | Key Vault transport; `ISecretResolver.ResolveAsync` accepts cancellation and `ApiKeyCache` owns the bundle |
-| [Src/OutcomeMapper.cs](Src/OutcomeMapper.cs), [Src/Models.cs](Src/Models.cs) | Outcomes and shared records |
+| [Src/EntraSendOtpPayload.cs](Src/EntraSendOtpPayload.cs) | Bound request model, strict channel/mode converters and semantic validation |
+| [Src/JweDeliveryContext.cs](Src/JweDeliveryContext.cs) | Pinned JWE decryption and decrypted delivery context |
+| [Src/CredentialTokenService.cs](Src/CredentialTokenService.cs) | Provider-supplied retrieval, one expiring `MemoryCache` value and startup warmup |
+| [Src/OtpLog.cs](Src/OtpLog.cs) | Source-generated, strongly typed [structured logging events](../docs/CONTRACT.md#application-logs) |
+| [Src/PhoneProviderBase.cs](Src/PhoneProviderBase.cs) | Provider extension contract and shared typed JSON/HTTP transport |
+| [Src/Providers/](Src/Providers/) | Provider identity, credential delegation and API-specific request/response protocols |
+| [Src/SecretResolver.cs](Src/SecretResolver.cs) | Key Vault transport; `ISecretResolver.ResolveAsync` accepts cancellation |
+| [Src/Models.cs](Src/Models.cs) | Outcomes and shared records |
 
-Implement `IProviderAdapter` and register it in [Program.cs](Program.cs) without adding provider-specific
-branches to the shared pipeline. See [production limitations](../docs/CONTRACT.md#production-limitations) before production use.
+Derive from `PhoneProviderBase`, register the provider in [Program.cs](Program.cs), and give it the configured
+name used by the simple `SelectProvider` policy in `SendOtp`. Providers own authentication declaration,
+credential resolution, request construction and private typed response DTOs. Their public `SendOtpAsync`
+method delegates to the base `SendJsonAsync<TResponse>` transport and maps the typed response into
+`ProviderResult`; provider mapping code never handles `HttpResponseMessage` or raw JSON DOM types.
+Provider-specific response semantics stay in each provider; no shared response-mapping
+registry is used. Common async HTTP transport remains in `SendOtp`. See
+[production limitations](../docs/CONTRACT.md#production-limitations) before production use.

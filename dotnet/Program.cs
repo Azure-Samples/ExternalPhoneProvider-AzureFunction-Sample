@@ -11,21 +11,19 @@ var builder = FunctionsApplication.CreateBuilder(args);
 builder.ConfigureFunctionsWebApplication();
 
 // Application events use selected metadata; provider URLs must not appear in factory logs.
-builder.Logging.AddFilter("System.Net.Http.HttpClient." + DispatchEngine.ProviderHttpClientName, LogLevel.None);
-builder.Services.AddHttpClient(DispatchEngine.ProviderHttpClientName)
+builder.Logging.AddFilter("System.Net.Http.HttpClient." + SendOtp.ProviderHttpClientName, LogLevel.None);
+builder.Services.AddHttpClient(SendOtp.ProviderHttpClientName)
 	.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<IEnv, ProcessEnv>();
 builder.Services.AddSingleton<ISecretResolver, SecretResolver>();
-builder.Services.AddSingleton<IJweKeyProvider, EnvJweKeyProvider>();
 builder.Services.AddSingleton<JweDecryptor>();
+builder.Services.AddSingleton<PhoneProviderBase, InfobipProvider>();
+builder.Services.AddSingleton<PhoneProviderBase, TelesignProvider>();
+builder.Services.AddSingleton<PhoneProviderBase, SopranoProvider>();
+builder.Services.AddSingleton<PhoneProviderBase, SinchProvider>();
 
-builder.Services.AddSingleton<IProviderAdapter, InfobipProvider>();
-builder.Services.AddSingleton<IProviderAdapter, TelesignProvider>();
-builder.Services.AddSingleton<IProviderAdapter, SopranoProvider>();
-builder.Services.AddSingleton<IProviderAdapter, SinchProvider>();
-
-builder.Services.AddSingleton<ProviderRegistry>();
-builder.Services.AddSingleton<DispatchEngine>();
-builder.Services.AddHostedService<CredentialRefreshService>();
+builder.Services.AddSingleton<CredentialTokenService>();
+builder.Services.AddHostedService(services => services.GetRequiredService<CredentialTokenService>());
+builder.Services.AddSingleton<SendOtp>();
 
 builder.Build().Run();

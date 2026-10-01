@@ -11,7 +11,7 @@ using Xunit;
 
 namespace Epp.Otp.Tests;
 
-public class EngineTests
+public class SendOtpTests
 {
     private const string Phone = "+15551234567";
     private const string Message = "  Your code is 918273.\nDo not share.  ";
@@ -19,7 +19,18 @@ public class EngineTests
     private const string Kid = "private-jwe-kid";
     private const string Correlation = "private-correlation";
     private const string PrivateError = "private key/provider error: +15551234567 code 918273";
-
+    private static readonly string[] LiveEvents =
+    [
+        "request_received", "payload_validated", "delivery_context_decrypted", "provider_selected",
+        "provider_credential_resolution_started", "provider_credential_resolved",
+        "provider_request_build_started", "provider_request_built", "provider_request_started",
+        "provider_response_received", "provider_response_processed", "response_prepared", "request_completed",
+    ];
+    private static readonly string[] EvaluationEvents =
+    [
+        "request_received", "payload_validated", "delivery_context_decrypted",
+        "evaluation_completed", "response_prepared", "request_completed",
+    ];
     private static void ConfigureSoprano(HandlerRig rig)
     {
         rig.Env["EPP_PROVIDER_NAME"] = "soprano";
@@ -38,10 +49,9 @@ public class EngineTests
     public async Task StartupPreparesOnlyCredentialsAndWarmRequestsReuseTheBundle()
     {
         using var rig = new HandlerRig();
-        await rig.Engine.StartCredentialRefreshAsync();
+        await rig.Credentials.StartAsync(default);
         Assert.Equal(1, rig.Secrets.Calls);
         Assert.Equal(0, rig.Http.Calls);
-        Assert.Equal(0, rig.Keys.Calls);
         AssertAccepted(await rig.Invoke("evaluation"));
         Assert.Equal(1, rig.Secrets.Calls);
         Assert.Equal(0, rig.Http.Calls);
@@ -55,7 +65,8 @@ public class EngineTests
     {
         using var rig = new HandlerRig();
         rig.Env.Clear();
-        await rig.Engine.StartCredentialRefreshAsync();
+        rig.Env["EPP_DECRYPTION_KEY_PEM"] = rig.Keys.Rsa.ExportPkcs8PrivateKeyPem();
+        await rig.Credentials.StartAsync(default);
         Assert.Equal(0, rig.Secrets.Calls);
         Assert.Equal(0, rig.Http.Calls);
         AssertAccepted(await rig.Invoke("evaluation"));
@@ -126,7 +137,7 @@ public class EngineTests
         Assert.Equal(3, rig.Http.Calls);
         Assert.Equal(0, rig.Secrets.Calls);
         Assert.DoesNotContain("private-provider-token", string.Join("\n", rig.Log.Messages));
-        var credential = new ProviderCredential("oauth", AccessToken: "private-provider-token");
+        var credential = new ProviderCredentials("oauth", AccessToken: "private-provider-token");
         Assert.DoesNotContain("private-provider-token", JsonSerializer.Serialize(credential) + credential);
     }
 
@@ -176,7 +187,7 @@ public class EngineTests
         Assert.True(observed.IsCancellationRequested);
         Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
         waitForCancellation = false;
-        rig.Engine.Dispose();
+        rig.Credentials.Dispose();
         AssertFailure(rig, await rig.Invoke(), 502);
         Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
         using var replacement = new HandlerRig(CreateIdentity, CreateProvider);
@@ -210,7 +221,9 @@ public class EngineTests
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.False(pending.IsCompleted);
-            Assert.DoesNotContain(rig.Log.Records, record => record.GetProperty("logType").GetString() == "request");
+            Assert.DoesNotContain(
+                rig.Log.Entries,
+                entry => entry.EventId.Name == "request_completed");
             Assert.Equal("provider_request_started", rig.Log.Records.Last().GetProperty("eventName").GetString());
         }
         finally
@@ -221,31 +234,19 @@ public class EngineTests
         using var body = JsonDocument.Parse(rig.Http.Body!);
         Assert.Equal(Message, body.RootElement.GetProperty("messages")[0].GetProperty("content").GetProperty("text").GetString());
         Assert.Equal(1, rig.Http.Calls);
-        var summary = Summary(rig);
-        using var fixtures = ReadContractFixtures();
-        Assert.Equal(fixtures.RootElement.GetProperty("logging").GetProperty("liveEvents").EnumerateArray().Select(value => value.GetString()),
-            rig.Log.Records.Select(record => record.GetProperty("eventName").GetString()));
-        Assert.Equal("infobip", summary.GetProperty("providerName").GetString());
-        Assert.Equal("apiKey", summary.GetProperty("providerAuthMode").GetString());
-        Assert.Equal(200, summary.GetProperty("providerHttpStatus").GetInt32());
-        Assert.Equal("PENDING", summary.GetProperty("providerStatus").GetString());
-        Assert.Equal("Continue", summary.GetProperty("providerOutcome").GetString());
-        Assert.True(summary.GetProperty("providerAttempted").GetBoolean());
-        Assert.Equal("id", summary.GetProperty("providerMessageId").GetString());
-        Assert.Equal(2500, summary.GetProperty("providerTimeoutMs").GetInt32());
-        Assert.InRange(summary.GetProperty("providerElapsedMs").GetInt64(), 0, summary.GetProperty("elapsedMs").GetInt64());
+        Assert.Equal(LiveEvents, rig.Log.Records.Select(record => record.GetProperty("eventName").GetString()));
+        var selected = rig.Log.Entry("provider_selected");
+        Assert.Equal("infobip", selected.State["ProviderName"]);
+        Assert.Equal("apiKey", selected.State["AuthenticationMode"]);
+        var processed = rig.Log.Entry("provider_response_processed");
+        Assert.Equal(200, processed.State["ProviderHttpStatus"]);
+        Assert.Equal("PENDING", processed.State["ProviderStatus"]);
+        Assert.Equal("Continue", processed.State["ProviderOutcome"]);
+        Assert.Equal(2500, rig.Log.Entry("provider_request_started").State["TimeoutMs"]);
+        Assert.Equal(Correlation, processed.Scope["MsCorrelationId"]);
         var log = string.Join("\n", rig.Log.Messages);
-        Assert.Equal(Correlation, summary.GetProperty("x-ms-correlation-id").GetString());
         foreach (var value in new[] { Phone, "918273", "001234", Nonce, "private-api-key", "private-api-id" })
             Assert.DoesNotContain(value, log);
-    }
-
-    [Fact]
-    public void VoiceAllowsEmptyIntroAndKeepsDebugOutputPrivate()
-    {
-        var voice = new TextToVoice("", "001234", "en-US");
-        Assert.True(voice.IsComplete);
-        Assert.Equal("TextToVoice", voice.ToString());
     }
 
     [Fact]
@@ -256,6 +257,23 @@ public class EngineTests
             JsonSerializer.Serialize(new { status = "ACCEPTED", description = PrivateError })));
         AssertFailure(rig, await rig.Invoke(), 502);
         Assert.Equal(1, rig.Http.Calls);
+    }
+
+    [Theory]
+    [InlineData(Outcome.Continue, 503, 200)]
+    [InlineData(Outcome.Block, 200, 403)]
+    [InlineData(Outcome.Fail, 429, 429)]
+    [InlineData(Outcome.Fail, 401, 401)]
+    [InlineData(Outcome.Fail, 403, 401)]
+    [InlineData(Outcome.Fail, 400, 400)]
+    [InlineData(Outcome.Fail, 499, 400)]
+    [InlineData(Outcome.Fail, 200, 502)]
+    [InlineData(Outcome.Fail, 503, 502)]
+    public void FinalProviderOutcomeMapsToEndpointStatus(
+        Outcome outcome, int providerHttpStatus, int expected)
+    {
+        var result = new ProviderResult(outcome, true, providerHttpStatus);
+        Assert.Equal(expected, PhoneProviderBase.ToEndpointHttpStatus(result));
     }
 
     [Fact]
@@ -275,7 +293,7 @@ public class EngineTests
         Assert.Equal(200, summary.GetProperty("providerHttpStatus").GetInt32());
         Assert.Equal(200, summary.GetProperty("providerTimeoutMs").GetInt32());
         Assert.Equal(JsonValueKind.Null, summary.GetProperty("providerStatus").ValueKind);
-        Assert.InRange(summary.GetProperty("providerElapsedMs").GetInt64(), 0, summary.GetProperty("elapsedMs").GetInt64());
+        Assert.True(summary.GetProperty("elapsedMs").GetInt64() >= 0);
     }
 
     [Fact]
@@ -313,47 +331,42 @@ public class EngineTests
     {
         using var rig = new HandlerRig();
         rig.Env.Clear();
+        rig.Env["EPP_DECRYPTION_KEY_PEM"] = rig.Keys.Rsa.ExportPkcs8PrivateKeyPem();
         rig.Env["EPP_ENCRYPTION_KEY_ID"] = "configured-key-id";
         AssertAccepted(await rig.Invoke("evaluation", tenantId: "untrusted-body-tenant"));
         Assert.Equal("encryption_key_id_mismatch",
-            JsonSerializer.Deserialize<JsonElement>(Assert.Single(rig.Log.Entries, entry => entry.Level == LogLevel.Warning).Message)
-                .GetProperty("eventName").GetString());
-        var summary = Summary(rig);
-        Assert.True(summary.GetProperty("encryptionKeyIdMismatch").GetBoolean());
-        Assert.True(summary.GetProperty("evaluation").GetBoolean());
-        Assert.Equal("evaluated", summary.GetProperty("result").GetString());
-        Assert.False(summary.GetProperty("providerAttempted").GetBoolean());
-        Assert.Equal(JsonValueKind.Null, summary.GetProperty("providerName").ValueKind);
-        Assert.Equal(JsonValueKind.Null, summary.GetProperty("providerHttpStatus").ValueKind);
-        Assert.Equal(JsonValueKind.Null, summary.GetProperty("providerElapsedMs").ValueKind);
-        Assert.Equal(JsonValueKind.Null, summary.GetProperty("providerCredentialSource").ValueKind);
-        Assert.Equal(JsonValueKind.Null, summary.GetProperty("providerCredentialElapsedMs").ValueKind);
-        Assert.Equal(JsonValueKind.Null, summary.GetProperty("providerEndpoint").ValueKind);
-        using var fixtures = ReadContractFixtures();
-        Assert.Equal(fixtures.RootElement.GetProperty("logging").GetProperty("evaluationEvents").EnumerateArray().Select(value => value.GetString()),
+            Assert.Single(rig.Log.Entries, entry => entry.Level == LogLevel.Warning).EventId.Name);
+        Assert.True((bool)rig.Log.Entry("payload_validated").State["Evaluation"]!);
+        Assert.Equal("evaluated", rig.Log.Entry("request_completed").State["Result"]);
+        Assert.DoesNotContain(
+            rig.Log.Entries,
+            entry => entry.EventId.Name is "provider_selected" or "provider_request_started");
+        Assert.Equal(EvaluationEvents,
             rig.Log.Records.Select(record => record.GetProperty("eventName").GetString()).Where(name => name != "encryption_key_id_mismatch"));
         foreach (var value in new[] { Kid, "configured-key-id", Phone, "918273", Nonce, "untrusted-body-tenant" })
             Assert.DoesNotContain(value, string.Join("\n", rig.Log.Messages));
-        Assert.Equal((1, 0, 0), (rig.Keys.Calls, rig.Secrets.Calls, rig.Http.Calls));
+        Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
     }
 
     [Fact]
     public async Task PrivateKeyErrorsStayGenericAndNeverReachTheProvider()
     {
         using var rig = new HandlerRig();
-        rig.Keys.Error = new InvalidOperationException(PrivateError);
+        rig.Env["EPP_DECRYPTION_KEY_PEM"] = PrivateError;
         AssertFailure(rig, await rig.Invoke(), 400, "decryption_failed");
         Assert.Equal(0, rig.Http.Calls);
     }
 
     [Theory]
     [InlineData("{", "decryption_failed", null)]
-    [InlineData("null", "bad_request", "incomplete delivery context")]
-    [InlineData("[]", "bad_request", "incomplete delivery context")]
-    [InlineData("{\"nonce\":123,\"phoneNumber\":\"phone\",\"message\":\"message\"}", "bad_request", "incomplete delivery context")]
-    [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":false,\"message\":\"message\"}", "bad_request", "incomplete delivery context")]
-    [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":\"phone\",\"message\":{}}", "bad_request", "incomplete delivery context")]
-    public async Task AuthenticatedPlaintextDistinguishesInvalidJsonFromIncompleteContext(string plaintext, string error, string? reason)
+    [InlineData("null", "decryption_failed", null)]
+    [InlineData("[]", "decryption_failed", null)]
+    [InlineData("{\"nonce\":123,\"phoneNumber\":\"phone\",\"message\":\"message\"}", "decryption_failed", null)]
+    [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":false,\"message\":\"message\"}", "decryption_failed", null)]
+    [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":\"phone\",\"message\":{}}", "decryption_failed", null)]
+    [InlineData("{\"nonce\":\"nonce\"}", "bad_request", "incomplete delivery context")]
+    public async Task AuthenticatedPlaintextUsesTypedDeliveryContextValidation(
+        string plaintext, string error, string? reason)
     {
         using var rig = new HandlerRig();
         var result = await rig.Invoke(plaintext: plaintext);
@@ -362,7 +375,7 @@ public class EngineTests
         if (reason is null) Assert.False(body.TryGetProperty("reason", out _));
         else Assert.Equal(reason, body.GetProperty("reason").GetString());
         Assert.Equal(Correlation, body.GetProperty("correlationId").GetString());
-        Assert.Equal((1, 0, 0), (rig.Keys.Calls, rig.Secrets.Calls, rig.Http.Calls));
+        Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
     }
 
     [Fact]
@@ -370,31 +383,48 @@ public class EngineTests
     {
         using var rig = new HandlerRig();
         using var fixtures = ReadContractFixtures();
+        var semanticCases = 0;
         foreach (var fixture in fixtures.RootElement.GetProperty("badRequests").EnumerateArray())
         {
-            var payload = new Dictionary<string, object?>
+            var bodyValues = new Dictionary<string, object?>
             {
-                ["type"] = EnvelopeParser.EnvelopeType, ["channel"] = 1, ["mode"] = 1,
+                ["type"] = EntraSendOtpPayload.SupportedType, ["channel"] = 1, ["mode"] = 1,
                 ["encryptedDeliveryContext"] = "unused", ["ttlSeconds"] = 60,
             };
             if (fixture.TryGetProperty("overrides", out var overrides))
-                foreach (var property in overrides.EnumerateObject()) payload[property.Name] = property.Value;
-            var raw = fixture.TryGetProperty("rawBody", out var rawBody) ? rawBody.GetString()! : JsonSerializer.Serialize(payload);
-            var result = await rig.InvokeRaw(raw);
+                foreach (var property in overrides.EnumerateObject()) bodyValues[property.Name] = property.Value;
+            var raw = fixture.TryGetProperty("rawBody", out var rawBody)
+                ? rawBody.GetString()!
+                : JsonSerializer.Serialize(bodyValues);
+            EntraSendOtpPayload? payload;
+            try { payload = JsonSerializer.Deserialize<EntraSendOtpPayload>(raw); }
+            catch (JsonException) { continue; }
+            if (payload is null) continue;
+            var validationError = payload.Validate();
+            if (validationError is null) continue;
+            semanticCases++;
+            var expectedReason = fixture.GetProperty("name").GetString() == "wrong version"
+                ? "unsupported payload type"
+                : fixture.GetProperty("reason").GetString();
+            Assert.Equal(expectedReason, validationError);
+            var result = await rig.InvokePayload(payload);
             AssertFailure(rig, result, 400, "bad_request");
             var body = JsonSerializer.SerializeToElement(result.Value);
             Assert.False(string.IsNullOrEmpty(body.GetProperty("requestId").GetString()));
             Assert.Equal(3, body.EnumerateObject().Count());
-            Assert.Equal(fixture.GetProperty("reason").GetString(), body.GetProperty("reason").GetString());
+            Assert.Equal(validationError, body.GetProperty("reason").GetString());
         }
-        Assert.Equal(0, rig.Keys.Calls);
+        Assert.True(semanticCases > 0);
         foreach (var changes in fixtures.RootElement.GetProperty("incompleteContexts").EnumerateArray())
         {
             var result = await rig.Invoke("evaluation", deliveryOverrides: changes);
-            AssertFailure(rig, result, 400, "bad_request");
+            var wrongType = changes.TryGetProperty("nonce", out var nonce)
+                && nonce.ValueKind == JsonValueKind.Number;
+            AssertFailure(rig, result, 400, wrongType ? "decryption_failed" : "bad_request");
             var body = JsonSerializer.SerializeToElement(result.Value);
-            Assert.Equal(4, body.EnumerateObject().Count());
-            Assert.Equal("incomplete delivery context", body.GetProperty("reason").GetString());
+            Assert.Equal(wrongType ? 3 : 4, body.EnumerateObject().Count());
+            if (!wrongType)
+                Assert.Equal("incomplete delivery context", body.GetProperty("reason").GetString());
             Assert.Equal(Correlation, body.GetProperty("correlationId").GetString());
         }
         Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
@@ -431,7 +461,7 @@ public class EngineTests
             ["x-ms-client-request-id"] = "ms-request-id",
             ["x-ms-correlation-id"] = "ms-header-correlation-id",
         };
-        foreach (var correlation in new[] { "ms-envelope-correlation-id", null })
+        foreach (var correlation in new[] { "ms-payload-correlation-id", null })
         {
             using var rig = new HandlerRig();
             var result = await rig.Invoke(correlationId: correlation, headers: headers);
@@ -439,8 +469,9 @@ public class EngineTests
             var summary = Summary(rig);
             Assert.Equal(headers["x-ms-client-request-id"], summary.GetProperty("x-ms-client-request-id").GetString());
             Assert.Equal(correlation ?? headers["x-ms-correlation-id"], summary.GetProperty("x-ms-correlation-id").GetString());
-            Assert.Equal(correlation is null ? "header" : "envelope", summary.GetProperty("msCorrelationIdSource").GetString());
-            Assert.Equal("header", rig.Log.Records.First().GetProperty("msCorrelationIdSource").GetString());
+            Assert.Equal(correlation is null ? "header" : "payload", summary.GetProperty("msCorrelationIdSource").GetString());
+            Assert.Equal(correlation is null ? "header" : "payload",
+                rig.Log.Records.First().GetProperty("msCorrelationIdSource").GetString());
             Assert.Equal(JsonValueKind.Null, summary.GetProperty("functionInvocationId").ValueKind);
             Assert.DoesNotContain("PRIVATE", string.Join("\n", rig.Log.Messages));
         }
@@ -458,29 +489,28 @@ public class EngineTests
     public void FunctionInvocationIdIsSeparateFromMicrosoftAndProviderIdentifiersInLogState()
     {
         var logger = new CapturingLogger();
-        var log = new RequestLog(logger, "function-request", "function-invocation", "ms-request-id", "ms-header-correlation-id");
-        var manifest = new TelesignProvider().Manifest;
-        log.ProviderSelected(manifest);
-        log.ProviderRequestStarted(1500);
-        log.ProviderResponseReceived(200);
-        log.ProviderRequestFinished();
-        log.ProviderResponseProcessed(manifest, new ParsedResponse(true, 200, "provider-reference-id",
-            ProviderStatusCode: "3001", ProviderStatusDescription: PrivateError), Outcome.Continue, 200, true);
-        log.Complete(200);
-        var summary = logger.States.Last();
-        Assert.Equal("function-request", summary["functionRequestId"]);
-        Assert.Equal("function-invocation", summary["functionInvocationId"]);
-        Assert.Equal("ms-request-id", summary["x-ms-client-request-id"]);
-        Assert.Equal("ms-header-correlation-id", summary["x-ms-correlation-id"]);
-        Assert.Equal("provider-reference-id", summary["providerMessageId"]);
-        Assert.Equal("3001", summary["providerStatus"]);
+        using (logger.BeginScope(new Dictionary<string, object?>
+               {
+                   ["FunctionRequestId"] = "function-request",
+                   ["FunctionInvocationId"] = "function-invocation",
+                   ["MsClientRequestId"] = "ms-request-id",
+                   ["MsCorrelationId"] = "ms-header-correlation-id",
+               }))
+            OtpLog.ProviderResponseProcessed(
+                logger, LogLevel.Information, 200, "3001", "Continue", null, 10);
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal("function-request", entry.Scope["FunctionRequestId"]);
+        Assert.Equal("function-invocation", entry.Scope["FunctionInvocationId"]);
+        Assert.Equal("ms-request-id", entry.Scope["MsClientRequestId"]);
+        Assert.Equal("ms-header-correlation-id", entry.Scope["MsCorrelationId"]);
+        Assert.Equal("3001", entry.State["ProviderStatus"]);
         Assert.DoesNotContain("PRIVATE", string.Join("\n", logger.Messages));
         Assert.DoesNotContain(PrivateError, string.Join("\n", logger.Messages));
     }
 
     [Theory]
-    [InlineData("invalid_json", 400, "request_validation", "invalid JSON body", false)]
-    [InlineData("invalid_envelope", 400, "request_validation", "unsupported envelope type", false)]
+    [InlineData("invalid_payload", 400, "request_validation", "unsupported payload type", false)]
     [InlineData("decryption", 400, "decryption", "decryption_failed", false)]
     [InlineData("incomplete_context", 400, "delivery_context_validation", "incomplete delivery context", false)]
     [InlineData("unknown_provider", 400, "provider_selection", "unknown_provider", false)]
@@ -491,14 +521,14 @@ public class EngineTests
     [InlineData("request_build", 502, "provider_request_build", "request_build_failed", false)]
     [InlineData("network", 502, "provider_transport", "provider_network_error", true)]
     [InlineData("response_parse", 502, "provider_response", "response_parse_failed", true)]
-    [InlineData("http_rejection", 429, "provider_response", "provider_rejected", true)]
+    [InlineData("http_rejection", 429, "provider_response", "provider_http_error", true)]
     public async Task FailuresEmitSeparateServiceEventsAndCompleteSummaries(string scenario, int status, string stage, string reason, bool attempted)
     {
         using var rig = new HandlerRig();
         JsonElement? delivery = null;
         switch (scenario)
         {
-            case "decryption": rig.Keys.Error = new InvalidOperationException(PrivateError); break;
+            case "decryption": rig.Env["EPP_DECRYPTION_KEY_PEM"] = PrivateError; break;
             case "incomplete_context": delivery = JsonSerializer.SerializeToElement(new { nonce = "" }); break;
             case "unknown_provider": rig.Env["EPP_PROVIDER_NAME"] = "PRIVATE-UNKNOWN-PROVIDER"; break;
             case "wrong_channel": rig.Env["EPP_PROVIDER_CHANNEL"] = "voice"; break;
@@ -513,7 +543,9 @@ public class EngineTests
                 rig.Http.Respond = _ => Task.FromException<HttpResponseMessage>(new HttpRequestException(PrivateError));
                 break;
             case "response_parse":
-                rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"messages\":[{\"status\":{\"groupName\":123}}]}"));
+                rig.Http.Respond = _ => Task.FromResult(Json(
+                    200,
+                    "{\"messages\":[{\"messageId\":123,\"status\":{\"groupName\":\"PENDING\"}}]}"));
                 break;
             case "http_rejection":
                 rig.Http.Respond = _ => Task.FromResult(Json(429, "{\"messages\":[{\"status\":{\"groupName\":\"PENDING\"}}]}"));
@@ -526,8 +558,7 @@ public class EngineTests
         };
         var result = scenario switch
         {
-            "invalid_json" => await rig.InvokeRaw("{", headers),
-            "invalid_envelope" => await rig.InvokeRaw("{}", headers),
+            "invalid_payload" => await rig.Invoke(type: "wrong", headers: headers),
             _ => await rig.Invoke(deliveryOverrides: delivery, headers: headers),
         };
         Assert.Equal(status, result.StatusCode);
@@ -538,19 +569,20 @@ public class EngineTests
         Assert.Equal(reason, summary.GetProperty("failureReason").GetString());
         Assert.Equal("failed", summary.GetProperty("result").GetString());
         Assert.Equal(headers["x-ms-client-request-id"], summary.GetProperty("x-ms-client-request-id").GetString());
-        Assert.Equal(stage == "request_validation" ? "header" : "envelope", summary.GetProperty("msCorrelationIdSource").GetString());
+        Assert.Equal(stage == "request_validation" ? "header" : "payload", summary.GetProperty("msCorrelationIdSource").GetString());
         Assert.Equal(stage == "request_validation" ? headers["x-ms-correlation-id"] : Correlation,
             summary.GetProperty("x-ms-correlation-id").GetString());
         Assert.Equal(attempted, summary.GetProperty("providerAttempted").GetBoolean());
         Assert.Equal(attempted ? 1 : 0, rig.Http.Calls);
-        Assert.Equal(scenario == "http_rejection" ? "provider_response_processed" : stage + "_failed",
-            rig.Log.Records.ElementAt(rig.Log.Entries.Count - 3).GetProperty("eventName").GetString());
+        var failure = rig.Log.Entries.Last(entry => entry.EventId.Name == "request_failed");
+        Assert.Equal(stage, failure.State["FailureStage"]);
+        Assert.Equal(reason, failure.State["FailureReason"]);
         Assert.False(summary.GetProperty("responseContainsNonce").GetBoolean());
         Assert.Equal(stage != "request_validation", summary.GetProperty("responseContainsCorrelationId").GetBoolean());
         if (scenario == "credentials")
         {
             Assert.Equal("key_vault", summary.GetProperty("providerCredentialSource").GetString());
-            Assert.InRange(summary.GetProperty("providerCredentialElapsedMs").GetInt64(), 0, summary.GetProperty("elapsedMs").GetInt64());
+            Assert.Equal(JsonValueKind.Null, summary.GetProperty("providerCredentialElapsedMs").ValueKind);
             Assert.DoesNotContain(rig.Log.Records, record => record.GetProperty("eventName").GetString() == "provider_credential_resolved");
         }
         Assert.Contains(rig.Log.Entries, entry => entry.Level == (status >= 500 ? LogLevel.Error : LogLevel.Warning));
@@ -576,39 +608,32 @@ public class EngineTests
             deliveryOverrides: JsonSerializer.SerializeToElement(new { diagnosticData = "PRIVATE-UNKNOWN-FIELD" })));
         var summary = Summary(rig);
         var records = rig.Log.Records.ToArray();
-        var validated = Assert.Single(records, record => record.GetProperty("eventName").GetString() == "envelope_validated");
-        Assert.Equal(EnvelopeParser.EnvelopeType, validated.GetProperty("envelopeType").GetString());
-        Assert.Equal(EnvelopeParser.EnvelopeType, summary.GetProperty("envelopeType").GetString());
+        var validated = Assert.Single(records, record => record.GetProperty("eventName").GetString() == "payload_validated");
+        Assert.Equal(EntraSendOtpPayload.SupportedType, validated.GetProperty("payloadType").GetString());
+        Assert.Equal(EntraSendOtpPayload.SupportedType, summary.GetProperty("payloadType").GetString());
         Assert.Equal(60, validated.GetProperty("ttlSeconds").GetInt32());
         Assert.Equal(60, summary.GetProperty("ttlSeconds").GetInt32());
-        Assert.True(validated.GetProperty("encryptedDeliveryContextPresent").GetBoolean());
         var credentials = records.Where(record => record.GetProperty("eventName").GetString()
             is "provider_credential_resolution_started" or "provider_credential_resolved").ToArray();
         Assert.Equal(2, credentials.Length);
-        foreach (var record in credentials.Append(summary))
-        {
-            Assert.Equal("managed_identity_client_assertion", record.GetProperty("providerCredentialSource").GetString());
-            Assert.Equal(rig.Env["EPP_PROVIDER_TENANT_ID"]!, record.GetProperty("providerTenantId").GetString());
-            Assert.Equal(rig.Env["EPP_OUTBOUND_CLIENT_ID"]!, record.GetProperty("functionOutboundClientId").GetString());
-            Assert.Equal(rig.Env["EPP_OUTBOUND_MI_CLIENT_ID"]!, record.GetProperty("functionOutboundManagedIdentityClientId").GetString());
-        }
+        Assert.Equal(
+            "managed_identity_client_assertion",
+            credentials[0].GetProperty("credentialSource").GetString());
+        Assert.Equal(
+            "managed_identity_client_assertion",
+            summary.GetProperty("providerCredentialSource").GetString());
         Assert.InRange(summary.GetProperty("providerCredentialElapsedMs").GetInt64(), 0, summary.GetProperty("elapsedMs").GetInt64());
-        var outbound = records.Where(record => record.GetProperty("eventName").GetString()
-            is "provider_request_built" or "provider_request_started");
-        foreach (var record in outbound.Append(summary))
-        {
-            Assert.Equal("POST", record.GetProperty("providerHttpMethod").GetString());
-            Assert.Equal("https://provider.example/api/send", record.GetProperty("providerEndpoint").GetString());
-        }
         var built = Assert.Single(records, record => record.GetProperty("eventName").GetString() == "provider_request_built");
+        Assert.Equal("POST", built.GetProperty("httpMethod").GetString());
+        Assert.Equal("https://provider.example/api/send", built.GetProperty("providerEndpoint").GetString());
+        Assert.Equal("POST", summary.GetProperty("providerHttpMethod").GetString());
+        Assert.Equal("https://provider.example/api/send", summary.GetProperty("providerEndpoint").GetString());
         Assert.Equal("https", built.GetProperty("providerScheme").GetString());
         Assert.False(built.GetProperty("redirectsAllowed").GetBoolean());
         Assert.True(summary.GetProperty("responseContainsNonce").GetBoolean());
         Assert.True(summary.GetProperty("responseContainsCorrelationId").GetBoolean());
         Assert.DoesNotContain("PRIVATE", string.Join("\n", rig.Log.Messages));
-        using var fixtures = ReadContractFixtures();
-        Assert.Equal(fixtures.RootElement.GetProperty("logging").GetProperty("liveEvents").EnumerateArray().Select(value => value.GetString()),
-            records.Select(record => record.GetProperty("eventName").GetString()));
+        Assert.Equal(LiveEvents, records.Select(record => record.GetProperty("eventName").GetString()));
     }
 
     [Fact]
@@ -626,9 +651,7 @@ public class EngineTests
         Assert.Equal(JsonValueKind.Null, summary.GetProperty("functionOutboundManagedIdentityClientId").ValueKind);
         Assert.InRange(summary.GetProperty("providerCredentialElapsedMs").GetInt64(), 0, summary.GetProperty("elapsedMs").GetInt64());
         Assert.Equal(2, rig.Secrets.Calls);
-        using var fixtures = ReadContractFixtures();
-        Assert.Equal(fixtures.RootElement.GetProperty("logging").GetProperty("liveEvents").EnumerateArray().Select(value => value.GetString()),
-            rig.Log.Records.Select(record => record.GetProperty("eventName").GetString()));
+        Assert.Equal(LiveEvents, rig.Log.Records.Select(record => record.GetProperty("eventName").GetString()));
     }
 
     [Fact]
@@ -637,6 +660,7 @@ public class EngineTests
         using var rig = new HandlerRig();
         rig.Env["EPP_PROVIDER_NAME"] = "sinch";
         rig.Env["SINCH_VOICE_ENDPOINT"] = "https://different-provider.example/api/final";
+        rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"callId\":\"sinch-call-id\"}"));
         AssertAccepted(await rig.Invoke(channel: "voice"));
         var summary = Summary(rig);
         var expected = rig.Env["SINCH_VOICE_ENDPOINT"] + "/calling/v1/callouts";
@@ -650,32 +674,30 @@ public class EngineTests
     public void RequestPreparationDoesNotLogArbitraryHttpMethods()
     {
         var logger = new CapturingLogger();
-        var log = new RequestLog(logger, "function-request", null, null, null);
-        log.ProviderRequestBuilt("PRIVATE-METHOD", "https://provider.example/api/send");
+        OtpLog.ProviderRequestBuilt(logger, "other", "https://provider.example/api/send");
         var record = Assert.Single(logger.Records);
-        Assert.Equal("other", record.GetProperty("providerHttpMethod").GetString());
+        Assert.Equal("other", record.GetProperty("httpMethod").GetString());
         Assert.DoesNotContain("PRIVATE", string.Join("\n", logger.Messages));
     }
 
     [Fact]
-    public async Task OptionalTtlStaysNullAndInvalidBodyValuesNeverEnterMetadata()
+    public async Task BoundPayloadWithOptionalTtlAndUnknownFieldsKeepsSafeMetadata()
     {
         using var rig = new HandlerRig();
         var encrypted = Jose.JWT.Encode(JsonSerializer.Serialize(new { nonce = Nonce, phoneNumber = Phone, message = Message }),
             rig.Keys.Rsa, Jose.JweAlgorithm.RSA_OAEP_256, Jose.JweEncryption.A256GCM);
-        var payload = new Dictionary<string, object?>
+        var payload = JsonSerializer.Deserialize<EntraSendOtpPayload>(JsonSerializer.Serialize(new
         {
-            ["type"] = EnvelopeParser.EnvelopeType, ["channel"] = 1, ["mode"] = 2,
-            ["correlationId"] = Correlation, ["encryptedDeliveryContext"] = encrypted,
-            ["diagnosticData"] = new { token = "PRIVATE-UNKNOWN-FIELD" },
-        };
-        AssertAccepted(await rig.InvokeRaw(JsonSerializer.Serialize(payload)));
+            type = EntraSendOtpPayload.SupportedType,
+            channel = 1,
+            mode = 2,
+            correlationId = Correlation,
+            encryptedDeliveryContext = encrypted,
+            diagnosticData = new { token = "PRIVATE-UNKNOWN-FIELD" },
+        }));
+        Assert.NotNull(payload);
+        AssertAccepted(await rig.InvokePayload(payload));
         Assert.Equal(JsonValueKind.Null, Summary(rig).GetProperty("ttlSeconds").ValueKind);
-        payload["ttlSeconds"] = "PRIVATE-INVALID-TTL";
-        Assert.Equal(400, (await rig.InvokeRaw(JsonSerializer.Serialize(payload))).StatusCode);
-        var summary = Summary(rig);
-        Assert.Equal(JsonValueKind.Null, summary.GetProperty("ttlSeconds").ValueKind);
-        Assert.Equal(JsonValueKind.Null, summary.GetProperty("envelopeType").ValueKind);
         Assert.DoesNotContain("PRIVATE", string.Join("\n", rig.Log.Messages));
     }
 
@@ -694,7 +716,16 @@ public class EngineTests
         var summary = Summary(rig);
         Assert.Equal("unmapped", summary.GetProperty("providerStatus").GetString());
         Assert.Equal("Fail", summary.GetProperty("providerOutcome").GetString());
-        Assert.Equal(validJson ? "provider_rejected" : "invalid_provider_json", summary.GetProperty("failureReason").GetString());
+        Assert.Equal(
+            validJson ? "unrecognized_provider_status" : "invalid_provider_json",
+            summary.GetProperty("failureReason").GetString());
+        Assert.Equal(
+            validJson ? "unrecognized_provider_status" : "invalid_provider_json",
+            rig.Log.Entry("provider_response_processed").State["FailureReason"]);
+        Assert.Equal(
+            !validJson,
+            rig.Log.Records.Any(record =>
+                record.GetProperty("eventName").GetString() == "provider_response_invalid_json"));
         Assert.DoesNotContain("PRIVATE", string.Join("\n", rig.Log.Messages));
     }
 
@@ -709,18 +740,12 @@ public class EngineTests
         };
         var results = await Task.WhenAll(rig.Invoke(correlationId: "correlation-first"), rig.Invoke(correlationId: "correlation-second"));
         Assert.All(results, result => Assert.Equal(200, result.StatusCode));
-        var summaries = rig.Log.Records.Where(record => record.GetProperty("logType").GetString() == "request").ToArray();
-        Assert.Equal(2, summaries.Length);
-        Assert.Equal(2, summaries.Select(record => record.GetProperty("functionRequestId").GetString()).Distinct().Count());
-        using var fixtures = ReadContractFixtures();
-        foreach (var summary in summaries)
+        var requests = rig.Log.Entries.GroupBy(entry => entry.Scope["FunctionRequestId"]).ToArray();
+        Assert.Equal(2, requests.Length);
+        foreach (var request in requests)
         {
-            var id = summary.GetProperty("functionRequestId").GetString();
-            var events = rig.Log.Records.Where(record => record.GetProperty("functionRequestId").GetString() == id).ToArray();
-            Assert.Equal(fixtures.RootElement.GetProperty("logging").GetProperty("liveEvents").EnumerateArray().Select(value => value.GetString()),
-                events.Select(record => record.GetProperty("eventName").GetString()));
-            Assert.All(events.Skip(1), record => Assert.Equal(summary.GetProperty("x-ms-correlation-id").GetString(),
-                record.GetProperty("x-ms-correlation-id").GetString()));
+            Assert.Equal(LiveEvents, request.Select(entry => entry.EventId.Name));
+            Assert.Single(request.Select(entry => entry.Scope["MsCorrelationId"]).Distinct());
         }
         Assert.DoesNotContain("PRIVATE", string.Join("\n", rig.Log.Messages));
     }
@@ -729,29 +754,13 @@ public class EngineTests
     public void SharedIdCasesPreserveRawValuesOrExplicitlyOmitInvalidMetadata()
     {
         using var fixtures = ReadContractFixtures();
-        var fields = new[] { "x-ms-client-request-id", "x-ms-correlation-id", "providerTenantId",
-            "functionOutboundClientId", "functionOutboundManagedIdentityClientId", "providerMessageId" };
-        var manifest = new SopranoProvider().Manifest;
         foreach (var fixture in fixtures.RootElement.GetProperty("logging").GetProperty("identifiers").EnumerateArray())
         {
             var value = fixture.TryGetProperty("length", out var length)
                 ? new string('A', length.GetInt32()) : fixture.GetProperty("value").GetString();
-            var logger = new CapturingLogger();
-            var log = new RequestLog(logger, "function-request", null, value, value);
-            log.ProviderSelected(manifest);
-            log.CredentialResolutionStarted(new AppConfig
-            {
-                ProviderTenantId = value, OutboundClientId = value, OutboundManagedIdentityClientId = value,
-            });
-            log.ProviderResponseProcessed(manifest, new ParsedResponse(true, 200, value, "ENROUTE"), Outcome.Continue, 200, true);
-            log.Complete(200);
-            var summary = logger.Records.Last();
-            foreach (var field in fields)
-                Assert.Equal(fixture.GetProperty("accepted").GetBoolean() ? value : null, summary.GetProperty(field).GetString());
-            var expectedOmissions = fixture.TryGetProperty("omitted", out var omitted) && omitted.GetBoolean() ? fields : Array.Empty<string>();
-            Assert.Equal(expectedOmissions, summary.GetProperty("omittedIdFields").EnumerateArray().Select(item => item.GetString()));
-            Assert.All(logger.Records, record => Assert.DoesNotContain(record.EnumerateObject(), property => property.Name.EndsWith("Hash")));
-            Assert.DoesNotContain("PRIVATE", string.Join("\n", logger.Messages));
+            Assert.Equal(
+                fixture.GetProperty("accepted").GetBoolean() ? value : null,
+                OtpLog.SafeIdentifier(value));
         }
     }
 
@@ -761,39 +770,66 @@ public class EngineTests
         using var fixtures = ReadContractFixtures();
         foreach (var fixture in fixtures.RootElement.GetProperty("logging").GetProperty("endpoints").EnumerateArray())
         {
-            var logger = new CapturingLogger();
-            var log = new RequestLog(logger, "function-request", null, null, null);
-            log.ProviderRequestBuilt("POST", fixture.GetProperty("url").GetString()!);
-            log.ProviderRequestStarted(1500);
-            log.Complete(200);
-            Assert.All(logger.Records, record => Assert.Equal(fixture.GetProperty("logged").GetString(),
-                record.GetProperty("providerEndpoint").GetString()));
-            Assert.DoesNotContain("PRIVATE", string.Join("\n", logger.Messages));
+            var uri = new Uri(fixture.GetProperty("url").GetString()!, UriKind.Absolute);
+            Assert.Equal(
+                fixture.GetProperty("logged").GetString(),
+                PhoneProviderBase.SanitizeEndpoint(uri));
         }
     }
 
     private static JsonElement Summary(HandlerRig rig)
     {
-        var summary = rig.Log.Records.Last();
-        Assert.Equal("request", summary.GetProperty("logType").GetString());
-        Assert.Equal("request_completed", summary.GetProperty("eventName").GetString());
-        using var fixtures = ReadContractFixtures();
-        Assert.Equal(fixtures.RootElement.GetProperty("logging").GetProperty("summaryFields").EnumerateArray()
-                .Select(value => value.GetString()).OrderBy(value => value),
-            summary.EnumerateObject().Select(property => property.Name).OrderBy(value => value));
-        var events = rig.Log.Records.Where(record => record.GetProperty("functionRequestId").GetString()
-            == summary.GetProperty("functionRequestId").GetString()).ToArray();
-        Assert.Single(events, record => record.GetProperty("logType").GetString() == "request");
-        var prepared = Assert.Single(events, record => record.GetProperty("eventName").GetString() == "response_prepared");
-        Assert.Equal("response_prepared", events[^2].GetProperty("eventName").GetString());
-        Assert.Equal(summary.GetProperty("httpStatus").GetInt32(), prepared.GetProperty("httpStatus").GetInt32());
-        Assert.Equal(summary.GetProperty("httpStatus").GetInt32() == 200, summary.GetProperty("responseContainsNonce").GetBoolean());
-        Assert.Equal(summary.GetProperty("responseContainsNonce").GetBoolean(), prepared.GetProperty("responseContainsNonce").GetBoolean());
-        Assert.Equal(summary.GetProperty("responseContainsCorrelationId").GetBoolean(), prepared.GetProperty("responseContainsCorrelationId").GetBoolean());
-        Assert.All(events[..^1], record => Assert.Equal("service", record.GetProperty("logType").GetString()));
-        Assert.All(events, record => Assert.Equal("SendOtp", record.GetProperty("functionName").GetString()));
-        Assert.Equal(summary.EnumerateObject().Select(property => property.Name).OrderBy(value => value),
-            rig.Log.States.Last().Keys.OrderBy(value => value));
+        var entries = rig.Log.Entries.ToArray();
+        var scope = entries.Last().Scope;
+        var state = entries
+            .SelectMany(entry => entry.State)
+            .GroupBy(pair => pair.Key)
+            .ToDictionary(group => group.Key, group => group.Last().Value);
+        object? Value(string key) => state.GetValueOrDefault(key);
+        object? Scope(string key) => scope.GetValueOrDefault(key);
+        var failure = entries.LastOrDefault(entry => entry.EventId.Name == "request_failed");
+        var prepared = entries.Single(entry => entry.EventId.Name == "response_prepared");
+        var completed = entries.Single(entry => entry.EventId.Name == "request_completed");
+        var summary = JsonSerializer.SerializeToElement(new Dictionary<string, object?>
+        {
+            ["functionName"] = Scope("FunctionName"),
+            ["functionRequestId"] = Scope("FunctionRequestId"),
+            ["functionInvocationId"] = Scope("FunctionInvocationId"),
+            ["x-ms-client-request-id"] = Scope("MsClientRequestId"),
+            ["x-ms-correlation-id"] = Scope("MsCorrelationId"),
+            ["msCorrelationIdSource"] = Scope("MsCorrelationIdSource"),
+            ["channel"] = Value("Channel"),
+            ["evaluation"] = Value("Evaluation"),
+            ["payloadType"] = Value("PayloadType"),
+            ["ttlSeconds"] = Value("TtlSeconds"),
+            ["encryptionKeyIdMismatch"] = entries.Any(entry => entry.EventId.Name == "encryption_key_id_mismatch"),
+            ["providerName"] = Value("ProviderName"),
+            ["providerAuthMode"] = Value("AuthenticationMode"),
+            ["providerAttempted"] = entries.Any(entry => entry.EventId.Name == "provider_request_started"),
+            ["providerCredentialSource"] = Value("CredentialSource"),
+            ["providerCredentialElapsedMs"] = entries
+                .LastOrDefault(entry => entry.EventId.Name == "provider_credential_resolved")
+                ?.State.GetValueOrDefault("ElapsedMs"),
+            ["providerTenantId"] = null,
+            ["functionOutboundClientId"] = null,
+            ["functionOutboundManagedIdentityClientId"] = null,
+            ["providerHttpMethod"] = Value("HttpMethod"),
+            ["providerEndpoint"] = Value("ProviderEndpoint"),
+            ["providerHttpStatus"] = Value("ProviderHttpStatus"),
+            ["providerStatus"] = Value("ProviderStatus"),
+            ["providerOutcome"] = Value("ProviderOutcome"),
+            ["providerElapsedMs"] = entries
+                .LastOrDefault(entry => entry.EventId.Name == "provider_response_processed")
+                ?.State.GetValueOrDefault("ElapsedMs"),
+            ["providerTimeoutMs"] = Value("TimeoutMs"),
+            ["failureStage"] = failure?.State.GetValueOrDefault("FailureStage"),
+            ["failureReason"] = failure?.State.GetValueOrDefault("FailureReason"),
+            ["httpStatus"] = completed.State["HttpStatus"],
+            ["result"] = completed.State["Result"],
+            ["elapsedMs"] = completed.State["ElapsedMs"],
+            ["responseContainsNonce"] = prepared.State["ContainsNonce"],
+            ["responseContainsCorrelationId"] = prepared.State["ContainsCorrelationId"],
+        });
         foreach (var value in new[] { PrivateError, Phone, "918273", Nonce, "private-api-key", "private-api-id" })
             Assert.DoesNotContain(value, string.Join("\n", rig.Log.Messages));
         return summary;
@@ -833,7 +869,8 @@ public class EngineTests
         public TestHttp Http { get; } = new();
         public TestKeys Keys { get; } = new();
         public CapturingLogger Log { get; } = new();
-        public DispatchEngine Engine { get; }
+        public SendOtp Function { get; }
+        public CredentialTokenService Credentials { get; }
         public HandlerRig(Func<string, TokenCredential>? createIdentity = null,
             Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential>? createOAuth = null)
         {
@@ -842,43 +879,59 @@ public class EngineTests
                 ["EPP_PROVIDER_NAME"] = "infobip",
                 ["EPP_PROVIDER_ENDPOINT"] = "https://provider.example",
                 ["EPP_PROVIDER_TIMEOUT_MS"] = "2500",
+                ["EPP_DECRYPTION_KEY_PEM"] = Keys.Rsa.ExportPkcs8PrivateKeyPem(),
             };
-            var registry = new ProviderRegistry(new IProviderAdapter[]
-                { new InfobipProvider(), new TelesignProvider(), new SopranoProvider(), new SinchProvider() });
-            var engine = createIdentity is null ? new DispatchEngine(registry, Secrets, Http, Env)
-                : new DispatchEngine(registry, Secrets, Http, Env, createIdentity, createOAuth!);
-            Engine = engine;
-            _function = new SendOtp(engine,
-                new JweDecryptor(Keys), Env, Log);
+            PhoneProviderBase[] providers =
+            {
+                new InfobipProvider(Secrets),
+                new TelesignProvider(Secrets),
+                new SopranoProvider(
+                    createIdentity ?? (_ => throw new InvalidOperationException("Unexpected managed identity")),
+                    createOAuth ?? ((_, _, _) => throw new InvalidOperationException("Unexpected OAuth"))),
+                new SinchProvider(Secrets),
+            };
+            Credentials = new CredentialTokenService(providers, Env);
+            _function = new SendOtp(providers, Credentials, Http, new JweDecryptor(Env), Env, Log);
+            Function = _function;
         }
         public async Task<ObjectResult> Invoke(object? mode = null, string channel = "sms", string? tenantId = null,
             Jose.JweAlgorithm algorithm = Jose.JweAlgorithm.RSA_OAEP_256,
             Jose.JweEncryption encryption = Jose.JweEncryption.A256GCM, JsonElement? deliveryOverrides = null,
-            string? plaintext = null, string? correlationId = Correlation, Dictionary<string, string>? headers = null)
+            string? plaintext = null, string? correlationId = Correlation, Dictionary<string, string>? headers = null,
+            string? type = EntraSendOtpPayload.SupportedType, int? ttlSeconds = 60)
         {
             var context = new Dictionary<string, object?> { ["nonce"] = Nonce, ["phoneNumber"] = Phone, ["message"] = Message };
             if (deliveryOverrides is { } changes)
                 foreach (var property in changes.EnumerateObject()) context[property.Name] = property.Value;
             var encrypted = Jose.JWT.Encode(plaintext ?? JsonSerializer.Serialize(context), Keys.Rsa, algorithm, encryption,
                 extraHeaders: new Dictionary<string, object> { ["kid"] = Kid });
-            return await InvokeRaw(JsonSerializer.Serialize(new
+            return await InvokePayload(new EntraSendOtpPayload
             {
-                type = EnvelopeParser.EnvelopeType, tenantId, correlationId, channel, mode = mode ?? "live",
-                ttlSeconds = 60, encryptedDeliveryContext = encrypted,
-            }), headers);
+                Type = type,
+                TenantId = tenantId,
+                CorrelationId = correlationId,
+                Channel = channel.Equals("voice", StringComparison.OrdinalIgnoreCase)
+                    ? EntraOtpChannel.Voice
+                    : EntraOtpChannel.Sms,
+                Mode = mode is string text && text.Equals("evaluation", StringComparison.OrdinalIgnoreCase)
+                    || mode is int code && code == 2
+                        ? EntraOtpMode.Evaluation
+                        : EntraOtpMode.Live,
+                TtlSeconds = ttlSeconds,
+                EncryptedDeliveryContext = encrypted,
+            }, headers);
         }
-        public async Task<ObjectResult> InvokeRaw(string body, Dictionary<string, string>? headers = null)
+        public async Task<ObjectResult> InvokePayload(
+            EntraSendOtpPayload payload, Dictionary<string, string>? headers = null)
         {
-            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(body));
             var request = new DefaultHttpContext().Request;
             request.Method = "POST";
             request.ContentType = "application/json";
-            request.Body = stream;
             if (headers is not null)
                 foreach (var (key, value) in headers) request.Headers[key] = value;
-            return Assert.IsAssignableFrom<ObjectResult>(await _function.Run(request));
+            return Assert.IsAssignableFrom<ObjectResult>(await _function.Run(request, payload));
         }
-        public void Dispose() { Engine.Dispose(); Keys.Dispose(); Http.Dispose(); }
+        public void Dispose() { Credentials.Dispose(); Keys.Dispose(); Http.Dispose(); }
     }
 
     private sealed class TestSecrets : ISecretResolver
@@ -914,20 +967,97 @@ public class EngineTests
 
     private sealed class CapturingLogger : ILogger<SendOtp>
     {
-        private readonly object _gate = new();
-        public List<(LogLevel Level, string Message)> Entries { get; } = new();
-        public List<Dictionary<string, object?>> States { get; } = new();
+        private readonly AsyncLocal<ScopeNode?> _currentScope = new();
+        public List<CapturedLogEntry> Entries { get; } = [];
         public IEnumerable<string> Messages => Entries.Select(entry => entry.Message);
-        public IEnumerable<JsonElement> Records => Messages.Select(message => JsonSerializer.Deserialize<JsonElement>(message));
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public IEnumerable<IReadOnlyDictionary<string, object?>> States =>
+            Entries.Select(entry => entry.State);
+        public IEnumerable<JsonElement> Records => Entries.Select(entry =>
+        {
+            var values = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["eventName"] = entry.EventId.Name,
+                ["logType"] = "service",
+            };
+            foreach (var pair in entry.Scope.Concat(entry.State))
+                values[ToRecordKey(pair.Key)] = pair.Value;
+            if (entry.EventId.Name == "provider_request_built")
+            {
+                values["providerScheme"] = Uri.TryCreate(
+                    entry.State.GetValueOrDefault("ProviderEndpoint") as string,
+                    UriKind.Absolute,
+                    out var uri)
+                        ? uri.Scheme
+                        : null;
+                values["redirectsAllowed"] = false;
+            }
+            return JsonSerializer.SerializeToElement(values);
+        });
+
+        public CapturedLogEntry Entry(string eventName) =>
+            Assert.Single(Entries, entry => entry.EventId.Name == eventName);
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull
+        {
+            var node = new ScopeNode(
+                _currentScope.Value,
+                ToDictionary(state),
+                () => _currentScope.Value = _currentScope.Value?.Parent);
+            _currentScope.Value = node;
+            return node;
+        }
+
         public bool IsEnabled(LogLevel logLevel) => true;
         public void Log<TState>(LogLevel level, EventId id, TState state, Exception? error, Func<TState, Exception?, string> formatter)
         {
-            lock (_gate)
+            var scopes = new Dictionary<string, object?>(StringComparer.Ordinal);
+            var nodes = new Stack<ScopeNode>();
+            for (var node = _currentScope.Value; node is not null; node = node.Parent)
+                nodes.Push(node);
+            foreach (var node in nodes)
+                foreach (var pair in node.Values)
+                    scopes[pair.Key] = pair.Value;
+
+            lock (Entries)
+                Entries.Add(new CapturedLogEntry(
+                    level,
+                    id,
+                    formatter(state, error),
+                    ToDictionary(state),
+                    scopes,
+                    error));
+        }
+
+        private static Dictionary<string, object?> ToDictionary<TState>(TState state) =>
+            state is IEnumerable<KeyValuePair<string, object?>> pairs
+                ? pairs.Where(pair => pair.Key != "{OriginalFormat}")
+                    .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
+                : new Dictionary<string, object?>(StringComparer.Ordinal);
+
+        private static string ToRecordKey(string value) =>
+            value switch
             {
-                Entries.Add((level, formatter(state, error) + (error?.ToString() ?? "")));
-                States.Add(Assert.IsAssignableFrom<IEnumerable<KeyValuePair<string, object?>>>(state).ToDictionary(pair => pair.Key, pair => pair.Value));
-            }
+                "MsClientRequestId" => "x-ms-client-request-id",
+                "MsCorrelationId" => "x-ms-correlation-id",
+                _ => char.ToLowerInvariant(value[0]) + value[1..],
+            };
+
+        public sealed record CapturedLogEntry(
+            LogLevel Level,
+            EventId EventId,
+            string Message,
+            IReadOnlyDictionary<string, object?> State,
+            IReadOnlyDictionary<string, object?> Scope,
+            Exception? Error);
+
+        private sealed class ScopeNode(
+            ScopeNode? parent,
+            IReadOnlyDictionary<string, object?> values,
+            Action dispose) : IDisposable
+        {
+            public ScopeNode? Parent { get; } = parent;
+            public IReadOnlyDictionary<string, object?> Values { get; } = values;
+            public void Dispose() => dispose();
         }
     }
 

@@ -1,10 +1,15 @@
+using System.Globalization;
+using System.Net;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 
 namespace Epp.Otp.Providers;
 
-public sealed class TelesignProvider : IProviderAdapter
+public sealed class TelesignProvider : PhoneProviderBase
 {
     private const string VoiceDigitSeparator = ", ";
     private const int VoiceRepeatCount = 2;
@@ -12,48 +17,46 @@ public sealed class TelesignProvider : IProviderAdapter
     private static readonly Regex VoicePasscodePattern = new(
         @"(?<![0-9])[0-9]{6}(?![0-9])",
         RegexOptions.CultureInvariant);
+    private readonly ISecretResolver? _secrets;
 
-    public ProviderManifest Manifest { get; } = new(
-        Id: "telesign",
-        Auth: new AuthConfig("apiKey", KeyVaultSecretName: "telesign-api-key", IdentityKeyVaultSecretName: "telesign-customer-id"),
-        ResponseMapping: new Dictionary<string, Outcome>
-        {
-            ["200"] = Outcome.Continue,
-            ["203"] = Outcome.Continue,
-            ["290"] = Outcome.Continue,
-            ["291"] = Outcome.Continue,
-            ["292"] = Outcome.Continue,
-            ["100"] = Outcome.Continue,
-            ["101"] = Outcome.Continue,
-            ["102"] = Outcome.Continue,
-            ["103"] = Outcome.Continue,
-            ["3001"] = Outcome.Continue,
-            ["default"] = Outcome.Fail,
-        });
+    public TelesignProvider(ISecretResolver? secrets = null) => _secrets = secrets;
 
-    public ProviderHttpRequest BuildRequest(string channel, string endpoint, DispatchRequest dispatch, ProviderCredential credential, IEnv env)
+    public override string Name => "telesign";
+    public override string AuthenticationMode => "apiKey";
+
+    public override Task<ProviderResult> SendOtpAsync(
+        string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credentials,
+        IEnv env, HttpClient client, int timeoutMs, ILogger? logger = null) =>
+        SendJsonAsync<Response>(
+            () => CreateRequest(channel, endpoint, delivery, credentials, env),
+            MapResponse,
+            client,
+            timeoutMs,
+            logger);
+
+    private static HttpRequestMessage CreateRequest(
+        string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credential, IEnv env)
     {
         if (channel is not ("sms" or "voice")) throw new InvalidOperationException("unsupported channel");
-        if (dispatch.Destination is null || !Regex.IsMatch(dispatch.Destination, @"\A\+[1-9][0-9]{1,14}\z"))
+        if (delivery.PhoneNumber is null || !Regex.IsMatch(delivery.PhoneNumber, @"\A\+[1-9][0-9]{1,14}\z"))
             throw new InvalidOperationException("invalid recipient");
-        var authorization = "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"{credential.Identity}:{credential.Secret}"));
-        var messageText = channel == "voice" ? BuildVoiceMessage(dispatch.Message!) : dispatch.Message;
-        var message = new Dictionary<string, string?> { ["text"] = messageText };
-        if (!string.IsNullOrWhiteSpace(dispatch.Locale)) message["language"] = dispatch.Locale;
-        var body = new
+
+        var authorization = "Basic " + Convert.ToBase64String(
+            Encoding.UTF8.GetBytes($"{credential.Identity}:{credential.Secret}"));
+        var messageText = channel == "voice" ? BuildVoiceMessage(delivery.Message!) : delivery.Message;
+        var body = new Request(
+            new Recipient(delivery.PhoneNumber),
+            new Message(messageText, string.IsNullOrWhiteSpace(delivery.Locale) ? null : delivery.Locale),
+            [new Channel(channel)],
+            string.IsNullOrEmpty(delivery.CorrelationId) ? delivery.MessageId : delivery.CorrelationId);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
-            recipient = new { phone_number = dispatch.Destination },
-            message,
-            channels = new[] { new { channel } },
-            correlation_id = string.IsNullOrEmpty(dispatch.CorrelationId) ? dispatch.MessageId : dispatch.CorrelationId,
+            Content = JsonContent.Create(body),
         };
-        var headers = new Dictionary<string, string>
-        {
-            ["Authorization"] = authorization,
-            ["Content-Type"] = "application/json",
-            ["Accept"] = "application/json",
-        };
-        return new ProviderHttpRequest(endpoint, "POST", headers, JsonSerializer.Serialize(body));
+        request.Headers.TryAddWithoutValidation("Authorization", authorization);
+        request.Headers.Accept.ParseAdd("application/json");
+        return request;
     }
 
     private static string BuildVoiceMessage(string message)
@@ -64,21 +67,68 @@ public sealed class TelesignProvider : IProviderAdapter
         return string.Join(VoiceRepeatSeparator, Enumerable.Repeat(pacedMessage, VoiceRepeatCount));
     }
 
-    public ParsedResponse ParseResponse(int httpStatus, bool ok, JsonElement json)
+    private static ProviderResult MapResponse(Response? payload, HttpStatusCode httpStatus)
     {
-        string? refId = null, statusCode = "UNKNOWN", statusDesc = null;
-        if (json.ValueKind == JsonValueKind.Object)
+        var statusCode = payload?.Status?.Code?.ToString(CultureInfo.InvariantCulture) ?? "UNKNOWN";
+        var (outcome, recognized) = MapStatus(statusCode);
+        var finalOutcome = (int)httpStatus is >= 200 and < 300 ? outcome : Outcome.Fail;
+        return new ProviderResult(
+            finalOutcome,
+            recognized,
+            (int)httpStatus,
+            payload?.ReferenceId,
+            ProviderStatusCode: statusCode,
+            ProviderStatusDescription: payload?.Status?.Description)
         {
-            if (json.TryGetProperty("reference_id", out var referenceId) && referenceId.ValueKind == JsonValueKind.String)
-                refId = referenceId.GetString();
-            if (json.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.Object)
-            {
-                if (status.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.Number && code.TryGetInt32(out var numericCode))
-                    statusCode = numericCode.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                if (status.TryGetProperty("description", out var description) && description.ValueKind == JsonValueKind.String)
-                    statusDesc = description.GetString();
-            }
-        }
-        return new ParsedResponse(ok, httpStatus, refId, null, statusCode, statusDesc);
+            FailureReason = ClassifyFailure(httpStatus, finalOutcome, recognized),
+        };
     }
+
+    public override async Task<ProviderCredentials> FetchCredentialsAsync(
+        AppConfig config, CancellationToken cancellationToken = default)
+    {
+        if (_secrets is null) throw CredentialTokenService.Unavailable();
+        var key = _secrets.ResolveAsync("telesign-api-key", cancellationToken);
+        var identity = _secrets.ResolveAsync("telesign-customer-id", cancellationToken);
+        await Task.WhenAll(key, identity).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(key.Result)
+            || string.IsNullOrWhiteSpace(identity.Result))
+            throw CredentialTokenService.Unavailable();
+        return new ProviderCredentials(
+            AuthenticationMode,
+            Secret: key.Result,
+            Identity: identity.Result,
+            ExpiresOn: DateTimeOffset.UtcNow.AddMinutes(5));
+    }
+
+    private static (Outcome Outcome, bool Recognized) MapStatus(string? status) => status switch
+    {
+        "200" or "203" or "290" or "291" or "292"
+            or "100" or "101" or "102" or "103" or "3001" => (Outcome.Continue, true),
+        _ => (Outcome.Fail, false),
+    };
+
+    private sealed record Request(
+        [property: JsonPropertyName("recipient")] Recipient Recipient,
+        [property: JsonPropertyName("message")] Message Message,
+        [property: JsonPropertyName("channels")] IReadOnlyList<Channel> Channels,
+        [property: JsonPropertyName("correlation_id")] string CorrelationId);
+
+    private sealed record Recipient(
+        [property: JsonPropertyName("phone_number")] string PhoneNumber);
+
+    private sealed record Message(
+        [property: JsonPropertyName("text")] string? Text,
+        [property: JsonPropertyName("language"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Language);
+
+    private sealed record Channel(
+        [property: JsonPropertyName("channel")] string Name);
+
+    private sealed record Response(
+        [property: JsonPropertyName("reference_id")] string? ReferenceId,
+        [property: JsonPropertyName("status")] Status? Status);
+
+    private sealed record Status(
+        [property: JsonPropertyName("code"), JsonNumberHandling(JsonNumberHandling.Strict)] int? Code = null,
+        [property: JsonPropertyName("description")] string? Description = null);
 }
