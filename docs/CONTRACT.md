@@ -224,9 +224,10 @@ success-looking status. Explicit `Block`/`StepUp` outcomes remain non-success re
 
 ## 3. Provider adapter contract
 
-Each provider is one unit exposing three things:
+Each provider is one unit that owns authentication requirements, request construction and response
+mapping. JavaScript exposes these through:
 
-- **`manifest`**: protocol facts only:
+- **`manifest`**: protocol facts:
   - `id`: provider id selected by `EPP_PROVIDER_NAME`; its complete request URL is `EPP_PROVIDER_ENDPOINT`
   - `auth`: either `{ mode: 'apiKey', keyVaultSecretName, identityKeyVaultSecretName? }` or
     `{ mode: 'oauth' }`; unsupported modes fail closed
@@ -236,12 +237,12 @@ Each provider is one unit exposing three things:
   `providerHttpStatus`, optional `providerMessageId`, `providerStatusName`, `providerStatusCode`
   and `providerStatusDescription` (snake_case attributes in Python, PascalCase in .NET).
 
-The adapter reads its API-specific JSON and constructs a normalized `ParsedResponse` object:
-[JavaScript](../javascript/src/functions/models.js), [Python](../python/src/models.py),
-[.NET](../dotnet/Src/Models.cs). The engine reads named properties/attributes rather than provider JSON
-or string-key response dictionaries. Optional values default to null/None; a status name takes precedence
-over a code during outcome mapping, as before. Custom Python adapters must return `ParsedResponse`,
-not the former dictionary.
+Python and .NET use provider classes instead of a manifest-driven engine. Each class declares its
+provider id and authentication mode, owns its credential secret names or OAuth acquisition, builds
+its private outbound request, and maps provider JSON directly to `ProviderResult`:
+[Python](../python/src/models.py), [.NET](../dotnet/Src/Models.cs). `ProviderResult` keeps `Outcome`
+coarse and stable while `FailureReason` carries one fixed safe diagnostic classification. Optional
+values default to null/None and raw provider JSON never enters the shared orchestration layer.
 
 This model is internal: do not serialize it into the endpoint response or logs. The
 [request logger](#application-logs) selects only the provider HTTP status, a status found in the
@@ -252,12 +253,12 @@ Provider requests are serialized only when building the outbound HTTP body; inco
 is parsed once and normalized inside its adapter. No serialization framework or provider-specific
 class hierarchy is required.
 
-Adapters require registration in the chosen runtime. Consult the selected adapter and its manifest
-for required credentials and options: the manifest declares authentication and protocol mappings;
-the implementation reads adapter-specific options from app settings. Individual API contracts remain
+Providers require registration in the chosen runtime. Consult the selected provider for required
+credentials and options. JavaScript declares them in its manifest; Python and .NET declare them on
+the provider implementation. Individual API contracts remain
 in the adapters; the [onboarding credential naming table](ONBOARDING.md#provider-credential-names)
-lists the exact manifest secret names for provisioning and authorized local tests. Keep that table
-aligned with the manifests; never include secret values in documentation or the settings sample.
+lists the exact secret names for provisioning and authorized local tests. Keep that table aligned
+with the providers; never include secret values in documentation or the settings sample.
 
 ### Telesign EPP integration
 
@@ -306,7 +307,7 @@ Set by provisioning. **Identical names across all languages.**
 | `KEY_VAULT_URL` | Key Vault URI for API-key providers |
 | `AZURE_CLIENT_ID` | set for a user-assigned managed identity |
 
-Telesign credentials live in **Key Vault**, under the names in its manifest, and are fetched via
+Telesign credentials live in **Key Vault**, under the names owned by its provider implementation, and are fetched via
 managed identity. Soprano exchanges an outbound managed-identity assertion for a token in the
 configured provider tenant/scope. Do not put provider secrets in code or app settings.
 
@@ -345,11 +346,11 @@ when credentials are fetched, not the HTTP/nonce contract, caller authentication
 selection or provider request format. The decryption-key Key Vault reference remains separate and
 is still resolved by the platform; this cache does not rotate or replace JWE keys.
 
-The selected provider's manifest determines which of two concrete cache classes is created:
+The selected provider's authentication requirements determine which concrete cache is created:
 
 | Authentication mode | Cache | Acquisition |
 |---|---|---|
-| `apiKey` | `ApiKeyCache` | Fetch the manifest's Key Vault secrets using managed identity. Cache the complete key/customer-ID bundle in .NET `MemoryCache`, JavaScript `lru-cache`, or Python `cachetools.TTLCache`. |
+| `apiKey` | `ApiKeyCache` | Fetch the provider's Key Vault secrets using managed identity. Cache the complete key/customer-ID bundle in .NET `MemoryCache`, JavaScript `lru-cache`, or Python `cachetools.TTLCache`. |
 | `oauth` | `AccessTokenCache` | Reuse Azure Identity's managed-identity and client-assertion credentials and their SDK caches. Retain only the latest usable provider token. No Key Vault access. |
 
 Only the selected cache starts. Its credential configuration is bound on first use; app-setting
@@ -390,8 +391,9 @@ Per-request `providerCredentialElapsedMs` continues to measure the caller's reso
   set, else system-assigned). No static credentials.
 - **Privacy**: never log phone numbers, passcodes, nonce values, bearer tokens, API keys, JWE headers/payloads,
   raw exceptions, provider descriptions/responses or endpoint query strings. There is no plaintext diagnostic
-  override. Each handler emits separate service events. JavaScript and Python also emit one
-  [request summary](#application-logs); .NET uses standard structured `ILogger` events and scopes instead.
+  override. Each handler emits separate service events. JavaScript also emits one
+  [request summary](#application-logs); Python and .NET use standard structured logging events and
+  immutable request context/scopes instead.
   Generated Function IDs remain distinguished from raw Microsoft/provider support IDs. Original wire IDs
   and the required nonce echo remain unchanged. Support IDs can correlate customer activity; restrict
   log access and retention. Endpoint logs contain only scheme, host/port and API path, never userinfo,
@@ -414,18 +416,20 @@ Per-request `providerCredentialElapsedMs` continues to measure the caller's reso
 
 ### Application logs
 
-JavaScript and Python emit JSON records with the shared fields described below. Service events have
-`logType: "service"` and an individual `eventName`; each invocation ends with one
-`logType: "request"`, `eventName: "request_completed"` summary.
+JavaScript emits JSON service records and one `request_completed` request summary. Python uses the
+standard `logging` pipeline: `otp_log.py` defines fixed event IDs, names, levels and fields, while an
+immutable `LoggerAdapter` context supplies the Function and Microsoft trace identifiers. The
+configured logging provider owns Python output formatting and export; Python does not manually
+serialize a mutable request summary.
 
-.NET uses the standard `ILogger` pipeline instead of manually serializing JSON. `OtpLog` defines
-source-generated events with stable IDs and names, while `ILogger.BeginScope` supplies
+Likewise, .NET uses the standard `ILogger` pipeline instead of manually serializing JSON. `OtpLog`
+defines source-generated events with stable IDs and names, while `ILogger.BeginScope` supplies
 `FunctionName`, `FunctionRequestId`, `FunctionInvocationId`, `MsClientRequestId`,
 `MsCorrelationId` and `MsCorrelationIdSource`. The configured logging provider owns output
 formatting and export. .NET emits `request_completed` as an ordinary typed event rather than a
 mutable comprehensive summary.
 
-A successful .NET live request emits:
+A successful Python or .NET live request emits:
 
 `request_received`, `payload_validated`, `delivery_context_decrypted`, `provider_selected`,
 `provider_credential_resolution_started`, `provider_credential_resolved`,
@@ -445,13 +449,13 @@ bodies, decrypted delivery fields, credentials, provider response bodies, query 
 exception messages. Endpoint values contain only scheme, host/port and path. Evaluation omits all
 provider events and emits `evaluation_completed`.
 
-A successful JavaScript or Python live request emits these separate service events, followed by the
-request summary:
+A successful live request emits these separate service events. JavaScript then emits its request
+summary; Python and .NET finish with the structured `request_completed` event:
 
 | Service event | Safe information recorded |
 |---|---|
 | `request_received` | Function invocation and available raw Microsoft trace IDs under their `x-ms-*` names; no raw body or arbitrary headers. |
-| `envelope_validated` | Allowlisted body metadata: validated `envelopeType`, normalized `channel`, `evaluation`, optional `ttlSeconds`, and `encryptedDeliveryContextPresent: true`. |
+| `envelope_validated` / `payload_validated` | Allowlisted body metadata: validated payload type, normalized `channel`, `evaluation` and optional `ttlSeconds`. |
 | `delivery_context_decrypted` | Decryption completed; no plaintext fields, JWE or key ID. |
 | `provider_selected` | Registered provider and its authentication mode. |
 | `provider_credential_resolution_started` | OAuth client-assertion or Key Vault credential source, with explicitly named raw OAuth application/identity/tenant IDs. |
@@ -460,7 +464,7 @@ request summary:
 | `provider_request_built` | Allowlisted HTTP method, final endpoint scheme/host/port/API path, HTTPS and disabled redirects; no query string, authorization headers or body. |
 | `provider_request_started` | The outbound send is beginning, with method, sanitized endpoint and timeout. |
 | `provider_response_received` | Actual upstream HTTP status; emitted before response-body reading completes. |
-| `provider_response_processed` | Mapped provider status/outcome, raw provider message/reference ID, duration and resulting Function HTTP status. |
+| `provider_response_processed` | Mapped provider status/outcome, fixed failure classification and duration. Raw provider descriptions and bodies are excluded. |
 | `response_prepared` | Response status and booleans indicating nonce/correlation inclusion, not their values or the response body. |
 
 Body metadata is built from validated fields, **not** from a body dump with a few sensitive
@@ -485,9 +489,9 @@ values are represented as `other` without changing the request sent.
 `response_prepared` is emitted on success **and failure** immediately before returning the handler
 response. It does not claim the host has serialized/transmitted that response or Microsoft received
 it; consult platform request telemetry for transport completion. Evaluation emits
-`evaluation_completed` instead of provider events, then `response_prepared` and the summary,
+`evaluation_completed` instead of provider events, then `response_prepared` and `request_completed`,
 without resolving provider configuration, credentials or HTTP. Failures emit their own stage event,
-such as `decryption_failed`, `provider_credentials_failed` or `provider_transport_failed`.
+`request_failed`, with a fixed failure stage and reason.
 A parsed provider rejection uses `provider_response_processed` with its non-success outcome and
 fixed failure reason.
 
@@ -523,7 +527,7 @@ These are tracing fields, not authentication assertions. In particular, an incom
 does not become a trusted tenant identity in logs. The existing wire correlation precedence,
 provider request IDs and public responses are unchanged.
 
-The JavaScript and Python request summary contains:
+The JavaScript request summary contains:
 
 | Fields | Purpose |
 |---|---|

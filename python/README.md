@@ -1,14 +1,14 @@
 # External Phone Provider Function: Python (v2 model)
 
-Implements the shared [contract](../docs/CONTRACT.md) with one dispatch engine and one selected
-provider per deployment. Target: Python 3.11, Azure Functions v4, Python v2 programming model.
+Implements the shared [contract](../docs/CONTRACT.md) with a direct Azure Function flow and one
+selected provider per deployment. Target: Python 3.11, Azure Functions v4, Python v2 programming model.
 
 ## Setup and deployment
 
 1. Follow [customer onboarding](../docs/ONBOARDING.md). Set `EPP_PROVIDER_NAME` to the selected
-	adapter's registered manifest id (`<adapter-id>` is only a placeholder).
-2. Consult the selected adapter and its manifest in [src/providers/](src/providers/) for required
-	credentials and options. Store credentials in Key Vault under the declared secret names, grant
+	provider id (`<adapter-id>` is only a placeholder).
+2. Consult the selected provider in [src/providers/](src/providers/) for required credentials and
+	options. Store credentials in Key Vault under the provider-owned secret names, grant
 	the Function's managed identity *Key Vault Secrets User*, and configure the matching endpoint/options.
 3. Base private local settings on [../docs/local.settings.sample.json](../docs/local.settings.sample.json),
 	replacing placeholders and selecting `FUNCTIONS_WORKER_RUNTIME=python`. Put settings at the
@@ -49,7 +49,7 @@ For live delivery, add `EPP_PROVIDER_NAME`, the complete selected `EPP_PROVIDER_
 matching provider authentication settings to `Values`.
 Add `EPP_PROVIDER_ACCOUNT_NAME` and any adapter-specific options only when required. Keep values as
 strings, including optional `EPP_PROVIDER_TIMEOUT_MS: "1500"`. Replace placeholders; provider API
-keys belong in the manifest-named Key Vault secrets, not this file. See the
+keys belong in the provider-named Key Vault secrets, not this file. See the
 [complete variable table](../README.md#configure-environment-variables).
 
 Core Tools loads `Values` into `os.environ`. Direct Python execution and pytest do not automatically
@@ -90,7 +90,7 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 
 ## Source
 
-Worker initialization selects `ApiKeyCache` or `AccessTokenCache` from the provider manifest's auth mode.
+Worker initialization selects `ApiKeyCache` or `AccessTokenCache` from the provider's credential specification.
 Only the selected cache starts: API keys use Key Vault and `cachetools.TTLCache`; access tokens use
 the MI/Entra SDKs without Key Vault. One daemon loop polls every 30 seconds. Configuration changes
 require restart. Callers can stop waiting without abandoning shared reads; synchronous SDK I/O uses connect/read
@@ -101,16 +101,17 @@ local evaluation without background credential acquisition.
 
 | Source | Purpose |
 |---|---|
-| [function_app.py](function_app.py) | HTTP handler and adapter registration |
+| [function_app.py](function_app.py) | Typed request orchestration and direct provider selection |
 | [src/config.py](src/config.py) | Shared deployment settings |
-| [src/models.py](src/models.py) | Envelope, delivery-context, dispatch and normalized `ParsedResponse` dataclasses |
-| [src/dispatch.py](src/dispatch.py) | Boundary validation, JWE, provider registry and outcome mapping |
-| [src/credentials.py](src/credentials.py) | `ApiKeyCache`, `AccessTokenCache` and their shared refresh coordinator |
-| [src/request_log.py](src/request_log.py) | Request-scoped [service events and summaries](../docs/CONTRACT.md#application-logs) with explicit ID sources |
-| [src/providers/](src/providers/) | Adapter manifests and API-specific implementations |
+| [src/models.py](src/models.py) | Typed Entra payload, delivery context, provider request and result dataclasses |
+| [src/jwe.py](src/jwe.py) | Pinned JWE decryption and typed delivery-context conversion |
+| [src/provider.py](src/provider.py) | Shared HTTPS transport, timeout handling and endpoint status mapping |
+| [src/credentials.py](src/credentials.py) | `CredentialTokenService`, `ApiKeyCache` and `AccessTokenCache` |
+| [src/otp_log.py](src/otp_log.py) | Fixed standard-logging event definitions and immutable request context |
+| [src/providers/](src/providers/) | Provider-owned credentials, requests and response mapping |
 | [src/secrets.py](src/secrets.py) | Key Vault transport; bundle caching belongs to `ApiKeyCache` |
 
-Add and register an adapter without adding provider-specific branches to the shared pipeline.
-Return `ParsedResponse` from `parse_response` using named fields; the engine reads attributes such as
-`parsed.provider_status_name`. Raw provider JSON remains local to the adapter, not a shared model hierarchy.
+Add a provider by subclassing `PhoneProviderBase`, declaring its credential specification, and
+implementing `build_request` and `map_response`. Return `ProviderResult` with the coarse endpoint
+outcome and a fixed safe failure classification. Raw provider JSON remains local to the provider.
 See [production limitations](../docs/CONTRACT.md#production-limitations) before production use.

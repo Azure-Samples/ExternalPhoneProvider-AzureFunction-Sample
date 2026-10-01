@@ -12,8 +12,7 @@ import pytest
 
 import src.credentials as credentials_module
 from src.config import read_config
-from src.credentials import ApiKeyCache, AccessTokenCache, ProviderCredentials
-from src.dispatch import DispatchEngine, ProviderRegistry
+from src.credentials import ApiKeyCache, AccessTokenCache, CredentialTokenService
 from src.providers.telesign import TelesignProvider
 
 AUTH = {"mode": "apiKey", "key_vault_secret_name": "key", "identity_key_vault_secret_name": "id"}
@@ -52,7 +51,7 @@ def test_library_cache_shares_parallel_reads_and_serves_a_complete_pair_during_r
     secrets = Mock(resolve=Mock(side_effect=read))
     oauth = Mock(side_effect=AssertionError("API-key mode must not create an OAuth credential"))
     monkeypatch.setattr(credentials_module, "ClientAssertionCredential", oauth)
-    manager = ProviderCredentials(secrets, cache_options=clock.options)
+    manager = CredentialTokenService(secrets, cache_options=clock.options)
     try:
         with ThreadPoolExecutor(max_workers=10) as pool:
             pending = [pool.submit(manager.resolve, AUTH, CONFIG) for _ in range(10)]
@@ -90,7 +89,7 @@ def test_failed_refresh_never_extends_ttl_or_publishes_a_partial_pair():
         return name
 
     secrets = Mock(resolve=Mock(side_effect=read))
-    manager = ProviderCredentials(secrets, cache_options=clock.options, report_failure=failures.append)
+    manager = CredentialTokenService(secrets, cache_options=clock.options, report_failure=failures.append)
     try:
         manager.resolve(AUTH, CONFIG)
         fail = True
@@ -141,7 +140,7 @@ def test_waiter_timeouts_and_partial_failures_do_not_start_overlapping_secret_re
         assert release.wait(3)
         return "PRIVATE-IDENTITY"
 
-    manager = ProviderCredentials(Mock(resolve=read), cache_options={**clock.options, "wait_timeout": 0.02},
+    manager = CredentialTokenService(Mock(resolve=read), cache_options={**clock.options, "wait_timeout": 0.02},
                                   report_failure=lambda _: None)
     try:
         for _ in range(3):
@@ -181,7 +180,7 @@ def test_access_token_cache_uses_sdk_refresh_metadata_and_preserves_original_exp
 
     monkeypatch.setattr(credentials_module, "ClientAssertionCredential", create)
     secrets = Mock(resolve=Mock(side_effect=AssertionError("OAuth must not read Key Vault")))
-    manager = ProviderCredentials(secrets, cache_options=clock.options, report_failure=lambda _: None)
+    manager = CredentialTokenService(secrets, cache_options=clock.options, report_failure=lambda _: None)
     config = read_config({"EPP_PROVIDER_TENANT_ID": "tenant", "EPP_OUTBOUND_CLIENT_ID": "app",
                           "EPP_OUTBOUND_MI_CLIENT_ID": "identity", "EPP_PROVIDER_SCOPE": "scope"})
     try:
@@ -209,39 +208,27 @@ def test_access_token_cache_uses_sdk_refresh_metadata_and_preserves_original_exp
         manager.close()
 
 
-def test_startup_only_prepares_credentials_and_shutdown_is_terminal():
+def test_selected_provider_credentials_are_cached_and_shutdown_is_terminal():
     secrets = Mock(resolve=Mock(return_value="test-key"))
-    engine = DispatchEngine(ProviderRegistry([TelesignProvider()]), secrets,
-                            {"EPP_PROVIDER_NAME": "telesign", "EPP_PROVIDER_AUTH_MODE": "apiKey"})
+    manager = CredentialTokenService(secrets)
+    provider = TelesignProvider()
     try:
-        engine.start_credential_refresh()
-        engine.start_credential_refresh()
+        manager.get_credentials(provider, CONFIG)
+        manager.get_credentials(provider, CONFIG)
         assert secrets.resolve.call_count == 2
     finally:
-        engine.close()
+        manager.close()
     with pytest.raises(ValueError, match="unavailable"):
-        engine._credentials.resolve(AUTH, CONFIG)
-    no_provider = DispatchEngine(ProviderRegistry([TelesignProvider()]), secrets, {})
-    try:
-        no_provider.start_credential_refresh()
-        assert secrets.resolve.call_count == 2
-    finally:
-        no_provider.close()
-    broken = DispatchEngine(ProviderRegistry([TelesignProvider()]), Mock(resolve=Mock(side_effect=ValueError("PRIVATE"))),
-                            {"EPP_PROVIDER_NAME": "telesign"})
-    try:
-        broken.start_credential_refresh()
-    finally:
-        broken.close()
+        manager.get_credentials(provider, CONFIG)
 
 
 def test_configuration_changes_require_a_new_worker_and_stopped_cache_cannot_restart():
     secrets = Mock(resolve=Mock(return_value="key"))
-    manager = ProviderCredentials(secrets)
+    manager = CredentialTokenService(secrets)
     manager.resolve(AUTH, CONFIG)
     manager.close()
     other = read_config({"KEY_VAULT_URL": "https://other.vault.azure.net"})
-    manager = ProviderCredentials(secrets)
+    manager = CredentialTokenService(secrets)
     manager.resolve(AUTH, other)
     assert secrets.resolve.call_count == 4
     manager.close()
@@ -256,7 +243,7 @@ def test_periodic_refresh_uses_the_selected_cache_and_stops(monkeypatch):
     monkeypatch.setattr(credentials_module, "REFRESH_POLL_SECONDS", 0.02)
     monkeypatch.setattr(credentials_module, "SECRET_REFRESH_SECONDS", 0.02)
     secrets = Mock(resolve=Mock(return_value="key"))
-    manager = ProviderCredentials(secrets)
+    manager = CredentialTokenService(secrets)
     manager.resolve(AUTH, CONFIG)
     wait_until(lambda: secrets.resolve.call_count >= 4)
     manager.close()
@@ -268,7 +255,7 @@ def test_periodic_refresh_uses_the_selected_cache_and_stops(monkeypatch):
 
 def test_unknown_auth_mode_does_not_create_a_cache():
     secrets = Mock()
-    manager = ProviderCredentials(secrets, report_failure=lambda _: None)
+    manager = CredentialTokenService(secrets, report_failure=lambda _: None)
     try:
         with pytest.raises(ValueError, match="unavailable"):
             manager.resolve({"mode": "unknown"}, CONFIG)
@@ -284,7 +271,7 @@ def test_pending_secret_reads_do_not_block_process_shutdown():
         from threading import Event
         from types import SimpleNamespace
         from src.config import read_config
-        from src.credentials import ProviderCredentials
+        from src.credentials import CredentialTokenService
 
         started, blocked = Event(), Event()
         def resolve(name):
@@ -292,7 +279,7 @@ def test_pending_secret_reads_do_not_block_process_shutdown():
             blocked.wait()
             return "synthetic-key"
 
-        manager = ProviderCredentials(SimpleNamespace(resolve=resolve), cache_options={"wait_timeout": 0.02})
+        manager = CredentialTokenService(SimpleNamespace(resolve=resolve), cache_options={"wait_timeout": 0.02})
         atexit.register(lambda: print("shutdown-complete", flush=True))
         atexit.register(manager.close)
         try:
