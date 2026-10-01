@@ -259,7 +259,13 @@ try {
                 Assert ($settings.Contains("'$setting', if(variables('isFlexConsumption'), 'false', 'true')")) 'Both cache app settings must follow the selected plan.'
             }
             $site = ($inner.resources | Where-Object type -eq 'Microsoft.Web/sites').properties
-            Assert ($site.Contains("'alwaysReady', createArray()") -and $site.Contains("'type', 'SystemAssignedIdentity'")) 'Flex must use zero always-ready instances and managed-identity deployment storage.'
+            Assert ($site -is [Collections.IDictionary]) 'Function App properties must remain a literal object so serverFarmId is visible during provider preflight.'
+            Assert ($site.serverFarmId -ceq "[resourceId('Microsoft.Web/serverfarms', parameters('resourceNames').hostingPlan)]") 'The hosting-plan ID must be explicit without a runtime reference.'
+            Assert ($site.httpsOnly -eq $true -and $site.publicNetworkAccess -ceq 'Disabled') 'The Function must retain HTTPS-only access and initially disabled public ingress.'
+            $functionAppConfig = $site.functionAppConfig
+            Assert ($functionAppConfig -is [string] -and $functionAppConfig.StartsWith("[if(variables('isFlexConsumption'), ") -and $functionAppConfig.EndsWith(', null())]')) 'Only functionAppConfig must be conditional on FC1, with no Flex configuration for EP1.'
+            Assert ($functionAppConfig.Contains("'deployment', createObject('storage', createObject('type', 'blobContainer'") -and $functionAppConfig.Contains("reference(resourceId('Microsoft.Storage/storageAccounts', parameters('resourceNames').storageAccount), '2023-05-01').primaryEndpoints.blob")) 'Flex must retain its deployment container and storage endpoint lookup.'
+            Assert ($functionAppConfig.Contains("'instanceMemoryMB', 2048, 'maximumInstanceCount', 40, 'alwaysReady', createArray()") -and $functionAppConfig.Contains("'type', 'SystemAssignedIdentity'")) 'Flex must retain 2048 MB, up to 40 on-demand instances, zero always-ready instances, and managed-identity deployment storage.'
         }
     } $directory $TemplatePath
     Write-Host 'Service plan selection, approval, availability, migration guards, CLI versions, and publication checks passed.'

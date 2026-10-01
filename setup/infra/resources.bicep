@@ -162,7 +162,8 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
       '${outboundIdentity.id}': {}
     }
   }
-  properties: union({
+  // Keep serverFarmId visible to preflight instead of deferring all properties with the storage reference.
+  properties: {
     serverFarmId: plan.id
     httpsOnly: true
     // The script verifies Easy Auth before opening ingress for publication.
@@ -176,8 +177,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
       ftpsState: 'Disabled'
       linuxFxVersion: runtime.stack
     })
-  }, isFlexConsumption ? {
-    functionAppConfig: {
+    functionAppConfig: isFlexConsumption ? {
       deployment: {
         storage: {
           type: 'blobContainer'
@@ -196,8 +196,8 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         maximumInstanceCount: 40
         alwaysReady: []
       }
-    }
-  } : {})
+    } : null
+  }
 }
 
 var identifierUri = 'api://${functionApp.properties.defaultHostName}/${applicationId}'

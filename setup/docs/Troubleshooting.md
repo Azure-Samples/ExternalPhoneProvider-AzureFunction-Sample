@@ -59,6 +59,27 @@ For older deployments without a service-plan tag,
 preflight checks the actual hosting-plan SKU. Use `-ServicePlan EP1` when rerunning an existing EP1
 deployment; do not delete tags to bypass the migration guard.
 
+## FC1 deployment preflight reports an object-reference error
+
+An affected setup template can fail with `InvalidTemplateDeployment` against
+`Microsoft.Web/serverfarms` and the inner message `Object reference not set to an instance of an object`.
+The cause is the Function App's entire `properties` object being wrapped in a `union()` expression
+that contains the Flex deployment storage endpoint's runtime `reference()`. ARM defers that whole
+expression, including `serverFarmId`, so the provider cannot see the Function-to-plan association
+during preflight. This error is not evidence that the FC1 SKU or selected region is unsupported.
+
+The corrected Bicep keeps `properties` as a literal object with an explicit `serverFarmId` and makes
+only `functionAppConfig` conditional on FC1. The storage endpoint lookup, hosting-plan configuration,
+scaling, managed identities, authentication, and public-access settings are unchanged.
+
+Download the updated `Setup-Epp.ps1` from the intended source branch and rerun it with matching
+`-SourceRepository` and `-SourceRef <source-branch-or-fixed-commit>` values. For the setup test branch,
+use `-SourceRef jamesxian-microsoft-service-plan-setup`; a command pinned to an older commit still
+downloads the old support files and template. Keep the original tenant, subscription, application,
+language, service plan, and resource prefix rather than changing plans to bypass this error.
+`az deployment sub validate` can check the corrected template without creating resources. Passing
+validation does not prove successful publication, runtime startup, Easy Auth enforcement, or delivery.
+
 ## Credential caching does not match the selected plan
 
 Check `EPP_KEY_VAULT_CACHE_ENABLED` and `EPP_ACCESS_TOKEN_CACHE_ENABLED` on the serving Function App.
