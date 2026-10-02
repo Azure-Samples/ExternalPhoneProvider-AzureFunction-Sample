@@ -17,8 +17,8 @@ const load = mock.method(Module, '_load', function (name, ...args) {
     if (name !== '@azure/core-rest-pipeline') return originalLoad.call(this, name, ...args);
     return { ...pipeline, createDefaultHttpClient: () => state.transport };
 });
-let ProviderCredentials;
-try { ({ ProviderCredentials } = require('../src/functions/credentials')); }
+let CredentialTokenService;
+try { ({ CredentialTokenService } = require('../src/functions/credentials')); }
 finally { load.mock.restore(); }
 
 const envKeys = [
@@ -99,7 +99,7 @@ function config() {
 
 test('real SDK sees one initial Entra exchange and none on concurrent or later warm requests', async () => {
     let now = Date.now();
-    const manager = new ProviderCredentials({
+    const manager = new CredentialTokenService({
         cacheOptions: { now: () => now, schedule: () => ({ unref() {} }), cancel() {} },
     });
     const settings = config();
@@ -121,7 +121,7 @@ test('real SDK sees one initial Entra exchange and none on concurrent or later w
 
 test('the cache-owned acquisition budget aborts actual SDK transport and does not cache a late token', async () => {
     const failures = [];
-    const manager = new ProviderCredentials({ reportFailure: (kind) => failures.push(kind) });
+    const manager = new CredentialTokenService({ reportFailure: (kind) => failures.push(kind) });
     const settings = config();
     state.wait = 10000;
     try {
@@ -136,7 +136,7 @@ test('the cache-owned acquisition budget aborts actual SDK transport and does no
 });
 
 test('restarting with new configuration cancels old work without publishing into the replacement cache', async () => {
-    const manager = new ProviderCredentials({ reportFailure: () => {} });
+    const manager = new CredentialTokenService({ reportFailure: () => {} });
     const settings = config();
     state.wait = 10000;
     const first = manager.resolve({ mode: 'oauth' }, settings);
@@ -144,7 +144,7 @@ test('restarting with new configuration cancels old work without publishing into
     await waitForRequest(false);
     manager.close();
     state.wait = 5;
-    const replacement = new ProviderCredentials({ reportFailure() {} });
+    const replacement = new CredentialTokenService({ reportFailure() {} });
     const result = await replacement.resolve({ mode: 'oauth' }, { ...settings, outboundClientId: crypto.randomUUID() });
     await firstRejected;
     try {
@@ -156,7 +156,7 @@ test('restarting with new configuration cancels old work without publishing into
 
 test('the acquisition deadline aborts real managed-identity transport before another refresh starts', async () => {
     let now = Date.now();
-    const manager = new ProviderCredentials({
+    const manager = new CredentialTokenService({
         reportFailure: () => {},
         cacheOptions: { now: () => now, schedule: () => ({ unref() {} }), cancel() {} },
     });
@@ -177,7 +177,7 @@ test('the acquisition deadline aborts real managed-identity transport before ano
 });
 
 test('shutdown aborts managed-identity transport and cannot restart acquisition', async () => {
-    const manager = new ProviderCredentials({ reportFailure: () => {} });
+    const manager = new CredentialTokenService({ reportFailure: () => {} });
     const settings = config();
     state.miWait = 10000;
     const pending = manager.resolve({ mode: 'oauth' }, settings);
@@ -198,7 +198,7 @@ test('shutdown aborts managed-identity transport and cannot restart acquisition'
 });
 
 test('Key Vault acquisition also aborts its real managed-identity transport', async () => {
-    const manager = new ProviderCredentials({ reportFailure: () => {} });
+    const manager = new CredentialTokenService({ reportFailure: () => {} });
     const settings = readConfig({
         KEY_VAULT_URL: 'https://unit.vault.azure.net', AZURE_CLIENT_ID: crypto.randomUUID(),
     });
@@ -218,7 +218,7 @@ test('the default Azure HTTP client closes a stalled managed-identity socket on 
         const { createServer } = require('node:http');
         const { setTimeout: delay } = require('node:timers/promises');
         const { ClientAssertionCredential } = require('@azure/identity');
-        const { ProviderCredentials } = require('./src/functions/credentials');
+        const { CredentialTokenService } = require('./src/functions/credentials');
         ClientAssertionCredential.prototype.getToken = async function () {
             await this.getAssertion();
             throw new Error('The synthetic managed-identity request must not complete');
@@ -239,7 +239,7 @@ test('the default Azure HTTP client closes a stalled managed-identity socket on 
             }
             process.env.IDENTITY_ENDPOINT = 'http://127.0.0.1:' + server.address().port + '/identity';
             process.env.IDENTITY_HEADER = 'synthetic-header';
-            const manager = new ProviderCredentials({ reportFailure: () => {} });
+            const manager = new CredentialTokenService({ reportFailure: () => {} });
             try {
                 await assert.rejects(manager.resolve({ mode: 'oauth' }, {
                     providerTenantId: '11111111-1111-1111-1111-111111111111',

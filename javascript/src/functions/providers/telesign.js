@@ -1,84 +1,81 @@
-// <copyright file="telesign.js" company="Microsoft Corporation">
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// </copyright>
-
 'use strict';
 
-const { ParsedResponse } = require('../models');
+const { OUTCOME, ProviderResult, classifyFailure } = require('../providerResult');
 
 const VOICE_PASSCODE_PATTERN = /(?<![0-9])[0-9]{6}(?![0-9])/g;
-const VOICE_DIGIT_SEPARATOR = ', ';
-const VOICE_REPEAT_COUNT = 2;
-const VOICE_REPEAT_SEPARATOR = ' ';
+const SUCCESS = new Set(['200', '203', '290', '291', '292', '100', '101', '102', '103', '3001']);
 
-const manifest = {
-    id: 'telesign',
-    auth: {
+function buildVoiceMessage(message) {
+    const paced = message.replace(VOICE_PASSCODE_PATTERN, (passcode) => [...passcode].join(', '));
+    return `${paced} ${paced}`;
+}
+
+const provider = Object.freeze({
+    name: 'telesign',
+    authenticationMode: 'apiKey',
+    credentialSpec: Object.freeze({
         mode: 'apiKey',
         keyVaultSecretName: 'telesign-api-key',
         identityKeyVaultSecretName: 'telesign-customer-id',
+    }),
+
+    createRequest({ channel, endpoint, delivery, credential }) {
+        if (!['sms', 'voice'].includes(channel)) throw new Error('unsupported channel');
+        if (typeof delivery.phoneNumber !== 'string'
+            || !/^\+[1-9][0-9]{1,14}$/.test(delivery.phoneNumber)) {
+            throw new Error('invalid recipient');
+        }
+        const message = {
+            text: channel === 'voice' ? buildVoiceMessage(delivery.message) : delivery.message,
+        };
+        if (typeof delivery.locale === 'string' && delivery.locale.trim()) {
+            message.language = delivery.locale;
+        }
+        const correlationId = typeof delivery.correlationId === 'string' && delivery.correlationId
+            ? delivery.correlationId : delivery.messageId;
+        return {
+            url: endpoint,
+            method: 'POST',
+            headers: {
+                Authorization: `Basic ${Buffer.from(`${credential.identity}:${credential.secret}`).toString('base64')}`,
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+            },
+            body: JSON.stringify({
+                recipient: { phone_number: delivery.phoneNumber },
+                message,
+                channels: [{ channel }],
+                correlation_id: correlationId,
+            }),
+        };
     },
-    // SMS: 200/203 delivered, 290/291/292 in progress. Voice: 100 answered, 101/102/103 placed/ringing/in progress.
-    responseMapping: {
-        200: 'Continue',
-        203: 'Continue',
-        290: 'Continue',
-        291: 'Continue',
-        292: 'Continue',
-        100: 'Continue',
-        101: 'Continue',
-        102: 'Continue',
-        103: 'Continue',
-        3001: 'Continue',
-        default: 'Fail',
+
+    interpretResponse(response) {
+        const payload = response.json && typeof response.json === 'object' && !Array.isArray(response.json)
+            ? response.json : {};
+        const statusObject = payload.status && typeof payload.status === 'object' && !Array.isArray(payload.status)
+            ? payload.status : {};
+        const code = typeof statusObject.code === 'number' && Number.isInteger(statusObject.code)
+            ? String(statusObject.code) : 'UNKNOWN';
+        const recognized = SUCCESS.has(code);
+        const mappedOutcome = recognized ? OUTCOME.CONTINUE : OUTCOME.FAIL;
+        const outcome = response.ok ? mappedOutcome : OUTCOME.FAIL;
+        return new ProviderResult({
+            outcome,
+            statusRecognized: recognized,
+            providerHttpStatus: response.providerHttpStatus,
+            providerMessageId: typeof payload.reference_id === 'string' ? payload.reference_id : null,
+            providerStatusCode: code,
+            providerStatusDescription: typeof statusObject.description === 'string'
+                ? statusObject.description : null,
+            failureReason: classifyFailure({
+                providerHttpStatus: response.providerHttpStatus,
+                outcome,
+                statusRecognized: recognized,
+                validJson: response.validJson,
+            }),
+        });
     },
-};
+});
 
-function buildVoiceMessage(message) {
-    const pacedMessage = message.replace(
-        VOICE_PASSCODE_PATTERN,
-        (passcode) => [...passcode].join(VOICE_DIGIT_SEPARATOR),
-    );
-    return Array(VOICE_REPEAT_COUNT).fill(pacedMessage).join(VOICE_REPEAT_SEPARATOR);
-}
-
-function buildRequest({ channel, endpoint, dispatch, credential }) {
-    if (!['sms', 'voice'].includes(channel)) throw new Error('unsupported channel');
-    if (typeof dispatch.destination !== 'string' || !/^\+[1-9][0-9]{1,14}$/.test(dispatch.destination)
-        || dispatch.destination.trim() !== dispatch.destination) {
-        throw new Error('invalid recipient');
-    }
-    const authorization = `Basic ${Buffer.from(`${credential.identity}:${credential.secret}`).toString('base64')}`;
-    const correlationId = typeof dispatch.correlationId === 'string' && dispatch.correlationId
-        ? dispatch.correlationId : dispatch.messageId;
-    const message = { text: channel === 'voice' ? buildVoiceMessage(dispatch.message) : dispatch.message };
-    if (typeof dispatch.locale === 'string' && dispatch.locale.trim()) message.language = dispatch.locale;
-    return {
-        url: endpoint,
-        method: 'POST',
-        headers: {
-            Authorization: authorization,
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-        },
-        body: JSON.stringify({
-            recipient: { phone_number: dispatch.destination },
-            message,
-            channels: [{ channel }],
-            correlation_id: correlationId,
-        }),
-    };
-}
-
-function parseResponse({ httpStatus, ok, json }) {
-    const status = (json && json.status) || {};
-    return new ParsedResponse({
-        success: ok,
-        providerHttpStatus: httpStatus,
-        providerMessageId: typeof json?.reference_id === 'string' ? json.reference_id : null,
-        providerStatusCode: Number.isInteger(status.code) ? String(status.code) : 'UNKNOWN',
-        providerStatusDescription: typeof status.description === 'string' ? status.description : null,
-    });
-}
-
-module.exports = { manifest, buildRequest, parseResponse };
+module.exports = provider;

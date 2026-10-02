@@ -5,106 +5,299 @@
 'use strict';
 
 const { app } = require('@azure/functions');
-const crypto = require('crypto');
-const {
-    dispatchOtp,
-    parseEnvelope,
-    decryptDeliveryContext,
-    contextToDispatch,
-    startProviderCredentialRefresh,
-    stopProviderCredentialRefresh,
-    MODE,
-} = require('./dispatch');
+const crypto = require('node:crypto');
+const { performance } = require('node:perf_hooks');
 const { readConfig } = require('./config');
-const { RequestLog } = require('./requestLog');
+const { parseEntraPayload } = require('./entraPayload');
+const { OtpDelivery } = require('./delivery');
+const { decryptDeliveryContext } = require('./jwe');
+const { selectProvider } = require('./providers');
+const {
+    credentialTokenService,
+    reportRefreshFailure,
+} = require('./credentials');
+const {
+    ProviderTransportError,
+    isValidProviderUrl,
+    parseProviderTimeout,
+    sendProviderRequest,
+} = require('./providerTransport');
+const {
+    safeIdentifier,
+    createRequestContext,
+    payloadContext,
+    providerContext,
+    credentialContext,
+    emit,
+    requestFailed,
+    requestCompleted,
+    unexpectedError,
+} = require('./logging');
+
+async function startProviderCredentialRefresh() {
+    const config = readConfig();
+    if (!config.providerName) return;
+    const provider = selectProvider(config.providerName);
+    if (!provider || (config.providerAuthMode
+        && config.providerAuthMode !== provider.authenticationMode)) {
+        reportRefreshFailure('configuration');
+        return;
+    }
+    try {
+        await credentialTokenService.getCredentials(provider.credentialSpec, config);
+    } catch {
+        if (!credentialTokenService.current) reportRefreshFailure('configuration');
+    }
+}
+
+function stopProviderCredentialRefresh() {
+    credentialTokenService.close();
+}
 
 app.hook.appStart(startProviderCredentialRefresh);
 app.hook.appTerminate(stopProviderCredentialRefresh);
 
 app.http('SendOtp', {
     methods: ['POST'],
-    authLevel: 'anonymous', // Protected by platform authentication in Azure.
-    handler: async (request, context) => {
+    authLevel: 'anonymous',
+    handler: async (request, azureContext) => {
         const requestId = crypto.randomUUID();
+        const headerCorrelationId = request.headers.get('x-ms-correlation-id');
         const msRequestId = request.headers.get('x-ms-client-request-id');
-        const headerCorrelationId = request.headers.get('x-ms-correlation-id') || null;
-        const log = new RequestLog(context, requestId, msRequestId, headerCorrelationId);
-        let correlationId = headerCorrelationId || requestId;
+        let logContext = createRequestContext(
+            azureContext,
+            requestId,
+            msRequestId,
+            headerCorrelationId,
+        );
+        let correlationId = safeIdentifier(headerCorrelationId) || requestId;
         let evaluation = false;
-        let httpStatus = 500;
-        const respond = (status, jsonBody) => {
-            httpStatus = status;
-            log.responsePrepared(status, Object.hasOwn(jsonBody, 'nonce'), Object.hasOwn(jsonBody, 'correlationId'));
-            return { status, jsonBody };
+        let status = 500;
+        let failureEmitted = false;
+
+        const fail = (failureStage, failureReason, httpStatus) => {
+            failureEmitted = true;
+            requestFailed(logContext, failureStage, failureReason, httpStatus);
+            return httpStatus;
+        };
+        const respond = (httpStatus, jsonBody) => {
+            status = httpStatus;
+            emit(logContext, 'response_prepared', {
+                httpStatus,
+                responseContainsNonce: Object.hasOwn(jsonBody, 'nonce'),
+                responseContainsCorrelationId: Object.hasOwn(jsonBody, 'correlationId'),
+            });
+            return { status: httpStatus, jsonBody };
         };
 
         try {
-            log.service('request_received');
+            emit(logContext, 'request_received');
             const config = readConfig();
-            const clientRequestId = msRequestId || requestId;
 
-            let payload;
+            let rawPayload;
             try {
-                payload = JSON.parse(await request.text());
+                rawPayload = JSON.parse(await request.text());
             } catch {
-                log.failure('request_validation', 'invalid JSON body', 400);
+                fail('request_validation', 'invalid JSON body', 400);
                 return respond(400, { error: 'bad_request', reason: 'invalid JSON body', requestId });
             }
 
-            const parsed = parseEnvelope(payload);
+            const parsed = parseEntraPayload(rawPayload);
             if (parsed.error) {
-                log.failure('request_validation', parsed.error, 400);
+                fail('request_validation', parsed.error, 400);
                 return respond(400, { error: 'bad_request', reason: parsed.error, requestId });
             }
-            const envelope = parsed.envelope;
-            correlationId = envelope.correlationId || headerCorrelationId || requestId;
-            evaluation = envelope.mode === MODE.EVALUATION;
-            log.envelopeValidated(envelope, envelope.correlationId || headerCorrelationId,
-                envelope.correlationId ? 'envelope' : 'header');
+            const payload = parsed.payload;
+            logContext = payloadContext(logContext, payload);
+            correlationId = typeof payload.correlationId === 'string' && payload.correlationId
+                ? payload.correlationId
+                : headerCorrelationId
+                || requestId;
+            evaluation = payload.isEvaluation;
+            emit(logContext, 'envelope_validated', {
+                envelopeType: payload.type,
+                ttlSeconds: payload.ttlSeconds ?? null,
+                encryptedDeliveryContextPresent: true,
+            });
 
-            let delivery;
-            let header;
+            let decrypted;
             try {
-                ({ context: delivery, header } = await decryptDeliveryContext(
-                    envelope.encryptedDeliveryContext, config));
+                decrypted = await decryptDeliveryContext(
+                    payload.encryptedDeliveryContext,
+                    config.decryptionKeyPem,
+                );
             } catch {
-                log.failure('decryption', 'decryption_failed', 400);
+                fail('decryption', 'decryption_failed', 400);
                 return respond(400, { error: 'decryption_failed', correlationId, requestId });
             }
-            log.service('delivery_context_decrypted');
+            emit(logContext, 'delivery_context_decrypted');
 
-            // Key ID is advisory after authenticated decryption.
-            if (config.expectedKeyId && config.expectedKeyId !== header.kid) {
-                log.keyIdMismatch();
+            if (config.expectedKeyId && config.expectedKeyId !== decrypted.keyId) {
+                emit(logContext, 'encryption_key_id_mismatch', {}, 'warn');
             }
-
-            if (!delivery?.isComplete) {
-                log.failure('delivery_context_validation', 'incomplete delivery context', 400);
-                return respond(400, { error: 'bad_request', reason: 'incomplete delivery context', correlationId, requestId });
-            }
-
-            // Evaluation proves decryption without resolving a provider or requiring provider config.
-            if (!evaluation) {
-                const dispatch = contextToDispatch(delivery, envelope, clientRequestId);
-                dispatch.correlationId = correlationId;
-                const result = await dispatchOtp(dispatch, { requestId, config, log }).catch(() => {
-                    if (!log.data.failureStage) log.failure('provider_dispatch', 'unexpected_error', 500);
-                    return { httpStatus: 500 };
+            if (!decrypted.delivery?.isComplete) {
+                fail('delivery_context_validation', 'incomplete delivery context', 400);
+                return respond(400, {
+                    error: 'bad_request',
+                    reason: 'incomplete delivery context',
+                    correlationId,
+                    requestId,
                 });
-                if (result.httpStatus !== 200) {
-                    return respond(result.httpStatus, { error: 'provider_delivery_failed', correlationId, requestId });
-                }
-            } else {
-                log.service('evaluation_completed');
             }
 
-            // Only a successful delivery (or validated evaluation) may echo the nonce and accepted.
-            return respond(200, { nonce: delivery.nonce, correlationId, providerStatus: 'accepted' });
+            if (evaluation) {
+                emit(logContext, 'evaluation_completed');
+                return respond(200, {
+                    nonce: decrypted.delivery.nonce,
+                    correlationId,
+                    providerStatus: 'accepted',
+                });
+            }
+
+            const provider = selectProvider(config.providerName);
+            if (!provider) {
+                fail('provider_selection', 'unknown_provider', 400);
+                return respond(400, { error: 'provider_delivery_failed', correlationId, requestId });
+            }
+            logContext = providerContext(logContext, provider);
+            emit(logContext, 'provider_selected');
+
+            const channel = payload.channelName;
+            if (config.providerChannel && config.providerChannel !== channel) {
+                fail('provider_configuration', 'channel_not_configured', 400);
+                return respond(400, { error: 'provider_delivery_failed', correlationId, requestId });
+            }
+            if (config.providerAuthMode
+                && config.providerAuthMode !== provider.authenticationMode) {
+                fail('provider_configuration', 'authentication_mode_mismatch', 502);
+                return respond(502, { error: 'provider_delivery_failed', correlationId, requestId });
+            }
+            if (!isValidProviderUrl(config.providerEndpoint)) {
+                fail('provider_configuration', 'invalid_provider_endpoint', 502);
+                return respond(502, { error: 'provider_delivery_failed', correlationId, requestId });
+            }
+
+            let credential;
+            const credentialStarted = performance.now();
+            try {
+                if (provider.authenticationMode === 'oauth') {
+                    logContext = credentialContext(logContext, config);
+                }
+                emit(logContext, 'provider_credential_resolution_started', {
+                    providerCredentialSource: provider.authenticationMode === 'oauth'
+                        ? 'managed_identity_client_assertion' : 'key_vault',
+                    providerTenantId: logContext.providerTenantId,
+                    functionOutboundClientId: logContext.functionOutboundClientId,
+                    functionOutboundManagedIdentityClientId:
+                        logContext.functionOutboundManagedIdentityClientId,
+                });
+                credential = await credentialTokenService.getCredentials(
+                    provider.credentialSpec,
+                    config,
+                );
+            } catch {
+                fail('provider_credentials', 'credential_unavailable', 502);
+                return respond(502, { error: 'provider_delivery_failed', correlationId, requestId });
+            }
+            const needsIdentity = provider.credentialSpec.identityKeyVaultSecretName;
+            const credentialUnavailable = !credential
+                || (credential.mode === 'apiKey'
+                    && (!credential.secret || (needsIdentity && !credential.identity)))
+                || (credential.mode === 'oauth' && !credential.accessToken);
+            if (credentialUnavailable) {
+                fail('provider_credentials', 'credential_unavailable', 502);
+                return respond(502, { error: 'provider_delivery_failed', correlationId, requestId });
+            }
+            emit(logContext, 'provider_credential_resolved', {
+                providerCredentialElapsedMs: Math.floor(performance.now() - credentialStarted),
+            });
+
+            const delivery = new OtpDelivery({
+                phoneNumber: decrypted.delivery.phoneNumber,
+                message: decrypted.delivery.message,
+                channel,
+                messageId: msRequestId || requestId,
+                correlationId,
+                locale: decrypted.delivery.locale,
+            });
+            let providerRequest;
+            try {
+                emit(logContext, 'provider_request_build_started');
+                providerRequest = provider.createRequest({
+                    channel,
+                    endpoint: config.providerEndpoint,
+                    delivery,
+                    credential,
+                    env: config.env,
+                });
+            } catch {
+                fail('provider_request_build', 'request_build_failed', 502);
+                return respond(502, { error: 'provider_delivery_failed', correlationId, requestId });
+            }
+
+            let transportResponse;
+            try {
+                transportResponse = await sendProviderRequest(
+                    providerRequest,
+                    parseProviderTimeout(config.providerTimeoutMs),
+                    logContext,
+                );
+            } catch (error) {
+                if (error instanceof ProviderTransportError) {
+                    fail(error.stage, error.reason, error.httpStatus);
+                    return respond(error.httpStatus, {
+                        error: 'provider_delivery_failed',
+                        correlationId,
+                        requestId,
+                    });
+                }
+                throw error;
+            }
+
+            let result;
+            try {
+                result = provider.interpretResponse(transportResponse);
+            } catch {
+                fail('provider_response', 'response_parse_failed', 500);
+                return respond(500, { error: 'provider_delivery_failed', correlationId, requestId });
+            }
+            emit(logContext, 'provider_response_processed', {
+                providerHttpStatus: result.providerHttpStatus,
+                providerStatus: result.statusRecognized
+                    ? result.providerStatusName || result.providerStatusCode
+                    : 'unmapped',
+                providerOutcome: result.outcome,
+                providerMessageId: safeIdentifier(result.providerMessageId),
+                providerElapsedMs: transportResponse.elapsedMs,
+                failureReason: result.failureReason,
+                httpStatus: result.httpStatus,
+            }, result.httpStatus >= 500 ? 'error' : result.httpStatus === 200 ? 'log' : 'warn');
+
+            if (result.httpStatus >= 400) {
+                fail('provider_response', result.failureReason || 'provider_rejected', result.httpStatus);
+                return respond(result.httpStatus, {
+                    error: 'provider_delivery_failed',
+                    correlationId,
+                    requestId,
+                });
+            }
+            return respond(200, {
+                nonce: decrypted.delivery.nonce,
+                correlationId,
+                providerStatus: 'accepted',
+            });
         } catch {
-            if (!log.data.failureStage) log.failure('handler', 'unexpected_error', 500);
+            if (!failureEmitted) {
+                failureEmitted = true;
+                unexpectedError(logContext);
+            }
             return respond(500, { error: 'delivery_failed', correlationId, requestId });
         } finally {
-            log.complete(httpStatus);
+            requestCompleted(logContext, status, status === 200
+                ? evaluation ? 'evaluated' : 'accepted'
+                : 'failed');
         }
     },
 });
+
+module.exports = { startProviderCredentialRefresh, stopProviderCredentialRefresh };
