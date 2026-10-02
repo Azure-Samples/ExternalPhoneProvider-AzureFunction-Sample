@@ -23,7 +23,11 @@ try {
         New-Item -ItemType Directory -Path (Split-Path $destination) -Force | Out-Null
         Copy-Item -LiteralPath $file.FullName -Destination $destination
     }
-    if (-not (Test-Path -LiteralPath (Join-Path $stage 'src/dispatch.py'))) { throw 'Missing Python application source.' }
+    foreach ($name in @('function_app.py', 'src/jwe.py', 'src/provider.py')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $stage $name))) {
+            throw "Missing Python application source: $name."
+        }
+    }
     $zip = Join-Path $temporary 'app.zip'
     [IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip)
     New-Item -ItemType Directory -Path (Split-Path $archive) -Force | Out-Null
