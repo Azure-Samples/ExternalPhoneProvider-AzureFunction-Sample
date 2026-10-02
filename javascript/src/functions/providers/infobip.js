@@ -1,68 +1,79 @@
-// <copyright file="infobip.js" company="Microsoft Corporation">
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// </copyright>
-
 'use strict';
 
-const { ParsedResponse } = require('../models');
+const { OUTCOME, ProviderResult, classifyFailure } = require('../providerResult');
 
-// Voice integration is unverified; confirm the request format before production use.
+const SUCCESS = new Set(['ACCEPTED', 'PENDING', 'DELIVERED']);
+const REJECTED = new Set(['REJECTED', 'EXPIRED', 'UNDELIVERABLE']);
 
-const manifest = {
-    id: 'infobip',
-    auth: { mode: 'apiKey', keyVaultSecretName: 'infobip-api-key' },
-    responseMapping: {
-        ACCEPTED: 'Continue',
-        PENDING: 'Continue',
-        DELIVERED: 'Continue',
-        REJECTED: 'Fail',
-        EXPIRED: 'Fail',
-        UNDELIVERABLE: 'Fail',
-        default: 'Fail',
-    },
-};
+const provider = Object.freeze({
+    name: 'infobip',
+    authenticationMode: 'apiKey',
+    credentialSpec: Object.freeze({ mode: 'apiKey', keyVaultSecretName: 'infobip-api-key' }),
 
-function buildRequest({ channel, endpoint, dispatch, credential, env }) {
-    const base = endpoint;
-    const senderId = env.EPP_PROVIDER_ACCOUNT_NAME || 'Verify';
-    const headers = {
-        Authorization: `App ${credential.secret}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-    };
-
-    if (channel === 'voice') {
-        const body = {
-            messages: [{
-                from: senderId,
-                destinations: [{ to: dispatch.destination, messageId: dispatch.correlationId || dispatch.messageId }],
-                text: dispatch.message,
-                language: dispatch.locale || 'en',
-                voice: { name: 'Joanna', gender: 'female' },
-            }],
+    createRequest({ channel, endpoint, delivery, credential, env }) {
+        const senderId = env.EPP_PROVIDER_ACCOUNT_NAME || 'Verify';
+        const messageId = delivery.correlationId || delivery.messageId;
+        const headers = {
+            Authorization: `App ${credential.secret}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
         };
-        return { url: `${base}/tts/3/advanced`, method: 'POST', headers, body: JSON.stringify(body) };
-    }
+        if (channel === 'voice') {
+            return {
+                url: `${endpoint}/tts/3/advanced`,
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    messages: [{
+                        from: senderId,
+                        destinations: [{ to: delivery.phoneNumber, messageId }],
+                        text: delivery.message,
+                        language: delivery.locale || 'en',
+                        voice: { name: 'Joanna', gender: 'female' },
+                    }],
+                }),
+            };
+        }
+        return {
+            url: `${endpoint}/sms/3/messages`,
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                messages: [{
+                    sender: senderId,
+                    destinations: [{ to: delivery.phoneNumber, messageId }],
+                    content: { text: delivery.message },
+                }],
+            }),
+        };
+    },
 
-    const body = {
-        messages: [{
-            sender: senderId,
-            destinations: [{ to: dispatch.destination, messageId: dispatch.correlationId || dispatch.messageId }],
-            content: { text: dispatch.message },
-        }],
-    };
-    return { url: `${base}/sms/3/messages`, method: 'POST', headers, body: JSON.stringify(body) };
-}
+    interpretResponse(response) {
+        const message = Array.isArray(response.json?.messages) ? response.json.messages[0] : null;
+        const statusObject = message && typeof message.status === 'object' && !Array.isArray(message.status)
+            ? message.status : null;
+        const rawStatus = typeof statusObject?.groupName === 'string'
+            ? statusObject.groupName : typeof statusObject?.name === 'string' ? statusObject.name : null;
+        const status = rawStatus?.toUpperCase() || null;
+        const recognized = SUCCESS.has(status) || REJECTED.has(status);
+        const mappedOutcome = SUCCESS.has(status) ? OUTCOME.CONTINUE : OUTCOME.FAIL;
+        const outcome = response.ok ? mappedOutcome : OUTCOME.FAIL;
+        return new ProviderResult({
+            outcome,
+            statusRecognized: recognized,
+            providerHttpStatus: response.providerHttpStatus,
+            providerMessageId: typeof message?.messageId === 'string' ? message.messageId : null,
+            providerStatusName: status,
+            providerStatusDescription: typeof statusObject?.description === 'string'
+                ? statusObject.description : null,
+            failureReason: classifyFailure({
+                providerHttpStatus: response.providerHttpStatus,
+                outcome,
+                statusRecognized: recognized,
+                validJson: response.validJson,
+            }),
+        });
+    },
+});
 
-function parseResponse({ httpStatus, ok, json }) {
-    const firstMessage = json && json.messages && json.messages[0];
-    const status = (firstMessage && firstMessage.status) || {};
-    return new ParsedResponse({
-        success: ok,
-        providerHttpStatus: httpStatus,
-        providerMessageId: (firstMessage && firstMessage.messageId) || null,
-        providerStatusName: (status.groupName || status.name || '').toUpperCase() || null,
-    });
-}
-
-module.exports = { manifest, buildRequest, parseResponse };
+module.exports = provider;

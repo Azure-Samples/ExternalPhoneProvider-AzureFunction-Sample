@@ -1,67 +1,83 @@
-// <copyright file="sinch.js" company="Microsoft Corporation">
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// </copyright>
-
 'use strict';
 
-const { ParsedResponse } = require('../models');
+const { OUTCOME, ProviderResult, classifyFailure } = require('../providerResult');
 
-// A batch identifier indicates acceptance, not final delivery; delivery status arrives by callback.
+const SUCCESS = new Set(['Dispatched', 'Delivered', 'Queued']);
+const REJECTED = new Set(['Failed', 'Rejected']);
 
-const manifest = {
-    id: 'sinch',
-    auth: { mode: 'apiKey', keyVaultSecretName: 'sinch-api-token' },
-    responseMapping: {
-        Dispatched: 'Continue',
-        Delivered: 'Continue',
-        Queued: 'Continue',
-        Failed: 'Fail',
-        Rejected: 'Fail',
-        default: 'Fail',
-    },
-};
+function nonblankString(value) {
+    return typeof value === 'string' && value.trim() ? value : null;
+}
 
-function buildRequest({ channel, endpoint, dispatch, credential, env }) {
-    const headers = {
-        Authorization: `Bearer ${credential.secret}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-    };
+const provider = Object.freeze({
+    name: 'sinch',
+    authenticationMode: 'apiKey',
+    credentialSpec: Object.freeze({ mode: 'apiKey', keyVaultSecretName: 'sinch-api-token' }),
 
-    if (channel === 'voice') {
-        // Voice uses a separate host; verify that its authentication accepts the configured credential.
-        const voiceBase = env.SINCH_VOICE_ENDPOINT || 'https://calling.api.sinch.com';
-        const body = {
-            method: 'ttsCallout',
-            ttsCallout: {
-                destination: { type: 'number', endpoint: dispatch.destination },
-                text: dispatch.message,
-                locale: dispatch.locale || 'en-US',
-                custom: dispatch.correlationId || dispatch.messageId,
-            },
+    createRequest({ channel, endpoint, delivery, credential, env }) {
+        const headers = {
+            Authorization: ['Bearer', credential.secret].join(' '),
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
         };
-        return { url: `${voiceBase}/calling/v1/callouts`, method: 'POST', headers, body: JSON.stringify(body) };
-    }
+        if (channel === 'voice') {
+            const voiceBase = env.SINCH_VOICE_ENDPOINT || 'https://calling.api.sinch.com';
+            return {
+                url: `${voiceBase}/calling/v1/callouts`,
+                method: 'POST',
+                headers,
+                body: JSON.stringify({
+                    method: 'ttsCallout',
+                    ttsCallout: {
+                        destination: { type: 'number', endpoint: delivery.phoneNumber },
+                        text: delivery.message,
+                        locale: delivery.locale || 'en-US',
+                        custom: delivery.correlationId || delivery.messageId,
+                    },
+                }),
+            };
+        }
+        const servicePlanId = env.SINCH_SERVICE_PLAN_ID || '';
+        return {
+            url: `${endpoint}/xms/v1/${servicePlanId}/batches`,
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                from: env.EPP_PROVIDER_ACCOUNT_NAME || 'Verify',
+                to: [delivery.phoneNumber],
+                body: delivery.message,
+                client_reference: delivery.correlationId || delivery.messageId,
+            }),
+        };
+    },
 
-    const smsBase = endpoint;
-    const servicePlanId = env.SINCH_SERVICE_PLAN_ID || '';
-    const body = {
-        from: env.EPP_PROVIDER_ACCOUNT_NAME || 'Verify',
-        to: [dispatch.destination],
-        body: dispatch.message,
-        client_reference: dispatch.correlationId || dispatch.messageId,
-    };
-    return { url: `${smsBase}/xms/v1/${servicePlanId}/batches`, method: 'POST', headers, body: JSON.stringify(body) };
-}
+    interpretResponse(response) {
+        const payload = response.json && typeof response.json === 'object' && !Array.isArray(response.json)
+            ? response.json : {};
+        const messageId = nonblankString(payload.id) || nonblankString(payload.callId);
+        let status = nonblankString(payload.status);
+        if (payload.status == null && response.ok && messageId) status = 'Dispatched';
+        const recognized = SUCCESS.has(status) || REJECTED.has(status);
+        const mappedOutcome = SUCCESS.has(status) ? OUTCOME.CONTINUE : OUTCOME.FAIL;
+        const outcome = response.ok && messageId ? mappedOutcome : OUTCOME.FAIL;
+        const failureReason = response.validJson && response.ok && !messageId
+            ? 'missing_provider_message_id'
+            : classifyFailure({
+                providerHttpStatus: response.providerHttpStatus,
+                outcome,
+                statusRecognized: recognized,
+                validJson: response.validJson,
+            });
+        return new ProviderResult({
+            outcome,
+            statusRecognized: recognized,
+            providerHttpStatus: response.providerHttpStatus,
+            providerMessageId: messageId,
+            providerStatusName: status,
+            providerStatusDescription: typeof payload.text === 'string' ? payload.text : null,
+            failureReason,
+        });
+    },
+});
 
-function parseResponse({ httpStatus, ok, json }) {
-    const messageOrCallId = (json && (json.id || json.callId || json._links && json._links.self)) || null;
-    return new ParsedResponse({
-        success: ok,
-        providerHttpStatus: httpStatus,
-        providerMessageId: typeof messageOrCallId === 'string' ? messageOrCallId : (messageOrCallId && messageOrCallId.href) || null,
-        providerStatusName: ok ? 'Dispatched' : (json && (json.text || json.status)) || null,
-    });
-}
-
-module.exports = { manifest, buildRequest, parseResponse };
+module.exports = provider;
