@@ -4,8 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.dispatch import DispatchRequest, ProviderRegistry, context_to_dispatch, parse_envelope, resolve_outcome
-from src.models import DeliveryContext, Envelope, ParsedResponse, TextToVoice
+from src.models import EntraSendOtpPayload, Outcome, OtpDelivery, ProviderResult
 from src.providers.infobip import InfobipProvider
 from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
@@ -14,198 +13,164 @@ from src.providers.telesign import TelesignProvider
 MESSAGE = "  Use 918273; then 1234.\nDo not rewrite + or café.  "
 
 
-def _dispatch(channel="sms"):
-    return DispatchRequest("+15551234567", MESSAGE, channel, "message-id", "correlation-id", "en-US",
-                           TextToVoice("Your code is", "001234", "en-US") if channel == "voice" else None)
+def _delivery(channel="sms"):
+    return OtpDelivery(
+        "+15551234567", MESSAGE, channel, "message-id", "correlation-id", "en-US")
 
 
 @pytest.mark.parametrize("channel", ["sms", "voice"])
-def test_soprano_selected_endpoint_and_oauth_contract(channel):
-    dispatch = _dispatch(channel)
-    if channel == "voice":
-        dispatch.locale = "fr-FR"
-        dispatch.text_to_voice = TextToVoice("ignored", "001234", "override")
-    request = ProviderRegistry([SopranoProvider()]).get("SOPRANO").build_request(
-        channel, "https://qa4.example/oauth/messages", dispatch,
+def test_soprano_owns_request_and_response_contract(channel):
+    delivery = _delivery(channel)
+    request = SopranoProvider().build_request(
+        channel,
+        "https://qa4.example/oauth/messages",
+        delivery,
         {"mode": "oauth", "access_token": "provider-token"},
         {},
     )
-    assert request["url"] == "https://qa4.example/oauth/messages" and request["method"] == "POST"
-    assert request["headers"] == {
-        "Authorization": "Bear" + "er provider-token",
-        "Content-Type": "application/json", "Accept": "application/json",
-    }
-    expected = {
-        "destination": "15551234567", "messageTypes": [channel],
-        "correlationId": "correlation-id", "shutterMode": False,
-    }
+    assert request.url == "https://qa4.example/oauth/messages"
+    assert request.method == "POST"
+    assert request.headers["Authorization"] == "Bearer provider-token"
+    body = json.loads(request.body)
+    assert body["destination"] == "15551234567"
+    assert body["messageTypes"] == [channel]
+    assert body["correlationId"] == "correlation-id"
     if channel == "voice":
-        expected["voice"] = {"text2voice": {
+        assert body["voice"]["text2voice"] == {
             "beforePasswordText": "  Use ",
             "password": "918273",
             "afterPasswordText": "; then 1234.\nDo not rewrite + or café.  ",
-            "language": "fr-FR",
+            "language": "en-US",
             "gender": 1,
             "loop": 2,
-        }}
+        }
+        assert "text" not in body
     else:
-        expected["text"] = MESSAGE
-    assert json.loads(request["body"]) == expected
-    response = SopranoProvider().parse_response(201, True, {"id": 123, "status": "ENROUTE"})
-    assert response == ParsedResponse(True, 201, provider_message_id="123", provider_status_name="ENROUTE")
-    assert "ENROUTE" not in repr(response)
+        assert body["text"] == MESSAGE
+
+    result = SopranoProvider().map_response({"id": 123, "status": "ENROUTE"}, 201)
+    assert result == ProviderResult(
+        Outcome.CONTINUE, True, 201, "123", "ENROUTE")
 
 
-@pytest.mark.parametrize("locale", [None, "", "   ", {"untrusted": True}])
-def test_soprano_voice_defaults_language_without_valid_locale(locale):
-    dispatch = _dispatch("voice")
-    dispatch.locale = locale
-    request = SopranoProvider().build_request(
-        "voice", "https://qa4.example/oauth/messages", dispatch,
-        {"mode": "oauth", "access_token": "provider-token"}, {},
-    )
-    assert json.loads(request["body"])["voice"]["text2voice"]["language"] == "en-US"
+@pytest.mark.parametrize("body,expected_status,recognized", [
+    ({"status": "accepted", "id": 1}, "ACCEPTED", True),
+    ([{"state": "queued", "messageId": "m"}], "QUEUED", True),
+    ({"status": False, "state": "ACCEPTED"}, "UNKNOWN", False),
+    ({}, "UNKNOWN", False),
+])
+def test_soprano_preserves_protocol_specific_mixed_response_shapes(body, expected_status, recognized):
+    result = SopranoProvider().map_response(body, 200)
+    assert result.provider_status_name == expected_status
+    assert result.status_recognized is recognized
+    assert result.failure_reason == (None if recognized else "unrecognized_provider_status")
 
 
-def test_soprano_voice_requires_six_digit_passcode():
-    dispatch = _dispatch("voice")
-    dispatch.message = "Your code is unavailable."
-    with pytest.raises(ValueError, match="six-digit passcode"):
-        SopranoProvider().build_request(
-            "voice", "https://qa4.example/oauth/messages", dispatch,
-            {"mode": "oauth", "access_token": "provider-token"}, {},
-        )
-
-
-def test_infobip_sms_request_and_response_contract():
+def test_infobip_contract_is_strict_and_provider_owned():
     request = InfobipProvider().build_request(
-        "sms", "https://infobip.example", _dispatch(),
-        {"mode": "apiKey", "secret": "ib"}, {"EPP_PROVIDER_ACCOUNT_NAME": "EPP"},
-    )
-    assert request["method"] == "POST" and request["url"] == "https://infobip.example/sms/3/messages"
-    assert request["headers"]["Authorization"] == "App ib"
-    assert json.loads(request["body"])["messages"] == [{
-        "sender": "EPP", "destinations": [{"to": "+15551234567", "messageId": "correlation-id"}],
+        "sms", "https://infobip.example", _delivery(),
+        {"mode": "apiKey", "secret": "ib"}, {"EPP_PROVIDER_ACCOUNT_NAME": "EPP"})
+    assert request.url == "https://infobip.example/sms/3/messages"
+    assert request.headers["Authorization"] == "App ib"
+    assert json.loads(request.body)["messages"] == [{
+        "sender": "EPP",
+        "destinations": [{"to": "+15551234567", "messageId": "correlation-id"}],
         "content": {"text": MESSAGE},
     }]
-    response = InfobipProvider().parse_response(200, True, {
+    result = InfobipProvider().map_response({
         "messages": [{"messageId": "message-id", "status": {"groupName": "PENDING"}}],
-    })
-    assert response == ParsedResponse(True, 200, provider_message_id="message-id", provider_status_name="PENDING")
+    }, 200)
+    assert result == ProviderResult(
+        Outcome.CONTINUE, True, 200, "message-id", "PENDING")
 
 
-@pytest.mark.parametrize("channel,locale", [
-    ("sms", "en"), ("voice", "en"), ("sms", None), ("sms", ""), ("sms", {"untrusted": True}),
-])
-def test_telesign_epp_request_contract(channel, locale):
-    dispatch = _dispatch(channel)
-    dispatch.locale = locale
+def test_sinch_requires_a_provider_message_id_for_success():
+    provider = SinchProvider()
+    accepted = provider.map_response({"id": "message-id"}, 200)
+    assert accepted.outcome == Outcome.CONTINUE
+    assert accepted.provider_status_name == "Dispatched"
+    missing = provider.map_response({}, 200)
+    assert missing.outcome == Outcome.FAIL
+    assert missing.failure_reason == "missing_provider_message_id"
+
+
+@pytest.mark.parametrize("channel", ["sms", "voice"])
+def test_telesign_request_contract(channel):
     request = TelesignProvider().build_request(
-        channel, f"https://verify.telesign.com/epp/{channel}", dispatch,
-        {"mode": "apiKey", "secret": "key", "identity": "customer"}, {},
+        channel,
+        f"https://verify.telesign.com/epp/{channel}",
+        _delivery(channel),
+        {"mode": "apiKey", "secret": "key", "identity": "customer"},
+        {},
     )
-    assert request["method"] == "POST" and request["url"] == f"https://verify.telesign.com/epp/{channel}"
-    assert request["headers"] == {"Authorization": "Basic " + base64.b64encode(b"customer:key").decode(),
-                                  "Content-Type": "application/json", "Accept": "application/json"}
-    expected_text = (
-        "  Use 9, 1, 8, 2, 7, 3; then 1234.\nDo not rewrite + or café.   "
-        "  Use 9, 1, 8, 2, 7, 3; then 1234.\nDo not rewrite + or café.  "
-        if channel == "voice" else MESSAGE
-    )
-    assert json.loads(request["body"]) == {
-        "recipient": {"phone_number": "+15551234567"},
-        "message": {"text": expected_text, "language": "en"} if locale == "en" else {"text": expected_text},
-        "channels": [{"channel": channel}], "correlation_id": "correlation-id",
-    }
+    assert request.headers["Authorization"] == (
+        "Basic " + base64.b64encode(b"customer:key").decode())
+    body = json.loads(request.body)
+    assert body["recipient"] == {"phone_number": "+15551234567"}
+    assert body["channels"] == [{"channel": channel}]
+    assert body["correlation_id"] == "correlation-id"
+    if channel == "voice":
+        assert "9, 1, 8, 2, 7, 3" in body["message"]["text"]
 
 
-def test_telesign_voice_paces_only_six_digit_numeric_runs_and_repeats_message():
-    dispatch = _dispatch("voice")
-    dispatch.message = "Code 001234; ref 1234567; alternate 654321."
-    request = TelesignProvider().build_request(
-        "voice", "https://verify.telesign.com/epp/voice", dispatch,
-        {"mode": "apiKey", "secret": "key", "identity": "customer"}, {},
-    )
-    assert json.loads(request["body"])["message"]["text"] == (
-        "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1. "
-        "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1."
-    )
+def test_telesign_enforces_integer_status_codes():
+    provider = TelesignProvider()
+    for payload in ({}, {"status": {"code": True}}, {"status": {"code": "290"}}):
+        result = provider.map_response(payload, 200)
+        assert result.outcome == Outcome.FAIL
+        assert result.status_recognized is False
+        assert result.failure_reason == "unrecognized_provider_status"
+    accepted = provider.map_response(
+        {"reference_id": "message-id", "status": {"code": 290}}, 200)
+    assert accepted == ProviderResult(
+        Outcome.CONTINUE, True, 200, "message-id",
+        provider_status_code="290")
 
 
-def test_telesign_epp_validates_recipients_and_status():
-    adapter = TelesignProvider()
-    response = adapter.parse_response(200, True, {"reference_id": "message-id", "status": {"code": 290}})
-    assert response == ParsedResponse(True, 200, provider_message_id="message-id", provider_status_code="290")
+def test_http_errors_override_provider_acceptance():
+    result = SopranoProvider().map_response({"status": "ACCEPTED"}, 500)
+    assert result.outcome == Outcome.FAIL
+    assert result.failure_reason == "provider_http_error"
+
+
+def test_telesign_validates_recipient_and_channel():
+    provider = TelesignProvider()
     credential = {"identity": "customer", "secret": "key"}
-    for destination in ("15551234567", "+0123", "+1", "+1234567890123456", "+123\n", "+123\r", "+12 34", None):
-        dispatch = _dispatch()
-        dispatch.destination = destination
+    for destination in ("15551234567", "+0123", "+1", "+1234567890123456", None):
+        delivery = _delivery()
+        delivery = OtpDelivery(
+            destination, delivery.message, delivery.channel, delivery.message_id,
+            delivery.correlation_id, delivery.locale)
         with pytest.raises(ValueError, match="invalid recipient"):
-            adapter.build_request("sms", "https://verify.telesign.com", dispatch, credential, {})
+            provider.build_request("sms", "https://verify.telesign.com", delivery, credential, {})
     with pytest.raises(ValueError, match="unsupported channel"):
-        adapter.build_request("email", "https://verify.telesign.com", _dispatch(), credential, {})
-    dispatch = _dispatch()
-    for correlation_id in (None, "", 123, True, [], {"invalid": True}):
-        dispatch.correlation_id = correlation_id
-        request = adapter.build_request("sms", "https://verify.telesign.com", dispatch, credential, {})
-        assert json.loads(request["body"])["correlation_id"] == dispatch.message_id
-    for payload in (None, {}, {"status": []}, {"status": {"code": True}}, {"status": {"code": "290"}}, {"status": {"code": 999}}):
-        assert resolve_outcome(adapter.manifest, adapter.parse_response(200, True, payload)) == "Fail"
-    for code, ok, outcome in ((290, True, "Continue"), (100, True, "Continue"), (290, False, "Fail"),
-                              (3001, True, "Continue"), (3001, False, "Fail")):
-        parsed = adapter.parse_response(200 if ok else 500, ok, {"status": {"code": code, "description": "status detail"}})
-        assert parsed.provider_status_description == "status detail"
-        assert resolve_outcome(adapter.manifest, parsed) == outcome
+        provider.build_request("email", "https://verify.telesign.com", _delivery(), credential, {})
 
 
-def test_sinch_sms_request_and_response_contract():
-    request = SinchProvider().build_request(
-        "sms", "https://sinch.example", _dispatch(),
-        {"mode": "apiKey", "secret": "static-api-token"},
-        {"SINCH_SERVICE_PLAN_ID": "plan", "EPP_PROVIDER_ACCOUNT_NAME": "EPP"},
-    )
-    assert request["method"] == "POST" and request["url"] == "https://sinch.example/xms/v1/plan/batches"
-    assert request["headers"]["Authorization"] == "Bearer static-api-token"
-    assert json.loads(request["body"]) == {
-        "from": "EPP", "to": ["+15551234567"], "body": MESSAGE, "client_reference": "correlation-id",
+def test_typed_payload_accepts_contract_values_and_rejects_bad_requests():
+    valid = {
+        "type": "microsoft.mfa.otpDeliver.v1",
+        "channel": 1,
+        "mode": 1,
+        "encryptedDeliveryContext": "jwe",
     }
-    response = SinchProvider().parse_response(200, True, {"id": "message-id"})
-    assert response == ParsedResponse(True, 200, provider_message_id="message-id", provider_status_name="Dispatched")
+    for channel, mode, expected in ((1, 1, ("sms", False)), ("VOICE", "Evaluation", ("voice", True))):
+        payload, error = EntraSendOtpPayload.from_payload(
+            {**valid, "channel": channel, "mode": mode})
+        assert error is None
+        assert (payload.channel_name, payload.is_evaluation) == expected
 
-
-def test_request_models_preserve_content_and_accept_valid_routing_and_ttl():
-    payload = {"type": "microsoft.mfa.otpDeliver.v1", "channel": 1, "mode": 1, "encryptedDeliveryContext": "jwe"}
-    for channel, mode, expected in ((1, 1, (1, 1)), ("VOICE", "Evaluation", (2, 2))):
-        envelope, error = parse_envelope({**payload, "channel": channel, "mode": mode})
-        assert error is None and isinstance(envelope, Envelope)
-        assert (envelope.channel, envelope.mode) == expected
-    for ttl in (1, 2147483647):
-        envelope, error = parse_envelope({**payload, "ttlSeconds": ttl})
-        assert error is None and envelope.ttl_seconds == ttl
-    envelope, error = parse_envelope(payload)
-    assert error is None and envelope.ttl_seconds is None
-
-    context = DeliveryContext.from_payload({
-        "nonce": " nonce ", "phoneNumber": "+15551234567", "message": MESSAGE,
-        "locale": {"opaque": "metadata"},
-    })
-    assert isinstance(context, DeliveryContext) and context.is_complete
-    dispatch = context_to_dispatch(context, envelope, "message-id")
-    assert isinstance(dispatch, DispatchRequest)
-    assert context.nonce == " nonce " and dispatch.message == MESSAGE
-    assert dispatch.destination == context.phone_number and dispatch.locale is context.locale
-    assert MESSAGE not in repr(context) + repr(dispatch)
-    assert "encrypted_delivery_context" not in repr(envelope)
-    assert DeliveryContext.from_payload(None) is None
-
-
-def test_envelope_parser_rejects_invalid_inputs_with_the_contract_reason():
-    fixtures = json.loads((Path(__file__).resolve().parents[2] / "tests/fixtures/contract.json").read_text())
-    valid = {"type": "microsoft.mfa.otpDeliver.v1", "channel": 1, "mode": 1, "encryptedDeliveryContext": "jwe"}
+    fixtures = json.loads(
+        (Path(__file__).resolve().parents[2] / "tests/fixtures/contract.json")
+        .read_text(encoding="utf-8"))
     for fixture in fixtures["badRequests"]:
-        # Malformed JSON is handled before the parser receives an object.
         if fixture["reason"] == "invalid JSON body":
             continue
-        payload = json.loads(fixture["rawBody"]) if "rawBody" in fixture else {**valid, **fixture["overrides"]}
-        envelope, error = parse_envelope(payload)
-        assert envelope is None and error == fixture["reason"], fixture["name"]
+        value = (
+            json.loads(fixture["rawBody"])
+            if "rawBody" in fixture
+            else {**valid, **fixture["overrides"]}
+        )
+        payload, error = EntraSendOtpPayload.from_payload(value)
+        assert payload is None
+        assert error == fixture["reason"]

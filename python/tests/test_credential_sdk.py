@@ -8,7 +8,7 @@ import requests
 import pytest
 import src.credentials as credentials_module
 from src.config import read_config
-from src.credentials import ProviderCredentials
+from src.credentials import CredentialTokenService
 
 
 @pytest.mark.parametrize("refresh_in", [None, 60])
@@ -50,7 +50,7 @@ def test_real_provider_sdk_reuses_tokens_and_preserves_refresh_metadata(monkeypa
         return_value=Mock(spec=["get_token"], get_token=Mock(side_effect=managed))))
     secrets = Mock()
     now = time.time()
-    manager = ProviderCredentials(secrets, cache_options={
+    manager = CredentialTokenService(secrets, cache_options={
         "clock": lambda: now,
     })
     config = read_config({
