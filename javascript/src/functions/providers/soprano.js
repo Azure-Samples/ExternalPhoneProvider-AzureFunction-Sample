@@ -1,83 +1,85 @@
-// <copyright file="soprano.js" company="Microsoft Corporation">
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// </copyright>
-
 'use strict';
 
-const { ParsedResponse } = require('../models');
+const { OUTCOME, ProviderResult, classifyFailure } = require('../providerResult');
 
 const DEFAULT_VOICE_LANGUAGE = 'en-US';
-const VOICE_GENDER = 1;
-const VOICE_LOOP = 2;
-
-const manifest = {
-    id: 'soprano',
-    auth: { mode: 'oauth' },
-    responseMapping: {
-        ENROUTE: 'Continue',
-        ACCEPTED: 'Continue',
-        SUBMITTED: 'Continue',
-        SENT: 'Continue',
-        DELIVERED: 'Continue',
-        QUEUED: 'Continue',
-        FAILED: 'Fail',
-        REJECTED: 'Fail',
-        FILTERED: 'Fail',
-        BLOCKED: 'Block',
-        default: 'Fail',
-    },
-};
+const SUCCESS = new Set(['ENROUTE', 'ACCEPTED', 'SUBMITTED', 'SENT', 'DELIVERED', 'QUEUED']);
+const REJECTED = new Set(['FAILED', 'REJECTED', 'FILTERED']);
 
 function buildTextToVoice(message, locale) {
     const renderedMessage = String(message || '');
-    const passcodeMatch = renderedMessage.match(/\d{6}/);
-    if (!passcodeMatch) {
-        throw new Error('voice message does not contain a six-digit passcode');
-    }
-
-    const passcodeIndex = passcodeMatch.index;
+    const match = renderedMessage.match(/[0-9]{6}/);
+    if (!match) throw new Error('voice message does not contain a six-digit passcode');
     return {
-        beforePasswordText: renderedMessage.slice(0, passcodeIndex),
-        password: passcodeMatch[0],
-        afterPasswordText: renderedMessage.slice(passcodeIndex + passcodeMatch[0].length),
+        beforePasswordText: renderedMessage.slice(0, match.index),
+        password: match[0],
+        afterPasswordText: renderedMessage.slice(match.index + match[0].length),
         language: typeof locale === 'string' && locale.trim() ? locale : DEFAULT_VOICE_LANGUAGE,
-        gender: VOICE_GENDER,
-        loop: VOICE_LOOP,
+        gender: 1,
+        loop: 2,
     };
 }
 
-function buildRequest({ channel, endpoint, dispatch, credential }) {
-    const headers = {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        Authorization: `Bearer ${credential.accessToken}`,
-    };
-    let destination = String(dispatch.destination || '');
-    while (destination.startsWith('+')) destination = destination.slice(1);
-    const body = {
-        destination,
-        messageTypes: [channel === 'voice' ? 'voice' : 'sms'],
-        correlationId: dispatch.correlationId || dispatch.messageId,
-        shutterMode: false,
-    };
-    if (channel === 'voice') {
-        body.voice = { text2voice: buildTextToVoice(dispatch.message, dispatch.locale) };
-    } else {
-        body.text = dispatch.message;
-    }
-    return { url: endpoint, method: 'POST', headers, body: JSON.stringify(body) };
+function responseIdentifier(value) {
+    if (typeof value === 'string') return value || null;
+    return typeof value === 'number' && Number.isFinite(value) ? String(value) : null;
 }
 
-function parseResponse({ httpStatus, ok, json }) {
-    const payload = (Array.isArray(json) ? json[0] : json) || {};
-    const value = payload.status ?? payload.state;
-    const status = typeof value === 'string' && value ? value.toUpperCase() : 'UNKNOWN';
-    return new ParsedResponse({
-        success: ok,
-        providerHttpStatus: httpStatus,
-        providerMessageId: (payload.id != null ? String(payload.id) : null) || payload.messageId || null,
-        providerStatusName: status,
-    });
-}
+const provider = Object.freeze({
+    name: 'soprano',
+    authenticationMode: 'oauth',
+    credentialSpec: Object.freeze({ mode: 'oauth' }),
 
-module.exports = { manifest, buildRequest, parseResponse };
+    createRequest({ channel, endpoint, delivery, credential }) {
+        const body = {
+            destination: String(delivery.phoneNumber || '').replace(/^\++/, ''),
+            messageTypes: [channel === 'voice' ? 'voice' : 'sms'],
+            correlationId: delivery.correlationId || delivery.messageId,
+            shutterMode: false,
+        };
+        if (channel === 'voice') {
+            body.voice = { text2voice: buildTextToVoice(delivery.message, delivery.locale) };
+        } else {
+            body.text = delivery.message;
+        }
+        return {
+            url: endpoint,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                Authorization: ['Bearer', credential.accessToken].join(' '),
+            },
+            body: JSON.stringify(body),
+        };
+    },
+
+    interpretResponse(response) {
+        const root = Array.isArray(response.json) ? response.json[0] : response.json;
+        const payload = root && typeof root === 'object' && !Array.isArray(root) ? root : {};
+        const selectedStatus = payload.status == null ? payload.state : payload.status;
+        const status = typeof selectedStatus === 'string' && selectedStatus.trim()
+            ? selectedStatus.toUpperCase() : 'UNKNOWN';
+        const recognized = SUCCESS.has(status) || REJECTED.has(status) || status === 'BLOCKED';
+        let mappedOutcome = OUTCOME.FAIL;
+        if (SUCCESS.has(status)) mappedOutcome = OUTCOME.CONTINUE;
+        if (status === 'BLOCKED') mappedOutcome = OUTCOME.BLOCK;
+        const outcome = !response.ok && mappedOutcome === OUTCOME.CONTINUE
+            ? OUTCOME.FAIL : mappedOutcome;
+        return new ProviderResult({
+            outcome,
+            statusRecognized: recognized,
+            providerHttpStatus: response.providerHttpStatus,
+            providerMessageId: responseIdentifier(payload.id) || responseIdentifier(payload.messageId),
+            providerStatusName: status,
+            failureReason: classifyFailure({
+                providerHttpStatus: response.providerHttpStatus,
+                outcome,
+                statusRecognized: recognized,
+                validJson: response.validJson,
+            }),
+        });
+    },
+});
+
+module.exports = provider;

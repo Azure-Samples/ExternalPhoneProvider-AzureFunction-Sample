@@ -4,11 +4,12 @@ This defines the shared contract for [JavaScript](../javascript/), [Python](../p
 [.NET](../dotnet/). See [production limitations](#production-limitations) before production use.
 
 > **Naming.** EPP means **External Phone Provider**. App settings use the `EPP_` prefix; the
-> request and delivery models are `Envelope`, `DeliveryContext` and `DispatchRequest`.
+> request and delivery models are `Envelope`, `DeliveryContext` and provider-neutral OTP delivery.
 > Documentation names do not change the external JSON fields or `microsoft.mfa.otpDeliver.v1` version.
 
-The design is **one dispatch engine + registered provider adapters**, with one selected provider per
-deployment. API-specific paths, headers, payloads and status rules belong in adapters, not this guide.
+The design selects one provider per deployment. The HTTP Function owns the request lifecycle, while
+API-specific credentials, paths, headers, payloads, response rules, outcomes and safe failure
+classifications remain inside each provider implementation.
 
 ---
 
@@ -82,15 +83,15 @@ runs once per language. Tag tampering and original-header-byte tests remain.
 |-------|----------|-------|
 | `nonce` | yes | value the endpoint MUST echo to prove decryption |
 | `phoneNumber` | yes | caller supplies an E.164 string; full E.164 validation is an implementation gap |
-| `message` | yes | fully rendered, localized text containing the passcode; text-message adapters forward it unchanged, Soprano voice extracts the first six consecutive digits, and Telesign voice paces standalone six-digit numeric runs and repeats the full message twice |
+| `message` | yes | fully rendered, localized text containing the passcode; text-message providers forward it unchanged, Soprano voice extracts the first six consecutive digits, and Telesign voice paces standalone six-digit numeric runs and repeats the full message twice |
 | `extension` | no | office-voice contract field; not currently forwarded by the shared dispatch model |
-| `locale` | no | voice selection input where supported by the selected adapter |
+| `locale` | no | voice selection input where supported by the selected provider |
 | `riskContext` | no | contextual request data; no risk-policy evaluation is implemented here |
-| `textToVoice` | no | legacy structured speech input; current Soprano adapters ignore it |
+| `textToVoice` | no | legacy structured speech input; current Soprano implementations ignore it |
 
 Decryption failure → `400`. Missing `nonce` / `phoneNumber` / `message` → `400`.
 
-For Soprano live voice, the adapter finds the first six consecutive digits in `message`, preserving
+For Soprano live voice, the provider finds the first six consecutive digits in `message`, preserving
 leading zeros, and splits the rendered text into `beforePasswordText`, `password`, and
 `afterPasswordText`. It uses a nonblank SAS `locale` as `language`, falling back to `en-US`, and sends
 fixed `gender: 1` and `loop: 2`. The resulting object is sent as `voice.text2voice` without a top-level
@@ -105,8 +106,8 @@ requests the configured provider scope. Existing platform caller authentication 
 
 The Function obtains one provider token through the shared OAuth credential resolver using the
 setup-generated `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE`, `EPP_OUTBOUND_CLIENT_ID`, and
-`EPP_OUTBOUND_MI_CLIENT_ID`. `EPP_PROVIDER_AUTH_MODE=oauth` matches the Soprano adapter.
-`EPP_PROVIDER_ENDPOINT` is the complete selected send URL and is not modified by the adapter.
+`EPP_OUTBOUND_MI_CLIENT_ID`. `EPP_PROVIDER_AUTH_MODE=oauth` matches the Soprano provider.
+`EPP_PROVIDER_ENDPOINT` is the complete selected send URL and is not modified by the provider.
 The calling app registration and outbound user-assigned identity must share a home tenant; the
 calling app must be multitenant and provisioned/authorized in the provider tenant. The app's
 federated credential trusts the identity's principal ID, home-tenant v2 issuer, and
@@ -146,11 +147,11 @@ See [Microsoft's managed-identity federation guidance](https://learn.microsoft.c
 Use a SAS locale supported by the selected Soprano endpoint and account. On QA4, an API-key
 voice request using `en` returned HTTP `400` with error code `400101`; the same request structure
 using `en-US` returned HTTP `201` with `ENROUTE` on September 15, 2026. This confirms acceptance,
-not handset receipt or audio quality. When SAS omits the locale, the adapters use `en-US`.
+not handset receipt or audio quality. When SAS omits the locale, the providers use `en-US`.
 
 The supplied Soprano Connect Voice PDF describes a different API: `POST /voice/voice_orderApiCreate.do`
 with form-encoded fields, `subAction=20`, and numeric language IDs (`1` is default English).
-Its password fields are `beforePassword`, `passwordText`, and `afterPassword`. This adapter follows
+Its password fields are `beforePassword`, `passwordText`, and `afterPassword`. This provider follows
 the reference integration's JSON `/messages/omnimsg` contract instead; do not mix the form API's
 language IDs, field names, or `ApiResponse.StatusCode` response format with this JSON interface.
 
@@ -203,8 +204,8 @@ wire fields, where required by an API, remain internal and cannot enable a separ
 
 ## 2. Outcome → HTTP status mapping
 
-The provider's parsed status is mapped via the adapter's `responseMapping` to an **outcome**, then to
-an HTTP status. **Fail-closed:** an unknown/unmapped status is treated as `Fail`.
+The provider interprets its parsed status as an **outcome** and endpoint HTTP status.
+**Fail-closed:** an unknown/unmapped or incomplete response is treated as `Fail`.
 An unsuccessful provider HTTP response cannot become `Continue` because its body contains a
 success-looking status. Explicit `Block`/`StepUp` outcomes remain non-success responses.
 
@@ -222,47 +223,38 @@ success-looking status. Explicit `Block`/`StepUp` outcomes remain non-success re
 
 ---
 
-## 3. Provider adapter contract
+## 3. Provider contract
 
-Each provider is one unit that owns authentication requirements, request construction and response
-mapping. JavaScript exposes these through:
+Each provider owns:
 
-- **`manifest`**: protocol facts:
-  - `id`: provider id selected by `EPP_PROVIDER_NAME`; its complete request URL is `EPP_PROVIDER_ENDPOINT`
-  - `auth`: either `{ mode: 'apiKey', keyVaultSecretName, identityKeyVaultSecretName? }` or
-    `{ mode: 'oauth' }`; unsupported modes fail closed
-  - `responseMapping`: map of provider status → `Continue` | `Fail` | `Block` | `StepUp` (+ `default`)
-- **`buildRequest({ channel, endpoint, dispatch, credential, env })`** → `{ url, method, headers, body }`
-- **`parseResponse({ httpStatus, ok, json })`** → `ParsedResponse`, containing `success`,
-  `providerHttpStatus`, optional `providerMessageId`, `providerStatusName`, `providerStatusCode`
-  and `providerStatusDescription` (snake_case attributes in Python, PascalCase in .NET).
+- its fixed name, authentication mode and credential acquisition specification;
+- request construction, including provider-specific paths, headers and JSON;
+- response shape interpretation, recognized statuses, outcome and endpoint HTTP status;
+- safe failure classification: `provider_http_error`, `provider_rejected`,
+  `unrecognized_provider_status`, `missing_provider_message_id` or `invalid_provider_json`.
 
-Python and .NET use provider classes instead of a manifest-driven engine. Each class declares its
-provider id and authentication mode, owns its credential secret names or OAuth acquisition, builds
-its private outbound request, and maps provider JSON directly to `ProviderResult`:
-[Python](../python/src/models.py), [.NET](../dotnet/Src/Models.cs). `ProviderResult` keeps `Outcome`
-coarse and stable while `FailureReason` carries one fixed safe diagnostic classification. Optional
-values default to null/None and raw provider JSON never enters the shared orchestration layer.
+The shared transport owns only final HTTPS validation, a capped timeout, manual redirects,
+`AbortController`/cancellation through response-body reading and one JSON parse. The provider receives
+the transport result and returns a normalized provider result. Raw API-specific JSON is not inspected
+by the Function and never enters public responses or logs.
 
 This model is internal: do not serialize it into the endpoint response or logs. The
-[request logger](#application-logs) selects only the provider HTTP status, a status found in the
-adapter's mapping, the mapped outcome and a bounded raw provider message ID; descriptions and raw
+[request logger](#application-logs) selects only the provider HTTP status, a recognized normalized
+status, the mapped outcome and a bounded raw provider message ID; descriptions and raw
 metadata remain private. Public HTTP responses still expose only the existing
 nonce/correlation/status or sanitized error contract.
 Provider requests are serialized only when building the outbound HTTP body; incoming provider JSON
-is parsed once and normalized inside its adapter. No serialization framework or provider-specific
+is parsed once and normalized inside its provider. No serialization framework or provider-specific
 class hierarchy is required.
 
-Providers require registration in the chosen runtime. Consult the selected provider for required
-credentials and options. JavaScript declares them in its manifest; Python and .NET declare them on
-the provider implementation. Individual API contracts remain
-in the adapters; the [onboarding credential naming table](ONBOARDING.md#provider-credential-names)
-lists the exact secret names for provisioning and authorized local tests. Keep that table aligned
-with the providers; never include secret values in documentation or the settings sample.
+Consult the selected provider implementation for required credentials and options. The
+[onboarding credential naming table](ONBOARDING.md#provider-credential-names) lists exact secret
+names for provisioning and authorized local tests. Keep that table aligned with provider credential
+specifications; never include secret values in documentation or the settings sample.
 
 ### Telesign EPP integration
 
-SMS and Voice use the complete provider-approved URLs selected from the provider profile. The adapter
+SMS and Voice use the complete provider-approved URLs selected from the provider profile. The provider
 supplies `recipient.phone_number`, the unchanged `message.text`, optional `message.language`, one
 selected `channels[].channel`, and `correlation_id`. Keep the leading `+` in the E.164 phone number.
 
@@ -279,7 +271,7 @@ account events to fill them.
 
 Telesign's `X-Shutter-Mode: true` suppresses delivery at the provider while still calling its endpoint.
 It is appropriate for an explicitly authorized, direct provider diagnostic, not normal OTP delivery.
-The production adapter does not add or forward this header. Function evaluation mode remains separate:
+The production provider does not add or forward this header. Function evaluation mode remains separate:
 it validates/decrypts and skips all provider HTTP. A successful provider shutter probe is not evidence
 that an SMS was delivered or a Voice call was placed. Enabling the API globally also does not prove
 that a particular Customer ID/API Key pair is authorized for this integration.
@@ -292,22 +284,22 @@ Set by provisioning. **Identical names across all languages.**
 
 | Key | Purpose |
 |-----|---------|
-| `EPP_PROVIDER_NAME` | registered id of the selected provider; `<adapter-id>` is a placeholder, not a bundled default |
+| `EPP_PROVIDER_NAME` | fixed id of the selected provider; `<provider-id>` is a placeholder, not a bundled default |
 | `EPP_PROVIDER_ENDPOINT` | complete absolute HTTPS request URL for the selected channel/region, with a hostname, port 1–65535, and no userinfo or fragment; redirects are not followed |
 | `EPP_PROVIDER_CHANNEL` | optional configured `sms` or `voice` route; when set, other live-request channels fail closed |
 | `EPP_PROVIDER_ENDPOINT_REGION` | selected `global` or `eu` route label; informational at runtime |
-| `EPP_PROVIDER_AUTH_MODE` | must match the selected adapter (`apiKey` for Telesign, `oauth` for Soprano) |
+| `EPP_PROVIDER_AUTH_MODE` | must match the selected provider (`apiKey` for Telesign, `oauth` for Soprano) |
 | `EPP_PROVIDER_TENANT_ID` | selected provider tenant; added to the Step 1 app's allowed-tenants preview and used as the OAuth authority for Soprano |
 | `EPP_PROVIDER_SCOPE` | Soprano OAuth scope |
 | `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | client application and user-assigned identity used for Soprano client-assertion exchange |
-| `EPP_PROVIDER_ACCOUNT_NAME` | sender/source only when required by the selected adapter |
+| `EPP_PROVIDER_ACCOUNT_NAME` | sender/source only when required by the selected provider |
 | `EPP_PROVIDER_TIMEOUT_MS` | trimmed ASCII decimal milliseconds; default 1500 for missing/invalid/nonpositive values; capped at 2500. Not a whole-invocation deadline |
 | `EPP_DECRYPTION_KEY_PEM` | single RSA private key for JWE decryption, PEM or base64-encoded PEM; use a Key Vault secret reference in Azure, not a plaintext private key in shared settings |
 | `EPP_ENCRYPTION_KEY_ID` | optional expected JWE `kid`; after successful decryption, a mismatch emits only `encryption_key_id_mismatch`. Advisory, not a key selector or authentication check |
 | `KEY_VAULT_URL` | Key Vault URI for API-key providers |
 | `AZURE_CLIENT_ID` | set for a user-assigned managed identity |
 
-Telesign credentials live in **Key Vault**, under the names owned by its provider implementation, and are fetched via
+Telesign credentials live in **Key Vault**, under the names in its credential specification, and are fetched via
 managed identity. Soprano exchanges an outbound managed-identity assertion for a token in the
 configured provider tenant/scope. Do not put provider secrets in code or app settings.
 
@@ -327,16 +319,16 @@ The shared configuration readers are [JavaScript `readConfig`](../javascript/src
 [Python `read_config`](../python/src/config.py), and [.NET `AppConfig.Read`](../dotnet/Src/AppConfig.cs).
 They return named configuration objects for encryption and the selected provider, not caller-authentication
 settings. Key Vault settings are read by JavaScript's configuration object and by the Python/.NET secret resolvers.
-Provider-specific options remain ordinary app settings passed to the selected adapter.
+Provider-specific options remain ordinary app settings passed to the selected provider.
 
 JSON parsing and type checks stay at the request boundary. Downstream code uses `Envelope`,
-`DeliveryContext` and `DispatchRequest` models (documented object shapes in JavaScript, dataclasses
+`DeliveryContext` and provider-neutral delivery models (immutable JavaScript objects, dataclasses
 in Python, and classes/records in .NET). Named .NET response records preserve the existing wire names
 and optional-field omission. Object construction does not replace validation or coerce invalid input.
 
-All customers call the same `POST /api/SendOtp` handler in their chosen language. Its registry selects
-the configured adapter, which builds the provider's SMS or voice API call. Purchasing an unsupported
-provider does not install an adapter: add and register that provider's adapter first. Purchase,
+All customers call the same `POST /api/SendOtp` handler in their chosen language. A fixed lookup selects
+the configured provider, which builds the SMS or voice API call. Purchasing an unsupported
+provider does not install an implementation: add that provider first. Purchase,
 subscription activation and changing tenant policy belong to provisioning, not this Function.
 
 ### Credential caching and refresh
@@ -346,7 +338,7 @@ when credentials are fetched, not the HTTP/nonce contract, caller authentication
 selection or provider request format. The decryption-key Key Vault reference remains separate and
 is still resolved by the platform; this cache does not rotate or replace JWE keys.
 
-The selected provider's authentication requirements determine which concrete cache is created:
+The selected provider's credential specification determines which concrete cache is created:
 
 | Authentication mode | Cache | Acquisition |
 |---|---|---|
@@ -391,9 +383,9 @@ Per-request `providerCredentialElapsedMs` continues to measure the caller's reso
   set, else system-assigned). No static credentials.
 - **Privacy**: never log phone numbers, passcodes, nonce values, bearer tokens, API keys, JWE headers/payloads,
   raw exceptions, provider descriptions/responses or endpoint query strings. There is no plaintext diagnostic
-  override. Each handler emits separate service events. JavaScript also emits one
-  [request summary](#application-logs); Python and .NET use standard structured logging events and
-  immutable request context/scopes instead.
+  override. Each handler emits separate service events. JavaScript and .NET use fixed completion
+  events rather than a mutable comprehensive summary; Python uses the same fixed-event approach
+  through the standard `logging` pipeline.
   Generated Function IDs remain distinguished from raw Microsoft/provider support IDs. Original wire IDs
   and the required nonce echo remain unchanged. Support IDs can correlate customer activity; restrict
   log access and retention. Endpoint logs contain only scheme, host/port and API path, never userinfo,
@@ -416,22 +408,24 @@ Per-request `providerCredentialElapsedMs` continues to measure the caller's reso
 
 ### Application logs
 
-JavaScript emits JSON service records and one `request_completed` request summary. Python uses the
-standard `logging` pipeline: `otp_log.py` defines fixed event IDs, names, levels and fields, while an
-immutable `LoggerAdapter` context supplies the Function and Microsoft trace identifiers. The
-configured logging provider owns Python output formatting and export; Python does not manually
-serialize a mutable request summary.
+JavaScript emits JSON service records with an immutable request context. Python uses the standard
+`logging` pipeline: `otp_log.py` defines fixed event IDs, names, levels and fields, while an immutable
+`LoggerAdapter` context supplies the Function and Microsoft trace identifiers. The configured
+logging provider owns Python output formatting and export. Neither runtime manually builds a mutable
+comprehensive request summary; each invocation ends with a fixed `request_completed` event.
 
 Likewise, .NET uses the standard `ILogger` pipeline instead of manually serializing JSON. `OtpLog`
 defines source-generated events with stable IDs and names, while `ILogger.BeginScope` supplies
 `FunctionName`, `FunctionRequestId`, `FunctionInvocationId`, `MsClientRequestId`,
 `MsCorrelationId` and `MsCorrelationIdSource`. The configured logging provider owns output
 formatting and export. .NET emits `request_completed` as an ordinary typed event rather than a
-mutable comprehensive summary.
+mutable comprehensive summary. JavaScript follows the same fixed-event model while retaining its
+existing JSON field names.
 
-A successful Python or .NET live request emits:
+A successful live request in each runtime emits:
 
-`request_received`, `payload_validated`, `delivery_context_decrypted`, `provider_selected`,
+`request_received`, `payload_validated` (`envelope_validated` in JavaScript),
+`delivery_context_decrypted`, `provider_selected`,
 `provider_credential_resolution_started`, `provider_credential_resolved`,
 `provider_request_build_started`, `provider_request_built`, `provider_request_started`,
 `provider_response_received`, `provider_response_processed`, `response_prepared`,
@@ -449,8 +443,7 @@ bodies, decrypted delivery fields, credentials, provider response bodies, query 
 exception messages. Endpoint values contain only scheme, host/port and path. Evaluation omits all
 provider events and emits `evaluation_completed`.
 
-A successful live request emits these separate service events. JavaScript then emits its request
-summary; Python and .NET finish with the structured `request_completed` event:
+A successful live request emits these separate service events:
 
 | Service event | Safe information recorded |
 |---|---|
@@ -460,7 +453,7 @@ summary; Python and .NET finish with the structured `request_completed` event:
 | `provider_selected` | Registered provider and its authentication mode. |
 | `provider_credential_resolution_started` | OAuth client-assertion or Key Vault credential source, with explicitly named raw OAuth application/identity/tenant IDs. |
 | `provider_credential_resolved` | Credential resolution and usability checks completed, with elapsed time; no secret, token, assertion or claims. |
-| `provider_request_build_started` | The adapter is preparing the outbound request. |
+| `provider_request_build_started` | The provider is preparing the outbound request. |
 | `provider_request_built` | Allowlisted HTTP method, final endpoint scheme/host/port/API path, HTTPS and disabled redirects; no query string, authorization headers or body. |
 | `provider_request_started` | The outbound send is beginning, with method, sanitized endpoint and timeout. |
 | `provider_response_received` | Actual upstream HTTP status; emitted before response-body reading completes. |
@@ -477,8 +470,8 @@ a Key Vault network fetch or a fresh identity/token exchange occurred. `provider
 covers resolution plus the existing credential checks, not a separately enforced deadline. SDK
 diagnostics remain suppressed as before; logging adds no token acquisition, secret reads or retries.
 
-`provider_request_built` describes the adapter request, not creation of a new physical HTTP connection
-or a new HTTP client in every runtime. `providerEndpoint` uses the **final** adapter URL, which can
+`provider_request_built` describes the provider request, not creation of a new physical HTTP connection
+or a new HTTP client in every runtime. `providerEndpoint` uses the **final** provider URL, which can
 differ from the configured base URL, but records only scheme + host/port + API path. For example,
 `https://provider.example/epp/voice?key=secret` is logged as `https://provider.example/epp/voice`.
 Userinfo, the entire query string and fragments are excluded. Use provider-approved paths that do
@@ -490,8 +483,8 @@ values are represented as `other` without changing the request sent.
 response. It does not claim the host has serialized/transmitted that response or Microsoft received
 it; consult platform request telemetry for transport completion. Evaluation emits
 `evaluation_completed` instead of provider events, then `response_prepared` and `request_completed`,
-without resolving provider configuration, credentials or HTTP. Failures emit their own stage event,
-`request_failed`, with a fixed failure stage and reason.
+without resolving provider configuration, credentials or HTTP. Failures emit the fixed
+`request_failed` event with a safe stage, reason and HTTP status.
 A parsed provider rejection uses `provider_response_processed` with its non-success outcome and
 fixed failure reason.
 
@@ -510,7 +503,7 @@ from header to envelope. The identifiers are intentionally not named simply `req
 | `x-ms-client-request-id` | Raw Microsoft per-attempt ID from the header of the same name, not the generated fallback used by dispatch. |
 | `x-ms-correlation-id` | Raw selected Microsoft correlation: envelope `correlationId` first, then the header of the same name. The existing precedence is unchanged, and this never contains a generated Function ID. |
 | `msCorrelationIdSource` | `envelope`, `header` or `none`; disambiguates the selected value when the envelope and header differ. |
-| `providerMessageId` | Raw adapter-normalized message/reference ID returned by the provider, including Telesign `reference_id`, for support lookup. Not filled from dispatch or Function IDs, although a provider may echo an ID it received. |
+| `providerMessageId` | Raw provider-normalized message/reference ID returned by the provider, including Telesign `reference_id`, for support lookup. Not filled from delivery or Function IDs, although a provider may echo an ID it received. |
 | `providerTenantId` | Raw configured `EPP_PROVIDER_TENANT_ID` for OAuth, not incoming envelope `tenantId`. |
 | `functionOutboundClientId` | Raw application's `EPP_OUTBOUND_CLIENT_ID` used for provider access, not the endpoint application's inbound audience or a Microsoft request ID. |
 | `functionOutboundManagedIdentityClientId` | Raw configured `EPP_OUTBOUND_MI_CLIENT_ID` used to obtain the app assertion, not the Key Vault identity or the identity's principal/Object ID. |
@@ -527,34 +520,18 @@ These are tracing fields, not authentication assertions. In particular, an incom
 does not become a trusted tenant identity in logs. The existing wire correlation precedence,
 provider request IDs and public responses are unchanged.
 
-The JavaScript request summary contains:
+The fixed `request_completed` event contains only the final HTTP status, result and elapsed time.
+Stage-specific fields remain on the event where they become known instead of being accumulated into
+a mutable summary. `providerHttpStatus` is recorded when response headers arrive, so a response-body
+timeout can legitimately produce `provider_response_received` with upstream `200` followed by
+`request_failed` with Function status `504`, without a mapped provider status or success
+acknowledgement. Unknown provider status text and malformed JSON are never logged; malformed JSON
+emits only `provider_response_invalid_json` before the provider outcome rules run.
 
-| Fields | Purpose |
-|---|---|
-| `httpStatus`, `result`, `elapsedMs` | Final Function response, `accepted` / `evaluated` / `failed`, and total handler time in milliseconds. Acceptance is not handset delivery. |
-| `envelopeType`, `channel`, `evaluation`, `ttlSeconds` | Allowlisted request-body metadata; null until envelope validation succeeds. Omitted TTL remains null; logging does not introduce expiry enforcement. |
-| `providerName`, `providerAuthMode`, `providerAttempted` | Registered adapter ID, its `apiKey` / `oauth` mode, and whether provider HTTP was attempted. Unknown configured names and credentials are never echoed. |
-| `providerCredentialSource`, `providerCredentialElapsedMs` | Credential resolution path and duration, including failed resolution; null if it never started. |
-| `providerTenantId`, `functionOutboundClientId`, `functionOutboundManagedIdentityClientId` | Raw configured OAuth identity IDs; null when OAuth resolution was not attempted. |
-| `providerHttpMethod`, `providerEndpoint` | Final adapter request method and scheme/host/port/API path, set only after request construction and URL validation. No query string. |
-| `providerHttpStatus`, `providerStatus`, `providerOutcome` | Actual upstream HTTP status and normalized response mapping. Status is logged only if it is an explicit adapter mapping key (not `default`); otherwise it is `unmapped`. |
-| `providerMessageId` | Raw provider lookup/reference ID for support escalation. |
-| `providerElapsedMs`, `providerTimeoutMs` | Outbound request duration including response-body reading, and the configured/clamped HTTP timeout. Neither is an end-to-end deadline. |
-| `failureStage`, `failureReason` | Stage and fixed diagnostic reason, such as `provider_credentials` / `credential_unavailable`, `provider_transport` / `provider_timeout`, or `provider_response` / `provider_rejected`. No exception messages. |
-| `encryptionKeyIdMismatch` | Whether the advisory warning was emitted; never the configured or received key ID. |
-| `responseContainsNonce`, `responseContainsCorrelationId` | Whether those fields are in the prepared response, without recording their values. Null if no response was prepared. |
-| `omittedIdFields` | Names of support ID fields whose current values failed the logging format/length guard; empty for ordinary valid IDs. |
-
-Provider fields remain null when their stage was not reached. `providerHttpStatus` is captured as
-soon as headers arrive, so a response-body timeout can legitimately show upstream `200` alongside
-Function `httpStatus: 504`, without a mapped provider status or success acknowledgement. Unknown
-provider status text and malformed JSON are never logged; malformed JSON emits only
-`provider_response_invalid_json` before the existing adapter outcome rules run.
-
-Normal events and request summaries use Information; invalid requests, non-success 4xx outcomes and
+Normal events and completion events use Information; invalid requests, non-success 4xx outcomes and
 advisory warnings use Warning; 5xx failures and timeouts use Error. Keep application Information logs
 enabled when investigating. This contract describes **emission**, not guaranteed collection:
-host/telemetry filters and sampling can drop trace records. Application summaries are logs, not
+host/telemetry filters and sampling can drop trace records. Application events are logs, not
 the host's Request telemetry type, so excluding `Request` from sampling does not by itself retain
 every summary. Configure collection and retention deliberately without enabling SDK/body tracing.
 Easy Auth rejections occur before the handler and appear in platform telemetry, not these events.
@@ -565,12 +542,12 @@ Easy Auth rejections occur before the handler and appear in platform telemetry, 
 
 Each language keeps lightweight offline tests covering representative application checks for:
 
-- Bundled adapter request formats and static provider credentials.
+- Bundled provider request formats and static provider credentials.
 - Fail-closed outcomes, missing credentials, HTTPS guards and timeouts.
 - Envelope validation and real JWE decryption/tamper rejection.
 - Evaluation handling without provider I/O; configured-provider startup refresh is tested separately.
 - Awaited delivery, nonce acknowledgement and privacy-safe logging, including the shared
-  service-event order and summary field set in [contract.json](../tests/fixtures/contract.json),
+  service-event order and safe field cases in [contract.json](../tests/fixtures/contract.json),
   identifier provenance, error paths, provider-body timeouts and concurrent request isolation.
 - Selected-cache-only startup, shared credential retrieval, fixed refresh/retry cadence, hard expiry,
   token lifetime preservation and shutdown using controlled clocks and

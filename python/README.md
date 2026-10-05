@@ -50,7 +50,7 @@ matching provider authentication settings to `Values`.
 Add `EPP_PROVIDER_ACCOUNT_NAME` and any adapter-specific options only when required. Keep values as
 strings, including optional `EPP_PROVIDER_TIMEOUT_MS: "1500"`. Replace placeholders; provider API
 keys belong in the provider-named Key Vault secrets, not this file. See the
-[complete variable table](../README.md#configure-environment-variables).
+[complete variable table](../TECHNICAL.md#configure-environment-variables).
 
 Core Tools loads `Values` into `os.environ`. Direct Python execution and pytest do not automatically
 read local settings. [read_config](src/config.py) returns an `AppConfig` object; the handler/engine

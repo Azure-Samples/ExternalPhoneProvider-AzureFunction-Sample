@@ -1,18 +1,20 @@
 # External Phone Provider Function: JavaScript
 
-A Node.js Azure Function implementing the shared [contract](../docs/CONTRACT.md): one dispatch
-engine and one selected provider per deployment. API-specific behavior stays in registered adapters.
+A Node.js Azure Function implementing the shared [contract](../docs/CONTRACT.md). The Function owns
+an explicit parse → decrypt → evaluation short-circuit or provider selection → credential resolution
+→ provider request/transport/result → response flow. One provider is selected per deployment, and
+each provider owns its credentials, wire request, response interpretation, outcome and failure class.
 
 ## Setup
 
-1. Follow [customer onboarding](../docs/ONBOARDING.md). Choose a registered adapter and set
-   `EPP_PROVIDER_NAME` to its manifest id; `<adapter-id>` is a placeholder, not a default.
-2. Consult the selected adapter and its manifest in [src/functions/providers/](src/functions/providers/)
-   for required credentials and options. Store credential values under the manifest's Key Vault
+1. Follow [customer onboarding](../docs/ONBOARDING.md). Choose a bundled provider and set
+   `EPP_PROVIDER_NAME` to its fixed id; `<provider-id>` is a placeholder, not a default.
+2. Consult the selected implementation in [src/functions/providers/](src/functions/providers/)
+   for required credentials and options. Store credential values under the provider's Key Vault
    secret names, grant the Function's managed identity *Key Vault Secrets User*, and configure the
    matching endpoint and required options. This guide does not duplicate individual API contracts.
 3. Use [../docs/local.settings.sample.json](../docs/local.settings.sample.json) as a starting point,
-   replacing placeholders with the selected adapter's settings. Keep local settings private at
+   replacing placeholders with the selected provider's settings. Keep local settings private at
    the app root beside [host.json](host.json), with `FUNCTIONS_WORKER_RUNTIME=node`.
 4. Configure decryption from the [shared catalog](../docs/CONTRACT.md#4-configuration-app-settings--env).
    Follow [platform trust setup](../docs/ONBOARDING.md#2-provision-encryption-and-deployment-trust): Easy
@@ -48,9 +50,9 @@ the test-key placeholder in this minimal setup:
 
 For live delivery, add `EPP_PROVIDER_NAME`, the complete selected `EPP_PROVIDER_ENDPOINT`, and the
 matching provider authentication settings to `Values`.
-Add `EPP_PROVIDER_ACCOUNT_NAME` and any adapter-specific options only when required. Optional
+Add `EPP_PROVIDER_ACCOUNT_NAME` and any provider-specific options only when required. Optional
 `EPP_PROVIDER_TIMEOUT_MS` is a string such as `"1500"`. Replace placeholders; do not put API keys in
-this file. See the [complete variable table](../README.md#configure-environment-variables).
+this file. See the [complete variable table](../TECHNICAL.md#configure-environment-variables).
 
 Core Tools copies `Values` into the process environment; direct Node processes and the offline tests
 do **not** automatically load this file. [AppConfig](src/functions/config.js) reads `process.env`
@@ -61,15 +63,15 @@ does not resolve Key Vault references locally; supply the local test PEM or base
 Older private settings may contain `DEFAULT_PROVIDER`, `ENDPOINT_TIMEOUT_MS`, `REQUIRE_AUTH`,
 `EXPECTED_AUDIENCE`, `ISSUER_TENANT_ID`, `EUDB`, or per-provider `*_ENDPOINT` entries. Those do not
 configure the current shared engine. Use `EPP_PROVIDER_NAME`, `EPP_PROVIDER_ENDPOINT` and
-`EPP_PROVIDER_TIMEOUT_MS` instead; configure caller authentication in Easy Auth. Keep adapter options
+`EPP_PROVIDER_TIMEOUT_MS` instead; configure caller authentication in Easy Auth. Keep provider options
 that are actually read, such as a service-plan ID or voice selection. Private integration helpers may
 load settings from another location or use test credential variables, but the Function itself does not.
 
-The Soprano adapter uses the configured complete endpoint and an OAuth bearer token. For voice, it
+The Soprano provider uses the configured complete endpoint and an OAuth bearer token. For voice, it
 extracts the first six-digit passcode from the rendered message and sends fixed synthesis values:
 gender `1` and loop `2`. It uses a nonblank SAS request locale as the language, falling back to
 `en-US` when the locale is absent or invalid. These values require no additional environment
-settings. Soprano SMS continues to forward the rendered message unchanged. The Telesign adapter
+settings. Soprano SMS continues to forward the rendered message unchanged. The Telesign provider
 uses the configured complete endpoint and API-key credentials from Key Vault. Telesign SMS forwards
 the rendered message unchanged; Telesign voice comma-separates each six-digit numeric run that is
 not part of a longer number and repeats the complete paced message twice.
@@ -99,7 +101,7 @@ retries. The shared contract defines validation, HTTP outcomes and privacy-safe 
 
 ## Source and extension points
 
-The app-start hook selects `ApiKeyCache` or `AccessTokenCache` from the provider manifest's auth mode.
+The app-start hook selects `ApiKeyCache` or `AccessTokenCache` from the provider credential spec.
 Only that cache starts: API keys use Key Vault and `lru-cache`; access tokens use the MI/Entra SDKs,
 without Key Vault. One shared 30-second refresh loop and one in-flight acquisition keep warm reads
 nonblocking. Configuration changes require restart; failures never extend expiry. A small HTTP-client
@@ -109,17 +111,21 @@ local evaluation-only use without credential acquisition; prewarming never sends
 
 | Source | Purpose |
 |---|---|
-| [src/functions/SendOtp.js](src/functions/SendOtp.js) | HTTP handler |
+| [src/functions/SendOtp.js](src/functions/SendOtp.js) | Explicit HTTP orchestration and startup/termination hooks |
 | [src/functions/config.js](src/functions/config.js) | Shared deployment settings |
-| [src/functions/models.js](src/functions/models.js) | Delivery context, normalized `ParsedResponse`, and documented request objects |
-| [src/functions/dispatch.js](src/functions/dispatch.js) | Envelope/JWE handling, registry and dispatch |
-| [src/functions/credentials.js](src/functions/credentials.js) | `ApiKeyCache`, `AccessTokenCache` and their shared refresh coordinator |
-| [src/functions/requestLog.js](src/functions/requestLog.js) | Request-scoped [service events and summaries](../docs/CONTRACT.md#application-logs) with explicit ID sources |
-| [src/functions/providers/](src/functions/providers/) | Adapter manifests and API-specific implementations |
+| [src/functions/entraPayload.js](src/functions/entraPayload.js) | Validated Entra envelope and exact contract reasons |
+| [src/functions/delivery.js](src/functions/delivery.js) | Validated decrypted context and immutable provider-neutral delivery |
+| [src/functions/jwe.js](src/functions/jwe.js) | Flat JWE validation/decryption with pinned algorithms and PEM key cache |
+| [src/functions/providerTransport.js](src/functions/providerTransport.js) | HTTPS validation, bounded fetch, body read, JSON parse and manual redirects |
+| [src/functions/providerResult.js](src/functions/providerResult.js) | Provider result and endpoint outcome model |
+| [src/functions/logging.js](src/functions/logging.js) | Immutable request context and fixed privacy-safe structured events |
+| [src/functions/credentials.js](src/functions/credentials.js) | `CredentialTokenService`, `ApiKeyCache`, `AccessTokenCache` and refresh lifecycle |
+| [src/functions/providers/](src/functions/providers/) | Fixed lookup and provider-owned credential/request/response rules |
 | [test/](test/) | Representative offline checks |
 
-To add an adapter, implement `manifest`, `buildRequest` and `parseResponse` in the adapter folder and
-register it in [src/functions/dispatch.js](src/functions/dispatch.js). Return a `ParsedResponse` from
-`parseResponse`; raw API-specific JSON stays inside that adapter. Keep credentials, options and
-status mapping with that adapter; the shared pipeline needs no provider-specific branches. See
+To add a provider, implement its fixed `name`, `authenticationMode`, `credentialSpec`,
+`createRequest` and `interpretResponse` in the provider folder, then add it to the switch in
+[providers/index.js](src/functions/providers/index.js). `interpretResponse` returns a
+`ProviderResult` containing the provider-owned outcome, endpoint HTTP status and one safe fixed
+failure classification. Raw API JSON stays inside the provider. See
 [production limitations](../docs/CONTRACT.md#production-limitations) before production use.
