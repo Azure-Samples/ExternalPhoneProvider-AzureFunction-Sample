@@ -1,6 +1,8 @@
-# EPP Onboarding
+# EPP Detailed Configuration and Validation
 
-Follow these five steps for the External Phone Provider (EPP) Function. Choose one language:
+For first-time single-region deployment, start with the [main onboarding guide](../README.md).
+This guide covers detailed configuration, local development, and validation of the External Phone
+Provider (EPP) Function. Choose one language:
 [JavaScript](../javascript/README.md), [Python](../python/README.md), or [.NET](../dotnet/README.md).
 Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limitations.
 
@@ -123,8 +125,8 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
 	 change signing keys; request a fresh token afterward. This does **not** disable the required
 	 JWE encryption of `encryptedDeliveryContext` or remove `EPP_DECRYPTION_KEY_PEM`.
 
-	 Download the selected language's [Function ZIP](../README.md#download-a-function-zip) from GitHub
-	 Releases, or use the [root-level packaging scripts](../README.md#build-zips-locally) for custom builds.
+	 Download the selected language's [Function ZIP](../TECHNICAL.md#download-a-function-zip) from GitHub
+	 Releases, or use the [root-level packaging scripts](../TECHNICAL.md#build-zips-locally) for custom builds.
 	 The .NET source ZIP must be extracted and built/published with the .NET 8 SDK or a build-enabled
 	 deployment pipeline. The Python source ZIP requires Azure remote build on Linux. Neither source
 	 ZIP is ready for direct run-from-package. Downloading or building a ZIP does not deploy it.

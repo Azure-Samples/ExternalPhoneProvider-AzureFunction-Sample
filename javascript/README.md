@@ -50,7 +50,7 @@ For live delivery, add `EPP_PROVIDER_NAME`, the complete selected `EPP_PROVIDER_
 matching provider authentication settings to `Values`.
 Add `EPP_PROVIDER_ACCOUNT_NAME` and any adapter-specific options only when required. Optional
 `EPP_PROVIDER_TIMEOUT_MS` is a string such as `"1500"`. Replace placeholders; do not put API keys in
-this file. See the [complete variable table](../README.md#configure-environment-variables).
+this file. See the [complete variable table](../TECHNICAL.md#configure-environment-variables).
 
 Core Tools copies `Values` into the process environment; direct Node processes and the offline tests
 do **not** automatically load this file. [AppConfig](src/functions/config.js) reads `process.env`

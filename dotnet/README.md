@@ -55,7 +55,7 @@ matching provider authentication settings to `Values`.
 Add `EPP_PROVIDER_ACCOUNT_NAME` and adapter-specific options only when required. Optional
 `EPP_PROVIDER_TIMEOUT_MS` is a string such as `"1500"`. Replace placeholders; store provider credentials
 under the adapter's Key Vault secret names, not in local settings. See the
-[complete variable table](../README.md#configure-environment-variables).
+[complete variable table](../TECHNICAL.md#configure-environment-variables).
 
 Core Tools loads `Values` into environment variables. [AppConfig.Read](Src/AppConfig.cs) reads them
 through `IEnv`; direct worker execution and unit tests do not automatically load local settings.
