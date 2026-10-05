@@ -161,7 +161,7 @@ class AccessTokenCache {
 }
 
 // Owns one selected cache and one periodic refresh; configuration changes require a worker restart.
-class ProviderCredentials {
+class CredentialTokenService {
     /** @param {{cacheOptions?: RefreshOptions, reportFailure?: (kind: string) => void}} [options] */
     constructor({ cacheOptions = {}, reportFailure = reportRefreshFailure } = {}) {
         this.now = cacheOptions.now || Date.now;
@@ -180,7 +180,7 @@ class ProviderCredentials {
         this.closed = false;
     }
     /** @param {AuthConfig} auth @param {AppConfig} config */
-    async resolve(auth, config) {
+    async getCredentials(auth, config) {
         if (this.closed) throw unavailable();
         if (!this.current) {
             try {
@@ -200,6 +200,7 @@ class ProviderCredentials {
         if (!value) throw unavailable();
         return value;
     }
+    resolve(auth, config) { return this.getCredentials(auth, config); }
     refresh() {
         if (this.closed || !this.current) return Promise.reject(unavailable());
         if (this.pending) return this.pending;
@@ -234,9 +235,19 @@ class ProviderCredentials {
         this.controller?.abort();
         this.current?.stop();
     }
-    [inspect.custom]() { return '[ProviderCredentials]'; }
-    toJSON() { return '[ProviderCredentials]'; }
+    [inspect.custom]() { return '[CredentialTokenService]'; }
+    toJSON() { return '[CredentialTokenService]'; }
 }
 
-const providerCredentials = new ProviderCredentials();
-module.exports = { ApiKeyCache, AccessTokenCache, ProviderCredentials, providerCredentials, reportRefreshFailure };
+const credentialTokenService = new CredentialTokenService();
+const ProviderCredentials = CredentialTokenService;
+const providerCredentials = credentialTokenService;
+module.exports = {
+    ApiKeyCache,
+    AccessTokenCache,
+    CredentialTokenService,
+    credentialTokenService,
+    ProviderCredentials,
+    providerCredentials,
+    reportRefreshFailure,
+};

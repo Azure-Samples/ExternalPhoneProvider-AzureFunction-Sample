@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { inspect } = require('node:util');
-const { ApiKeyCache, AccessTokenCache, ProviderCredentials } = require('../src/functions/credentials');
+const { ApiKeyCache, AccessTokenCache, CredentialTokenService } = require('../src/functions/credentials');
 const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { readConfig } = require('../src/functions/config');
@@ -52,7 +52,7 @@ test('library-backed bundle shares concurrent reads, serves during refresh, and 
         await gate;
         return { value: `${name}-${version}` };
     });
-    const manager = new ProviderCredentials({ cacheOptions: time.options });
+    const manager = new CredentialTokenService({ cacheOptions: time.options });
     try {
         const pending = Array.from({ length: 20 }, () => manager.resolve(auth, config));
         await flush();
@@ -82,7 +82,7 @@ test('partial refresh failure retains the old pair only until hard expiry, with 
         return { value: name };
     });
     const failures = [];
-    const manager = new ProviderCredentials({ cacheOptions: time.options, reportFailure: (kind) => failures.push(kind) });
+    const manager = new CredentialTokenService({ cacheOptions: time.options, reportFailure: (kind) => failures.push(kind) });
     try {
         await manager.resolve(auth, config);
         fail = true;
@@ -113,7 +113,7 @@ test('invalid or disabled secret values are never published', async (t) => {
     for (const invalid of [{ value: '' }, { value: 'bad', properties: { enabled: false } },
         { value: 'bad', properties: { notBefore: new Date(time.now + 3600000) } },
         { value: 'bad', properties: { expiresOn: new Date(time.now) } }]) {
-        const manager = new ProviderCredentials({ cacheOptions: time.options, reportFailure() {} });
+        const manager = new CredentialTokenService({ cacheOptions: time.options, reportFailure() {} });
         getSecret.mock.mockImplementation(async () => invalid);
         await assert.rejects(manager.resolve(auth, config), /unavailable/);
         manager.close();
@@ -131,7 +131,7 @@ test('SDK credentials are reused, one refresh loop warms both tokens, and reads 
         await this.getAssertion();
         return { token: 'PRIVATE-PROVIDER', expiresOnTimestamp: expiry, refreshAfterTimestamp: time.now + 10000 };
     });
-    const manager = new ProviderCredentials({ cacheOptions: time.options, reportFailure() {} });
+    const manager = new CredentialTokenService({ cacheOptions: time.options, reportFailure() {} });
     try {
         const results = await Promise.all(Array.from({ length: 20 }, () => manager.resolve({ mode: 'oauth' }, oauth)));
         assert.ok(results.every((value) => value.accessToken === 'PRIVATE-PROVIDER'));
@@ -161,24 +161,24 @@ test('only the selected cache is created, and new configuration uses a new worke
         token: 'token', expiresOnTimestamp: time.now + 3600000,
     }));
     const vault = t.mock.method(SecretClient.prototype, 'getSecret', () => assert.fail('OAuth must not read Key Vault'));
-    let manager = new ProviderCredentials({ cacheOptions: time.options });
+    let manager = new CredentialTokenService({ cacheOptions: time.options });
     try {
         await manager.resolve({ mode: 'oauth' }, oauth);
         await manager.resolve({ mode: 'oauth' }, oauth);
         assert.equal(provider.mock.callCount(), 1);
         assert.ok(manager.current instanceof AccessTokenCache);
         manager.close();
-        manager = new ProviderCredentials({ cacheOptions: time.options });
+        manager = new CredentialTokenService({ cacheOptions: time.options });
         await manager.resolve({ mode: 'oauth' }, { ...oauth, providerScope: 'different-scope' });
         assert.notEqual(provider.mock.calls[0].this, provider.mock.calls[1].this);
         manager.close();
-        manager = new ProviderCredentials({ cacheOptions: time.options });
+        manager = new CredentialTokenService({ cacheOptions: time.options });
         await manager.resolve({ mode: 'oauth' }, { ...oauth, outboundClientId: 'different-app' });
         assert.notEqual(provider.mock.calls[1].this, provider.mock.calls[2].this);
         assert.equal(time.timerCount, 1);
         assert.equal(vault.mock.callCount(), 0);
         manager.close();
-        manager = new ProviderCredentials({ cacheOptions: time.options, reportFailure() {} });
+        manager = new CredentialTokenService({ cacheOptions: time.options, reportFailure() {} });
         await assert.rejects(manager.resolve({ mode: 'oauth' }, { ...oauth, providerScope: '' }), /unavailable/);
         assert.equal(time.timerCount, 0);
         await manager.resolve({ mode: 'oauth' }, oauth);
@@ -190,13 +190,13 @@ test('API-key mode never creates an access-token credential and unknown modes st
     const time = clock();
     t.mock.method(SecretClient.prototype, 'getSecret', async () => ({ value: 'key' }));
     const token = t.mock.method(ClientAssertionCredential.prototype, 'getToken', () => assert.fail('Unexpected OAuth'));
-    const manager = new ProviderCredentials({ cacheOptions: time.options });
+    const manager = new CredentialTokenService({ cacheOptions: time.options });
     try {
         await manager.resolve(auth, config);
         assert.ok(manager.current instanceof ApiKeyCache);
         assert.equal(token.mock.callCount(), 0);
     } finally { manager.close(); }
-    const invalid = new ProviderCredentials({ cacheOptions: time.options, reportFailure() {} });
+    const invalid = new CredentialTokenService({ cacheOptions: time.options, reportFailure() {} });
     await assert.rejects(invalid.resolve({ mode: 'unknown' }, config), /unavailable/);
     assert.equal(invalid.current, null);
     assert.equal(time.timerCount, 0);
@@ -211,7 +211,7 @@ test('shutdown aborts a pending read, prevents late publication, and cannot be r
         await gate;
         return { value: 'PRIVATE-LATE-KEY' };
     });
-    const manager = new ProviderCredentials({ cacheOptions: time.options });
+    const manager = new CredentialTokenService({ cacheOptions: time.options });
     const pending = manager.resolve(auth, config);
     const rejected = assert.rejects(pending, /unavailable/);
     await flush();
