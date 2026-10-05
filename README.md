@@ -38,7 +38,7 @@ Use a **dedicated nonproduction tenant and subscription** for your first deploym
 
 | Requirement | What to prepare |
 |---|---|
-| Provider | A Telesign or Soprano offer with the required SMS or voice route, account/sender registration, and provider onboarding completed. |
+| Provider | An offer from a provider in **Security Store**, with the required SMS or voice route, account/sender registration, and provider onboarding completed. Confirm the provider is supported by the guided setup. |
 | Workstation | Windows with PowerShell 7+ and Azure CLI 2.48.1+ on `PATH`. Certificates are issued inside Key Vault, not the local certificate store. End-to-end setup from Linux or Azure Cloud Shell has not been validated. |
 | Network access | Access to GitHub, Azure, Microsoft Graph, and Key Vault. Python deployment also requires access to the Function's SCM endpoint. |
 | Azure permissions | An Azure user account permitted to deploy at subscription scope, register required resource providers, and create scoped role assignments. |
@@ -151,10 +151,13 @@ for the full setup procedure.
 
 #### Complete provider authentication
 
-| Provider | Required action |
+Follow the authentication instructions for your selected **Security Store provider**. The required
+action depends on the authentication method supported by its integration:
+
+| Authentication method | Required action |
 |---|---|
-| Telesign | Store the raw API key as `telesign-api-key` and customer ID as `telesign-customer-id` in the credential Key Vault. Confirm the Function identity has Key Vault Secrets User access. |
-| Soprano | Complete provider consent/application-role onboarding for the existing multitenant application. Setup creates the outbound managed-identity federation, but does not grant access to the provider API. |
+| API key or token | Store the required credentials and any matching account/customer identifier in Key Vault using the integration's documented secret names. Confirm the Function identity has Key Vault Secrets User access. |
+| OAuth with managed identity | Complete the provider's consent/application-role onboarding for the existing multitenant application. Setup configures the supported outbound managed-identity federation, but does not grant access to the provider API. |
 
 Replace any test provider values before live validation. Never put API keys in source code or local
 settings. See [provider authentication](docs/ONBOARDING.md#provider-credential-names) for details.
