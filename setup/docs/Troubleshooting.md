@@ -1,5 +1,30 @@
 # Troubleshooting Step 2
 
+## Deployment fails with SubscriptionIsOverQuotaForSku
+
+This is a subscription quota check, not an authentication failure or a missing resource-provider
+registration. A region can support Linux Premium EP1 while your subscription has an **EP1 VMs**
+limit of zero there. Quotas are regional: an allowance in one region does not establish an
+allowance in another.
+
+1. Confirm the tenant, subscription, region, and SKU in the deployment plan and Azure error.
+2. In the Azure portal, open **Quotas**, select **App Service**, and filter to the intended
+   subscription and region. Review **EP1 VMs**, its current usage, and the requested deployment's
+   requirements. This is an App Service quota, not a general-purpose Compute VM quota.
+3. Request an increase sufficient for the deployment and any planned scaling. Requesting an
+   increase does not mean it is approved; verify the effective limit after approval.
+4. If the quota is not adjustable in the portal or the request is rejected, create an Azure
+   support request under **Service and subscription limits (quotas)** for
+   **Function or Web App (Windows and Linux)**. Include the region, Linux deployment type, EP1
+   SKU, current limit, requested limit, and the error's tracking ID.
+5. Alternatively, choose another region only after checking its quota, service availability,
+   and your residency and provider requirements. Review the updated deployment plan before approval.
+
+See the [Azure quotas overview](https://learn.microsoft.com/azure/quotas/quotas-overview) for the
+quota-management and support options. Setup does not request or guarantee a quota increase.
+Do not change the hosting SKU, disable Easy Auth, or change provider credentials to bypass this
+error. After resolving quota, rerun setup and complete the normal deployed validation checks.
+
 ## appservice list-locations rejects EP1
 
 `EP1` is an Azure Functions Elastic Premium plan SKU, but older Azure CLI versions do not accept

@@ -6,6 +6,11 @@ PowerShell script to deploy the endpoint, and activate policy manually after val
 The customer does not clone this repository or download Bicep/support scripts separately.
 `Setup-Epp.ps1` retrieves those files and the selected provider's JSON from GitHub.
 
+This guide deploys **one Function endpoint in one Azure region**. It does not provision Azure
+Front Door or a second region. A successful single-region deployment or encrypted evaluation
+does not establish cross-region failover or recovery; Front Door onboarding is deferred until
+that validation is complete.
+
 ## Availability
 
 Choose **SMS or voice**, a **Global or EU tenant scope**, **Telesign or Soprano**, and an
@@ -71,7 +76,11 @@ disclosed outbound managed-identity federated credential.
   principal or the endpoint app.
 - Microsoft Graph **beta** access for the Entra `signInAudienceRestrictions` allowed-tenants preview.
   The selected provider tenant is allowed in addition to the app's home tenant, which Entra always allows.
-- **Linux Premium EP1** available in the chosen region. Setup registers missing required Azure
+- **Linux Premium EP1** available in the chosen region, with sufficient subscription quota for the
+  deployment. Regional service availability and resource-provider registration do not guarantee
+  EP1 quota. If deployment reports `SubscriptionIsOverQuotaForSku`, resolve the
+  [regional quota issue](Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku)
+  before retrying. Setup registers missing required Azure
   resource providers automatically after the single approval. The Azure account needs the
   providers' subscription-scoped `/register/action` permission (included in Contributor/Owner).
 - **.NET selection only:** install the .NET 8 SDK and allow NuGet access. Setup runs `dotnet publish`

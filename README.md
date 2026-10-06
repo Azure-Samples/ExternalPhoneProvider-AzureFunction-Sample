@@ -25,8 +25,16 @@ The single-region request flow is:
 2. App Service Authentication (Easy Auth) validates the caller before the Function runs.
 3. The Function decrypts the request using a key stored in Azure Key Vault.
 4. The selected provider adapter authenticates to the phone provider and submits the SMS or voice message.
-5. The Function returns a success response after provider acceptance. Confirming delivery to the
+5. For a live request, the Function returns a success response after provider acceptance. Confirming delivery to the
    recipient is a separate validation step.
+
+The diagram's delivery path describes **live requests**. An authorized, valid encrypted
+**evaluation request (`mode: 2`)** returns the matching nonce without submitting a message to the
+provider. Background credential refresh can still run independently. Authentication failures may
+return **401 or 403**; neither is a successful evaluation.
+
+**East US in the diagram is illustrative, not a required or guaranteed deployment location.**
+Choose a region with available Linux Premium EP1 capacity and sufficient quota in your subscription.
 
 Application Insights provides operational telemetry. Provider API keys stay in Key Vault; supported
 OAuth integrations use managed identity. This guide covers only the single-region topology shown
@@ -44,7 +52,7 @@ Use a **dedicated nonproduction tenant and subscription** for your first deploym
 | Azure permissions | An Azure user account permitted to deploy at subscription scope, register required resource providers, and create scoped role assignments. |
 | Microsoft Entra permissions | A Privileged Role Administrator for the application and Microsoft Graph configuration. Setup uses the allowed-tenants preview and requires Microsoft Graph beta access. |
 | Policy activation | An Authentication Policy Administrator to activate the endpoint after validation. Deployment alone does not activate it. |
-| Region and hosting | A region supporting Linux Premium EP1. Deployed resources incur Azure charges; review the hosting plan before approval. |
+| Region and hosting | A region supporting Linux Premium EP1 with sufficient EP1 quota for your subscription. Resource-provider registration does not grant quota. Deployed resources incur Azure charges; review the hosting plan before approval. |
 | C# only | The .NET 8 SDK and NuGet access. Setup builds and publishes the selected .NET package automatically. |
 
 Setup can install missing Microsoft Graph PowerShell modules and the Azure CLI Bicep component
@@ -52,7 +60,9 @@ after confirmation. Azure CLI itself must already be installed. JavaScript and P
 require a local build toolchain for this guided deployment; Python dependencies are built in Azure.
 
 Review the complete [setup prerequisites](setup/docs/README.md#prerequisites-for-step-2) before
-deploying.
+deploying. If Azure reports `SubscriptionIsOverQuotaForSku`, follow the
+[regional quota troubleshooting steps](setup/docs/Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku)
+before retrying.
 
 ## Onboard your endpoint
 
