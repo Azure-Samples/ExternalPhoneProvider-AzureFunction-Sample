@@ -1,41 +1,39 @@
 # Optional multi-region onboarding with Azure Front Door
 
-Azure Front Door can provide **one public EPP URL backed by Function Apps in multiple regions**.
-This is an optional, manually managed topology; the [main onboarding guide](../README.md) remains
-the starting point for a single-region deployment.
+Use Azure Front Door when you want **one public EPP URL backed by Function Apps in multiple regions**.
+You configure this option manually. For a single region, start with the
+[main onboarding guide](../README.md).
 
-**No Front Door deployment script is provided.** The guided setup does not create or coordinate
-this topology. This guide describes the configuration and validation responsibilities; it is not a
-one-command deployment or a claim of interruption-free delivery.
+**We don't provide a Front Door deployment script.** The guided setup creates one regional endpoint,
+not the multi-region setup described here. This guide covers what you need to configure and test.
+Failover can still interrupt requests.
 
 ## Scope and observed behavior
 
-An isolated JavaScript evaluation deployment was tested with Front Door Standard, two and three
-regional origins, a shared encryption certificate, and a separate non-delivering readiness handler.
-Authenticated encrypted evaluation, rejection of invalid callers, origin access restrictions, and
-controlled Function stop/restart behavior were exercised.
+We tested an isolated JavaScript deployment with Front Door Standard, two and three regional
+origins, a shared encryption certificate, and a separate readiness handler that sends no messages.
+The tests covered encrypted evaluation requests, rejection of invalid callers, direct-origin
+access restrictions, and stopping and restarting individual Functions.
 
 **The readiness handler used in testing is not part of the released sample.** You must implement
 and validate the [readiness contract below](#3-provide-a-non-delivering-readiness-endpoint) before
 enabling multi-origin health probes. There is no app setting that adds this endpoint to a release ZIP.
-The same design can be applied to other runtimes, but .NET and Python multi-region behavior was not
-validated in these trials.
+You can adapt the design for other runtimes, but we haven't tested it with .NET or Python.
 
-Live SMS/voice delivery, real Entra service invocation and retry behavior, a complete Azure regional
-outage, custom domains, WAF, Private Link, and production load were **not** validated. Complete
-customer-specific testing before policy activation.
+We **did not test** live SMS/voice delivery, calls and retries from the real Entra service, a full
+Azure regional outage, custom domains, WAF, Private Link, or production load. Test the features your
+deployment needs before activating policy.
 
 ## Architecture: one URL, multiple origins
 
 ![Multi-region External Phone Provider architecture with Azure Front Door](images/multi-region-architecture.png)
 
-The diagram is a reference topology, not a deployment result. Region names are illustrative.
-The custom domain and Premium/WAF elements are optional design choices, not features exercised in
-the Standard-tier test. Use globally unique Function App, storage account, and Key Vault names;
-regional identities and vault references also differ. Share the **logical configuration and RSA
-key material**, not every literal resource name, identity ID, or vault-specific version identifier.
-The SMS/voice arrows describe live delivery; evaluation returns the nonce without contacting the
-phone provider.
+The diagram shows the design, not the exact test deployment. Its region names are examples.
+Custom domains and Premium/WAF are optional and weren't part of the Standard-tier test.
+Give each Function App, storage account, and Key Vault a globally unique name. Each region also has
+its own identity IDs and vault references. Keep the **provider and authentication configuration
+consistent and use the same RSA key**, rather than copying every setting literally.
+The SMS/voice arrows show live delivery. Evaluation returns the nonce without contacting the provider.
 
 | Component | Purpose |
 |---|---|
@@ -45,8 +43,8 @@ phone provider.
 | Regional origin | Run the same selected implementation and provider integration, with local storage, Key Vault, identity, and telemetry. |
 
 The caller uses `https://<front-door-host>/api/SendOtp`, not a list of regional URLs.
-Front Door selects an eligible origin using health, priority, latency, and weight. Equal priorities
-make both origins eligible; equal weights do **not** guarantee a 50/50 split. Adding a third region
+Front Door chooses an origin based on health, priority, latency, and weight. Equal priorities
+allow both origins to serve traffic. Equal weights do **not** guarantee a 50/50 split. Adding a third region
 normally adds an **origin**, not another customer-facing endpoint.
 
 ## 1. Plan the regional deployment
@@ -55,14 +53,14 @@ Start in a dedicated nonproduction tenant and subscription. Review the
 [setup prerequisites](../setup/docs/README.md#prerequisites-for-step-2) and
 [regional quota guidance](../setup/docs/Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku).
 
-- Choose two regions initially, based on service availability, capacity, residency, and the selected
+- Start with two regions, based on service availability, capacity, residency, and the selected
   Security Store provider's requirements. A third region adds cost and capacity, but does not
-  inherently shorten failure detection.
+  won't necessarily shorten failure detection.
 - Check availability of **every** required resource type, not just EP1 quota. Hosting availability
-  does not establish that Application Insights or other dependencies are available in that region.
+  doesn't mean Application Insights or other dependencies are available there.
 - Budget for an EP1 plan and regional dependencies in each region, Front Door, and telemetry.
   Keep enough warm capacity for the remaining origins to handle traffic during an outage.
-- Choose one language and deploy identical, verified package bytes to each origin. Do not mix
+- Choose one language and verify that each origin receives the same package. Do not mix
   implementations or package versions while measuring failover.
 - Record the endpoint application's client ID, validated token audience and issuer, authorized
   caller application ID, certificate/public-key identity, selected provider route, and regional owners.
@@ -71,12 +69,12 @@ Start in a dedicated nonproduction tenant and subscription. Review the
 **Do not simply rerun `Setup-Epp.ps1` in another region against the same application.** It is a
 single-region setup flow and does not coordinate Front Door, shared key material, regional
 registrations, or failover. Independent certificate issuance or a setup rerun can change app
-configuration or close ingress on an existing endpoint.
+configuration or disable incoming access to an existing endpoint.
 
 ## 2. Prepare equivalent, independently provisioned origins
 
-Provision each regional Function App and its dependencies manually through your approved Azure
-process. Keep ingress closed while setting up trust, keys, identities, and packages.
+Create each regional Function App and its dependencies through your approved Azure process.
+Keep public access disabled while setting up authentication, keys, identities, and packages.
 
 1. Use the same endpoint application and validated issuer/audience/caller policy on every origin.
    Enable Easy Auth with `requireAuthentication=true`, `Return401`, and HTTPS required.
@@ -85,7 +83,7 @@ process. Keep ingress closed while setting up trust, keys, identities, and packa
    `Authorization` header and encrypted request body. Its hostname is not automatically the token
    audience, and its profile ID is not the caller application's ID.
 3. **Do not enable Front Door managed-identity origin authentication on this route.** That feature
-   replaces the `Authorization` header; this design requires the original caller token to reach
+   replaces the `Authorization` header. The original caller token must reach
    Easy Auth. Managed identity is still used by each Function for its own Azure dependencies.
 4. Deploy the same package using private storage and managed-identity access. Keep SCM/basic
    publishing authentication protections in place; do not open administrative endpoints to bypass
@@ -111,9 +109,9 @@ certificate is separate from this JWE encryption certificate.
   design if these constraints do not fit.
 - Give each Function identity scoped access to its regional vault. Set `EPP_DECRYPTION_KEY_PEM`
   to the regional certificate's **versioned PEM backing-secret reference**.
-- Verify matching public-key material and successful decryption in every region. Comparing only
-  vault names or secret-version strings is insufficient.
-- Restored certificates are independent copies, not automatic synchronization. Coordinate renewal
+- Verify that the public keys match and each region can decrypt a request. Matching vault names
+  or secret-version strings alone doesn't prove this.
+- Restored certificates are independent copies. They don't stay in sync automatically. Coordinate renewal
   and Entra updates across every origin using the [certificate lifecycle guidance](../setup/docs/README.md#encryption-certificate-lifecycle).
   That section explains the single-key constraints; apply the multi-region updates through an
   approved manual procedure, not independent setup reruns. The sample has one active decryption
@@ -146,7 +144,7 @@ and application failure handling effective independently of probe status.
 ## 4. Configure Front Door manually
 
 In the Azure portal, create a Front Door Standard/Premium profile, an endpoint, and an origin group.
-The following values describe the **tested starting configuration**, not universal performance defaults:
+These are the **settings we tested**. Treat them as a starting point, not a performance guarantee:
 
 | Setting | Tested value |
 |---|---|
@@ -168,15 +166,15 @@ The following values describe the **tested starting configuration**, not univers
 
 Create the route under **Front Door manager**, associate it with the endpoint's domain, and select
 the origin group. Inspect **Origin groups > your group > Origins** to see the regional backends.
-One public endpoint with several origins is expected.
+You should see one public endpoint with several origins behind it.
 
 Use the same request body and caller authorization end to end. Do not add header-replacement,
 redirect, cache, or retry rules without separately validating their effect on authentication and OTP
-delivery. A cached response cannot acknowledge a new delivery request; Front Door does not cache POST.
+delivery. A cached response cannot confirm a new delivery request. Front Door does not cache POST.
 
 ### Restrict each origin to this Front Door profile
 
-Before opening ingress for Front Door, configure Function App access restrictions:
+Before allowing Front Door to reach the Functions, configure their access restrictions:
 
 1. Allow the **`AzureFrontDoor.Backend` service tag** with an additional **`X-Azure-FDID`** header
    condition matching this profile's Front Door ID.
@@ -198,31 +196,33 @@ nonces locally without writing them or request bodies to shared logs.
   Easy Auth issuer, audience, and caller restrictions.
 - Direct origin requests must be denied, including requests with a spoofed `X-Azure-FDID`.
 - Through Front Door, missing/invalid/wrong-audience tokens and unauthorized callers must fail.
-  Bracket unauthorized-caller testing with valid evaluation requests so a general outage is not
-  mistaken for successful authorization enforcement.
+  Send valid evaluation requests before and after testing an unauthorized caller. This confirms
+  that the rejection came from access control, not a general outage.
 - Valid encrypted evaluations must return the matching nonce. Malformed/tampered requests must
-  not be accepted. Prove each origin participates using safe correlation IDs and regional telemetry.
+  not be accepted. Use safe correlation IDs and regional logs to confirm which origins handled requests.
 - Send bounded continuous evaluation traffic **before, during, and after** a controlled test-origin
-  outage. Keep the origin enabled in Front Door to test health-driven routing, not just manual removal.
+  outage. Keep the origin enabled in Front Door so the test checks automatic health-based routing,
+  not manual removal.
 - Record every failed response and transport error. Restore the origin even if testing fails, and
   verify that specific origin's readiness before testing another one. A shared readiness URL can
   succeed through a different origin.
 - Correlate event timestamps, origin state, and client results. Do not use a delayed aggregate
-  health-percentage graph as an exact outage-to-recovery timer.
+  health-percentage graph to time recovery precisely.
 - Separately test approved live SMS/voice delivery and caller behavior with the provider and EPP
   onboarding owner. Evaluation does not prove either.
 
-Only after the required validations should an **Authentication Policy Administrator** follow the
+Once these checks pass, have an **Authentication Policy Administrator** follow the
 [supported activation procedure](../setup/docs/README.md#step-3---manually-validate-and-activate-policy),
-using the Front Door SendOtp URL and endpoint application client ID. Save the previous policy first;
-preserve unrelated properties and read the change back. No policy change is automated by this guide.
+using the Front Door SendOtp URL and endpoint application client ID. Save the previous policy first,
+preserve unrelated properties, and read the policy back to confirm the change. This step is manual.
 
 ## Observed failover results and limitations
 
-These controlled JavaScript trials stopped a Function App, **not an entire Azure region**. All used
-one observer in Central US and non-delivering encrypted evaluation. The two-origin deployment used
-Central US and West US 2; the third origin was in West US 3. Central US was the stopped origin.
-The sample-size/success threshold remained 4/3; the stopped origin was serving traffic before each outage.
+We stopped one Function App in these JavaScript tests, **not an entire Azure region**. One test
+client in Central US sent encrypted evaluation requests without delivering messages. The first two
+origins were in Central US and West US 2. The third was in West US 3.
+We stopped the Central US Function after confirming it was serving requests. All trials used
+a sample size of 4 with 3 successes required to consider an origin healthy.
 
 | Origins | Probe interval | Failed requests in matched first 8 minutes | Sustained success after stop confirmation |
 |---|---|---|---|
@@ -235,25 +235,27 @@ Failures were mostly **HTTP 403**, with zero, one, two, and two transport errors
 Transport errors were recorded as status `0`, which is not an HTTP status. No 5xx responses were
 observed in these trials; a network or full-region outage can behave differently.
 
-"Sustained success" is the successful sampled tail after the last failure, continuing for at least
-30 seconds before restart. It is measured from management-plane stop confirmation, not the exact
-physical failure time. Requests targeted roughly one per second, but slow responses/timeouts reduced
-sample counts. One three-origin trial needed controller recovery and ran longer, so comparisons use
-the same first-eight-minute window. Baseline and post-restart windows had no failed samples.
+"Sustained success" means every sampled request after the last failure succeeded, with at least
+30 seconds of successful traffic before we restarted the Function. We measured from when Azure
+confirmed the stop, which may differ from when the Function actually stopped serving.
+We aimed for one request per second, but slow responses and timeouts reduced the sample counts.
+The test controller was interrupted during one three-origin trial, extending that outage while we
+recovered it. To keep the comparison fair, the table uses only the first eight minutes of each outage.
+We saw no failed samples before the outages or after restarting the Functions.
 
 **This was not a complete Front Door outage, and it was not seamless failover.** Healthy origins
 continued serving, but a 403 is still a failed request. A failed request is not guaranteed to be
 replayed on another origin. The actual Entra caller's handling of these errors was not tested.
 
-These small trials do not establish that 10-second probes or a third region improve reliability.
-More regions can add capacity and failure tolerance; they do not eliminate detection/routing delays,
-shared provider dependencies, or application faults. Faster probes increase probe traffic and can
-make transient conditions affect routing more quickly. Define an acceptable failure budget and
-repeat measurements for your caller locations and load.
+These trials didn't show a consistent benefit from 10-second probes or a third region.
+More regions can add capacity and help tolerate additional failures, but they don't remove routing
+delays, shared provider dependencies, or application faults. Faster probes generate more traffic
+and can make brief problems trigger routing changes sooner. Decide how much disruption your
+application can accept, then repeat the tests from your callers' locations and at your expected load.
 
 Do not add blind retries to live sends: a timeout can occur after provider acceptance, and the sample
-does not supply delivery deduplication. No zero-downtime, production SLA, or handset-delivery claim
-follows from these evaluation results.
+does not deduplicate deliveries. These results don't establish zero downtime, a production SLA,
+or successful delivery to a phone.
 
 ## Operations and rollback
 

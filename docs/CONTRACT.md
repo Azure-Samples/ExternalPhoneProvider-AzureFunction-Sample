@@ -290,7 +290,7 @@ Set by provisioning. **Identical names across all languages.**
 | Key | Purpose |
 |-----|---------|
 | `EPP_PROVIDER_NAME` | fixed id of the selected provider; `<provider-id>` is a placeholder, not a bundled default |
-| `EPP_PROVIDER_ENDPOINT` | complete absolute HTTPS request URL for the selected channel/region, with a hostname, port 1–65535, and no userinfo or fragment; redirects are not followed |
+| `EPP_PROVIDER_ENDPOINT` | complete absolute HTTPS request URL for the selected channel/region, with a hostname, port 1-65535, and no userinfo or fragment; redirects are not followed |
 | `EPP_PROVIDER_CHANNEL` | optional configured `sms` or `voice` route; when set, other live-request channels fail closed |
 | `EPP_PROVIDER_ENDPOINT_REGION` | selected `global` or `eu` route label; informational at runtime |
 | `EPP_PROVIDER_AUTH_MODE` | must match the selected provider (`apiKey` for Telesign, `oauth` for Soprano) |
