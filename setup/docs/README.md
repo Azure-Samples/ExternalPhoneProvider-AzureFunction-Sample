@@ -7,9 +7,10 @@ The customer does not clone this repository or download Bicep/support scripts se
 `Setup-Epp.ps1` retrieves those files and the selected provider's JSON from GitHub.
 
 This guide deploys **one Function endpoint in one Azure region**. It does not provision Azure
-Front Door or a second region. A successful single-region deployment or encrypted evaluation
-does not establish cross-region failover or recovery; Front Door onboarding is deferred until
-that validation is complete.
+Front Door or a second region. For the optional multi-region design, use the
+[manual Front Door onboarding guide](../../docs/FRONTDOOR.md). No Front Door setup script is
+provided. Running this setup again in another region won't coordinate encryption keys or
+Front Door origins. A successful deployment or evaluation doesn't prove live delivery or seamless failover.
 
 ## Availability
 

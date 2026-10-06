@@ -3,6 +3,10 @@
 For the single-region customer deployment flow, start with the
 [main onboarding guide](README.md).
 
+Azure Front Door is an [optional manual multi-region design](docs/FRONTDOOR.md), not a feature
+enabled by the single-region setup script. Its additional readiness endpoint is not shipped in
+the release packages, and regional failover does not change the SendOtp contract.
+
 A provider-agnostic **OTP-delivery Azure Function** sample, implemented across multiple languages.
 Each language folder is a self-contained implementation of the **same design and the same
 [contract](docs/CONTRACT.md)**: one engine, drop-in provider adapters, env-provisioned config, and
@@ -273,6 +277,7 @@ authentication; [separate deployed security checks](docs/ONBOARDING.md#4-package
 
 - **[README.md](README.md)**: single-region customer onboarding.
 - **[docs/ONBOARDING.md](docs/ONBOARDING.md)**: detailed configuration, security, deployment, and validation.
+- **[docs/FRONTDOOR.md](docs/FRONTDOOR.md)**: optional manual multi-region onboarding and observed failover limitations.
 - **[docs/CONTRACT.md](docs/CONTRACT.md)**: the language-agnostic contract every implementation follows.
 - **[Application logs](docs/CONTRACT.md#application-logs)**: separate service events, per-request summaries,
   and the meaning of Microsoft, Function and provider identifier fields.

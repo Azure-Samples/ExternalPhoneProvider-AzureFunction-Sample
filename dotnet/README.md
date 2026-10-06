@@ -5,6 +5,10 @@ selected provider per deployment. Target: .NET 8 isolated worker, Azure Function
 
 ## Setup and deployment
 
+For multiple regional origins behind one URL, see [manual Front Door onboarding](../docs/FRONTDOOR.md).
+No Front Door deployment script or readiness handler is supplied. The reported multi-region trials
+used JavaScript; validate an equivalent .NET readiness implementation and deployment separately.
+
 1. Follow [customer onboarding](../docs/ONBOARDING.md). Set `EPP_PROVIDER_NAME` to the selected
 	adapter's `Name` (`<adapter-id>` is only a placeholder).
 2. Consult the selected adapter in [Src/Providers/](Src/Providers/) for required credentials and

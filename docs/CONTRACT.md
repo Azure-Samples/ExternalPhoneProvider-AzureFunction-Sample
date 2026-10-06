@@ -11,6 +11,11 @@ The design selects one provider per deployment. The HTTP Function owns the reque
 API-specific credentials, paths, headers, payloads, response rules, outcomes and safe failure
 classifications remain inside each provider implementation.
 
+An [optional manual Front Door topology](FRONTDOOR.md) can route this same API to regional origins.
+It does not change caller authentication, JWE validation, nonce semantics, or provider selection,
+and it does not add automatic provider failover or delivery deduplication. Any readiness endpoint
+is separate from this contract and must not deliver OTPs.
+
 ---
 
 ## 1. HTTP API
@@ -285,7 +290,7 @@ Set by provisioning. **Identical names across all languages.**
 | Key | Purpose |
 |-----|---------|
 | `EPP_PROVIDER_NAME` | fixed id of the selected provider; `<provider-id>` is a placeholder, not a bundled default |
-| `EPP_PROVIDER_ENDPOINT` | complete absolute HTTPS request URL for the selected channel/region, with a hostname, port 1–65535, and no userinfo or fragment; redirects are not followed |
+| `EPP_PROVIDER_ENDPOINT` | complete absolute HTTPS request URL for the selected channel/region, with a hostname, port 1-65535, and no userinfo or fragment; redirects are not followed |
 | `EPP_PROVIDER_CHANNEL` | optional configured `sms` or `voice` route; when set, other live-request channels fail closed |
 | `EPP_PROVIDER_ENDPOINT_REGION` | selected `global` or `eu` route label; informational at runtime |
 | `EPP_PROVIDER_AUTH_MODE` | must match the selected provider (`apiKey` for Telesign, `oauth` for Soprano) |
