@@ -75,7 +75,7 @@ jobs:
           $required = @{
             'epp-javascript.zip' = @('host.json', 'src/functions/SendOtp.js', 'node_modules/@azure/functions/package.json')
             'epp-dotnet-source.zip' = @('host.json', 'dotnet.csproj', 'Program.cs', 'Functions/SendOtp.cs', 'Src/PhoneProviderBase.cs')
-            'epp-python-source.zip' = @('host.json', 'function_app.py', 'requirements.txt', 'src/dispatch.py')
+            'epp-python-source.zip' = @('host.json', 'function_app.py', 'requirements.txt', 'src/jwe.py', 'src/provider.py')
           }
           $checksums = foreach ($name in ($required.Keys | Sort-Object)) {
             $path = Join-Path 'artifacts' $name

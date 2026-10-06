@@ -389,7 +389,8 @@ Per-request `providerCredentialElapsedMs` continues to measure the caller's reso
 - **Privacy**: never log phone numbers, passcodes, nonce values, bearer tokens, API keys, JWE headers/payloads,
   raw exceptions, provider descriptions/responses or endpoint query strings. There is no plaintext diagnostic
   override. Each handler emits separate service events. JavaScript and .NET use fixed completion
-  events rather than a mutable comprehensive summary; Python retains its safe summary.
+  events rather than a mutable comprehensive summary; Python uses the same fixed-event approach
+  through the standard `logging` pipeline.
   Generated Function IDs remain distinguished from raw Microsoft/provider support IDs. Original wire IDs
   and the required nonce echo remain unchanged. Support IDs can correlate customer activity; restrict
   log access and retention. Endpoint logs contain only scheme, host/port and API path, never userinfo,
@@ -412,20 +413,21 @@ Per-request `providerCredentialElapsedMs` continues to measure the caller's reso
 
 ### Application logs
 
-JavaScript and Python emit JSON records with the shared fields described below. Service events have
-`logType: "service"` and an individual `eventName`; each invocation ends with a fixed
-`request_completed` event. JavaScript uses an immutable request context and does not build a mutable
-comprehensive request summary.
+JavaScript emits JSON service records with an immutable request context. Python uses the standard
+`logging` pipeline: `otp_log.py` defines fixed event IDs, names, levels and fields, while an immutable
+`LoggerAdapter` context supplies the Function and Microsoft trace identifiers. The configured
+logging provider owns Python output formatting and export. Neither runtime manually builds a mutable
+comprehensive request summary; each invocation ends with a fixed `request_completed` event.
 
-.NET uses the standard `ILogger` pipeline instead of manually serializing JSON. `OtpLog` defines
-source-generated events with stable IDs and names, while `ILogger.BeginScope` supplies
+Likewise, .NET uses the standard `ILogger` pipeline instead of manually serializing JSON. `OtpLog`
+defines source-generated events with stable IDs and names, while `ILogger.BeginScope` supplies
 `FunctionName`, `FunctionRequestId`, `FunctionInvocationId`, `MsClientRequestId`,
 `MsCorrelationId` and `MsCorrelationIdSource`. The configured logging provider owns output
 formatting and export. .NET emits `request_completed` as an ordinary typed event rather than a
 mutable comprehensive summary. JavaScript follows the same fixed-event model while retaining its
 existing JSON field names.
 
-A successful .NET or JavaScript live request emits:
+A successful live request in each runtime emits:
 
 `request_received`, `payload_validated` (`envelope_validated` in JavaScript),
 `delivery_context_decrypted`, `provider_selected`,
@@ -446,12 +448,12 @@ bodies, decrypted delivery fields, credentials, provider response bodies, query 
 exception messages. Endpoint values contain only scheme, host/port and path. Evaluation omits all
 provider events and emits `evaluation_completed`.
 
-A successful JavaScript live request emits these separate service events:
+A successful live request emits these separate service events:
 
 | Service event | Safe information recorded |
 |---|---|
 | `request_received` | Function invocation and available raw Microsoft trace IDs under their `x-ms-*` names; no raw body or arbitrary headers. |
-| `envelope_validated` | Allowlisted body metadata: validated `envelopeType`, normalized `channel`, `evaluation`, optional `ttlSeconds`, and `encryptedDeliveryContextPresent: true`. |
+| `envelope_validated` / `payload_validated` | Allowlisted body metadata: validated payload type, normalized `channel`, `evaluation` and optional `ttlSeconds`. |
 | `delivery_context_decrypted` | Decryption completed; no plaintext fields, JWE or key ID. |
 | `provider_selected` | Registered provider and its authentication mode. |
 | `provider_credential_resolution_started` | OAuth client-assertion or Key Vault credential source, with explicitly named raw OAuth application/identity/tenant IDs. |
@@ -460,7 +462,7 @@ A successful JavaScript live request emits these separate service events:
 | `provider_request_built` | Allowlisted HTTP method, final endpoint scheme/host/port/API path, HTTPS and disabled redirects; no query string, authorization headers or body. |
 | `provider_request_started` | The outbound send is beginning, with method, sanitized endpoint and timeout. |
 | `provider_response_received` | Actual upstream HTTP status; emitted before response-body reading completes. |
-| `provider_response_processed` | Mapped provider status/outcome, raw provider message/reference ID, duration and resulting Function HTTP status. |
+| `provider_response_processed` | Mapped provider status/outcome, fixed failure classification and duration. Raw provider descriptions and bodies are excluded. |
 | `response_prepared` | Response status and booleans indicating nonce/correlation inclusion, not their values or the response body. |
 
 Body metadata is built from validated fields, **not** from a body dump with a few sensitive
@@ -523,31 +525,13 @@ These are tracing fields, not authentication assertions. In particular, an incom
 does not become a trusted tenant identity in logs. The existing wire correlation precedence,
 provider request IDs and public responses are unchanged.
 
-Python retains a comprehensive request summary. JavaScript emits the same safe concepts only on the
-fixed event where each value is known; its `request_completed` event contains the final HTTP status,
-result and elapsed time rather than a cumulative mutable snapshot:
-
-| Fields | Purpose |
-|---|---|
-| `httpStatus`, `result`, `elapsedMs` | Final Function response, `accepted` / `evaluated` / `failed`, and total handler time in milliseconds. Acceptance is not handset delivery. |
-| `envelopeType`, `channel`, `evaluation`, `ttlSeconds` | Allowlisted request-body metadata; null until envelope validation succeeds. Omitted TTL remains null; logging does not introduce expiry enforcement. |
-| `providerName`, `providerAuthMode`, `providerAttempted` | Fixed provider ID, its `apiKey` / `oauth` mode, and whether provider HTTP was attempted. Unknown configured names and credentials are never echoed. |
-| `providerCredentialSource`, `providerCredentialElapsedMs` | Credential resolution path and duration, including failed resolution; null if it never started. |
-| `providerTenantId`, `functionOutboundClientId`, `functionOutboundManagedIdentityClientId` | Raw configured OAuth identity IDs; null when OAuth resolution was not attempted. |
-| `providerHttpMethod`, `providerEndpoint` | Final provider request method and scheme/host/port/API path, set only after request construction and URL validation. No query string. |
-| `providerHttpStatus`, `providerStatus`, `providerOutcome` | Actual upstream HTTP status and normalized result. Status is logged only when the provider recognized it; otherwise it is `unmapped`. |
-| `providerMessageId` | Raw provider lookup/reference ID for support escalation. |
-| `providerElapsedMs`, `providerTimeoutMs` | Outbound request duration including response-body reading, and the configured/clamped HTTP timeout. Neither is an end-to-end deadline. |
-| `failureStage`, `failureReason` | Stage and fixed diagnostic reason, such as `provider_credentials` / `credential_unavailable`, `provider_transport` / `provider_timeout`, or `provider_response` / `provider_rejected`. No exception messages. |
-| `encryptionKeyIdMismatch` | Whether the advisory warning was emitted; never the configured or received key ID. |
-| `responseContainsNonce`, `responseContainsCorrelationId` | Whether those fields are in the prepared response, without recording their values. Null if no response was prepared. |
-| `omittedIdFields` | Names of support ID fields whose current values failed the logging format/length guard; empty for ordinary valid IDs. |
-
-Provider fields remain null when their stage was not reached. `providerHttpStatus` is captured as
-soon as headers arrive, so a response-body timeout can legitimately show upstream `200` alongside
-Function `httpStatus: 504`, without a mapped provider status or success acknowledgement. Unknown
-provider status text and malformed JSON are never logged; malformed JSON emits only
-`provider_response_invalid_json` before the provider outcome rules run.
+The fixed `request_completed` event contains only the final HTTP status, result and elapsed time.
+Stage-specific fields remain on the event where they become known instead of being accumulated into
+a mutable summary. `providerHttpStatus` is recorded when response headers arrive, so a response-body
+timeout can legitimately produce `provider_response_received` with upstream `200` followed by
+`request_failed` with Function status `504`, without a mapped provider status or success
+acknowledgement. Unknown provider status text and malformed JSON are never logged; malformed JSON
+emits only `provider_response_invalid_json` before the provider outcome rules run.
 
 Normal events and completion events use Information; invalid requests, non-success 4xx outcomes and
 advisory warnings use Warning; 5xx failures and timeouts use Error. Keep application Information logs
