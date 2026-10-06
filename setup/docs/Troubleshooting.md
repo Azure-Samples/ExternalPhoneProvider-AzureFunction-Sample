@@ -73,9 +73,8 @@ only `functionAppConfig` conditional on FC1. The storage endpoint lookup, hostin
 scaling, managed identities, authentication, and public-access settings are unchanged.
 
 Download the updated `Setup-Epp.ps1` from the intended source branch and rerun it with matching
-`-SourceRepository` and `-SourceRef <source-branch-or-fixed-commit>` values. For the setup test branch,
-use `-SourceRef jamesxian-microsoft-service-plan-setup`; a command pinned to an older commit still
-downloads the old support files and template. Keep the original tenant, subscription, application,
+`-SourceRepository` and `-SourceRef <source-branch-or-fixed-commit>` values. A command pinned to an
+older commit still downloads the old support files and template. Keep the original tenant, subscription, application,
 language, service plan, and resource prefix rather than changing plans to bypass this error.
 `az deployment sub validate` can check the corrected template without creating resources. Passing
 validation does not prove successful publication, runtime startup, Easy Auth enforcement, or delivery.
