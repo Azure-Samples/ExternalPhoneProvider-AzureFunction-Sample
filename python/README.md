@@ -5,6 +5,10 @@ provider per deployment. Target: Python 3.11, Azure Functions v4, Python v2 prog
 
 ## Setup and deployment
 
+For multiple regional origins behind one URL, see [manual Front Door onboarding](../docs/FRONTDOOR.md).
+No Front Door deployment script or readiness handler is supplied. The reported multi-region trials
+used JavaScript; validate an equivalent Python readiness implementation and deployment separately.
+
 1. Follow [customer onboarding](../docs/ONBOARDING.md). Set `EPP_PROVIDER_NAME` to the selected
 	adapter's registered manifest id (`<adapter-id>` is only a placeholder).
 2. Consult the selected adapter and its manifest in [src/providers/](src/providers/) for required

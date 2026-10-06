@@ -6,6 +6,13 @@ by SMS or voice. Start here to onboard **one deployment in one Azure region**.
 For implementation details, configuration, packaging, and security behavior, see the
 [technical reference](TECHNICAL.md).
 
+## Deployment options
+
+| Option | Onboarding |
+|---|---|
+| Single region | Follow the guided steps below; `Setup-Epp.ps1` deploys one endpoint. |
+| Multiple regions behind Azure Front Door | Follow the [optional manual guide](docs/FRONTDOOR.md). No Front Door setup script is provided; a separately implemented readiness endpoint and coordinated regional configuration are required. |
+
 ## What you will set up
 
 You will connect a provider account to a dedicated Azure Function endpoint, validate SMS or voice
@@ -37,8 +44,9 @@ return **401 or 403**; neither is a successful evaluation.
 Choose a region with available Linux Premium EP1 capacity and sufficient quota in your subscription.
 
 Application Insights provides operational telemetry. Provider API keys stay in Key Vault; supported
-OAuth integrations use managed identity. This guide covers only the single-region topology shown
-above. Multi-region deployment, failover, and resiliency guidance are deferred.
+OAuth integrations use managed identity. The guided steps below cover the single-region topology
+shown above. For one public URL backed by multiple regional origins, see the
+[manual Front Door option](docs/FRONTDOOR.md), including its observed transition failures.
 
 ## Before you start
 
@@ -222,6 +230,7 @@ application behavior or configuration details, use the technical documentation b
 
 ## More documentation
 
+- [Optional manual Azure Front Door onboarding](docs/FRONTDOOR.md) - regional origins, readiness, security, validation, and failover limitations; no automation supplied.
 - [Setup guide](setup/docs/README.md) - permissions, deployment prompts, validation, and manual rollback.
 - [Technical reference](TECHNICAL.md) - configuration, packages, provider behavior, and security.
 - [Detailed configuration and validation](docs/ONBOARDING.md) - local development and deployment checks.

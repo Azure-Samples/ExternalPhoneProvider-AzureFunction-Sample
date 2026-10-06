@@ -7,6 +7,10 @@ each provider owns its credentials, wire request, response interpretation, outco
 
 ## Setup
 
+For multiple regional origins behind one URL, see [manual Front Door onboarding](../docs/FRONTDOOR.md).
+The JavaScript evaluation trials used a separate readiness handler; it is not included in this
+sample's release package. No Front Door deployment script is supplied.
+
 1. Follow [customer onboarding](../docs/ONBOARDING.md). Choose a bundled provider and set
    `EPP_PROVIDER_NAME` to its fixed id; `<provider-id>` is a placeholder, not a default.
 2. Consult the selected implementation in [src/functions/providers/](src/functions/providers/)

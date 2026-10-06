@@ -1,5 +1,21 @@
 # Troubleshooting Step 2
 
+## Optional Front Door deployments
+
+The single-region setup script does not provision Front Door or a multi-region readiness endpoint.
+Use the [manual Front Door guide](../../docs/FRONTDOOR.md) for that option.
+
+- A probe returning 401/403 or 404 is not healthy. Verify the dedicated readiness handler, its exact
+  path, the origin host header, and the profile-pinned network restrictions. Do not exempt SendOtp
+  or disable Easy Auth to make probes pass.
+- An authenticated SendOtp request returning 403 during an outage still failed. Check origin state,
+  access restrictions, and authentication diagnostics; do not assume every 403 is a normal failover
+  transition or that the caller retries it.
+- A successful request through the shared URL does not prove every origin works. Correlate safe
+  request identifiers with regional telemetry and verify each origin after recovery.
+- Distinguish delayed aggregate metrics from event timestamps and client observations. See the
+  [recorded test results and limitations](../../docs/FRONTDOOR.md#observed-failover-results-and-limitations).
+
 ## Deployment fails with SubscriptionIsOverQuotaForSku
 
 This is a subscription quota check, not an authentication failure or a missing resource-provider

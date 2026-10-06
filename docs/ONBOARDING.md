@@ -6,6 +6,11 @@ Provider (EPP) Function. Choose one language:
 [JavaScript](../javascript/README.md), [Python](../python/README.md), or [.NET](../dotnet/README.md).
 Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limitations.
 
+For a single public URL backed by multiple regions, see the
+[optional manual Front Door guide](FRONTDOOR.md). That option requires customer-managed readiness,
+shared-key coordination, origin restrictions, and separate validation; this onboarding flow does
+not automate it.
+
 1. **Purchase a provider offer from Security Store.**
 
 	 Open **Security Store > Provider offers**, purchase an offer, and activate the provider account.
