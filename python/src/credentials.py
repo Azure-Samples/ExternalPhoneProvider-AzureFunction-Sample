@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import math
 import threading
@@ -15,6 +14,7 @@ from azure.identity import AzureAuthorityHosts, ClientAssertionCredential, Manag
 from cachetools import TTLCache
 
 from .config import AppConfig
+from . import otp_log
 
 API_KEY_MODE: Final = "apiKey"
 OAUTH_MODE: Final = "oauth"
@@ -66,8 +66,7 @@ _log_filter = _CredentialLogFilter()
 
 
 def report_refresh_failure(kind: str) -> None:
-    logging.warning("%s", json.dumps({"logType": "service", "eventName": "credential_refresh_failed",
-                                     "cacheKind": kind, "failureReason": "credential_unavailable"}))
+    otp_log.credential_refresh_failed(logging.getLogger(__name__), kind)
 
 
 def _private_acquisition(load: Callable[[], T]) -> T:
@@ -190,8 +189,8 @@ class AccessTokenCache:
             self._token = None
 
 
-class ProviderCredentials:
-    """One selected cache and one refresh loop; configuration changes require a worker restart."""
+class CredentialTokenService:
+    """Caches credentials for the provider selected by this worker."""
 
     def __init__(self, secrets: SecretReader, *, cache_options: RefreshOptions | None = None,
                  report_failure: Callable[[str], None] = report_refresh_failure) -> None:
@@ -205,15 +204,18 @@ class ProviderCredentials:
         self._pending: Future[ApiKeyCredential | OAuthCredential] | None = None
         self._next_attempt = 0.0
 
-    def resolve(self, auth: Mapping[str, str], config: AppConfig) -> ApiKeyCredential | OAuthCredential:
+    def get_credentials(self, provider, config: AppConfig) -> ApiKeyCredential | OAuthCredential:
+        return self.resolve(provider.credential_spec, config)
+
+    def resolve(self, spec: Mapping[str, str], config: AppConfig) -> ApiKeyCredential | OAuthCredential:
         with self._lock:
             if self._stop.is_set():
                 raise ValueError(CREDENTIAL_ERROR)
             if self.cache is None:
                 try:
-                    if auth.get("mode") == API_KEY_MODE:
-                        self.cache = ApiKeyCache(self._secrets, auth, self._clock)
-                    elif auth.get("mode") == OAUTH_MODE:
+                    if spec.get("mode") == API_KEY_MODE:
+                        self.cache = ApiKeyCache(self._secrets, spec, self._clock)
+                    elif spec.get("mode") == OAUTH_MODE:
                         self.cache = _private_acquisition(lambda: AccessTokenCache(config, self._clock))
                     else:
                         raise ValueError(CREDENTIAL_ERROR)
