@@ -135,11 +135,20 @@ Autoscale maxima, provisioned instance counts, and approved quotas alone are **n
 Pass only against agreed latency/error and sustained-load criteria with measured evidence in
 both directions. No measured production-capacity result is supplied by this guide.
 
-Encrypted evaluation load validates authentication, decryption, and routing without sending OTPs;
-it does not exercise provider delivery throughput. Provider/dependency capacity and live-path
-behavior need separate approved evidence before the release capacity gate can pass. Do not turn
-the non-delivering drill into a live-send load test. Evaluate cold starts, cache expiry, and
-credential/key refresh so warm caches do not hide a dependency on the failed region.
+Encrypted evaluation requests bypass request-path provider credential resolution and outbound
+provider calls. A double-load evaluation drill proves only the exercised ingress, authentication,
+decryption, and routing path, **not complete live-send capacity**. Background credential refresh
+can still run independently; its presence does not prove live-path credential capacity.
+
+The GA capacity gate separately requires production-representative evidence in both survivor
+regions using a **non-delivering, provider-approved sandbox/stub** that exercises the live request
+path, credential acquisition/refresh, and representative provider latency and quota/throttling
+behavior, or separately authorized delivery validation. Document how the sandbox/stub represents
+production and obtain provider capacity/quota evidence for what it cannot reproduce; an instant
+success stub or bypassed credential lookup is insufficient. Evaluate cold starts, cache expiry,
+and credential/key refresh so warm caches do not hide a dependency on the failed region. Keep
+this separate from the evaluation-only fire-drill; do not silently enable live sends in that drill
+or mark the full capacity gate passed using evaluation-only throughput.
 
 ## 2. Prepare equivalent, independently provisioned origins
 
@@ -322,8 +331,10 @@ observed failover timings below as an SLA.
    region's routing, Function, storage, vault, identity, and telemetry signals. Do not treat missing
    regional telemetry as zero errors or use delayed health-percentage graphs to time recovery.
    Verify the surviving region sustains the required offered rate and agreed criteria for the
-   full soak period, not merely one successful request. Record failures during detection even if
-   later requests succeed; retries must not hide first-attempt errors.
+   full soak period, not merely one successful request. Label this as evaluation-path capacity,
+   not full live-send capacity; the separate provider/credential evidence required by the capacity
+   gate remains necessary. Record failures during detection even if later requests succeed;
+   retries must not hide first-attempt errors.
 6. **Restore unconditionally, including on abort.** Stop fault injection and restore the target
    at the deadline or any abort threshold, or when the soak completes. Stop synthetic load if
    unsafe. Put restoration in the controller's guaranteed cleanup path and retain the independent
@@ -336,7 +347,8 @@ observed failover timings below as an SLA.
    traffic returns and avoid immediately changing weights or driving a new surge. Require stable
    health, latency, errors, and capacity through the agreed observation window. Confirm all
    resources and routing are restored before repeating the same exercise with the other region
-   isolated. Both directions must meet the survivor-capacity gate.
+   isolated. Both directions must meet the evaluation-drill criteria; the full survivor-capacity
+   gate additionally requires the separate production-representative live-path evidence above.
 8. **Record the outcome and gaps.** Retain sanitized configuration/package identifiers, approvals,
    workload and limits, expected versus observed routing, fault/probe/client/recovery timestamps,
    rates, latency/errors, capacity/dependency evidence, aborts, and restoration confirmation.
