@@ -1,7 +1,15 @@
 #Requires -Version 7.4
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-$module = Import-Module (Join-Path $PSScriptRoot '../support/Epp.FrontDoor.psm1') -Force -PassThru
+function Import-FrontDoorTestModule {
+    New-Module -Name Epp.FrontDoor.Tests -ArgumentList (Join-Path $PSScriptRoot '../Setup-EppFrontDoor.ps1') -ScriptBlock {
+        param($Path)
+        $token = [Security.SecureString]::new()
+        try { . $Path -Verify -AccessToken $token }
+        finally { $token.Dispose() }
+    } | Import-Module -Force -PassThru
+}
+$module = Import-FrontDoorTestModule
 try {
     & $module {
         function Assert($Value, $Message) { if (-not $Value) { throw $Message } }
@@ -9,6 +17,8 @@ try {
             try { & $Action | Out-Null } catch { return }
             throw 'Expected unsafe configuration to be rejected.'
         }
+        $expectedOutput = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../artifacts/frontdoor'))
+        Assert ([IO.Path]::GetFullPath($OutputDirectory) -ceq $expectedOutput) 'Default output must use the ignored artifacts directory.'
         $tenant = '11111111-1111-1111-1111-111111111111'
         $app = '22222222-2222-2222-2222-222222222222'
         $caller = '33333333-3333-3333-3333-333333333333'
@@ -229,7 +239,7 @@ try {
                     try { Invoke-EppFrontDoor @parameters -ApproveDeployment:$approved -WarningVariable warnings -WarningAction SilentlyContinue }
                     catch { $failure = $_.Exception.Message }
                     if (-not $approved) {
-                        Assert ($failure -eq 'Noninteractive deployment requires -ApproveDeployment.') 'Expected approval guard.'
+                        Assert ($failure -eq 'Noninteractive deployment requires -ApproveDeployment.') "Expected approval guard, got: $failure"
                         Assert ($deploymentTest.closed.Count -eq 0 -and -not (Test-Path $output)) 'Unapproved runs must not mutate resources or state.'
                         continue
                     }
@@ -298,7 +308,7 @@ try {
         if (-not $rejected) { throw 'Invalid verification endpoint was not rejected.' }
     }
     Write-Host 'PASS: the shared entry point separates deployment from verification and rejects unsafe token destinations.'
-    $module = Import-Module (Join-Path $PSScriptRoot '../support/Epp.FrontDoor.psm1') -Force -PassThru
+    $module = Import-FrontDoorTestModule
     & $module {
         param($Directory, $AccessToken)
         $rsa = [Security.Cryptography.RSA]::Create(2048)

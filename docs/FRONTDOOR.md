@@ -38,7 +38,6 @@ From the repository root:
     -SourceFunctionApp '<existing-epp-function>' `
     -ResourcePrefix 'myfront' `
     -Locations @('centralus', 'westus2') `
-    -OutputDirectory .\setup\frontdoor-output `
     -EvaluationOnly
 ```
 
@@ -52,8 +51,9 @@ records both package hashes, and publishes identical bytes to private regional s
 and API-key credentials use encrypted Key Vault backups; incompatible existing copies are not overwritten.
 
 Before completing routes, setup checks authentication, ingress restrictions, Function registration,
-and resolved key references. The output directory holds `frontdoor-state.json`, the public certificate,
-and the reviewed ZIP, never plaintext private keys or provider credentials.
+and resolved key references. Outputs default to the ignored `artifacts/frontdoor` directory:
+`frontdoor-state.json`, the public certificate, and the reviewed ZIP, never plaintext private keys
+or provider credentials. Use `-OutputDirectory` for a different location and keep it out of source control.
 Front Door initially returned 404 during our deployment's propagation. **Do not activate policy based
 on ARM success alone.**
 
@@ -65,9 +65,7 @@ process with the source's tenant, audience, and allowed caller, not a Function k
 ```powershell
 $token = Read-Host 'Approved EPP caller access token' -AsSecureString
 try {
-    .\setup\Setup-EppFrontDoor.ps1 -Verify `
-        -OutputDirectory .\setup\frontdoor-output `
-        -AccessToken $token
+    .\setup\Setup-EppFrontDoor.ps1 -Verify -AccessToken $token
 }
 finally {
     $token.Dispose()
@@ -79,7 +77,8 @@ three encrypted evaluations, with sanitized results and correlation IDs. It send
 stops no origins, and does not prove each origin participated. Run the
 [per-origin and failover checks](#5-validate-before-manually-activating-policy) separately.
 
-Resume with the **same source, arguments, prefix, and output directory**. Setup checks the saved
+Resume with the **same source, arguments, prefix, and output directory**. For an earlier run, pass
+its original `-OutputDirectory` explicitly rather than moving or recreating its state. Setup checks the saved
 package and source/configuration fingerprint. Source changes require review. Atomic checkpoints
 retain a `.previous` copy; inspect it and Azure state before recovering a damaged checkpoint.
 Never delete state to bypass ownership checks.
