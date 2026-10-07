@@ -87,7 +87,7 @@ Do not substitute a Function key or your ordinary Azure management token.
 ```powershell
 $token = Read-Host 'Approved EPP caller access token' -AsSecureString
 try {
-    .\setup\Test-EppFrontDoor.ps1 `
+    .\setup\Setup-EppFrontDoor.ps1 -Verify `
         -OutputDirectory .\setup\frontdoor-output `
         -AccessToken $token
 }
@@ -96,7 +96,9 @@ finally {
 }
 ```
 
-This sends missing-token and invalid-token checks plus three encrypted evaluation requests.
+Use the same entry point for both operations: without `-Verify` it deploys; with `-Verify` it only
+tests the saved endpoint and does not provision or reconfigure Azure resources.
+Verification sends missing-token and invalid-token checks plus three encrypted evaluation requests.
 It stores only sanitized outcomes and correlation IDs. It does not send SMS/voice, retry live sends,
 stop origins, or prove every origin participated. Complete the
 [per-origin and failover checks](#5-validate-before-manually-activating-policy) separately.

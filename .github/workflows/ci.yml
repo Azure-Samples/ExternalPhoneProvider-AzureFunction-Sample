@@ -19,7 +19,6 @@ jobs:
         run: |
           ./setup/tests/Certificates.Tests.ps1
           ./setup/tests/FrontDoor.Tests.ps1
-          ./setup/tests/FrontDoorVerify.Tests.ps1
       - name: Compile Bicep without deploying
         shell: pwsh
         run: |

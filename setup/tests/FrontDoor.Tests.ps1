@@ -1,4 +1,4 @@
-#Requires -Version 7.0
+#Requires -Version 7.4
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $module = Import-Module (Join-Path $PSScriptRoot '../support/Epp.FrontDoor.psm1') -Force -PassThru
@@ -149,3 +149,39 @@ try {
         }
     }
 } finally { Remove-Module -ModuleInfo $module }
+
+$path = Join-Path $PSScriptRoot '../Setup-EppFrontDoor.ps1'
+$errors = $null; $tokens = $null
+[Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors) | Out-Null
+if ($errors.Count) { throw ($errors.Message -join '; ') }
+$command = Get-Command $path
+$deploy = @($command.ParameterSets | Where-Object Name -eq 'Deploy')
+$verify = @($command.ParameterSets | Where-Object Name -eq 'Verify')
+if ($deploy.Count -ne 1 -or $verify.Count -ne 1 -or
+    'AccessToken' -in $deploy[0].Parameters.Name -or 'SubscriptionId' -in $verify[0].Parameters.Name -or
+    'ApproveDeployment' -in $verify[0].Parameters.Name -or
+    -not ($verify[0].Parameters | Where-Object Name -eq 'AccessToken').IsMandatory) {
+    throw 'Deploy and Verify must have separate, unambiguous parameter sets.'
+}
+$temporary = Join-Path ([IO.Path]::GetTempPath()) ('fd-verify-tests-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory $temporary | Out-Null
+$token = ConvertTo-SecureString 'test-token' -AsPlainText -Force
+try {
+    foreach ($url in @('http://test.azurefd.net/api/SendOtp','https://example.com/api/SendOtp',
+        'https://test.azurefd.net/api/SendOtp?redirect=elsewhere','https://user@test.azurefd.net/api/SendOtp')) {
+        @{ endpointUrl = $url } | ConvertTo-Json | Set-Content (Join-Path $temporary 'frontdoor-state.json')
+        $rejected = $false
+        try { & $path -Verify -OutputDirectory $temporary -AccessToken $token }
+        catch {
+            if ($_.Exception.Message -ne 'State does not identify an HTTPS Front Door SendOtp endpoint.') { throw }
+            $rejected = $true
+        }
+        if (-not $rejected) { throw 'Invalid verification endpoint was not rejected.' }
+    }
+    Write-Host 'PASS: the shared entry point separates deployment from verification and rejects unsafe token destinations.'
+}
+finally {
+    $token.Dispose()
+    Remove-Item -LiteralPath (Join-Path $temporary 'frontdoor-state.json')
+    Remove-Item -LiteralPath $temporary
+}
