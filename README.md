@@ -236,6 +236,7 @@ application behavior or configuration details, use the technical documentation b
 
 ## More documentation
 
+- [Monitoring setup and sample queries](docs/MONITORING.md) - single-region and multi-region Functions, alert setup, Workbooks, and optional Front Door monitoring.
 - [Optional manual Azure Front Door onboarding](docs/FRONTDOOR.md) - regional setup, readiness, security, and test results. No deployment script is provided.
 - [Setup guide](setup/docs/README.md) - permissions, deployment prompts, validation, and manual rollback.
 - [Technical reference](TECHNICAL.md) - configuration, packages, provider behavior, and security.
