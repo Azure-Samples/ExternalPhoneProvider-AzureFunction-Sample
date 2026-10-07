@@ -24,27 +24,23 @@ We **did not test** live SMS/voice delivery, calls and retries from the real Ent
 Azure regional outage, custom domains, WAF, Private Link, or production load. Test the features your
 deployment needs before activating policy.
 
-### Regional resiliency responsibility and GA acceptance gate
+### Regional resiliency responsibility
 
-The GA requirement for **regional outage of customer-hosted resources (Microsoft-configured
-baseline)** is to provide and validate the supported cross-region resiliency pattern when the Azure
-region hosting the standard CYOT endpoint becomes unavailable, including how failover is exercised
-and tested. Customers using that baseline should not have to design regional disaster recovery (DR)
-themselves. **This is a requirement/acceptance gate, not a claim that this sample has delivered GA DR.**
-
-For that gate, Microsoft owns defining, configuring, documenting, and validating the supported
-standard baseline and its failover procedure. Customers operate their deployed baseline: assign
+For the Microsoft-configured baseline, Microsoft is responsible for defining, configuring,
+documenting, and validating the standard regional-failover pattern and its exercise procedure.
+Customers using that baseline should not have to design regional disaster recovery (DR) themselves.
+Customers operate their deployed baseline: assign
 owners, maintain regional capacity, credentials and keys, monitor it, and run approved drills.
 Customers who replace the topology own the alternate regional-failover design and its validation.
 Customer operation of the standard baseline does not transfer responsibility for designing that
 baseline to the customer.
 
 The two-region pattern below makes the intended baseline concrete, but today's onboarding remains
-single-region and Front Door setup remains manual. Release owners must close the readiness-handler,
-regional-dependency, capacity, real-caller, and outage-validation gaps before claiming this gate is
-met. Recovery-time and recovery-point objectives (RTO/RPO), tolerable request failures, latency
-limits, and required evidence must be defined and approved by release and operator owners; the
-observed results below do not establish those targets.
+single-region and Front Door setup remains manual. The readiness-handler, regional-dependency,
+capacity, real-caller, and outage-validation gaps described here remain to be addressed before
+relying on this pattern for regional recovery. Recovery-time and recovery-point objectives
+(RTO/RPO), tolerable request failures, latency limits, and required evidence must be defined and
+approved by the deployment owners; the observed results below do not establish those targets.
 
 ## Architecture: one URL, multiple origins
 
@@ -140,7 +136,7 @@ provider calls. A double-load evaluation drill proves only the exercised ingress
 decryption, and routing path, **not complete live-send capacity**. Background credential refresh
 can still run independently; its presence does not prove live-path credential capacity.
 
-The GA capacity gate separately requires production-representative evidence in both survivor
+The capacity gate separately requires production-representative evidence in both survivor
 regions using a **non-delivering, provider-approved sandbox/stub** that exercises the live request
 path, credential acquisition/refresh, and representative provider latency and quota/throttling
 behavior, or separately authorized delivery validation. Document how the sandbox/stub represents
@@ -362,11 +358,11 @@ observed failover timings below as an SLA.
 Stopping a Function App simulates one application origin becoming unavailable. It does **not**
 simulate the loss of an Azure region's storage, vault, identity access, network paths, control
 plane, or telemetry, nor prove the surviving stack can start or refresh credentials without them.
-The GA acceptance plan must separately validate loss of regional dependencies and telemetry,
+The regional-resiliency validation plan must separately validate loss of regional dependencies and telemetry,
 using approved nonproduction fault scenarios and capturing evidence outside the affected region.
 Include dependency refresh/startup and restoration behavior; a warm app-stop success alone leaves
 these regional-outage gaps open. Record any scenario that cannot be safely exercised as an
-unvalidated limitation requiring release-owner disposition, not a passing regional-outage test.
+unvalidated limitation requiring deployment-owner review, not a passing regional-outage test.
 
 Evaluation also does not prove real Entra caller deadlines/retries, provider acceptance, or handset
 delivery. Validate those separately with the provider and onboarding owner. Neither this runbook
