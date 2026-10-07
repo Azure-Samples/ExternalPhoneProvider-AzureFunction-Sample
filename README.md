@@ -11,7 +11,7 @@ For implementation details, configuration, packaging, and security behavior, see
 | Option | Onboarding |
 |---|---|
 | Single region | Follow the steps below. `Setup-Epp.ps1` deploys one endpoint. |
-| Multiple regions behind Azure Front Door | Follow the [manual guide](docs/FRONTDOOR.md). You'll need to configure the regions and implement a readiness endpoint yourself. We don't provide a Front Door setup script. |
+| Multiple regions behind Azure Front Door | Use [JavaScript EP1 expansion](docs/FRONTDOOR.md#scripted-javascript-expansion) from an existing deployment, or follow the manual guidance for other configurations. Policy activation stays manual. |
 
 ## What you will set up
 
@@ -46,7 +46,7 @@ Choose a region with available Linux Premium EP1 capacity and sufficient quota i
 Application Insights provides operational telemetry. Provider API keys stay in Key Vault; supported
 OAuth integrations use managed identity. The guided steps below cover the single-region topology
 shown above. For one public URL backed by multiple regional origins, see the
-[manual Front Door option](docs/FRONTDOOR.md), including the request failures seen during testing.
+[Front Door option](docs/FRONTDOOR.md), including setup requirements and the request failures seen during testing.
 
 ## Before you start
 
@@ -230,7 +230,7 @@ application behavior or configuration details, use the technical documentation b
 
 ## More documentation
 
-- [Optional manual Azure Front Door onboarding](docs/FRONTDOOR.md) - regional setup, readiness, security, and test results. No deployment script is provided.
+- [Optional Azure Front Door onboarding](docs/FRONTDOOR.md) - JavaScript expansion, manual alternatives, readiness, security, and test results.
 - [Setup guide](setup/docs/README.md) - permissions, deployment prompts, validation, and manual rollback.
 - [Technical reference](TECHNICAL.md) - configuration, packages, provider behavior, and security.
 - [Detailed configuration and validation](docs/ONBOARDING.md) - local development and deployment checks.

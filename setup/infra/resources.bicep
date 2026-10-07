@@ -10,6 +10,14 @@ param packageBlobName string
 param language string
 param remoteBuild bool
 
+@description('Optional Front Door ingress and shared caller trust. Omit for the existing single-region flow.')
+param frontDoor {
+  id: string
+  issuer: string
+  audience: string
+  callerApplicationIds: string[]
+}?
+
 var runtimes = {
   javascript: {
     worker: 'node'
@@ -155,25 +163,41 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
     httpsOnly: true
     // The script verifies Easy Auth before opening ingress for publication or Python remote build.
     publicNetworkAccess: 'Disabled'
-    siteConfig: {
+    siteConfig: union({
       alwaysOn: true
       minimumElasticInstanceCount: 1
       ftpsState: 'Disabled'
       http20Enabled: true
       linuxFxVersion: runtime.stack
       minTlsVersion: '1.2'
-    }
+    }, frontDoor == null ? {} : {
+      ipSecurityRestrictionsDefaultAction: 'Deny'
+      ipSecurityRestrictions: [
+        {
+          name: 'AllowThisFrontDoor'
+          priority: 100
+          action: 'Allow'
+          tag: 'ServiceTag'
+          ipAddress: 'AzureFrontDoor.Backend'
+          headers: {
+            'x-azure-fdid': [frontDoor!.id]
+          }
+        }
+      ]
+    })
   }
 }
 
 var identifierUri = 'api://${functionApp.properties.defaultHostName}/${applicationId}'
-var issuer = tokenVersion == 2 ? '${environment().authentication.loginEndpoint}${tenantId}/v2.0' : 'https://sts.windows.net/${tenantId}/'
-var audience = tokenVersion == 2 ? applicationId : identifierUri
+var issuer = frontDoor.?issuer ?? (tokenVersion == 2 ? '${environment().authentication.loginEndpoint}${tenantId}/v2.0' : 'https://sts.windows.net/${tenantId}/')
+var audience = frontDoor.?audience ?? (tokenVersion == 2 ? applicationId : identifierUri)
 
 resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: functionApp
   name: 'appsettings'
-  properties: union(providerSettings, {
+  properties: union(providerSettings, frontDoor == null ? {} : {
+    EPP_FRONT_DOOR_HEALTH_ENABLED: 'true'
+  }, {
     FUNCTIONS_EXTENSION_VERSION: '~4'
     FUNCTIONS_WORKER_RUNTIME: runtime.worker
     AzureWebJobsStorage__accountName: storage.name
@@ -209,7 +233,7 @@ resource authentication 'Microsoft.Web/sites/config@2024-04-01' = {
     globalValidation: {
       requireAuthentication: true
       unauthenticatedClientAction: 'Return401'
-      excludedPaths: []
+      excludedPaths: frontDoor == null ? [] : ['/api/health/ready']
     }
     httpSettings: {
       requireHttps: true
@@ -224,7 +248,7 @@ resource authentication 'Microsoft.Web/sites/config@2024-04-01' = {
         validation: {
           allowedAudiences: [audience]
           defaultAuthorizationPolicy: {
-            allowedApplications: [callerApplicationId]
+            allowedApplications: frontDoor.?callerApplicationIds ?? [callerApplicationId]
           }
         }
       }

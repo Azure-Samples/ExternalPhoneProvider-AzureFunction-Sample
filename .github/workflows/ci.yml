@@ -16,12 +16,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Test certificate setup without Azure access
         shell: pwsh
-        run: ./setup/tests/Certificates.Tests.ps1
+        run: |
+          ./setup/tests/Certificates.Tests.ps1
+          ./setup/tests/FrontDoor.Tests.ps1
+          ./setup/tests/FrontDoorVerify.Tests.ps1
       - name: Compile Bicep without deploying
         shell: pwsh
         run: |
           az bicep install
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($name in @('frontdoor', 'frontdoor-regions')) {
+            az bicep build --file (Join-Path $env:GITHUB_WORKSPACE "setup/infra/$name.bicep") --outfile (Join-Path $env:RUNNER_TEMP "epp-$name.json")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
           az bicep build --file (Join-Path $env:GITHUB_WORKSPACE 'setup/infra/main.bicep') --outfile (Join-Path $env:RUNNER_TEMP 'epp-main.json')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

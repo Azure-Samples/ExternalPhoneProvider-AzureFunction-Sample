@@ -1,12 +1,132 @@
 # Optional multi-region onboarding with Azure Front Door
 
 Use Azure Front Door when you want **one public EPP URL backed by Function Apps in multiple regions**.
-You configure this option manually. For a single region, start with the
+You can expand a supported JavaScript deployment with the [PowerShell setup below](#scripted-javascript-expansion),
+or follow the manual steps for other configurations. For a single region, start with the
 [main onboarding guide](../README.md).
 
-**We don't provide a Front Door deployment script.** The guided setup creates one regional endpoint,
-not the multi-region setup described here. This guide covers what you need to configure and test.
-Failover can still interrupt requests.
+The original `Setup-Epp.ps1` still creates one regional endpoint. The separate
+[Setup-EppFrontDoor.ps1](../setup/Setup-EppFrontDoor.ps1) creates new regional copies behind Front Door
+and leaves the source endpoint and authentication policy unchanged. Failover can still interrupt requests.
+
+## Scripted JavaScript expansion
+
+Run this script from a reviewed repository checkout, not as a standalone downloaded file. It uses
+[frontdoor-regions.bicep](../setup/infra/frontdoor-regions.bicep) to call the existing
+[regional Function module](../setup/infra/resources.bicep) for each new region. The same module
+continues to serve the single-region setup when no Front Door configuration is passed.
+
+### Supported source and prerequisites
+
+- PowerShell **7.4+**, Azure CLI with Bicep installed, and an Azure user account signed into the
+  source subscription and tenant. The new setup does not install tools or change your CLI default.
+- An existing **Linux JavaScript EP1** EPP Function using private Blob run-from-package with
+  system-assigned managed-identity access. Remote-build, FC1, Python, and .NET sources are rejected.
+- Enforced HTTPS Easy Auth, an issuer in the selected tenant, a **v2 application-ID audience**,
+  and a nonempty authorized-caller list. Additional principal/claim restrictions are rejected
+  instead of silently dropped.
+- A current, enabled, exportable RSA PEM certificate named `phone-provider-encryption`. The source
+  Function must use its latest version-pinned backing secret, with more than 30 days of validity.
+  The script does not rotate or register a new key.
+- Permission to read the source app configuration and package, back up its certificate, and
+  deploy the new resources and scoped role assignments. API-key cloning also needs permission to
+  back up the provider's named secrets. No Microsoft Graph or policy permissions are granted.
+- Two or three distinct target regions in the **same subscription and Azure geography as the source
+  vault**, with suitable EP1 quota and availability for all dependencies.
+- For provider-enabled expansion, a supported API-key setup profile and provider secrets in the
+  source certificate vault. OAuth provider federation is **not automated** by this first version.
+  For OAuth sources or sources with no provider, use `-EvaluationOnly` explicitly to validate
+  infrastructure without configuring a provider. This cannot send live messages successfully.
+
+### Deploy
+
+From the repository root:
+
+```powershell
+.\setup\Setup-EppFrontDoor.ps1 `
+    -SubscriptionId '<subscription-id>' `
+    -TenantId '<tenant-id>' `
+    -SourceResourceGroup '<existing-epp-resource-group>' `
+    -SourceFunctionApp '<existing-epp-function>' `
+    -ResourcePrefix 'myfront' `
+    -Locations @('centralus', 'westus2') `
+    -OutputDirectory .\setup\frontdoor-output `
+    -EvaluationOnly
+```
+
+Replace the placeholders and choose regions that meet your requirements. The prefix must be 3-10
+lowercase letters/digits, starting with a letter. Read-only source inspection and package download
+happen before approval. Review the source, target groups, package hash, provider mode, and charges.
+Type `Yes` to proceed, or use both `-NonInteractive -ApproveDeployment` for an explicitly approved
+unattended run.
+
+The script:
+
+1. Creates a separate Front Door Standard profile and two or three **new** regional deployments.
+   The source is a configuration/package/key source, not an origin in the new group.
+2. Adds the reviewed, opt-in readiness handler to a copy of the source ZIP. Delivery files and
+   dependencies remain unchanged. It records both source and resulting package hashes.
+3. Copies the certificate using encrypted Key Vault backup/restore, pins regional secret references,
+   and uploads identical package bytes to each region's private storage. API-key mode also copies
+   the profile's named credential secrets. Existing incompatible copies are not overwritten.
+4. Checks regional authentication, profile-pinned ingress restrictions, Function registration, and
+   resolved key references before completing the route setup. It does not disable Easy Auth on SendOtp.
+5. Saves `frontdoor-state.json`, a public certificate, and the reviewed package under the selected
+   output directory. No plaintext private key or provider credential is written there.
+
+The readiness endpoint and route may take time to become reachable after ARM reports success.
+Our live validation initially received Front Door 404 responses before the route became available.
+Do not activate policy based on deployment status alone.
+
+### Verify and resume
+
+The deployment ends with **authenticated validation still required**. Obtain an access token through
+your approved test-caller process, using the same tenant, audience, and allowed caller as the source.
+Do not substitute a Function key or your ordinary Azure management token.
+
+```powershell
+$token = Read-Host 'Approved EPP caller access token' -AsSecureString
+try {
+    .\setup\Test-EppFrontDoor.ps1 `
+        -OutputDirectory .\setup\frontdoor-output `
+        -AccessToken $token
+}
+finally {
+    $token.Dispose()
+}
+```
+
+This sends missing-token and invalid-token checks plus three encrypted evaluation requests.
+It stores only sanitized outcomes and correlation IDs. It does not send SMS/voice, retry live sends,
+stop origins, or prove every origin participated. Complete the
+[per-origin and failover checks](#5-validate-before-manually-activating-policy) separately.
+
+To resume an interrupted setup, use the **same source, arguments, prefix, and output directory**.
+The script retains a fingerprint of the approved source/configuration and verifies its saved package.
+Changes to the source package, key, or selected configuration require review rather than silent reuse.
+Checkpoint writes are atomic and retain a `.previous` copy. Do not remove a checkpoint to bypass
+ownership checks. If a checkpoint is damaged, inspect the previous copy and Azure resource state
+before restoring it manually.
+
+Rerunning can temporarily close **the new origins'** ingress while they are verified and republished.
+Do not rerun on serving origins without a maintenance plan. On failure the script attempts to close
+ingress to its new origins and reports failures to do so. It does not delete resources automatically;
+they can remain billable. The original source and policy remain available for rollback.
+
+### What was verified for this script
+
+The JavaScript evaluation-only expansion was deployed in Central US and West US 2. Both new origins
+served valid encrypted evaluations through the new Front Door, and each passed token-rejection,
+malformed-envelope, and tampered-JWE checks when selected individually. Direct origin access was
+denied even with a spoofed Front Door ID header. Certificate continuity, package hashes, resolved
+references, and source configuration were checked.
+
+A stalled certificate-restore client was interrupted during validation. The setup closed the new
+origins, retained its checkpoint, and resumed using the same package and certificate. The restore
+operation now has a bounded HTTP timeout. Source validation and encrypted-restore safeguards have
+offline coverage. Provider-secret cloning, live API-key delivery, and OAuth federation were not
+exercised by this evaluation-only deployment.
+The older failover measurements below remain observations, not a new performance guarantee.
 
 ## Scope and observed behavior
 
@@ -15,10 +135,12 @@ origins, a shared encryption certificate, and a separate readiness handler that 
 The tests covered encrypted evaluation requests, rejection of invalid callers, direct-origin
 access restrictions, and stopping and restarting individual Functions.
 
-**The readiness handler used in testing is not part of the released sample.** You must implement
-and validate the [readiness contract below](#3-provide-a-non-delivering-readiness-endpoint) before
-enabling multi-origin health probes. There is no app setting that adds this endpoint to a release ZIP.
-You can adapt the design for other runtimes, but we haven't tested it with .NET or Python.
+The JavaScript readiness handler is included in this source revision and enabled only when
+`EPP_FRONT_DOOR_HEALTH_ENABLED` is exactly `true`. The expansion script inserts it into the copied
+source package before enabling it. An older release ZIP might not contain the handler, so setting
+the flag alone is insufficient. Manual deployments must meet the
+[readiness contract below](#3-provide-a-non-delivering-readiness-endpoint).
+We haven't tested an equivalent .NET or Python handler.
 
 We **did not test** live SMS/voice delivery, calls and retries from the real Entra service, a full
 Azure regional outage, custom domains, WAF, Private Link, or production load. Test the features your

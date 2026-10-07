@@ -7,9 +7,9 @@ Provider (EPP) Function. Choose one language:
 Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limitations.
 
 For a single public URL backed by multiple regions, see the
-[manual Front Door guide](FRONTDOOR.md). You'll need to implement readiness checks, keep encryption
-keys consistent across regions, restrict origin access, and test the deployment. This onboarding
-flow doesn't automate those steps.
+[Front Door guide](FRONTDOOR.md). The separate expansion script supports JavaScript on EP1 and
+copies the source package and key into new origins. Other configurations need manual setup.
+This single-region onboarding flow does not enable Front Door.
 
 1. **Purchase a provider offer from Security Store.**
 

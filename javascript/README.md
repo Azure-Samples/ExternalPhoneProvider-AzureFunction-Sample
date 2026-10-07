@@ -7,9 +7,11 @@ each provider owns its credentials, wire request, response interpretation, outco
 
 ## Setup
 
-For multiple regional origins behind one URL, see [manual Front Door onboarding](../docs/FRONTDOOR.md).
-The JavaScript evaluation trials used a separate readiness handler; it is not included in this
-sample's release package. No Front Door deployment script is supplied.
+For multiple regional origins behind one URL, see [Front Door onboarding](../docs/FRONTDOOR.md).
+The separate JavaScript/EP1 expansion script reuses an existing deployment. This revision's
+readiness handler is registered only when `EPP_FRONT_DOOR_HEALTH_ENABLED` is exactly `true`;
+older release packages need the handler added before enabling the flag. Single-region behavior
+is unchanged when the flag is absent.
 
 1. Follow [customer onboarding](../docs/ONBOARDING.md). Choose a bundled provider and set
    `EPP_PROVIDER_NAME` to its fixed id; `<provider-id>` is a placeholder, not a default.

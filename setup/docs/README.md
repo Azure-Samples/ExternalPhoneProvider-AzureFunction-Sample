@@ -8,8 +8,8 @@ The customer does not clone this repository or download Bicep/support scripts se
 
 This guide deploys **one Function endpoint in one Azure region**. It does not provision Azure
 Front Door or a second region. For the optional multi-region design, use the
-[manual Front Door onboarding guide](../../docs/FRONTDOOR.md). No Front Door setup script is
-provided. Running this setup again in another region won't coordinate encryption keys or
+[Front Door onboarding guide](../../docs/FRONTDOOR.md), which includes a separate JavaScript/EP1
+expansion script. Running this single-region setup again in another region won't coordinate encryption keys or
 Front Door origins. A successful deployment or evaluation doesn't prove live delivery or seamless failover.
 
 ## Availability

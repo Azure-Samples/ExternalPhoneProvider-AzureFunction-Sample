@@ -32,6 +32,7 @@ local.settings*.json
 [Oo]bj/
 publish/
 artifacts/
+setup/frontdoor-output/
 .azure/
 .python_packages/
 __pycache__/

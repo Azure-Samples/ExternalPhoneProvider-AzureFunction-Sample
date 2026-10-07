@@ -3,7 +3,10 @@
 ## Optional Front Door deployments
 
 The single-region setup script does not provision Front Door or a multi-region readiness endpoint.
-Use the [manual Front Door guide](../../docs/FRONTDOOR.md) for that option.
+Use the [Front Door guide](../../docs/FRONTDOOR.md) for the separate JavaScript expansion script or
+manual alternatives. The expansion script requires the same subscription/geography for encrypted
+Key Vault restores and a stable source package, key, and saved checkpoint. Do not delete state
+to bypass a source-change or ownership error.
 
 - A probe returning 401/403 or 404 is not healthy. Verify the dedicated readiness handler, its exact
   path, the origin host header, and the profile-pinned network restrictions. Do not exempt SendOtp
