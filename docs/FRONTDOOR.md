@@ -24,6 +24,28 @@ We **did not test** live SMS/voice delivery, calls and retries from the real Ent
 Azure regional outage, custom domains, WAF, Private Link, or production load. Test the features your
 deployment needs before activating policy.
 
+### Regional resiliency responsibility and GA acceptance gate
+
+The GA requirement for **regional outage of customer-hosted resources (Microsoft-configured
+baseline)** is to provide and validate the supported cross-region resiliency pattern when the Azure
+region hosting the standard CYOT endpoint becomes unavailable, including how failover is exercised
+and tested. Customers using that baseline should not have to design regional disaster recovery (DR)
+themselves. **This is a requirement/acceptance gate, not a claim that this sample has delivered GA DR.**
+
+For that gate, Microsoft owns defining, configuring, documenting, and validating the supported
+standard baseline and its failover procedure. Customers operate their deployed baseline: assign
+owners, maintain regional capacity, credentials and keys, monitor it, and run approved drills.
+Customers who replace the topology own the alternate regional-failover design and its validation.
+Customer operation of the standard baseline does not transfer responsibility for designing that
+baseline to the customer.
+
+The two-region pattern below makes the intended baseline concrete, but today's onboarding remains
+single-region and Front Door setup remains manual. Release owners must close the readiness-handler,
+regional-dependency, capacity, real-caller, and outage-validation gaps before claiming this gate is
+met. Recovery-time and recovery-point objectives (RTO/RPO), tolerable request failures, latency
+limits, and required evidence must be defined and approved by release and operator owners; the
+observed results below do not establish those targets.
+
 ## Architecture: one URL, multiple origins
 
 ![Multi-region External Phone Provider architecture with Azure Front Door](images/multi-region-architecture.png)
@@ -47,6 +69,24 @@ Front Door chooses an origin based on health, priority, latency, and weight. Equ
 allow both origins to serve traffic. Equal weights do **not** guarantee a 50/50 split. Adding a third region
 normally adds an **origin**, not another customer-facing endpoint.
 
+### Two-region baseline to provision and validate
+
+Use two independently provisioned regional stacks, A and B, at equal Front Door priority for
+active-active service. Each has its own Function App and hosting capacity, private runtime/package
+storage, Key Vault containing the shared decryption key and applicable provider credentials,
+managed identities with local scoped access, and regional telemetry. Configure provider federation
+for each regional outbound identity where required. Neither stack may require the other region's
+storage, vault, or identity to serve or recover; verify startup, key resolution, and credential
+refresh as well as already-warm requests.
+
+Keep one shared Front Door public SendOtp URL and endpoint application registration, with identical
+issuer, audience, authorized-caller policy, selected provider route, and encryption public-key
+identity across both stacks. Replicate and renew the matching private key securely in each regional
+vault using the [key coordination procedure](#coordinate-the-encryption-key). Failover must not
+require changing the caller URL, trust configuration, or registered encryption certificate.
+Front Door, Entra authentication, and the selected provider remain shared dependencies; regional
+duplication does not add provider failover or remove those dependencies.
+
 ## 1. Plan the regional deployment
 
 Start in a dedicated nonproduction tenant and subscription. Review the
@@ -55,11 +95,11 @@ Start in a dedicated nonproduction tenant and subscription. Review the
 
 - Start with two regions, based on service availability, capacity, residency, and the selected
   Security Store provider's requirements. A third region adds cost and capacity, but does not
-  won't necessarily shorten failure detection.
+  necessarily shorten failure detection.
 - Check availability of **every** required resource type, not just EP1 quota. Hosting availability
   doesn't mean Application Insights or other dependencies are available there.
 - Budget for an EP1 plan and regional dependencies in each region, Front Door, and telemetry.
-  Keep enough warm capacity for the remaining origins to handle traffic during an outage.
+  Size and validate each region for the survivor workload described below, not just its normal share.
 - Choose one language and verify that each origin receives the same package. Do not mix
   implementations or package versions while measuring failover.
 - Record the endpoint application's client ID, validated token audience and issuer, authorized
@@ -70,6 +110,36 @@ Start in a dedicated nonproduction tenant and subscription. Review the
 single-region setup flow and does not coordinate Front Door, shared key material, regional
 registrations, or failover. Independent certificate issuance or a setup rerun can change app
 configuration or disable incoming access to an existing endpoint.
+
+### Capacity gate: each region must support the combined peak load
+
+**EACH region must be provisioned and validated to serve the combined peak workload on its own.**
+For a balanced two-region active-active baseline, this means **at least twice its normal per-region
+traffic**, plus explicitly planned headroom for bursts, retries, probe traffic, and dependency
+overhead. Reserve that capacity in both A and B before relying on regional failover; spare capacity
+only in one direction is insufficient. Planning retry headroom does not authorize blind retries
+of live sends.
+
+Use the expected peak offered workload, not a quiet-period average or the lower throughput left
+after requests time out. Equal weights do not guarantee equal routing. If normal traffic is
+unequal, each region still needs the entire combined peak workload plus headroom; the less-used
+region may need more than twice its usual traffic. An N-region alternative needs a documented
+failure budget and measured capacity for every permitted survivor set and routing distribution.
+Adding origins does not waive the double-load requirement for the balanced two-region baseline.
+
+Record the workload mix, offered and completed request rates, concurrency, payload sizes, test
+duration, per-region latency percentiles, errors/timeouts, resource saturation, and dependency
+throttling. Verify hosting/subscription quotas, available warm capacity and scale-out delay,
+storage and vault limits, identity/token-service capacity, and provider account/rate limits.
+Autoscale maxima, provisioned instance counts, and approved quotas alone are **not capacity proof**.
+Pass only against agreed latency/error and sustained-load criteria with measured evidence in
+both directions. No measured production-capacity result is supplied by this guide.
+
+Encrypted evaluation load validates authentication, decryption, and routing without sending OTPs;
+it does not exercise provider delivery throughput. Provider/dependency capacity and live-path
+behavior need separate approved evidence before the release capacity gate can pass. Do not turn
+the non-delivering drill into a live-send load test. Evaluate cold starts, cache expiry, and
+credential/key refresh so warm caches do not hide a dependency on the failed region.
 
 ## 2. Prepare equivalent, independently provisioned origins
 
@@ -200,14 +270,8 @@ nonces locally without writing them or request bodies to shared logs.
   that the rejection came from access control, not a general outage.
 - Valid encrypted evaluations must return the matching nonce. Malformed/tampered requests must
   not be accepted. Use safe correlation IDs and regional logs to confirm which origins handled requests.
-- Send bounded continuous evaluation traffic **before, during, and after** a controlled test-origin
-  outage. Keep the origin enabled in Front Door so the test checks automatic health-based routing,
-  not manual removal.
-- Record every failed response and transport error. Restore the origin even if testing fails, and
-  verify that specific origin's readiness before testing another one. A shared readiness URL can
-  succeed through a different origin.
-- Correlate event timestamps, origin state, and client results. Do not use a delayed aggregate
-  health-percentage graph to time recovery precisely.
+- Run the [regional failover fire-drill](#6-regional-failover-fire-drill) in both directions, with
+  agreed acceptance criteria and evidence for the [capacity gate](#capacity-gate-each-region-must-support-the-combined-peak-load).
 - Separately test approved live SMS/voice delivery and caller behavior with the provider and EPP
   onboarding owner. Evaluation does not prove either.
 
@@ -215,6 +279,86 @@ Once these checks pass, have an **Authentication Policy Administrator** follow t
 [supported activation procedure](../setup/docs/README.md#step-3---manually-validate-and-activate-policy),
 using the Front Door SendOtp URL and endpoint application client ID. Save the previous policy first,
 preserve unrelated properties, and read the policy back to confirm the change. This step is manual.
+
+## 6. Regional failover fire-drill
+
+This runbook is for an approved, dedicated nonproduction deployment. It exercises health-based
+rerouting; it is not permission to disrupt production or a claim of a full Azure regional-outage
+test. Define numeric pass/abort thresholds and durations before starting, rather than adopting the
+observed failover timings below as an SLA.
+
+1. **Assign ownership and approve the boundary.** Name a drill lead, change approver, regional
+   resource owners, load/telemetry observer, and restoration owner with a backup. Record the exact
+   tenant, subscription, Front Door profile, origin group, Function Apps, target region, change
+   window, maximum isolation duration, and restoration actions. Confirm no production policy or
+   real users depend on these resources. Approve only one isolated test origin at a time.
+2. **Prepare bounded, non-delivering traffic and independent recovery.** Use an authorized test
+   caller to send synthetic encrypted `mode: 2` evaluation requests through the shared URL; never
+   use real OTPs, real recipient data, or live-send mode. Check nonce matches locally, not in shared
+   logs. Set hard rate, concurrency, request-timeout, total-duration, and cost limits. Place the
+   controller and evidence capture outside the target region. Test restoration access and arrange
+   an independent deadline-triggered restoration mechanism or backup operator; the load controller
+   must not be the only way to end the outage.
+3. **Establish the baseline and acceptance gates.** Save the approved origin/routing, authentication,
+   ingress, package, key-reference, and regional-dependency configuration. Complete the security and
+   evaluation checks in section 5. Confirm both origins are healthy and actually serving, using
+   origin-specific diagnostics rather than only the shared readiness URL. Agree the offered peak
+   rate plus headroom, minimum survivor soak duration, detection/recovery target, allowed failures
+   and timeouts, latency percentiles, resource/dependency limits, and failback observation window.
+   Include abort thresholds for an unhealthy survivor, unexpected delivery, security drift, lost
+   observability, or an approaching isolation deadline. Capture steady-state evidence from every
+   region and the client before injecting a fault.
+4. **Isolate ONE approved origin; leave it enabled in Front Door.** After confirming it is serving
+   traffic, apply the approved reversible fault, for example stopping that test Function App.
+   Timestamp the fault request and platform confirmation separately. Keep the other origin healthy
+   and unchanged. Do not disable the target in Front Door: manual disabling tests control-plane
+   removal, not health-probe outage detection. Never disable authentication, exempt SendOtp from
+   Easy Auth, or weaken ingress to make the drill pass. Front Door can route across all origins
+   when all probes fail; probe state is not a security boundary.
+5. **Observe detection and sustained survivor load.** Maintain the bounded combined-peak evaluation
+   load plus planned headroom through Front Door, without exceeding the approved test ceiling.
+   Capture client attempts, completed requests, every failed response and transport error, latency,
+   safe correlation IDs, and timestamps alongside Front Door probe/access diagnostics and every
+   region's routing, Function, storage, vault, identity, and telemetry signals. Do not treat missing
+   regional telemetry as zero errors or use delayed health-percentage graphs to time recovery.
+   Verify the surviving region sustains the required offered rate and agreed criteria for the
+   full soak period, not merely one successful request. Record failures during detection even if
+   later requests succeed; retries must not hide first-attempt errors.
+6. **Restore unconditionally, including on abort.** Stop fault injection and restore the target
+   at the deadline or any abort threshold, or when the soak completes. Stop synthetic load if
+   unsafe. Put restoration in the controller's guaranteed cleanup path and retain the independent
+   safeguard for controller interruption or loss. Restore the saved approved state even when
+   assertions fail; escalate immediately to the restoration owner if restoration cannot be
+   confirmed. Do not start another fault or declare success while an origin remains impaired.
+7. **Fail back conservatively, then reverse the direction.** Verify the restored origin's own
+   dependencies, key/credential resolution, readiness, and successful encrypted evaluations.
+   Expect Front Door to resume routing when its health criteria are met; watch both origins as
+   traffic returns and avoid immediately changing weights or driving a new surge. Require stable
+   health, latency, errors, and capacity through the agreed observation window. Confirm all
+   resources and routing are restored before repeating the same exercise with the other region
+   isolated. Both directions must meet the survivor-capacity gate.
+8. **Record the outcome and gaps.** Retain sanitized configuration/package identifiers, approvals,
+   workload and limits, expected versus observed routing, fault/probe/client/recovery timestamps,
+   rates, latency/errors, capacity/dependency evidence, aborts, and restoration confirmation.
+   Record pass/fail against each agreed criterion, including unmet or unmeasured gates, with
+   follow-up owners and repeat-test dates. Never attach keys, bearer tokens, request bodies, OTPs,
+   or nonce values. Repeat after material topology, package, authentication, key, provider, or
+   capacity changes and at the operator-approved cadence.
+
+### What this drill does not prove
+
+Stopping a Function App simulates one application origin becoming unavailable. It does **not**
+simulate the loss of an Azure region's storage, vault, identity access, network paths, control
+plane, or telemetry, nor prove the surviving stack can start or refresh credentials without them.
+The GA acceptance plan must separately validate loss of regional dependencies and telemetry,
+using approved nonproduction fault scenarios and capturing evidence outside the affected region.
+Include dependency refresh/startup and restoration behavior; a warm app-stop success alone leaves
+these regional-outage gaps open. Record any scenario that cannot be safely exercised as an
+unvalidated limitation requiring release-owner disposition, not a passing regional-outage test.
+
+Evaluation also does not prove real Entra caller deadlines/retries, provider acceptance, or handset
+delivery. Validate those separately with the provider and onboarding owner. Neither this runbook
+nor Front Door makes retries automatically safe or guarantees zero downtime.
 
 ## Observed failover results and limitations
 
