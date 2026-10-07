@@ -179,9 +179,67 @@ try {
         if (-not $rejected) { throw 'Invalid verification endpoint was not rejected.' }
     }
     Write-Host 'PASS: the shared entry point separates deployment from verification and rejects unsafe token destinations.'
+    $module = Import-Module (Join-Path $PSScriptRoot '../support/Epp.FrontDoor.psm1') -Force -PassThru
+    & $module {
+        param($Directory, $AccessToken)
+        $rsa = [Security.Cryptography.RSA]::Create(2048)
+        $request = [Security.Cryptography.X509Certificates.CertificateRequest]::new(
+            'CN=OfflineTest', $rsa, [Security.Cryptography.HashAlgorithmName]::SHA256,
+            [Security.Cryptography.RSASignaturePadding]::Pkcs1)
+        $certificate = $request.CreateSelfSigned([DateTimeOffset]::UtcNow.AddMinutes(-1), [DateTimeOffset]::UtcNow.AddDays(1))
+        $test = @{ calls = 0; fail = $false; privateKey = $rsa }
+        function Decode([string]$Value) {
+            $value = $Value.Replace('-','+').Replace('_','/')
+            [Convert]::FromBase64String($value.PadRight($value.Length + (4-$value.Length%4)%4, '='))
+        }
+        function Invoke-WebRequest {
+            param($Uri, $Method, $ContentType, $Body, $MaximumRedirection, $TimeoutSec, $SkipHttpErrorCheck, $Authentication, $Token)
+            if ($Uri -ne 'https://test.azurefd.net/api/SendOtp' -or $MaximumRedirection -ne 0 -or
+                $TimeoutSec -ne 30 -or -not $SkipHttpErrorCheck) { throw 'Unsafe verification request.' }
+            $test.calls++
+            if ($test.calls -eq 1) {
+                if ($Token) { throw 'Missing-token test must omit authentication.' }
+                return @{ StatusCode = 401; Content = '' }
+            }
+            if ($Authentication -ne 'Bearer' -or $Token -isnot [Security.SecureString]) { throw 'Expected secure bearer authentication.' }
+            if ($test.calls -eq 2) { return @{ StatusCode = 403; Content = '' } }
+            if (-not [object]::ReferenceEquals($Token, $AccessToken)) { throw 'Caller token not passed through securely.' }
+            $payload = $Body | ConvertFrom-Json
+            if ($payload.mode -ne 2) { throw 'Verification must never send a live OTP.' }
+            $parts = $payload.encryptedDeliveryContext.Split('.')
+            $key = $test.privateKey.Decrypt((Decode $parts[1]), [Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
+            $cipher = Decode $parts[3]; $plain = [byte[]]::new($cipher.Length)
+            $aes = [Security.Cryptography.AesGcm]::new($key, 16)
+            try { $aes.Decrypt((Decode $parts[2]), $cipher, (Decode $parts[4]), $plain, [Text.Encoding]::ASCII.GetBytes($parts[0])) }
+            finally { $aes.Dispose(); [Array]::Clear($key, 0, $key.Length) }
+            $delivery = [Text.Encoding]::UTF8.GetString($plain) | ConvertFrom-Json
+            @{ StatusCode = 200; Content = (@{
+                nonce = $(if ($test.fail) { 'wrong-nonce' } else { $delivery.nonce })
+                correlationId = $payload.correlationId
+            } | ConvertTo-Json) }
+        }
+        try {
+            [IO.File]::WriteAllBytes((Join-Path $Directory 'encryption-public.cer'), $certificate.RawData)
+            @{ endpointUrl = 'https://test.azurefd.net/api/SendOtp' } | ConvertTo-Json | Set-Content (Join-Path $Directory 'frontdoor-state.json')
+            foreach ($fail in @($false, $true)) {
+                $test.calls = 0; $test.fail = $fail; $rejected = $false
+                try { Test-EppFrontDoor -OutputDirectory $Directory -AccessToken $AccessToken }
+                catch {
+                    if ($_.Exception.Message -ne 'Front Door evaluation/authentication checks failed. No live messages were sent.') { throw }
+                    $rejected = $true
+                }
+                if ($test.calls -ne 5 -or $rejected -ne $fail) { throw 'Verification changed its five-check or nonce-validation behavior.' }
+            }
+            Write-Host 'PASS: five offline HTTP checks use secure tokens and encrypted evaluation; wrong nonces still fail.'
+        } finally { $certificate.Dispose(); $rsa.Dispose() }
+    } $temporary $token
 }
 finally {
     $token.Dispose()
-    Remove-Item -LiteralPath (Join-Path $temporary 'frontdoor-state.json')
+    foreach ($name in @('frontdoor-state.json','encryption-public.cer','evaluation-results.json')) {
+        $file = Join-Path $temporary $name
+        if (Test-Path $file) { Remove-Item -LiteralPath $file }
+    }
     Remove-Item -LiteralPath $temporary
+    if ($module) { Remove-Module -ModuleInfo $module -ErrorAction SilentlyContinue }
 }

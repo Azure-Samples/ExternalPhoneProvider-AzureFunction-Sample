@@ -11,7 +11,7 @@ The design selects one provider per deployment. The HTTP Function owns the reque
 API-specific credentials, paths, headers, payloads, response rules, outcomes and safe failure
 classifications remain inside each provider implementation.
 
-An [optional Front Door topology](FRONTDOOR.md) can route this same API to regional origins.
+An [optional manual Front Door topology](FRONTDOOR.md) can route this same API to regional origins.
 It does not change caller authentication, JWE validation, nonce semantics, or provider selection,
 and it does not add automatic provider failover or delivery deduplication. Any readiness endpoint
 is separate from this contract and must not deliver OTPs.

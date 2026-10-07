@@ -207,10 +207,10 @@ function Invoke-EppFrontDoor {
     try {
         $account = Az account show --output json | ConvertFrom-Json
         if ([guid]$account.tenantId -ne $TenantId) { throw 'Subscription and tenant mismatch.' }
-        $token = Az account get-access-token --output json | ConvertFrom-Json
-        $part = $token.accessToken.Split('.')[1].Replace('-','+').Replace('_','/')
-        $claims = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($part.PadRight($part.Length + (4-$part.Length%4)%4,'='))) | ConvertFrom-Json
-        $operator = ([guid]$claims.oid).ToString()
+        $operator = & $module {
+            param($Sub, $Tenant)
+            Get-EppArmOperatorObjectId -Inputs @{ SubscriptionId = $Sub; TenantId = $Tenant }
+        } $SubscriptionId.ToString() $TenantId.ToString()
         $site = Arm $sourceId
         $settings = (Arm "$sourceId/config/appsettings/list" 'Post').properties
         $auth = (Arm "$sourceId/config/authsettingsV2/list").properties
@@ -483,16 +483,9 @@ function Test-EppFrontDoor {
         [IO.File]::ReadAllBytes((Join-Path $OutputDirectory 'encryption-public.cer')))
     $rsa = [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($certificate)
     $records = [Collections.Generic.List[object]]::new()
-    $client = $null
+    $invalidToken = ConvertTo-SecureString 'invalid' -AsPlainText -Force
     function Encode([byte[]]$Bytes) { [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+','-').Replace('/','_') }
     try {
-        $handler = [Net.Http.HttpClientHandler]::new()
-        $handler.AllowAutoRedirect = $false
-        $client = [Net.Http.HttpClient]::new($handler)
-        $client.Timeout = [TimeSpan]::FromSeconds(30)
-        $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($AccessToken)
-        try { $token = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
-        finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
         foreach ($mode in @('missing-token','invalid-token','evaluation-1','evaluation-2','evaluation-3')) {
             $nonce = [guid]::NewGuid().ToString('N')
             $correlation = [guid]::NewGuid().ToString()
@@ -512,36 +505,33 @@ function Test-EppFrontDoor {
                 correlationId = $correlation
                 encryptedDeliveryContext = (@($header, (Encode $wrapped), (Encode $iv), (Encode $encrypted), (Encode $tag)) -join '.')
             } | ConvertTo-Json -Compress
-            $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Post, $endpoint)
-            try {
-                $request.Content = [Net.Http.StringContent]::new($body, [Text.Encoding]::UTF8, 'application/json')
-                if ($mode -ne 'missing-token') {
-                    $bearer = if ($mode -eq 'invalid-token') { 'invalid' } else { $token }
-                    $request.Headers.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', $bearer)
+            $request = @{
+                Uri = $endpoint; Method = 'Post'; ContentType = 'application/json'; Body = $body
+                MaximumRedirection = 0; TimeoutSec = 30; SkipHttpErrorCheck = $true
+            }
+            if ($mode -ne 'missing-token') {
+                $request.Authentication = 'Bearer'
+                $request.Token = if ($mode -eq 'invalid-token') { $invalidToken } else { $AccessToken }
+            }
+            $response = Invoke-WebRequest @request
+            $status = [int]$response.StatusCode
+            $passed = $status -in @(401,403)
+            if ($mode -like 'evaluation-*') {
+                $passed = $false
+                if ($status -eq 200) {
+                    $result = $response.Content | ConvertFrom-Json
+                    $passed = $result.nonce -ceq $nonce -and $result.correlationId -ceq $correlation
                 }
-                $response = $client.SendAsync($request).GetAwaiter().GetResult()
-                try {
-                    $status = [int]$response.StatusCode
-                    $passed = $status -in @(401,403)
-                    if ($mode -like 'evaluation-*') {
-                        $passed = $false
-                        if ($status -eq 200) {
-                            $result = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json
-                            $passed = $result.nonce -ceq $nonce -and $result.correlationId -ceq $correlation
-                        }
-                    }
-                    $records.Add(@{ check = $mode; httpStatus = $status; passed = $passed; correlationId = $correlation })
-                    Write-Host "$mode HTTP $status; passed=$passed"
-                } finally { $response.Dispose() }
-            } finally { $request.Dispose() }
+            }
+            $records.Add(@{ check = $mode; httpStatus = $status; passed = $passed; correlationId = $correlation })
+            Write-Host "$mode HTTP $status; passed=$passed"
         }
         $records | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'evaluation-results.json') -Encoding utf8NoBOM
         if (@($records | Where-Object { -not $_.passed }).Count) { throw 'Front Door evaluation/authentication checks failed. No live messages were sent.' }
         Write-Host 'Evaluation passed from this caller. This does not prove every origin, failover timing, or live provider delivery.'
     }
     finally {
-        $token = $null
-        if ($client) { $client.Dispose() }
+        $invalidToken.Dispose()
         $rsa.Dispose()
         $certificate.Dispose()
     }

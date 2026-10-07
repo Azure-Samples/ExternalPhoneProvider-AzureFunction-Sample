@@ -11,32 +11,20 @@ and leaves the source endpoint and authentication policy unchanged. Failover can
 
 ## Scripted JavaScript expansion
 
-Run this script from a reviewed repository checkout, not as a standalone downloaded file. It uses
-[frontdoor-regions.bicep](../setup/infra/frontdoor-regions.bicep) to call the existing
-[regional Function module](../setup/infra/resources.bicep) for each new region. The same module
-continues to serve the single-region setup when no Front Door configuration is passed.
+Run from a reviewed repository checkout. [frontdoor-regions.bicep](../setup/infra/frontdoor-regions.bicep)
+reuses the existing [Function module](../setup/infra/resources.bicep); single-region defaults stay unchanged.
 
 ### Supported source and prerequisites
 
-- PowerShell **7.4+**, Azure CLI with Bicep installed, and an Azure user account signed into the
-  source subscription and tenant. The new setup does not install tools or change your CLI default.
-- An existing **Linux JavaScript EP1** EPP Function using private Blob run-from-package with
-  system-assigned managed-identity access. Remote-build, FC1, Python, and .NET sources are rejected.
-- Enforced HTTPS Easy Auth, an issuer in the selected tenant, a **v2 application-ID audience**,
-  and a nonempty authorized-caller list. Additional principal/claim restrictions are rejected
-  instead of silently dropped.
-- A current, enabled, exportable RSA PEM certificate named `phone-provider-encryption`. The source
-  Function must use its latest version-pinned backing secret, with more than 30 days of validity.
-  The script does not rotate or register a new key.
-- Permission to read the source app configuration and package, back up its certificate, and
-  deploy the new resources and scoped role assignments. API-key cloning also needs permission to
-  back up the provider's named secrets. No Microsoft Graph or policy permissions are granted.
-- Two or three distinct target regions in the **same subscription and Azure geography as the source
-  vault**, with suitable EP1 quota and availability for all dependencies.
-- For provider-enabled expansion, a supported API-key setup profile and provider secrets in the
-  source certificate vault. OAuth provider federation is **not automated** by this first version.
-  For OAuth sources or sources with no provider, use `-EvaluationOnly` explicitly to validate
-  infrastructure without configuring a provider. This cannot send live messages successfully.
+| Requirement | Supported configuration |
+|---|---|
+| Tools | PowerShell **7.4+**, Azure CLI and Bicep, with an Azure user signed into the source tenant/subscription. Tools are not installed and the CLI default is not changed. |
+| Source | **Linux JavaScript EP1**, private Blob run-from-package, system-assigned package identity. FC1, remote-build, Python, and .NET sources are rejected. |
+| Caller trust | HTTPS Easy Auth, the selected tenant's issuer, a **v2 application-ID audience**, and a nonempty caller allowlist. Additional principal/claim restrictions are rejected, not dropped. |
+| Certificate | Enabled, exportable RSA PEM certificate `phone-provider-encryption`. The source must pin its latest backing-secret version, with over 30 days remaining. No key rotation or registration is performed. |
+| Permissions | Read source settings/package; back up its certificate and any provider secrets; deploy resources and scoped roles. No Graph or policy permissions are granted. |
+| Regions | Two or three distinct regions in the **source vault's subscription and Azure geography**, with sufficient EP1 quota and all required services. |
+| Provider | A supported API-key setup profile with credentials in the source certificate vault. OAuth federation is not automated. Use **`-EvaluationOnly`** for OAuth or unconfigured sources; it omits provider configuration and cannot deliver live messages. |
 
 ### Deploy
 
@@ -54,35 +42,25 @@ From the repository root:
     -EvaluationOnly
 ```
 
-Replace the placeholders and choose regions that meet your requirements. The prefix must be 3-10
-lowercase letters/digits, starting with a letter. Read-only source inspection and package download
-happen before approval. Review the source, target groups, package hash, provider mode, and charges.
-Type `Yes` to proceed, or use both `-NonInteractive -ApproveDeployment` for an explicitly approved
-unattended run.
+Replace the placeholders. The prefix must be 3-10 lowercase letters/digits, starting with a letter.
+The script inspects the source and downloads its package before asking for approval. Review the plan
+and charges, then type `Yes`. Unattended runs require both `-NonInteractive -ApproveDeployment`.
 
-The script:
+Setup creates Front Door Standard and **new regional copies**, leaving the source outside the origin
+group. It adds opt-in readiness to a copy of the ZIP without changing delivery files or dependencies,
+records both package hashes, and publishes identical bytes to private regional storage. Certificate
+and API-key credentials use encrypted Key Vault backups; incompatible existing copies are not overwritten.
 
-1. Creates a separate Front Door Standard profile and two or three **new** regional deployments.
-   The source is a configuration/package/key source, not an origin in the new group.
-2. Adds the reviewed, opt-in readiness handler to a copy of the source ZIP. Delivery files and
-   dependencies remain unchanged. It records both source and resulting package hashes.
-3. Copies the certificate using encrypted Key Vault backup/restore, pins regional secret references,
-   and uploads identical package bytes to each region's private storage. API-key mode also copies
-   the profile's named credential secrets. Existing incompatible copies are not overwritten.
-4. Checks regional authentication, profile-pinned ingress restrictions, Function registration, and
-   resolved key references before completing the route setup. It does not disable Easy Auth on SendOtp.
-5. Saves `frontdoor-state.json`, a public certificate, and the reviewed package under the selected
-   output directory. No plaintext private key or provider credential is written there.
-
-The readiness endpoint and route may take time to become reachable after ARM reports success.
-Our live validation initially received Front Door 404 responses before the route became available.
-Do not activate policy based on deployment status alone.
+Before completing routes, setup checks authentication, ingress restrictions, Function registration,
+and resolved key references. The output directory holds `frontdoor-state.json`, the public certificate,
+and the reviewed ZIP, never plaintext private keys or provider credentials.
+Front Door initially returned 404 during our deployment's propagation. **Do not activate policy based
+on ARM success alone.**
 
 ### Verify and resume
 
-The deployment ends with **authenticated validation still required**. Obtain an access token through
-your approved test-caller process, using the same tenant, audience, and allowed caller as the source.
-Do not substitute a Function key or your ordinary Azure management token.
+Deployment still requires **authenticated validation**. Obtain a token through your approved caller
+process with the source's tenant, audience, and allowed caller, not a Function key or ARM token.
 
 ```powershell
 $token = Read-Host 'Approved EPP caller access token' -AsSecureString
@@ -96,39 +74,31 @@ finally {
 }
 ```
 
-Use the same entry point for both operations: without `-Verify` it deploys; with `-Verify` it only
-tests the saved endpoint and does not provision or reconfigure Azure resources.
-Verification sends missing-token and invalid-token checks plus three encrypted evaluation requests.
-It stores only sanitized outcomes and correlation IDs. It does not send SMS/voice, retry live sends,
-stop origins, or prove every origin participated. Complete the
+`-Verify` tests the saved endpoint without changing Azure resources: two rejected-token checks and
+three encrypted evaluations, with sanitized results and correlation IDs. It sends no SMS/voice,
+stops no origins, and does not prove each origin participated. Run the
 [per-origin and failover checks](#5-validate-before-manually-activating-policy) separately.
 
-To resume an interrupted setup, use the **same source, arguments, prefix, and output directory**.
-The script retains a fingerprint of the approved source/configuration and verifies its saved package.
-Changes to the source package, key, or selected configuration require review rather than silent reuse.
-Checkpoint writes are atomic and retain a `.previous` copy. Do not remove a checkpoint to bypass
-ownership checks. If a checkpoint is damaged, inspect the previous copy and Azure resource state
-before restoring it manually.
+Resume with the **same source, arguments, prefix, and output directory**. Setup checks the saved
+package and source/configuration fingerprint. Source changes require review. Atomic checkpoints
+retain a `.previous` copy; inspect it and Azure state before recovering a damaged checkpoint.
+Never delete state to bypass ownership checks.
 
-Rerunning can temporarily close **the new origins'** ingress while they are verified and republished.
-Do not rerun on serving origins without a maintenance plan. On failure the script attempts to close
-ingress to its new origins and reports failures to do so. It does not delete resources automatically;
-they can remain billable. The original source and policy remain available for rollback.
+Reruns can close **new-origin ingress** while republishing, so schedule maintenance for serving
+deployments. Failures trigger an attempt to close new-origin ingress and report any cleanup failure.
+Resources are not deleted and remain billable. The source endpoint and policy stay unchanged.
 
 ### What was verified for this script
 
-The JavaScript evaluation-only expansion was deployed in Central US and West US 2. Both new origins
-served valid encrypted evaluations through the new Front Door, and each passed token-rejection,
-malformed-envelope, and tampered-JWE checks when selected individually. Direct origin access was
-denied even with a spoofed Front Door ID header. Certificate continuity, package hashes, resolved
-references, and source configuration were checked.
+The evaluation-only deployment in Central US and West US 2 passed encrypted requests, invalid-token,
+malformed-envelope, and tampered-JWE checks on each new origin. Direct access, including a spoofed
+Front Door ID, was denied. We checked key continuity, package hashes, resolved references, and the
+unchanged source configuration.
 
-A stalled certificate-restore client was interrupted during validation. The setup closed the new
-origins, retained its checkpoint, and resumed using the same package and certificate. The restore
-operation now has a bounded HTTP timeout. Source validation and encrypted-restore safeguards have
-offline coverage. Provider-secret cloning, live API-key delivery, and OAuth federation were not
-exercised by this evaluation-only deployment.
-The older failover measurements below remain observations, not a new performance guarantee.
+After a stalled certificate restore, setup closed the new origins and resumed from its checkpoint.
+Restore now uses a bounded timeout. Offline tests cover source and restore safeguards, but this run
+did **not** exercise provider-secret cloning, live API-key delivery, or OAuth federation.
+The earlier failover measurements below are not a new performance guarantee.
 
 ## Scope and observed behavior
 
