@@ -41,7 +41,7 @@ provider. Background credential refresh can still run independently. Authenticat
 return **401 or 403**; neither is a successful evaluation.
 
 **East US in the diagram is illustrative, not a required or guaranteed deployment location.**
-Choose a region with available Linux Premium EP1 capacity and sufficient quota in your subscription.
+Choose a region with capacity and subscription quota for the selected Linux FC1 or EP1 plan.
 
 Application Insights provides operational telemetry. Provider API keys stay in Key Vault; supported
 OAuth integrations use managed identity. The guided steps below cover the single-region topology
@@ -55,12 +55,12 @@ Use a **dedicated nonproduction tenant and subscription** for your first deploym
 | Requirement | What to prepare |
 |---|---|
 | Provider | An offer from a provider in **Security Store**, with the required SMS or voice route, account/sender registration, and provider onboarding completed. Confirm the provider is supported by the guided setup. |
-| Workstation | Windows with PowerShell 7+ and Azure CLI 2.48.1+ on `PATH`. Certificates are issued inside Key Vault, not the local certificate store. End-to-end setup from Linux or Azure Cloud Shell has not been validated. |
-| Network access | Access to GitHub, Azure, Microsoft Graph, and Key Vault. Python deployment also requires access to the Function's SCM endpoint. |
+| Workstation | Windows with PowerShell 7+ and Azure CLI 2.60.0+ for FC1 or 2.48.1+ for EP1 on `PATH`. Certificates are issued inside Key Vault, not the local certificate store. End-to-end setup from Linux or Azure Cloud Shell has not been validated. |
+| Network access | Access to GitHub, Azure, Microsoft Graph, and Key Vault. FC1 publication and EP1 Python builds also require access to the Function's SCM endpoint. |
 | Azure permissions | An Azure user account permitted to deploy at subscription scope, register required resource providers, and create scoped role assignments. |
 | Microsoft Entra permissions | A Privileged Role Administrator for the application and Microsoft Graph configuration. Setup uses the allowed-tenants preview and requires Microsoft Graph beta access. |
 | Policy activation | An Authentication Policy Administrator to activate the endpoint after validation. Deployment alone does not activate it. |
-| Region and hosting | A region supporting Linux Premium EP1 with sufficient EP1 quota for your subscription. Resource-provider registration does not grant quota. Deployed resources incur Azure charges; review the hosting plan before approval. |
+| Region and hosting | A region supporting the selected Linux FC1 or EP1 plan with sufficient subscription quota. Resource-provider registration does not grant quota. Deployed resources can incur Azure charges; review the hosting plan before approval. |
 | C# only | The .NET 8 SDK and NuGet access. Setup builds and publishes the selected .NET package automatically. |
 
 Setup can install missing Microsoft Graph PowerShell modules and the Azure CLI Bicep component
@@ -99,6 +99,7 @@ Have the following values ready before running setup:
 | Azure region | Places this deployment in one region. |
 | Channel and provider scope | Selects SMS or voice and the provider's Global or EU route. Provider scope is separate from the Azure region. |
 | Language | Selects one of the equivalent Function implementations below. |
+| Service plan | Selects Flex Consumption FC1 or Premium EP1. Required explicitly for unattended setup. |
 | Resource prefix | Use 2-8 lowercase letters or digits, starting with a letter, such as `contoso`. Setup adds resource-specific names and a suffix. |
 
 ### 2. Deploy the endpoint
@@ -129,12 +130,17 @@ Choose **one language**; do not deploy all three implementations into the same F
 | C# | .NET 8 isolated, Functions v4 | Verifies the source package, builds it with your .NET SDK, and publishes the output. |
 | Python | Python 3.11, Functions v4 | Verifies the source package and uses Azure remote build to install dependencies before publishing. |
 
+Choose **Flex Consumption FC1** for zero always-ready instances and scale-to-zero, or **Premium EP1**
+for a warm instance. FC1 includes a free usage grant, not a zero-charge guarantee, and can cold-start.
+See [service plan selection](setup/docs/README.md#service-plan-selection) for cache app settings and
+migration limits. Unattended runs require `-ServicePlan FC1` or `-ServicePlan EP1`.
+
 The script prompts for missing inputs, retrieves its support files and provider profile, and selects
 the latest stable Function package release by default. It verifies package checksums; you do not
 need to locate a ZIP or enter a package URL manually.
 
 Before approving, review the displayed **tenant, subscription, application ID, region, provider
-route, language, resource names, permissions, and certificate changes**. Setup configures the
+route, language, service plan, cache app settings, resource names, permissions, and certificate changes**. Setup configures the
 endpoint app and grants the Microsoft phone-provider service principal Microsoft Graph
 `Application.Read.All`; understand these permissions before proceeding.
 
@@ -143,7 +149,7 @@ consent, and prerequisite-installation prompts are separate from deployment appr
 
 #### What successful setup produces
 
-- A dedicated resource group, Linux Premium EP1 plan, Function App, and storage account.
+- A dedicated resource group, selected Linux FC1 or EP1 plan, Function App, and storage account.
 - Key Vault and the encryption certificate/key configuration.
 - Managed identities, scoped role assignments, and Easy Auth caller restrictions.
 - Application Insights, a Log Analytics workspace, and diagnostics.

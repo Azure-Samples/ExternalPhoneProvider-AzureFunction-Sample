@@ -15,7 +15,8 @@ Front Door origins. A successful deployment or evaluation doesn't prove live del
 ## Availability
 
 Choose **SMS or voice**, a **Global or EU tenant scope**, **Telesign or Soprano**, and an
-Azure Function **platform**: Node.js, .NET, or Python. By default, setup resolves the source repository's latest stable
+Azure Function **platform**: Node.js, .NET, or Python, plus a **service plan**: Flex Consumption FC1
+or Premium EP1. By default, setup resolves the source repository's latest stable
 `epp-packages-*` release produced by CI. A private test branch can use its matching fork release.
 There is no package URL or checksum to enter. Setup verifies `SHA256SUMS.txt` automatically and
 performs the required build and publication for the selected language.
@@ -30,6 +31,39 @@ release, then use `-SourceRepository <owner/repository>` and
 `-SourceRef <branch-or-full-commit-sha>`. Both options must identify the same source as the downloaded
 launcher. Use `-PackageReleaseTag` if the fork contains more than one stable package release.
 Unpublished worktree changes are not downloadable from GitHub.
+
+## Service plan selection
+
+Setup offers these two Linux hosting plans, with the same cache app settings for every language:
+
+| Option | Hosting | `EPP_KEY_VAULT_CACHE_ENABLED` | `EPP_ACCESS_TOKEN_CACHE_ENABLED` |
+|---|---|---|---|
+| 1. Flex Consumption (FC1) | On-demand with a free usage grant; zero always-ready instances, 2048 MB, up to 40 on-demand instances | `"false"` | `"false"` |
+| 2. Premium (EP1) | Existing Premium configuration with one warm instance | `"true"` | `"true"` |
+
+**FC1 is not an always-free deployment.** Its on-demand compute has a
+[free usage grant](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan#billing);
+usage beyond the grant, Key Vault, storage, telemetry, and provider services can incur charges.
+FC1 can scale to zero and cold-start; these settings do not remove cold-start latency or force a
+new worker on every invocation.
+
+**Cache settings require runtime support.** Setup only writes the two app settings above; they do
+not change caching in a Function package that does not read them. Runtime cache-reader changes are
+separate and must be released and deployed before these settings take effect. Rerunning setup
+restores the selected plan's values. The decryption-key Key Vault reference remains platform-managed.
+
+Use `-ServicePlan FC1` or `-ServicePlan EP1` to skip the prompt. Unattended setup requires this
+parameter; it never silently chooses a paid plan. The approval and deployment summary include
+the selected plan and both cache settings.
+
+**Use a different resource prefix to change plans.** In-place FC1/EP1 migration is not supported.
+Preflight rejects a mismatch with the existing resource-group tag or actual hosting-plan SKU,
+including older EP1 deployments without the new tag. Existing EP1 deployments can be rerun with
+`-ServicePlan EP1`.
+For an active endpoint, onboard a new dedicated Step 1 application as well, or coordinate an
+encryption-key continuity migration with its owner. A new prefix creates a new vault and encryption
+key; it does not bypass the existing application's certificate-continuity checks. Setup does not
+automatically migrate keys or activate the replacement endpoint.
 
 ## Step 1 - manually create the application
 
@@ -60,9 +94,10 @@ disclosed outbound managed-identity federated credential.
 - **Windows with PowerShell 7+** is the supported customer deployment environment. Certificate
   issuance now happens inside Key Vault, without Windows certificate cmdlets or the local certificate
   store. End-to-end deployment from Linux or Azure Cloud Shell has not been validated.
-- Azure CLI **2.48.1+** on `PATH`, with access to GitHub, Azure, Microsoft Graph, and Key Vault.
+- Azure CLI **2.60.0+ for FC1** or **2.48.1+ for EP1** on `PATH`, with access to GitHub, Azure, Microsoft Graph, and Key Vault.
   Setup installs the Azure CLI Bicep component after confirmation when it is missing. Azure CLI itself
-  must be installed before running the script. Python additionally needs network access to SCM.
+  must be installed before running the script. FC1 publication and EP1 Python builds also need
+  network access to SCM.
 - Microsoft Graph PowerShell modules `Microsoft.Graph.Authentication` and
   `Microsoft.Graph.Applications`. Setup installs missing 2.x+ modules from PSGallery for CurrentUser
   after a separate confirmation.
@@ -77,9 +112,10 @@ disclosed outbound managed-identity federated credential.
   principal or the endpoint app.
 - Microsoft Graph **beta** access for the Entra `signInAudienceRestrictions` allowed-tenants preview.
   The selected provider tenant is allowed in addition to the app's home tenant, which Entra always allows.
-- **Linux Premium EP1** available in the chosen region, with sufficient subscription quota for the
-  deployment. Regional service availability and resource-provider registration do not guarantee
-  EP1 quota. If deployment reports `SubscriptionIsOverQuotaForSku`, resolve the
+- The selected **Linux Flex Consumption FC1 or Premium EP1** plan available in the chosen region,
+  with sufficient subscription quota. Availability is checked for that plan only; regional service
+  availability and resource-provider registration do not guarantee quota. If deployment reports
+  `SubscriptionIsOverQuotaForSku`, resolve the
   [regional quota issue](Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku)
   before retrying. Setup registers missing required Azure
   resource providers automatically after the single approval. The Azure account needs the
@@ -94,10 +130,12 @@ disclosed outbound managed-identity federated credential.
 |---|---|---|
 | JavaScript | Node.js 22, Functions v4 | Verify and publish the ready ZIP with its production dependencies |
 | .NET | .NET 8 isolated, Functions v4 | Verify source ZIP, publish for Linux with .NET 8, repackage and publish |
-| Python | Python 3.11, Functions v4 | Verify source ZIP, request Azure remote build, validate/download built output, publish that output |
+| Python | Python 3.11, Functions v4 | Verify source ZIP; One Deploy with remote build on FC1, or validate/download and publish the SCM-built output on EP1 |
 
 Package hashes are still checked; removing the **customer prompt** does not disable integrity
 verification. Source and deployed-package hashes are recorded separately when a build changes the bytes.
+For FC1 Python, One Deploy builds and stores the output inside Azure; the summary records the
+verified source hash and leaves `packageSha256` null rather than reporting it as the built-output hash.
 
 Setup normally detects these automatically. For unattended execution, allow installation explicitly:
 
@@ -150,21 +188,24 @@ The flow is:
    `PackageUrl` or `PackageSha256` inputs. Use
    `-PackageReleaseTag epp-packages-<run>-<attempt>` to pin a previous CI release. Malformed or
    disabled profiles still fail before resource creation.
-4. **Enter a resource prefix**, such as `contoso`. All resources created by the script start with
+4. **Service plan selection:** choose **Flex Consumption FC1** (free usage grant, zero always-ready
+   instances, both cache settings `"false"`) or **Premium EP1** (warm instance, both cache settings `"true"`).
+   Supply `-ServicePlan FC1` or `-ServicePlan EP1` to reuse a known selection.
+5. **Enter a resource prefix**, such as `contoso`. All resources created by the script start with
    this prefix. Use 2-8 lowercase letters or digits, starting with a letter. Every top-level
    resource name then adds the meaningful `epp` marker, for example
    `contoso-epp-rg-<suffix>`. A deterministic suffix derived from the
    subscription, application ID, and prefix reduces global-name collisions. Reruns use the same names.
-5. **Check prerequisites and sign in.** Missing Graph modules or Bicep can be installed after a
+6. **Check prerequisites and sign in.** Missing Graph modules or Bicep can be installed after a
    separate confirmation. Azure and Graph interactive sign-in starts only when the supplied tenant
    and subscription do not already have suitable user contexts.
-6. **Review the complete plan**, including resource names, tenant/subscription, language, automatic
-   package verification/build, provider
+7. **Review the complete plan**, including resource names, tenant/subscription, language, service plan,
+   both cache settings, automatic package verification/build, provider
    settings, scoped roles, certificate creation, and application configuration. Bicep receives these
    exact names; it does not independently calculate a different naming scheme.
    The plan also lists the six required **Azure resource providers** and their registration states.
    This is separate from the Telesign/Soprano provider selection.
-7. **Type `Yes` once to deploy.** `No` or Enter cancels without Azure changes. Invalid answers prompt
+8. **Type `Yes` once to deploy.** `No` or Enter cancels without Azure changes. Invalid answers prompt
    again; individual resources do not request additional approvals.
 
 After approval, setup rechecks the selected subscription and registers only missing
@@ -189,11 +230,12 @@ Supply known values to shorten the prompts:
     -ApplicationId <existing-client-id> `
     -Location westus2 `
     -Language javascript `
+    -ServicePlan FC1 `
     -Provider telesign `
     -ResourcePrefix contoso
 ```
 
-The plan creates or updates a dedicated resource group, Linux Premium EP1 hosting plan, Function App,
+The plan creates or updates a dedicated resource group, selected Linux FC1 or EP1 hosting plan, Function App,
 storage account/private package container, Key Vault, Log Analytics workspace, Application Insights,
 outbound managed identity, diagnostics, Easy Auth, and scoped role assignments. Storage/package
 access uses managed identity, not account keys or SAS. Telemetry uses the system identity; the
@@ -205,10 +247,14 @@ certificate. Its subject and Entra certificate display name are both **`CN=Exter
 without an application ID, resource prefix, or thumbprint in the name. Setup registers the public
 certificate in Entra with `Usage=Encrypt` and pins `EPP_DECRYPTION_KEY_PEM` to its **versioned PEM
 backing secret**. It **reads back and verifies Easy Auth before enabling ingress**.
-Python requires this access for its Entra-authenticated SCM remote build; SCM basic authentication
-stays disabled. Setup validates the built Python payload, stores it in private Blob storage, and
-switches to managed-identity run-from-package. It never mounts the unbuilt Python source ZIP.
-For every language, setup restarts, synchronizes triggers, and verifies that `SendOtp` is registered.
+SCM basic authentication stays disabled for both plans. FC1 uses Entra-authenticated **One Deploy**
+for every language, with remote build for Python. Its `functionAppConfig` defines runtime, scaling,
+and managed-identity deployment storage; setup does not write Premium-only runtime/build or
+`WEBSITE_RUN_FROM_PACKAGE` settings. One Deploy handles publication and trigger synchronization.
+EP1 Python uses the Entra-authenticated SCM remote build: setup validates the built Python payload,
+stores it in private Blob storage, and switches to managed-identity run-from-package.
+It never mounts the unbuilt Python source ZIP. EP1 then restarts and synchronizes triggers.
+Both plans verify that `SendOtp` is registered before reporting success.
 On publication/startup failure it disables public ingress again; failure to close ingress is reported
 explicitly rather than hidden.
 App-setting changes refresh Key Vault references through App Service. Setup does not separately poll
@@ -217,11 +263,13 @@ secret-resolution status; the required deployed evaluation request verifies decr
 The public certificate and a timestamped identifier
 summary are saved to `epp-output` beside the downloaded script, or to `-OutputDirectory`.
 The summary includes certificate/secret version identifiers, thumbprint, expiry, and manual renewal
-mode. Setup never downloads, writes, or imports the private key locally: only the Function receives
+mode. Its service-plan and cache fields record configured settings, not verified runtime cache behavior.
+Setup never downloads, writes, or imports the private key locally: only the Function receives
 it through its managed-identity Key Vault reference. Certificate creation automatically supplies the
 backing secret; setup no longer writes a separate `phone-provider-decryption-key` secret.
 
-For unattended runs, supply every input, authenticate both clients first, and explicitly authorize
+For unattended runs, supply every input including `-ServicePlan FC1` or `-ServicePlan EP1`,
+authenticate both clients first, and explicitly authorize
 the whole displayed plan with **both** `-NonInteractive -ApproveDeployment`. `-NonInteractive`
 alone never approves changes. There is no `-Stage`, `-Resume`, `-ConfigPath`, or policy-approval switch.
 
@@ -274,17 +322,20 @@ PowerShell is executed locally.
 
 ### Offline setup checks
 
-From the repository root, run the certificate regression suite without Azure sign-in or resource
-changes, then compile the infrastructure:
+From the repository root, run the certificate regression suite, compile the infrastructure, and
+check both service plans without Azure sign-in or resource changes:
 
 ```powershell
 pwsh -NoProfile -File .\setup\tests\Certificates.Tests.ps1
 az bicep build --file .\setup\infra\main.bicep --outfile "$env:TEMP\epp-main.json"
+pwsh -NoProfile -File .\setup\tests\ServicePlans.Tests.ps1 -TemplatePath "$env:TEMP\epp-main.json"
 ```
 
 The focused tests replace certificate/Graph calls and verify creation, reuse, errors, naming, key
-mismatch, and versioned settings. CI runs them on Windows and Linux. They do not simulate the full
-deployment or certify live RBAC propagation, Key Vault issuance, Entra behavior, or provider delivery.
+mismatch, and versioned settings. The service-plan suite checks selections, approval details, regional
+checks, CLI requirements, migration guards, parameter forwarding, and plan-specific publication
+with mocked Azure calls. CI runs both on Windows and Linux. They do not certify live deployments,
+RBAC propagation, Key Vault issuance, Entra behavior, or provider delivery.
 
 ## Step 3 - manually validate and activate policy
 

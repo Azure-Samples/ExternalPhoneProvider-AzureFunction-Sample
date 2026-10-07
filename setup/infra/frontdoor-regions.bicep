@@ -52,6 +52,7 @@ module regionalEndpoints 'resources.bicep' = [for (location, i) in locations: {
     packageBlobName: packageBlobName
     language: 'javascript'
     remoteBuild: false
+    servicePlan: 'EP1'
     frontDoor: {
       id: frontDoorId
       callerApplicationIds: callerApplicationIds

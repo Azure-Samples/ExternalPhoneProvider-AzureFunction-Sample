@@ -163,6 +163,7 @@ try {
                 }
                 closed = [Collections.Generic.List[string]]::new()
                 cleanupFailure = $false
+                sourcePlan = 'EP1'
             }
             $script:mockSetup = New-Module -ArgumentList $deploymentTest -ScriptBlock {
                 param($Test)
@@ -214,7 +215,7 @@ try {
                     '/sites/source/config/appsettings/list$' { return @{ properties = $deploymentTest.settings } }
                     '/sites/source/config/authsettingsV2/list$' { return @{ properties = $deploymentTest.auth } }
                     '/sites/source$' { return @{ kind = 'functionapp,linux'; properties = @{ serverFarmId = '/serverfarms/source-plan' } } }
-                    '/serverfarms/source-plan$' { return @{ sku = @{ name = 'EP1' } } }
+                    '/serverfarms/source-plan$' { return @{ sku = @{ name = $deploymentTest.sourcePlan } } }
                     default { throw "Unexpected ARM call (no network allowed): $Method $Uri" }
                 }
             }
@@ -231,13 +232,19 @@ try {
                     EvaluationOnly = $true; NonInteractive = $true; OutputDirectory = $output
                     AssetDirectory = (Split-Path $PSScriptRoot)
                 }
-                foreach ($scenario in @('unapproved','partial','resume','cleanup-failure')) {
+                foreach ($scenario in @('fc1-source','unapproved','partial','resume','cleanup-failure')) {
                     $approved = $scenario -ne 'unapproved'
                     $deploymentTest.cleanupFailure = $scenario -eq 'cleanup-failure'
+                    $deploymentTest.sourcePlan = if ($scenario -eq 'fc1-source') { 'FC1' } else { 'EP1' }
                     $deploymentTest.closed.Clear()
                     $failure = $null
                     try { Invoke-EppFrontDoor @parameters -ApproveDeployment:$approved -WarningVariable warnings -WarningAction SilentlyContinue }
                     catch { $failure = $_.Exception.Message }
+                    if ($scenario -eq 'fc1-source') {
+                        Assert ($failure -eq 'Only source EP1 plans are supported. FC1 expansion is not implemented.') "Expected FC1 source rejection, got: $failure"
+                        Assert ($deploymentTest.closed.Count -eq 0 -and -not (Test-Path $output)) 'Unsupported source plans must fail before any mutations.'
+                        continue
+                    }
                     if (-not $approved) {
                         Assert ($failure -eq 'Noninteractive deployment requires -ApproveDeployment.') "Expected approval guard, got: $failure"
                         Assert ($deploymentTest.closed.Count -eq 0 -and -not (Test-Path $output)) 'Unapproved runs must not mutate resources or state.'
