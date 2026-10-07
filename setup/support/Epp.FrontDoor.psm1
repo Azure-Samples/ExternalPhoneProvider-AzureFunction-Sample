@@ -203,7 +203,6 @@ function Invoke-EppFrontDoor {
     $temporary = Join-Path ([IO.Path]::GetTempPath()) ('epp-frontdoor-' + [guid]::NewGuid().ToString('N'))
     $state = $null
     $mutating = $false
-    $names = @()
     try {
         $account = Az account show --output json | ConvertFrom-Json
         if ([guid]$account.tenantId -ne $TenantId) { throw 'Subscription and tenant mismatch.' }
@@ -345,7 +344,7 @@ function Invoke-EppFrontDoor {
             applicationId = $source.applicationId; deployerObjectId = $operator
             sourceResourceId = $sourceId; packageBlobName = "$($packageHash.ToLower()).zip"
             providerSettings = $providerSettings; frontDoorId = $state.frontDoorId
-            issuer = $source.issuer; audience = $source.applicationId; callerApplicationIds = $source.callers
+            callerApplicationIds = $source.callers
         }
         if (-not $state.ContainsKey('regions')) {
             $file = ParameterFile 'regions.json' $values
@@ -357,13 +356,13 @@ function Invoke-EppFrontDoor {
             StateWrite
         }
         Assert-FdRegions $state.regions $ResourcePrefix $Locations
-        $names = @($state.regions | ForEach-Object { $_.names })
         $backup = Join-Path $temporary 'certificate.backup'
         DataAz keyvault certificate backup --vault-name $source.sourceVault --name phone-provider-encryption --file $backup --output none | Out-Null
         foreach ($secret in $secretNames) {
             DataAz keyvault secret backup --vault-name $source.sourceVault --name $secret --file (Join-Path $temporary "$secret.backup") --output none | Out-Null
         }
-        foreach ($name in $names) {
+        foreach ($region in $state.regions) {
+            $name = $region.names
             $targetStorage = Az storage account show --resource-group $name.resourceGroup --name $name.storageAccount --output json | ConvertFrom-Json
             if ($targetStorage.id -notlike "/subscriptions/$SubscriptionId/resourceGroups/$($name.resourceGroup)/*") { throw 'Target package storage is outside the expansion.' }
             $id = "/subscriptions/$SubscriptionId/resourceGroups/$($name.resourceGroup)/providers/Microsoft.Web/sites/$($name.functionApp)"
@@ -444,19 +443,20 @@ function Invoke-EppFrontDoor {
         Write-Host 'Source endpoint and policy unchanged. Verify authenticated evaluation and provider delivery before manual policy activation.'
     }
     catch {
+        $failure = $_
         if ($mutating -and $state) {
             $state.phase = 'failed'
             $state.recovery = 'Review original error; resume with the same unchanged source, inputs and output directory.'
-            if ($state.ContainsKey('regions')) {
-                foreach ($region in $state.regions) {
-                    $id = "/subscriptions/$SubscriptionId/resourceGroups/$($region.names.resourceGroup)/providers/Microsoft.Web/sites/$($region.names.functionApp)"
-                    try { $null = Arm $id 'Patch' @{ properties = @{ publicNetworkAccess = 'Disabled' } } }
-                    catch { Write-Warning "Could not close ingress for $($region.names.functionApp). Check it manually." }
-                }
+            # ARM may create origins before returning outputs or saving their checkpoint.
+            foreach ($i in 0..($Locations.Count-1)) {
+                $id = "/subscriptions/$SubscriptionId/resourceGroups/$ResourcePrefix-$i-rg/providers/Microsoft.Web/sites/$ResourcePrefix-$i-func"
+                try { $null = Arm $id 'Patch' @{ properties = @{ publicNetworkAccess = 'Disabled' } } }
+                catch { Write-Warning "Could not close ingress for $ResourcePrefix-$i-func. Check it manually." }
             }
-            StateWrite
+            try { StateWrite }
+            catch { Write-Warning 'Could not save the failure checkpoint. Review Azure state before resuming.' }
         }
-        throw
+        throw $failure
     }
     finally {
         if (Test-Path $temporary) {
@@ -476,7 +476,8 @@ function Test-EppFrontDoor {
     $state = Get-Content -LiteralPath (Join-Path $OutputDirectory 'frontdoor-state.json') -Raw | ConvertFrom-Json
     $endpoint = [uri]$state.endpointUrl
     if ($endpoint.Scheme -ne 'https' -or $endpoint.Host -notmatch '^[a-z0-9.-]+\.azurefd\.net$' -or
-        $endpoint.AbsolutePath -cne '/api/SendOtp' -or $endpoint.Query -or $endpoint.Fragment -or $endpoint.UserInfo) {
+        -not $endpoint.IsDefaultPort -or $endpoint.AbsolutePath -cne '/api/SendOtp' -or
+        $endpoint.Query -or $endpoint.Fragment -or $endpoint.UserInfo) {
         throw 'State does not identify an HTTPS Front Door SendOtp endpoint.'
     }
     $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new(

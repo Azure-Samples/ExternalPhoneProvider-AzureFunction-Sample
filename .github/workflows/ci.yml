@@ -24,12 +24,10 @@ jobs:
         run: |
           az bicep install
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          foreach ($name in @('frontdoor', 'frontdoor-regions')) {
+          foreach ($name in @('main', 'frontdoor', 'frontdoor-regions')) {
             az bicep build --file (Join-Path $env:GITHUB_WORKSPACE "setup/infra/$name.bicep") --outfile (Join-Path $env:RUNNER_TEMP "epp-$name.json")
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          az bicep build --file (Join-Path $env:GITHUB_WORKSPACE 'setup/infra/main.bicep') --outfile (Join-Path $env:RUNNER_TEMP 'epp-main.json')
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   javascript:
     name: JavaScript (Node.js)

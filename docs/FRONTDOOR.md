@@ -74,7 +74,7 @@ finally {
 }
 ```
 
-`-Verify` tests the saved endpoint without changing Azure resources: two rejected-token checks and
+`-Verify` tests the saved HTTPS endpoint on port 443 without changing Azure resources: two rejected-token checks and
 three encrypted evaluations, with sanitized results and correlation IDs. It sends no SMS/voice,
 stops no origins, and does not prove each origin participated. Run the
 [per-origin and failover checks](#5-validate-before-manually-activating-policy) separately.
@@ -85,7 +85,8 @@ retain a `.previous` copy; inspect it and Azure state before recovering a damage
 Never delete state to bypass ownership checks.
 
 Reruns can close **new-origin ingress** while republishing, so schedule maintenance for serving
-deployments. Failures trigger an attempt to close new-origin ingress and report any cleanup failure.
+deployments. Failures attempt to close every target origin, even if deployment failed before saving
+regional outputs. Cleanup failures are reported without replacing the original deployment error.
 Resources are not deleted and remain billable. The source endpoint and policy stay unchanged.
 
 ### What was verified for this script
@@ -221,8 +222,8 @@ endpoint would test authentication failure rather than application readiness.
 Implement a separate route such as **`/api/health/ready`** with this contract:
 
 - Support HTTPS `HEAD` and `GET`; return no response body for `HEAD`.
-- Return `200` only when the handler is running and the configured RSA decryption key is usable.
-  Return a generic `503` when not ready.
+- Return `200` only when the handler is running and the configured RSA decryption key is at least
+  2048 bits and usable with RSA-OAEP-256. Return a generic `503` when not ready.
 - Do not send an OTP or call a phone provider. Do not return a nonce, keys, credentials, or detailed
   configuration. Use `Cache-Control: no-store`.
 - If the route requires an Easy Auth exemption, exempt **only that exact readiness path**.

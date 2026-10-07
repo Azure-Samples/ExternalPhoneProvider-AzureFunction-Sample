@@ -14,8 +14,6 @@ param packageBlobName string
 @secure()
 param providerSettings object
 param frontDoorId string
-param issuer string
-param audience string
 @minLength(1)
 param callerApplicationIds string[]
 
@@ -56,8 +54,6 @@ module regionalEndpoints 'resources.bicep' = [for (location, i) in locations: {
     remoteBuild: false
     frontDoor: {
       id: frontDoorId
-      issuer: issuer
-      audience: audience
       callerApplicationIds: callerApplicationIds
     }
   }

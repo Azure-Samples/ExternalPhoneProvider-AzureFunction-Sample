@@ -136,6 +136,124 @@ try {
                 $reader = [IO.StreamReader]::new($zip.GetEntry('src/functions/SendOtp.js').Open())
                 try { Assert ($reader.ReadToEnd() -eq 'unchanged') 'Existing handler was changed.' } finally { $reader.Dispose() }
             } finally { $zip.Dispose() }
+            $rsa = [Security.Cryptography.RSA]::Create(2048)
+            $request = [Security.Cryptography.X509Certificates.CertificateRequest]::new(
+                'CN=OfflineDeployment', $rsa, [Security.Cryptography.HashAlgorithmName]::SHA256,
+                [Security.Cryptography.RSASignaturePadding]::Pkcs1)
+            $certificate = $request.CreateSelfSigned([DateTimeOffset]::UtcNow.AddDays(-1), [DateTimeOffset]::UtcNow.AddDays(60))
+            $output = Join-Path $directory 'deployment'
+            $settings.EPP_DECRYPTION_KEY_PEM = '@Microsoft.KeyVault(SecretUri=https://testvault.vault.azure.net/secrets/phone-provider-encryption/aaaaaaaa)'
+            $script:deploymentTest = @{
+                package = $zipPath; settings = $settings; auth = $auth; tenant = $tenant
+                certificate = @{
+                    sid = 'https://testvault.vault.azure.net/secrets/phone-provider-encryption/aaaaaaaa'
+                    cer = [Convert]::ToBase64String($certificate.RawData); attributes = @{ enabled = $true }
+                    policy = @{ keyProperties = @{ exportable = $true; keyType = 'RSA' }
+                        secretProperties = @{ contentType = 'application/x-pem-file' } }
+                }
+                closed = [Collections.Generic.List[string]]::new()
+                cleanupFailure = $false
+            }
+            $script:mockSetup = New-Module -ArgumentList $deploymentTest -ScriptBlock {
+                param($Test)
+                function Get-EppArmOperatorObjectId { param($Inputs); return $Test.tenant }
+                function Invoke-EppDataOperation { param($Operation); & $Operation }
+                function Invoke-EppAz {
+                    param([Parameter(ValueFromRemainingArguments)][string[]]$Arguments)
+                    switch -Regex ($Arguments -join ' ') {
+                        '^account show ' { return @{ tenantId = $Test.tenant } | ConvertTo-Json }
+                        '^account get-access-token ' { return '{"accessToken":"offline-test"}' }
+                        '^keyvault show ' {
+                            return @{ id = "/subscriptions/$($Test.tenant)/resourceGroups/source/providers/Microsoft.KeyVault/vaults/testvault"
+                                location = 'centralus' } | ConvertTo-Json
+                        }
+                        '^keyvault certificate show ' { return $Test.certificate | ConvertTo-Json -Depth 5 }
+                        '^rest .*locations\?' {
+                            return @{ value = @('centralus','westus2') | ForEach-Object {
+                                @{ name = $_; metadata = @{ geography = 'United States' } }
+                            } } | ConvertTo-Json -Depth 5
+                        }
+                        '^rest .*profiles/test-fd\?' { return @{ properties = @{ frontDoorId = $Test.tenant } } | ConvertTo-Json }
+                        '^storage blob download ' {
+                            Copy-Item -LiteralPath $Test.package -Destination $Arguments[[Array]::IndexOf($Arguments, '--file') + 1]
+                            return
+                        }
+                        '^group exists ' { return 'false' }
+                        '^provider show ' { return 'Registered' }
+                        '^(group create|deployment group (what-if|create)|deployment sub (validate|what-if)) ' { return }
+                        '^deployment sub create ' { throw 'Simulated regional deployment failure.' }
+                        default { throw "Unexpected Azure call (no network allowed): $($Arguments -join ' ')" }
+                    }
+                }
+            }
+            function script:Import-Module { param($Name, [switch]$PassThru, [switch]$Force); $script:mockSetup }
+            function script:Remove-Module { param($ModuleInfo) }
+            function script:Invoke-RestMethod {
+                param([uri]$Uri, $Method, $Headers, $ContentType, $TimeoutSec, $Body)
+                switch -Regex ($Uri.AbsolutePath) {
+                    '/sites/test-[01]-func$' {
+                        if ($Method -ne 'Patch' -or ($Body | ConvertFrom-Json).properties.publicNetworkAccess -ne 'Disabled') {
+                            throw 'Recovery must only disable target ingress.'
+                        }
+                        $deploymentTest.closed.Add($Uri.AbsolutePath)
+                        if ($deploymentTest.cleanupFailure -and $deploymentTest.closed.Count -eq 1) {
+                            throw 'Simulated ingress cleanup failure.'
+                        }
+                        return @{}
+                    }
+                    '/sites/source/config/appsettings/list$' { return @{ properties = $deploymentTest.settings } }
+                    '/sites/source/config/authsettingsV2/list$' { return @{ properties = $deploymentTest.auth } }
+                    '/sites/source$' { return @{ kind = 'functionapp,linux'; properties = @{ serverFarmId = '/serverfarms/source-plan' } } }
+                    '/serverfarms/source-plan$' { return @{ sku = @{ name = 'EP1' } } }
+                    default { throw "Unexpected ARM call (no network allowed): $Method $Uri" }
+                }
+            }
+            $script:writeState = ${function:Write-FdState}
+            function script:Write-FdState {
+                param($Path, $State)
+                if ($deploymentTest.cleanupFailure -and $State.phase -eq 'failed') { throw 'Simulated checkpoint write failure.' }
+                & $script:writeState $Path $State
+            }
+            try {
+                $parameters = @{
+                    SubscriptionId = $tenant; TenantId = $tenant; SourceResourceGroup = 'source'
+                    SourceFunctionApp = 'source'; ResourcePrefix = 'test'; Locations = @('centralus','westus2')
+                    EvaluationOnly = $true; NonInteractive = $true; OutputDirectory = $output
+                    AssetDirectory = (Split-Path $PSScriptRoot)
+                }
+                foreach ($scenario in @('unapproved','partial','resume','cleanup-failure')) {
+                    $approved = $scenario -ne 'unapproved'
+                    $deploymentTest.cleanupFailure = $scenario -eq 'cleanup-failure'
+                    $deploymentTest.closed.Clear()
+                    $failure = $null
+                    try { Invoke-EppFrontDoor @parameters -ApproveDeployment:$approved -WarningVariable warnings -WarningAction SilentlyContinue }
+                    catch { $failure = $_.Exception.Message }
+                    if (-not $approved) {
+                        Assert ($failure -eq 'Noninteractive deployment requires -ApproveDeployment.') 'Expected approval guard.'
+                        Assert ($deploymentTest.closed.Count -eq 0 -and -not (Test-Path $output)) 'Unapproved runs must not mutate resources or state.'
+                        continue
+                    }
+                    Assert ($failure -eq 'Simulated regional deployment failure.') "Original deployment failure lost: $failure"
+                    Assert ($deploymentTest.closed.Count -eq 2) 'Partial deployment must close both targets even without a regions checkpoint.'
+                    $checkpoint = Get-Content (Join-Path $output 'frontdoor-state.json') -Raw | ConvertFrom-Json -AsHashtable
+                    $phase = if ($deploymentTest.cleanupFailure) { 'deploying' } else { 'failed' }
+                    Assert ($checkpoint.phase -eq $phase -and -not $checkpoint.ContainsKey('regions')) 'Unexpected partial-deployment checkpoint.'
+                    Assert ((Get-FileHash (Join-Path $output 'frontdoor-package.zip')).Hash -ceq $checkpoint.packageHash) 'Resume changed the approved package.'
+                    if ($deploymentTest.cleanupFailure) {
+                        Assert (@($warnings | Where-Object { $_ -like '*Could not close ingress*' }).Count -eq 1) 'Missing ingress cleanup warning.'
+                        Assert (@($warnings | Where-Object { $_ -like '*Could not save the failure checkpoint*' }).Count -eq 1) 'Missing checkpoint warning.'
+                    }
+                }
+                Write-Host 'PASS: approval and partial-deployment recovery preserve the source and close every target on retry.'
+            } finally {
+                Remove-Item Function:\script:Import-Module, Function:\script:Remove-Module, Function:\script:Invoke-RestMethod
+                Set-Item Function:\script:Write-FdState $script:writeState
+                $certificate.Dispose(); $rsa.Dispose()
+                if (Test-Path $output) {
+                    Get-ChildItem -LiteralPath $output -File | Remove-Item -Force
+                    Remove-Item -LiteralPath $output
+                }
+            }
             $zip = [IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Update)
             try { $null = $zip.CreateEntry('../unsafe') } finally { $zip.Dispose() }
             Reject { Add-FdReadiness $zipPath $handler }
@@ -168,7 +286,8 @@ New-Item -ItemType Directory $temporary | Out-Null
 $token = ConvertTo-SecureString 'test-token' -AsPlainText -Force
 try {
     foreach ($url in @('http://test.azurefd.net/api/SendOtp','https://example.com/api/SendOtp',
-        'https://test.azurefd.net/api/SendOtp?redirect=elsewhere','https://user@test.azurefd.net/api/SendOtp')) {
+        'https://test.azurefd.net/api/SendOtp?redirect=elsewhere','https://user@test.azurefd.net/api/SendOtp',
+        'https://test.azurefd.net:8443/api/SendOtp')) {
         @{ endpointUrl = $url } | ConvertTo-Json | Set-Content (Join-Path $temporary 'frontdoor-state.json')
         $rejected = $false
         try { & $path -Verify -OutputDirectory $temporary -AccessToken $token }

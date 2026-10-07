@@ -2,7 +2,6 @@
 
 const { app } = require('@azure/functions');
 const crypto = require('node:crypto');
-const { readConfig } = require('./config');
 const {
     createRequestContext,
     extendRequestContext,
@@ -22,7 +21,7 @@ function isKeyReady(pem) {
         const normalized = pem.includes('-----BEGIN')
             ? pem : Buffer.from(pem, 'base64').toString('utf8');
         const key = crypto.createPrivateKey(normalized);
-        if (key.type !== 'private' || key.asymmetricKeyType !== 'rsa') return false;
+        if (key.asymmetricKeyType !== 'rsa' || key.asymmetricKeyDetails.modulusLength < 2048) return false;
 
         // Exercise the JWE key-unwrapping algorithm with a synthetic AES-256 key.
         const plaintext = Buffer.alloc(32);
@@ -53,12 +52,7 @@ if (process.env.EPP_FRONT_DOOR_HEALTH_ENABLED === 'true') {
                 createRequestContext(azureContext, crypto.randomUUID()),
                 { functionName: 'FrontDoorHealth' },
             );
-            let ready = false;
-            try {
-                ready = isKeyReady(readConfig().decryptionKeyPem);
-            } catch {
-                // Configuration failures use the same privacy-safe readiness result.
-            }
+            const ready = isKeyReady(process.env.EPP_DECRYPTION_KEY_PEM);
             const status = ready ? 200 : 503;
             if (!ready) {
                 requestFailed(logContext, 'readiness', 'key_unavailable', status);

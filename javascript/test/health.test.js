@@ -8,7 +8,6 @@ const https = require('node:https');
 const net = require('node:net');
 const tls = require('node:tls');
 const Module = require('node:module');
-const config = require('../src/functions/config');
 
 const healthPath = require.resolve('../src/functions/health');
 const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -50,7 +49,7 @@ function loadHealth(enabled = 'true') {
         if (name === '@azure/functions') {
             return { app: { http: (name, options) => registrations.push({ name, ...options }) } };
         }
-        assert.doesNotMatch(name, /credentials|providers|delivery|SendOtp|jwe|@azure\/identity|@azure\/keyvault/i,
+        assert.doesNotMatch(name, /config|credentials|providers|delivery|SendOtp|jwe|@azure\/identity|@azure\/keyvault/i,
             'Health must not load delivery or credential code');
         return originalLoad.call(this, name, ...args);
     });
@@ -152,6 +151,13 @@ test('missing, invalid, public and non-RSA keys fail closed with generic errors'
     }
 });
 
+test('RSA keys below the delivery algorithm minimum are not ready', async () => {
+    const [{ handler }] = loadHealth();
+    const weakKey = crypto.generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey;
+    process.env.EPP_DECRYPTION_KEY_PEM = weakKey.export({ type: 'pkcs8', format: 'pem' });
+    assert.equal((await invoke(handler)).response.status, 503);
+});
+
 test('HEAD reports readiness without a body on success and failure', async () => {
     const [{ handler }] = loadHealth();
     for (const [key, status] of [[pem, 200], ['', 503]]) {
@@ -214,13 +220,4 @@ test('a mismatched OAEP roundtrip is not ready', async () => {
     process.env.EPP_DECRYPTION_KEY_PEM = pem;
     mock.method(crypto, 'privateDecrypt', () => Buffer.alloc(32, 1));
     assert.equal((await invoke(handler)).response.status, 503);
-});
-
-test('configuration failures return generic readiness errors without exception details', async () => {
-    mock.method(config, 'readConfig', () => {
-        throw new Error(`PRIVATE-configuration-error ${pem}`);
-    });
-    const [{ handler }] = loadHealth();
-    assert.equal((await invoke(handler)).response.status, 503);
-    assert.equal((await invoke(handler, 'HEAD')).response.status, 503);
 });

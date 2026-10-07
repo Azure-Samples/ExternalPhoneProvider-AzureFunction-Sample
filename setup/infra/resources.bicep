@@ -13,8 +13,6 @@ param remoteBuild bool
 @description('Optional Front Door ingress and shared caller trust. Omit for the existing single-region flow.')
 param frontDoor {
   id: string
-  issuer: string
-  audience: string
   callerApplicationIds: string[]
 }?
 
@@ -189,8 +187,8 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
 }
 
 var identifierUri = 'api://${functionApp.properties.defaultHostName}/${applicationId}'
-var issuer = frontDoor.?issuer ?? (tokenVersion == 2 ? '${environment().authentication.loginEndpoint}${tenantId}/v2.0' : 'https://sts.windows.net/${tenantId}/')
-var audience = frontDoor.?audience ?? (tokenVersion == 2 ? applicationId : identifierUri)
+var issuer = tokenVersion == 2 ? '${environment().authentication.loginEndpoint}${tenantId}/v2.0' : 'https://sts.windows.net/${tenantId}/'
+var audience = tokenVersion == 2 ? applicationId : identifierUri
 
 resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: functionApp
