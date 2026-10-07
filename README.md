@@ -236,6 +236,7 @@ application behavior or configuration details, use the technical documentation b
 
 ## More documentation
 
+- [Application Insights guide](docs/APPLICATION-INSIGHTS.md) - telemetry flow, collected signals, identity, and single-region or multi-region collection limits.
 - [Optional manual Azure Front Door onboarding](docs/FRONTDOOR.md) - regional setup, readiness, security, and test results. No deployment script is provided.
 - [Setup guide](setup/docs/README.md) - permissions, deployment prompts, validation, and manual rollback.
 - [Technical reference](TECHNICAL.md) - configuration, packages, provider behavior, and security.
