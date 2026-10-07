@@ -24,7 +24,9 @@ flow doesn't automate those steps.
    Use the [guided EPP setup](../setup/docs/README.md) after manually creating only the dedicated
    endpoint application registration. Download only `setup/Setup-Epp.ps1`; it retrieves commit-pinned support scripts,
    Bicep, provider profiles, and the selected language package. Choose a provider, SMS or voice,
-   Global or EU, and a resource prefix, then approve one complete deployment plan.
+   Global or EU, a service plan, and a resource prefix, then approve one complete deployment plan.
+   See [service plan selection](../setup/docs/README.md#service-plan-selection) for plan defaults,
+   billing, migration limits, and the runtime package needed for cache control.
 
    After approval, the script configures the app registration and enterprise application, creates
    the Microsoft phone-provider service principal, assigns `Epp.Invoke`, grants it Microsoft Graph

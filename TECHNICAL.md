@@ -37,7 +37,8 @@ For local development, manual configuration, and deployment checks, see the
 Use **[setup](setup/docs/README.md)** for **Step 2: endpoint deployment**. Download only
 `Setup-Epp.ps1`; it downloads its supporting PowerShell, Bicep, package catalog, and provider JSON
 from the same commit. Customers select a language, provider, SMS or voice, Global or EU endpoint,
-and a resource prefix, then approve one complete plan. Manual Step 1 only creates the dedicated app
+a [service plan](setup/docs/README.md#service-plan-selection), and a resource prefix, then approve
+one complete plan. Manual Step 1 only creates the dedicated app
 registration; PowerShell configures its service principals, `Epp.Invoke`, Microsoft caller access,
 Graph `Application.Read.All`, the provider-tenant allowlist preview, encryption certificate, and
 Easy Auth. The encryption certificate is issued inside Key Vault after infrastructure deployment;

@@ -9,19 +9,26 @@ param providerSettings object
 param packageBlobName string
 param language string
 param remoteBuild bool
+@allowed(['FC1', 'EP1'])
+param servicePlan string = 'EP1'
+
+var isFlexConsumption = servicePlan == 'FC1'
 
 var runtimes = {
   javascript: {
     worker: 'node'
     stack: 'NODE|22'
+    version: '22'
   }
   dotnet: {
     worker: 'dotnet-isolated'
     stack: 'DOTNET-ISOLATED|8.0'
+    version: '8.0'
   }
   python: {
     worker: 'python'
     stack: 'PYTHON|3.11'
+    version: '3.11'
   }
 }
 var runtime = runtimes[language]
@@ -30,6 +37,7 @@ var tags = {
   managedBy: 'EPP-Setup'
   eppApplicationId: applicationId
   eppLanguage: language
+  eppServicePlan: servicePlan
 }
 var blobDataOwnerRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')
 var blobDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
@@ -126,17 +134,21 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: resourceNames.hostingPlan
   location: location
-  kind: 'linux'
+  kind: isFlexConsumption ? 'functionapp' : 'linux'
   tags: tags
-  sku: {
+  sku: isFlexConsumption ? {
+    name: 'FC1'
+    tier: 'FlexConsumption'
+  } : {
     name: 'EP1'
     tier: 'ElasticPremium'
     capacity: 1
   }
-  properties: {
+  properties: union({
     reserved: true
+  }, isFlexConsumption ? {} : {
     maximumElasticWorkerCount: 3
-  }
+  })
 }
 
 resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
@@ -150,19 +162,41 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
       '${outboundIdentity.id}': {}
     }
   }
+  // Keep serverFarmId visible to preflight instead of deferring all properties with the storage reference.
   properties: {
     serverFarmId: plan.id
     httpsOnly: true
-    // The script verifies Easy Auth before opening ingress for publication or Python remote build.
+    // The script verifies Easy Auth before opening ingress for publication.
     publicNetworkAccess: 'Disabled'
-    siteConfig: {
+    siteConfig: union({
+      http20Enabled: true
+      minTlsVersion: '1.2'
+    }, isFlexConsumption ? {} : {
       alwaysOn: true
       minimumElasticInstanceCount: 1
       ftpsState: 'Disabled'
-      http20Enabled: true
       linuxFxVersion: runtime.stack
-      minTlsVersion: '1.2'
-    }
+    })
+    functionAppConfig: isFlexConsumption ? {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: '${storage.properties.primaryEndpoints.blob}${packages.name}'
+          authentication: {
+            type: 'SystemAssignedIdentity'
+          }
+        }
+      }
+      runtime: {
+        name: runtime.worker
+        version: runtime.version
+      }
+      scaleAndConcurrency: {
+        instanceMemoryMB: 2048
+        maximumInstanceCount: 40
+        alwaysReady: []
+      }
+    } : null
   }
 }
 
@@ -174,13 +208,13 @@ resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: functionApp
   name: 'appsettings'
   properties: union(providerSettings, {
-    FUNCTIONS_EXTENSION_VERSION: '~4'
-    FUNCTIONS_WORKER_RUNTIME: runtime.worker
     AzureWebJobsStorage__accountName: storage.name
     AzureWebJobsStorage__credential: 'managedidentity'
     APPLICATIONINSIGHTS_CONNECTION_STRING: insights.properties.ConnectionString
     APPLICATIONINSIGHTS_AUTHENTICATION_STRING: 'Authorization=AAD'
     KEY_VAULT_URL: vault.properties.vaultUri
+    EPP_KEY_VAULT_CACHE_ENABLED: isFlexConsumption ? 'false' : 'true'
+    EPP_ACCESS_TOKEN_CACHE_ENABLED: isFlexConsumption ? 'false' : 'true'
     // Setup pins the encryption settings after Key Vault issues the certificate.
     EPP_OUTBOUND_CLIENT_ID: applicationId
     EPP_OUTBOUND_MI_CLIENT_ID: outboundIdentity.properties.clientId
@@ -188,6 +222,9 @@ resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     EPP_EXPECTED_ISSUER: issuer
     EPP_EXPECTED_CLIENT_ID: callerApplicationId
     EPP_TENANT_ID: tenantId
+  }, isFlexConsumption ? {} : union({
+    FUNCTIONS_EXTENSION_VERSION: '~4'
+    FUNCTIONS_WORKER_RUNTIME: runtime.worker
   }, remoteBuild ? {
     SCM_DO_BUILD_DURING_DEPLOYMENT: 'true'
     ENABLE_ORYX_BUILD: 'true'
@@ -196,7 +233,7 @@ resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID: 'SystemAssigned'
     SCM_DO_BUILD_DURING_DEPLOYMENT: 'false'
     ENABLE_ORYX_BUILD: 'false'
-  })
+  }))
 }
 
 resource authentication 'Microsoft.Web/sites/config@2024-04-01' = {
@@ -251,7 +288,7 @@ resource systemStorageRoles 'Microsoft.Authorization/roleAssignments@2022-04-01'
   }
 }]
 
-resource packageUploadRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource packageUploadRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!isFlexConsumption) {
   name: guid(storage.id, deployerObjectId, blobDataContributorRoleId)
   scope: storage
   properties: {
@@ -329,7 +366,7 @@ resource scmCredentials 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@
   }
 }
 
-resource ftpCredentials 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
+resource ftpCredentials 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = if (!isFlexConsumption) {
   parent: functionApp
   name: 'ftp'
   properties: {
