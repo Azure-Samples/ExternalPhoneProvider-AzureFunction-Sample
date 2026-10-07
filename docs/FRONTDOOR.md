@@ -88,24 +88,14 @@ deployments. Failures attempt to close every target origin, even if deployment f
 regional outputs. Cleanup failures are reported without replacing the original deployment error.
 Resources are not deleted and remain billable. The source endpoint and policy stay unchanged.
 
-### What was verified for this script
-
-The evaluation-only deployment in Central US and West US 2 passed encrypted requests, invalid-token,
-malformed-envelope, and tampered-JWE checks on each new origin. Direct access, including a spoofed
-Front Door ID, was denied. We checked key continuity, package hashes, resolved references, and the
-unchanged source configuration.
-
-After a stalled certificate restore, setup closed the new origins and resumed from its checkpoint.
-Restore now uses a bounded timeout. Offline tests cover source and restore safeguards, but this run
-did **not** exercise provider-secret cloning, live API-key delivery, or OAuth federation.
-The earlier failover measurements below are not a new performance guarantee.
-
 ## Scope and observed behavior
 
 We tested an isolated JavaScript deployment with Front Door Standard, two and three regional
 origins, a shared encryption certificate, and a separate readiness handler that sends no messages.
-The tests covered encrypted evaluation requests, rejection of invalid callers, direct-origin
-access restrictions, and stopping and restarting individual Functions.
+The tests covered encrypted evaluation, invalid callers, direct-origin access restrictions, and
+stopping and restarting individual Functions. Scripted expansion was tested in evaluation-only
+mode in Central US and West US 2, including malformed/tampered requests, key/package continuity,
+unchanged source settings, and resuming after an interrupted certificate restore.
 
 The JavaScript readiness handler is included in this source revision and enabled only when
 `EPP_FRONT_DOOR_HEALTH_ENABLED` is exactly `true`. The expansion script inserts it into the copied
@@ -114,9 +104,10 @@ the flag alone is insufficient. Manual deployments must meet the
 [readiness contract below](#3-provide-a-non-delivering-readiness-endpoint).
 We haven't tested an equivalent .NET or Python handler.
 
-We **did not test** live SMS/voice delivery, calls and retries from the real Entra service, a full
-Azure regional outage, custom domains, WAF, Private Link, or production load. Test the features your
-deployment needs before activating policy.
+We **did not test** provider-secret cloning, live SMS/voice delivery, OAuth federation, calls and
+retries from the real Entra service, a full Azure regional outage, custom domains, WAF, Private Link,
+or production load. Test the features your deployment needs before activating policy; the observed
+failover results below are not a performance guarantee.
 
 ## Architecture: one URL, multiple origins
 

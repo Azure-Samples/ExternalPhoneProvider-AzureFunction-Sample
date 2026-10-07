@@ -198,13 +198,13 @@ function Invoke-EppFrontDoor {
     $module = Import-Module (Join-Path $AssetDirectory 'support/Epp.Setup.psm1') -PassThru -Force
     function Az {
         param([Parameter(ValueFromRemainingArguments)][string[]]$Arguments)
-        & $module { param($ArgsList, $Sub) Invoke-EppAz @ArgsList --subscription $Sub --only-show-errors } $Arguments $SubscriptionId.ToString()
+        & $module { param($ArgsList, $Sub) Invoke-EppAz @ArgsList --subscription $Sub } $Arguments $SubscriptionId.ToString()
     }
     function DataAz {
         param([Parameter(ValueFromRemainingArguments)][string[]]$Arguments)
         & $module {
             param($ArgsList, $Sub)
-            Invoke-EppDataOperation { Invoke-EppAz @ArgsList --subscription $Sub --only-show-errors }
+            Invoke-EppDataOperation { Invoke-EppAz @ArgsList --subscription $Sub }
         } $Arguments $SubscriptionId.ToString()
     }
     function Arm {

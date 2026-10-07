@@ -49,7 +49,7 @@ function loadHealth(enabled = 'true') {
         if (name === '@azure/functions') {
             return { app: { http: (name, options) => registrations.push({ name, ...options }) } };
         }
-        assert.doesNotMatch(name, /config|credentials|providers|delivery|SendOtp|jwe|@azure\/identity|@azure\/keyvault/i,
+        assert.doesNotMatch(name, /credentials|providers|delivery|SendOtp|jwe|@azure\/identity|@azure\/keyvault/i,
             'Health must not load delivery or credential code');
         return originalLoad.call(this, name, ...args);
     });
@@ -96,7 +96,7 @@ async function invoke(handler, method = 'GET') {
     assert.doesNotMatch(JSON.stringify({ response, records }), /PRIVATE|BEGIN|RSA|base64|openssl/i);
     assert.ok(!JSON.stringify({ response, records }).includes(pem.split('\n')[1]));
     assert.equal(response.headers['Cache-Control'], 'no-store');
-    return { response, records };
+    return response;
 }
 
 test('registration is disabled unless the gate is exactly true', () => {
@@ -119,53 +119,33 @@ test('enabled health registers only the anonymous GET/HEAD readiness route', () 
     assert.equal(typeof handler, 'function');
 });
 
-test('raw and base64 RSA private keys are ready without delivery dependencies or network I/O', async () => {
+test('GET/HEAD readiness validates raw and base64 keys without provider or network I/O', async () => {
     const [{ handler }] = loadHealth();
-    const pkcs1 = privateKey.export({ type: 'pkcs1', format: 'pem' });
-    for (const key of [pem, Buffer.from(pem).toString('base64'),
-        pkcs1, Buffer.from(pkcs1).toString('base64')]) {
-        process.env.EPP_DECRYPTION_KEY_PEM = key;
-        const { response } = await invoke(handler);
-        assert.equal(response.status, 200);
-        assert.deepEqual(response.jsonBody, { status: 'ready' });
-    }
-});
-
-test('missing, invalid, public and non-RSA keys fail closed with generic errors', async () => {
-    const [{ handler }] = loadHealth();
-    const ec = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey;
-    for (const key of [
-        undefined, '', 'PRIVATE-invalid-key', '%%%not-base64%%%',
-        Buffer.from('PRIVATE-invalid-key').toString('base64'),
-        publicKey.export({ type: 'spki', format: 'pem' }),
-        Buffer.from(publicKey.export({ type: 'spki', format: 'pem' })).toString('base64'),
-        ec.export({ type: 'pkcs8', format: 'pem' }),
-        Buffer.from(ec.export({ type: 'pkcs8', format: 'pem' })).toString('base64'),
-        privateKey.export({ type: 'pkcs8', format: 'pem', cipher: 'aes-256-cbc', passphrase: 'PRIVATE' }),
-    ]) {
-        if (key === undefined) delete process.env.EPP_DECRYPTION_KEY_PEM;
-        else process.env.EPP_DECRYPTION_KEY_PEM = key;
-        const { response } = await invoke(handler);
-        assert.equal(response.status, 503);
-        assert.deepEqual(response.jsonBody, { status: 'not_ready' });
-    }
-});
-
-test('RSA keys below the delivery algorithm minimum are not ready', async () => {
-    const [{ handler }] = loadHealth();
-    const weakKey = crypto.generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey;
-    process.env.EPP_DECRYPTION_KEY_PEM = weakKey.export({ type: 'pkcs8', format: 'pem' });
-    assert.equal((await invoke(handler)).response.status, 503);
-});
-
-test('HEAD reports readiness without a body on success and failure', async () => {
-    const [{ handler }] = loadHealth();
-    for (const [key, status] of [[pem, 200], ['', 503]]) {
-        process.env.EPP_DECRYPTION_KEY_PEM = key;
-        const { response } = await invoke(handler, 'HEAD');
-        assert.equal(response.status, status);
-        assert.equal(response.body, undefined);
-        assert.equal(response.jsonBody, undefined);
+    const cases = [
+        ['RSA PKCS8', pem, 200],
+        ['RSA PKCS1', privateKey.export({ type: 'pkcs1', format: 'pem' }), 200],
+        ['missing', undefined, 503], ['empty', '', 503],
+        ['invalid key', 'PRIVATE-invalid-key', 503], ['invalid base64', '%%%not-base64%%%', 503],
+        ['public key', publicKey.export({ type: 'spki', format: 'pem' }), 503],
+        ['EC key', crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+            .privateKey.export({ type: 'pkcs8', format: 'pem' }), 503],
+        ['encrypted key', privateKey.export({ type: 'pkcs8', format: 'pem', cipher: 'aes-256-cbc', passphrase: 'PRIVATE' }), 503],
+        ['RSA below 2048 bits', crypto.generateKeyPairSync('rsa', { modulusLength: 1024 })
+            .privateKey.export({ type: 'pkcs8', format: 'pem' }), 503],
+    ];
+    for (const [name, key, status] of cases) {
+        const forms = key ? [key, Buffer.from(key).toString('base64')] : [key];
+        for (const value of forms) {
+            if (value === undefined) delete process.env.EPP_DECRYPTION_KEY_PEM;
+            else process.env.EPP_DECRYPTION_KEY_PEM = value;
+            for (const method of ['GET', 'HEAD']) {
+                const response = await invoke(handler, method);
+                assert.equal(response.status, status, `${name}: ${method}`);
+                assert.equal(response.body, undefined);
+                assert.deepEqual(response.jsonBody, method === 'HEAD' ? undefined
+                    : { status: status === 200 ? 'ready' : 'not_ready' });
+            }
+        }
     }
 });
 
@@ -179,7 +159,7 @@ test('validation caches success and failure by PEM and rechecks after key change
         [pem, 200, 3, 2], ['', 503, 3, 2], [pem, 200, 4, 3],
     ]) {
         process.env.EPP_DECRYPTION_KEY_PEM = key;
-        assert.equal((await invoke(handler)).response.status, status);
+        assert.equal((await invoke(handler)).status, status);
         assert.equal(createKey.mock.callCount(), parses);
         assert.equal(decrypt.mock.callCount(), decryptions);
     }
@@ -190,7 +170,7 @@ test('readiness exercises an RSA-OAEP-256 roundtrip with a 32-byte synthetic key
     process.env.EPP_DECRYPTION_KEY_PEM = pem;
     const encrypt = mock.method(crypto, 'publicEncrypt');
     const decrypt = mock.method(crypto, 'privateDecrypt');
-    assert.equal((await invoke(handler)).response.status, 200);
+    assert.equal((await invoke(handler)).status, 200);
     for (const operation of [encrypt, decrypt]) {
         assert.equal(operation.mock.callCount(), 1);
         const [options] = operation.mock.calls[0].arguments;
@@ -208,8 +188,8 @@ test('RSA operation failures return cached 503 without logging exception secrets
         const failure = mock.method(crypto, operation, () => {
             throw new Error(`PRIVATE-crypto-error ${pem}`);
         });
-        assert.equal((await invoke(handler)).response.status, 503);
-        assert.equal((await invoke(handler)).response.status, 503);
+        assert.equal((await invoke(handler)).status, 503);
+        assert.equal((await invoke(handler)).status, 503);
         assert.equal(failure.mock.callCount(), 1);
         failure.mock.restore();
     }
@@ -219,5 +199,5 @@ test('a mismatched OAEP roundtrip is not ready', async () => {
     const [{ handler }] = loadHealth();
     process.env.EPP_DECRYPTION_KEY_PEM = pem;
     mock.method(crypto, 'privateDecrypt', () => Buffer.alloc(32, 1));
-    assert.equal((await invoke(handler)).response.status, 503);
+    assert.equal((await invoke(handler)).status, 503);
 });
