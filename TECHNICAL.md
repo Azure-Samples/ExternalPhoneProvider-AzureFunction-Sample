@@ -121,7 +121,7 @@ extend it deliberately if you add runtime assets, and never put secrets in appli
 ## The design in one line
 
 SAS → Easy Auth → anonymous HTTP handler (`POST /api/SendOtp`, validate envelope + decrypt JWE) →
-configured provider (API key) → HTTP result with nonce on success.
+configured provider (OAuth or API key) → HTTP result with nonce on success.
 Only provider acceptance returns the nonce for live requests. Incoming `mode: 2` (evaluation) is the
 generic shutter: after platform authentication, validate and decrypt, then echo the nonce without
 calling a provider.
@@ -159,9 +159,9 @@ how code accesses configuration, not the environment-variable names.
 | `EPP_PROVIDER_ENDPOINT` | Live delivery | Complete provider-approved HTTPS request URL selected from the provider profile. |
 | `EPP_PROVIDER_CHANNEL` | Guided deployment | Selected `sms` or `voice` route; other live-request channels fail closed. |
 | `EPP_PROVIDER_ENDPOINT_REGION` | Guided deployment metadata | Selected `global` or `eu` route label. |
-| `EPP_PROVIDER_AUTH_MODE` | Live delivery | Must match the adapter: `apiKey` for Telesign or `oauth` for Soprano. |
-| `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE` | Soprano OAuth | Provider tenant and selected API scope. |
-| `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | Soprano OAuth | Existing multitenant application and outbound user-assigned managed identity used for client-assertion exchange. |
+| `EPP_PROVIDER_AUTH_MODE` | Live delivery | Must match the adapter: `oauth` for Telesign/Soprano, `apiKey` for Infobip/Sinch. |
+| `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE` | Telesign/Soprano OAuth | Provider tenant and selected API scope, including `/.default`. |
+| `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | Telesign/Soprano OAuth | Existing multitenant application and outbound user-assigned managed identity used for client-assertion exchange. |
 | `EPP_PROVIDER_TIMEOUT_MS` | Optional | Decimal milliseconds. Defaults to `1500`, capped at `2500`; not an end-to-end deadline. |
 | `EPP_PROVIDER_ACCOUNT_NAME` | Adapter-dependent | Sender/account metadata, not an API key or credential identity. |
 | `KEY_VAULT_URL` | Provider credential lookup | URI of the vault containing the manifest-named provider secrets. Separate from the encryption-key reference. |
@@ -173,9 +173,9 @@ how code accesses configuration, not the environment-variable names.
 2. **In Azure:** set the same application variables on the selected Function App (or serving slot)
   under **Settings → Environment variables → App settings**, then apply the changes. Local settings
   are not published automatically. Configure host storage separately for the selected hosting plan.
-3. For Telesign, store provider API credentials in Key Vault using the exact manifest names. For
-  Soprano, configure provider consent plus the profile's tenant/scope and outbound managed-identity
-  federation; the Function stores no Soprano client secret.
+3. For Telesign and Soprano, configure provider consent plus the profile's tenant/scope and outbound
+  managed-identity federation; the Function stores no provider client secret. For API-key adapters,
+  store credentials in Key Vault using their exact manifest names.
 
 Evaluation requests do not need provider variables or provider secrets. They still need the decryption
 key. The default credential resolvers use `ManagedIdentityCredential`, **not** the developer's CLI
@@ -184,8 +184,8 @@ evaluation locally, or an explicitly injected test resolver for integration work
 settings, keys or test credentials.
 
 Configured providers are [prepared automatically per worker](docs/CONTRACT.md#credential-caching-and-refresh):
-Telesign's Key Vault credentials, Soprano's managed-identity assertion, and its final Entra access
-token are cached and refreshed before expiry. Refresh never sends an OTP. Evaluation handling still
+API-key credentials, or the managed-identity assertion and final Entra access token for Telesign/Soprano,
+are cached and refreshed before expiry. Refresh never sends an OTP. Evaluation handling still
 skips provider work, but a worker with a configured provider can independently acquire credentials
 at startup or during background refresh. Leave `EPP_PROVIDER_NAME` unset for local evaluation-only
 work without credential acquisition. No extra refresh app settings are required.
@@ -207,9 +207,13 @@ configured provider route or authentication.
 The `telesign` adapter sends its JSON contract to the complete SMS or voice URL selected from the
 provider profile. It does not append or infer a route.
 
-Basic authentication uses `base64(customer-id:api-key)`, with the existing Key Vault secrets
-`telesign-customer-id` and `telesign-api-key`. Digest and Phase 2 token authentication are not
-implemented. The incoming caller's Authorization header is never forwarded.
+Authentication uses the same managed-identity OAuth client-assertion exchange as Soprano. The profile
+selects tenant `d818b557-ea1c-4070-a3f1-928330b7a30c` and scope
+`api://f1117a41-5e56-48d1-836a-1313846d1610/.default`. Only the final provider access token is sent as
+`Authorization: Bearer <token>`; neither the managed-identity assertion nor the incoming caller's
+Authorization header is forwarded. There is no Basic/Digest or API-key fallback. Existing API-key
+deployments must follow the [OAuth migration guidance](docs/ONBOARDING.md#telesign-oauth-migration)
+and complete provider authorization before live use.
 
 The adapter builds the following JSON from the decrypted delivery context and envelope:
 

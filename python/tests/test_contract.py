@@ -1,4 +1,3 @@
-import base64
 import json
 from pathlib import Path
 
@@ -102,10 +101,11 @@ def test_telesign_epp_request_contract(channel, locale):
     dispatch.locale = locale
     request = TelesignProvider().build_request(
         channel, f"https://verify.telesign.com/epp/{channel}", dispatch,
-        {"mode": "apiKey", "secret": "key", "identity": "customer"}, {},
+        {"mode": "oauth", "access_token": "provider-token"}, {},
     )
     assert request["method"] == "POST" and request["url"] == f"https://verify.telesign.com/epp/{channel}"
-    assert request["headers"] == {"Authorization": "Basic " + base64.b64encode(b"customer:key").decode(),
+    assert TelesignProvider.manifest["auth"] == {"mode": "oauth"}
+    assert request["headers"] == {"Authorization": "Bear" + "er provider-token",
                                   "Content-Type": "application/json", "Accept": "application/json"}
     expected_text = (
         "  Use 9, 1, 8, 2, 7, 3; then 1234.\nDo not rewrite + or café.   "
@@ -124,7 +124,7 @@ def test_telesign_voice_paces_only_six_digit_numeric_runs_and_repeats_message():
     dispatch.message = "Code 001234; ref 1234567; alternate 654321."
     request = TelesignProvider().build_request(
         "voice", "https://verify.telesign.com/epp/voice", dispatch,
-        {"mode": "apiKey", "secret": "key", "identity": "customer"}, {},
+        {"mode": "oauth", "access_token": "provider-token"}, {},
     )
     assert json.loads(request["body"])["message"]["text"] == (
         "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1. "
@@ -136,7 +136,7 @@ def test_telesign_epp_validates_recipients_and_status():
     adapter = TelesignProvider()
     response = adapter.parse_response(200, True, {"reference_id": "message-id", "status": {"code": 290}})
     assert response == ParsedResponse(True, 200, provider_message_id="message-id", provider_status_code="290")
-    credential = {"identity": "customer", "secret": "key"}
+    credential = {"mode": "oauth", "access_token": "provider-token"}
     for destination in ("15551234567", "+0123", "+1", "+1234567890123456", "+123\n", "+123\r", "+12 34", None):
         dispatch = _dispatch()
         dispatch.destination = destination

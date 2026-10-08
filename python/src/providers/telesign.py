@@ -1,4 +1,3 @@
-import base64
 import json
 import re
 
@@ -21,11 +20,7 @@ def _build_voice_message(message):
 class TelesignProvider:
     manifest = {
         "id": "telesign",
-        "auth": {
-            "mode": "apiKey",
-            "key_vault_secret_name": "telesign-api-key",
-            "identity_key_vault_secret_name": "telesign-customer-id",
-        },
+        "auth": {"mode": "oauth"},
         "response_mapping": {
             "200": "Continue", "203": "Continue", "290": "Continue", "291": "Continue", "292": "Continue",
             "100": "Continue", "101": "Continue", "102": "Continue", "103": "Continue",
@@ -39,8 +34,6 @@ class TelesignProvider:
             raise ValueError("unsupported channel")
         if not isinstance(dispatch.destination, str) or not re.fullmatch(r"\+[1-9][0-9]{1,14}", dispatch.destination):
             raise ValueError("invalid recipient")
-        raw = f"{credential['identity']}:{credential['secret']}".encode()
-        authorization = "Basic " + base64.b64encode(raw).decode()
         correlation_id = dispatch.correlation_id
         if not isinstance(correlation_id, str) or not correlation_id:
             correlation_id = dispatch.message_id
@@ -54,7 +47,7 @@ class TelesignProvider:
             "correlation_id": correlation_id,
         }
         headers = {
-            "Authorization": authorization,
+            "Authorization": f"Bearer {credential['access_token']}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }

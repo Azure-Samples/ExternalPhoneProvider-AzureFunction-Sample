@@ -1,7 +1,7 @@
+using Azure.Core;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Epp.Otp.Providers;
 
-public sealed class TelesignProvider : PhoneProviderBase
+public sealed class TelesignProvider : OAuthPhoneProviderBase
 {
     private const string VoiceDigitSeparator = ", ";
     private const int VoiceRepeatCount = 2;
@@ -17,12 +17,19 @@ public sealed class TelesignProvider : PhoneProviderBase
     private static readonly Regex VoicePasscodePattern = new(
         @"(?<![0-9])[0-9]{6}(?![0-9])",
         RegexOptions.CultureInvariant);
-    private readonly ISecretResolver? _secrets;
 
-    public TelesignProvider(ISecretResolver? secrets = null) => _secrets = secrets;
+    public TelesignProvider()
+    {
+    }
+
+    internal TelesignProvider(
+        Func<string, TokenCredential> createIdentity,
+        Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> createCredential)
+        : base(createIdentity, createCredential)
+    {
+    }
 
     public override string Name => "telesign";
-    public override string AuthenticationMode => "apiKey";
 
     public override Task<ProviderResult> SendOtpAsync(
         string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credentials,
@@ -41,8 +48,6 @@ public sealed class TelesignProvider : PhoneProviderBase
         if (delivery.PhoneNumber is null || !Regex.IsMatch(delivery.PhoneNumber, @"\A\+[1-9][0-9]{1,14}\z"))
             throw new InvalidOperationException("invalid recipient");
 
-        var authorization = "Basic " + Convert.ToBase64String(
-            Encoding.UTF8.GetBytes($"{credential.Identity}:{credential.Secret}"));
         var messageText = channel == "voice" ? BuildVoiceMessage(delivery.Message!) : delivery.Message;
         var body = new Request(
             new Recipient(delivery.PhoneNumber),
@@ -54,7 +59,7 @@ public sealed class TelesignProvider : PhoneProviderBase
         {
             Content = JsonContent.Create(body),
         };
-        request.Headers.TryAddWithoutValidation("Authorization", authorization);
+        request.Headers.Authorization = new("Bearer", credential.AccessToken);
         request.Headers.Accept.ParseAdd("application/json");
         return request;
     }
@@ -82,23 +87,6 @@ public sealed class TelesignProvider : PhoneProviderBase
         {
             FailureReason = ClassifyFailure(httpStatus, finalOutcome, recognized),
         };
-    }
-
-    public override async Task<ProviderCredentials> FetchCredentialsAsync(
-        AppConfig config, CancellationToken cancellationToken = default)
-    {
-        if (_secrets is null) throw CredentialTokenService.Unavailable();
-        var key = _secrets.ResolveAsync("telesign-api-key", cancellationToken);
-        var identity = _secrets.ResolveAsync("telesign-customer-id", cancellationToken);
-        await Task.WhenAll(key, identity).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(key.Result)
-            || string.IsNullOrWhiteSpace(identity.Result))
-            throw CredentialTokenService.Unavailable();
-        return new ProviderCredentials(
-            AuthenticationMode,
-            Secret: key.Result,
-            Identity: identity.Result,
-            ExpiresOn: DateTimeOffset.UtcNow.AddMinutes(5));
     }
 
     private static (Outcome Outcome, bool Recognized) MapStatus(string? status) => status switch

@@ -12,12 +12,8 @@ function buildVoiceMessage(message) {
 
 const provider = Object.freeze({
     name: 'telesign',
-    authenticationMode: 'apiKey',
-    credentialSpec: Object.freeze({
-        mode: 'apiKey',
-        keyVaultSecretName: 'telesign-api-key',
-        identityKeyVaultSecretName: 'telesign-customer-id',
-    }),
+    authenticationMode: 'oauth',
+    credentialSpec: Object.freeze({ mode: 'oauth' }),
 
     createRequest({ channel, endpoint, delivery, credential }) {
         if (!['sms', 'voice'].includes(channel)) throw new Error('unsupported channel');
@@ -37,7 +33,7 @@ const provider = Object.freeze({
             url: endpoint,
             method: 'POST',
             headers: {
-                Authorization: `Basic ${Buffer.from(`${credential.identity}:${credential.secret}`).toString('base64')}`,
+                Authorization: ['Bearer', credential.accessToken].join(' '),
                 'Content-Type': 'application/json',
                 Accept: 'application/json',
             },

@@ -161,6 +161,8 @@ action depends on the authentication method supported by its integration:
 
 Replace any test provider values before live validation. Never put API keys in source code or local
 settings. See [provider authentication](docs/ONBOARDING.md#provider-credential-names) for details.
+Telesign and Soprano use OAuth with managed identity. Existing Telesign API-key deployments must
+follow the [OAuth migration guidance](docs/ONBOARDING.md#telesign-oauth-migration) before upgrading.
 
 #### Validate before activation
 

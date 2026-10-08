@@ -17,6 +17,9 @@ jobs:
       - name: Test certificate setup without Azure access
         shell: pwsh
         run: ./setup/tests/Certificates.Tests.ps1
+      - name: Test provider OAuth setup without Azure access
+        shell: pwsh
+        run: ./setup/tests/Providers.Tests.ps1
       - name: Compile Bicep without deploying
         shell: pwsh
         run: |

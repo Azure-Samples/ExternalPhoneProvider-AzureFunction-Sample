@@ -17,6 +17,7 @@ from src.dispatch import DispatchEngine, DispatchRequest, ProviderRegistry
 from src.models import DeliveryContext, Envelope, TextToVoice
 from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
+from src.providers.telesign import TelesignProvider
 
 
 def _request(channel="sms"):
@@ -25,7 +26,7 @@ def _request(channel="sms"):
 
 @pytest.fixture
 def engine(monkeypatch):
-    registry = ProviderRegistry([SopranoProvider(), SinchProvider()])
+    registry = ProviderRegistry([SopranoProvider(), TelesignProvider(), SinchProvider()])
     monkeypatch.setattr(dispatch_module.requests, "request", Mock())
     result = DispatchEngine(registry, Mock(resolve=Mock(return_value="test-key")), {
         "EPP_PROVIDER_NAME": " SOPRANO ",
@@ -45,16 +46,17 @@ def test_missing_oauth_configuration_never_sends(engine):
     dispatch_module.requests.request.assert_not_called()
 
 
-def _oauth_settings():
-    return {"EPP_PROVIDER_NAME": "soprano", "EPP_PROVIDER_AUTH_MODE": "oauth", "EPP_PROVIDER_CHANNEL": "sms",
+def _oauth_settings(provider="soprano"):
+    return {"EPP_PROVIDER_NAME": provider, "EPP_PROVIDER_AUTH_MODE": "oauth", "EPP_PROVIDER_CHANNEL": "sms",
             "EPP_PROVIDER_ENDPOINT": "https://provider.example/full/sms/url/",
             "EPP_PROVIDER_TENANT_ID": "provider-tenant", "EPP_PROVIDER_SCOPE": "api://provider/.default",
             "EPP_OUTBOUND_CLIENT_ID": "calling-app", "EPP_OUTBOUND_MI_CLIENT_ID": "outbound-identity",
             "AZURE_CLIENT_ID": "different-vault-identity"}
 
 
-def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, monkeypatch):
-    engine.env = _oauth_settings()
+@pytest.mark.parametrize("provider", ["soprano", "telesign"])
+def test_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, monkeypatch, provider):
+    engine.env = _oauth_settings(provider)
     engine._resolve_credential = DispatchEngine._resolve_credential.__get__(engine, DispatchEngine)
     assertion = SimpleNamespace(token="private-assertion", expires_on=time.time() + 3600)
     access = SimpleNamespace(token="private-token", expires_on=time.time() + 3600)
@@ -79,7 +81,8 @@ def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, m
 
     monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", identity_factory)
     monkeypatch.setattr(credentials_module, "ClientAssertionCredential", create_client)
-    dispatch_module.requests.request.return_value = Mock(status_code=201, json=Mock(return_value={"status": "ENROUTE"}))
+    payload = {"status": {"code": 290}} if provider == "telesign" else {"status": "ENROUTE"}
+    dispatch_module.requests.request.return_value = Mock(status_code=201, json=Mock(return_value=payload))
     for scope in ("api://provider/.default", "api://second/.default"):
         engine.env["EPP_PROVIDER_SCOPE"] = scope
         assert engine.dispatch(_request(), "request")[0] == 200
@@ -118,8 +121,9 @@ def test_soprano_oauth_uses_setup_settings_and_rejects_unusable_tokens(engine, m
     engine.close()
 
 
-def test_soprano_oauth_sdk_logs_stay_private_without_muting_other_requests(engine, monkeypatch, caplog):
-    engine.env = _oauth_settings()
+@pytest.mark.parametrize("provider", ["soprano", "telesign"])
+def test_oauth_sdk_logs_stay_private_without_muting_other_requests(engine, monkeypatch, caplog, provider):
+    engine.env = _oauth_settings(provider)
     engine._resolve_credential = DispatchEngine._resolve_credential.__get__(engine, DispatchEngine)
     started, release = Event(), Event()
     logger = logging.getLogger("azure.identity.test_setup_oauth")
@@ -155,6 +159,27 @@ def test_soprano_oauth_sdk_logs_stay_private_without_muting_other_requests(engin
         dispatch_module.requests.request.assert_not_called()
     finally:
         logger.removeHandler(handler)
+
+
+@pytest.mark.parametrize("setting", [
+    "EPP_PROVIDER_TENANT_ID", "EPP_PROVIDER_SCOPE", "EPP_OUTBOUND_CLIENT_ID", "EPP_OUTBOUND_MI_CLIENT_ID",
+])
+def test_telesign_missing_oauth_settings_never_uses_api_keys(engine, setting):
+    engine.env = _oauth_settings("telesign")
+    del engine.env[setting]
+    engine._resolve_credential = DispatchEngine._resolve_credential.__get__(engine, DispatchEngine)
+    status, body = engine.dispatch(_request(), "request")
+    assert status == 502 and body["reason"] == "provider credential unavailable"
+    engine.secrets.resolve.assert_not_called()
+    dispatch_module.requests.request.assert_not_called()
+
+
+def test_telesign_rejects_legacy_api_key_mode(engine):
+    engine.env = {**_oauth_settings("telesign"), "EPP_PROVIDER_AUTH_MODE": "apiKey"}
+    assert engine.dispatch(_request(), "request")[0] == 502
+    engine._resolve_credential.assert_not_called()
+    engine.secrets.resolve.assert_not_called()
+    dispatch_module.requests.request.assert_not_called()
 
 
 def test_soprano_voice_payload_uses_oauth(engine):

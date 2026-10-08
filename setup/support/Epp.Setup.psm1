@@ -904,10 +904,10 @@ function Show-EppPlan {
     Write-Host '  - Pin the Function to the certificate secret version and register only the public certificate in Entra.'
     Write-Host '  - Renewal and Entra certificate synchronization remain administrator-owned operations.' -ForegroundColor Yellow
     if ($Inputs.ProviderAuthentication -eq 'oauth') {
-        Write-Host '  - Soprano OAuth: add a federated credential so the outbound managed identity can authenticate without a client secret.'
+        Write-Host "  - $($ProviderConfiguration.DisplayName) OAuth: add a federated credential so the outbound managed identity can authenticate without a client secret."
     }
     else {
-        Write-Host '  - Telesign API key: store the required provider credentials in Key Vault; no federated credential is created.'
+        Write-Host '  - API key: store the required provider credentials in Key Vault; no federated credential is created.'
     }
 
     Write-Host "`nDeployment notes" -ForegroundColor Cyan
@@ -948,12 +948,18 @@ function Show-EppDeploymentResult {
     Write-Host "Deployment details: $ResultPath"
     Write-Host 'Certificate renewal is manual. Track the expiry in the deployment details and coordinate the Entra certificate update before expiry.' -ForegroundColor Yellow
 
-    if ($ProviderConfiguration.Id -eq 'telesign') {
+    if ($ProviderConfiguration.AuthenticationMode -eq 'oauth') {
+        Write-Host "`nProvider authorization" -ForegroundColor Yellow
+        Write-Host "Confirm $($ProviderConfiguration.DisplayName) has provisioned and authorized application '$($Inputs.ApplicationId)' in provider tenant '$($ProviderConfiguration.Settings.EPP_PROVIDER_TENANT_ID)'."
+        Write-Host "Requested scope: $($ProviderConfiguration.Settings.EPP_PROVIDER_SCOPE)"
+        Write-Host 'Setup configured managed-identity federation; it did not grant provider API consent or application roles.'
+    }
+    else {
         $authentication = $ProviderConfiguration.Manifest.deployment.authentication
         Write-Host "`nPending operation" -ForegroundColor Yellow
-        Write-Host "Add the Telesign credentials to Key Vault '$($Names.keyVault)':"
-        Write-Host "   - $($authentication.identityKeyVaultSecretName) - your Telesign customer ID."
-        Write-Host "   - $($authentication.keyVaultSecretName) - your Telesign API key."
+        Write-Host "Add the $($ProviderConfiguration.DisplayName) credentials to Key Vault '$($Names.keyVault)':"
+        Write-Host "   - $($authentication.identityKeyVaultSecretName) - your provider account ID."
+        Write-Host "   - $($authentication.keyVaultSecretName) - your provider API key."
         Write-Host '   Store the values as Key Vault secrets; do not enter them into this setup script or shared logs.'
     }
 

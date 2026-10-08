@@ -39,21 +39,32 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
 
    | Provider | API credential secret | Matching identity secret | Authentication |
    |---|---|---|---|
-   | `telesign` | `telesign-api-key` | `telesign-customer-id` | Basic: base64 of `customer-id:api-key` |
+   | `telesign` | None | None | OAuth client assertion using the outbound user-assigned managed identity |
    | `soprano` | None | None | OAuth client assertion using the outbound user-assigned managed identity |
    | `infobip` | `infobip-api-key` | None | `Authorization: App <api-key>` |
    | `sinch` | `sinch-api-token` | None | Static token authentication |
 
-   For Telesign, store the raw key and customer ID separately and grant the Function identity
-   **Key Vault Secrets User** access. For Soprano, complete provider consent/application-role
-   onboarding for the existing multitenant application. The setup creates the disclosed federated
-   identity credential; it does not grant access to Soprano's API.
+   For Telesign and Soprano, complete provider consent/application-role onboarding for the existing
+   multitenant application. Setup creates the disclosed federated identity credential; it does not
+   grant access to the provider's API. API-key adapters still require **Key Vault Secrets User**
+   access to their declared secrets. Key Vault access for the encryption key remains separate.
+
+   <a id="telesign-oauth-migration"></a>
+   **Migrating an existing Telesign API-key deployment:** deploy an OAuth-capable Function package
+   together with its matching setup/provider profile. Rerun setup for the existing application to
+   configure the outbound managed-identity federation and `EPP_PROVIDER_AUTH_MODE=oauth`, provider
+   tenant/scope, and both outbound client IDs. Telesign must authorize that calling application in
+   its tenant before live validation. Changing the auth-mode setting alone is insufficient.
+   The old `telesign-api-key` and `telesign-customer-id` secrets are no longer read; setup does not
+   delete them. The new adapter rejects `apiKey` mode and has no Basic/Digest fallback. Coordinate
+   the provider rollout and retain a rollback plan rather than publishing over a working API-key
+   deployment before OAuth authorization and endpoint compatibility are confirmed.
 
    <a id="local-settings-and-cloud-secrets"></a>
    Start with [local.settings.sample.json](local.settings.sample.json) beside the chosen app's
    `host.json`. Replace placeholders in `Values`; all values must be strings. `EPP_PROVIDER_ENDPOINT`
    is the complete provider-approved request URL selected for the channel and Global/EU region.
-   `EPP_PROVIDER_AUTH_MODE` must match the adapter: `apiKey` for Telesign or `oauth` for Soprano.
+   `EPP_PROVIDER_AUTH_MODE` must match the adapter: `oauth` for Telesign/Soprano or `apiKey` for Infobip/Sinch.
    Provider API keys stay in Key Vault, not `Values`.
 
 	Reuse the values from the setup-created Function App's environment variables; do not create
@@ -65,13 +76,13 @@ Use [CONTRACT.md](CONTRACT.md) for the full request contract and production limi
 	| `EPP_PROVIDER_NAME`, `EPP_PROVIDER_AUTH_MODE` | Selected provider and its authentication mode. |
 	| `EPP_PROVIDER_ENDPOINT`, `EPP_PROVIDER_CHANNEL`, `EPP_PROVIDER_ENDPOINT_REGION` | Complete selected send URL, `sms` or `voice`, and `global` or `eu`. Do not append an API path. |
 	| `EPP_PROVIDER_TENANT_ID` | Provider tenant, not the customer's home tenant. |
-	| `EPP_PROVIDER_APP_ID`, `EPP_PROVIDER_SCOPE` | Soprano API application ID and the exact selected scope, including `/.default`. These are not the calling application's ID. Leave blank for API-key providers. |
-	| `EPP_OUTBOUND_CLIENT_ID` | Existing calling application's Application (client) ID used during setup, not its Object ID or Soprano's API ID. |
+	| `EPP_PROVIDER_APP_ID`, `EPP_PROVIDER_SCOPE` | Selected provider API application ID and exact scope, including `/.default`. These are not the calling application's ID. Leave blank for API-key providers. |
+	| `EPP_OUTBOUND_CLIENT_ID` | Existing calling application's Application (client) ID used during setup, not its Object ID or the provider's API ID. |
 	| `EPP_OUTBOUND_MI_CLIENT_ID` | Setup-created outbound user-assigned identity's Client ID, not its principal/Object ID. |
 	| `EPP_PROVIDER_TIMEOUT_MS`, `EPP_PROVIDER_RETRY_INTERVAL_MS` | Selected profile values, as strings. The retry interval does not enable runtime retries or shutter mode. |
 	| `KEY_VAULT_URL` | Setup-created or explicitly selected credential vault URL, not a secret value. |
 
-	The outbound IDs are used only for Soprano OAuth; leave them blank for local API-key-only
+	The outbound IDs are used for Telesign/Soprano OAuth; leave them blank for local API-key-only
 	configurations. `EPP_PROVIDER_APP_ID` and `EPP_PROVIDER_ENDPOINT_REGION` are setup metadata;
 	the runtime uses the selected scope and full URL directly. Keep Azure host storage, package
 	URLs, Application Insights, and Easy Auth configuration in Azure rather than copying the

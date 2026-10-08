@@ -98,15 +98,17 @@ fixed `gender: 1` and `loop: 2`. The resulting object is sent as `voice.text2voi
 `text` field. A message without a six-digit sequence fails closed before provider HTTP. No additional
 environment settings are required. Soprano SMS continues to forward `message` unchanged, and
 evaluation continues to skip provider-specific validation and I/O.
-Soprano uses OAuth client-assertion exchange. The outbound user-assigned managed identity obtains an
+Soprano and Telesign use OAuth client-assertion exchange. The outbound user-assigned managed identity obtains an
 `api://AzureADTokenExchange/.default` assertion for the existing multitenant application, which then
 requests the configured provider scope. Existing platform caller authentication is unchanged.
 
-### Soprano provider JWT
+<a id="soprano-provider-jwt"></a>
+
+### Provider OAuth tokens
 
 The Function obtains one provider token through the shared OAuth credential resolver using the
 setup-generated `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE`, `EPP_OUTBOUND_CLIENT_ID`, and
-`EPP_OUTBOUND_MI_CLIENT_ID`. `EPP_PROVIDER_AUTH_MODE=oauth` matches the Soprano provider.
+`EPP_OUTBOUND_MI_CLIENT_ID`. `EPP_PROVIDER_AUTH_MODE=oauth` matches both Soprano and Telesign.
 `EPP_PROVIDER_ENDPOINT` is the complete selected send URL and is not modified by the provider.
 The calling app registration and outbound user-assigned identity must share a home tenant; the
 calling app must be multitenant and provisioned/authorized in the provider tenant. The app's
@@ -118,7 +120,10 @@ managed-identity assertion, or incoming SAS token is forwarded. Missing settings
 failure, blank tokens, or tokens with 30 seconds or less remaining lifetime fail before provider HTTP;
 there is no API-key fallback. Evaluation skips acquisition. A provider rejection is not retried.
 Tokens are treated as opaque: the Function checks SDK expiry metadata, not custom JWT claims.
-Soprano remains responsible for signature, issuer, audience, expiry, permissions, and account validation.
+The provider remains responsible for signature, issuer, audience, expiry, permissions, and account validation.
+The scope includes `/.default`; the token's `aud` does not include this scope suffix. The provider's
+API registration controls the issued access-token version, independently of the endpoint application's
+inbound Easy Auth token version.
 
 Credential instances and their SDK caches are reused for the configured tenant/application/identity.
 One [worker-local refresh loop](#credential-caching-and-refresh) warms both exchange stages; a
@@ -258,12 +263,14 @@ SMS and Voice use the complete provider-approved URLs selected from the provider
 supplies `recipient.phone_number`, the unchanged `message.text`, optional `message.language`, one
 selected `channels[].channel`, and `correlation_id`. Keep the leading `+` in the E.164 phone number.
 
-Phase 1 supports Basic and Digest; this sample implements Basic only. Per
-[Telesign's authentication instructions](https://developer.telesign.com/enterprise/docs/authentication#basic-authentication),
-the header is `Authorization: Basic <base64(UTF8(customer-id:api-key))>`, using the raw Customer ID
-and API Key strings from Key Vault. Do not decode the API key first, send the API key alone, or
-substitute a key identifier. The guide's `Basic YOUR_API_KEY` is abbreviated, not the literal encoding.
-Provider-token authentication is described as Phase 2 and is not implemented for Telesign here.
+Telesign uses the [provider OAuth flow](#provider-oauth-tokens), not Basic/Digest authentication.
+The setup profile supplies tenant `d818b557-ea1c-4070-a3f1-928330b7a30c`, API application
+`f1117a41-5e56-48d1-836a-1313846d1610`, and scope
+`api://f1117a41-5e56-48d1-836a-1313846d1610/.default` for every SMS/voice and Global/EU route.
+The calling application must be provisioned and authorized by Telesign. The adapter sends the final
+application access token as a Bearer credential; it never reads the former customer-ID/API-key
+secrets and never falls back to them. Existing deployments require an
+[explicit OAuth migration](ONBOARDING.md#telesign-oauth-migration).
 
 The optional `account_lifecycle_event` and `originating_ip` fields are reserved for future intelligence
 capabilities. They are omitted; do not infer an originating address from the Function or synthesize
@@ -274,7 +281,7 @@ It is appropriate for an explicitly authorized, direct provider diagnostic, not 
 The production provider does not add or forward this header. Function evaluation mode remains separate:
 it validates/decrypts and skips all provider HTTP. A successful provider shutter probe is not evidence
 that an SMS was delivered or a Voice call was placed. Enabling the API globally also does not prove
-that a particular Customer ID/API Key pair is authorized for this integration.
+that a particular calling application is authorized for this integration.
 
 ---
 
@@ -288,10 +295,10 @@ Set by provisioning. **Identical names across all languages.**
 | `EPP_PROVIDER_ENDPOINT` | complete absolute HTTPS request URL for the selected channel/region, with a hostname, port 1–65535, and no userinfo or fragment; redirects are not followed |
 | `EPP_PROVIDER_CHANNEL` | optional configured `sms` or `voice` route; when set, other live-request channels fail closed |
 | `EPP_PROVIDER_ENDPOINT_REGION` | selected `global` or `eu` route label; informational at runtime |
-| `EPP_PROVIDER_AUTH_MODE` | must match the selected provider (`apiKey` for Telesign, `oauth` for Soprano) |
-| `EPP_PROVIDER_TENANT_ID` | selected provider tenant; added to the Step 1 app's allowed-tenants preview and used as the OAuth authority for Soprano |
-| `EPP_PROVIDER_SCOPE` | Soprano OAuth scope |
-| `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | client application and user-assigned identity used for Soprano client-assertion exchange |
+| `EPP_PROVIDER_AUTH_MODE` | must match the selected provider (`oauth` for Telesign/Soprano, `apiKey` for Infobip/Sinch) |
+| `EPP_PROVIDER_TENANT_ID` | selected provider tenant; added to the Step 1 app's allowed-tenants preview and used as the OAuth authority |
+| `EPP_PROVIDER_SCOPE` | selected Telesign/Soprano API scope, including `/.default` |
+| `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | client application and user-assigned identity used for provider client-assertion exchange |
 | `EPP_PROVIDER_ACCOUNT_NAME` | sender/source only when required by the selected provider |
 | `EPP_PROVIDER_TIMEOUT_MS` | trimmed ASCII decimal milliseconds; default 1500 for missing/invalid/nonpositive values; capped at 2500. Not a whole-invocation deadline |
 | `EPP_DECRYPTION_KEY_PEM` | single RSA private key for JWE decryption, PEM or base64-encoded PEM; use a Key Vault secret reference in Azure, not a plaintext private key in shared settings |
@@ -299,9 +306,9 @@ Set by provisioning. **Identical names across all languages.**
 | `KEY_VAULT_URL` | Key Vault URI for API-key providers |
 | `AZURE_CLIENT_ID` | set for a user-assigned managed identity |
 
-Telesign credentials live in **Key Vault**, under the names in its credential specification, and are fetched via
-managed identity. Soprano exchanges an outbound managed-identity assertion for a token in the
-configured provider tenant/scope. Do not put provider secrets in code or app settings.
+API-key provider credentials live in **Key Vault**, under the names in their credential specifications.
+Telesign and Soprano exchange an outbound managed-identity assertion for a token in the configured
+provider tenant/scope. Do not put provider secrets in code or app settings.
 
 Caller trust is configured in **Easy Auth**, not application environment variables: pin the trusted
 tenant issuer, the endpoint-app audience and the authorized SAS caller application ID. Incoming

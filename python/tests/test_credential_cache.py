@@ -14,6 +14,8 @@ import src.credentials as credentials_module
 from src.config import read_config
 from src.credentials import ApiKeyCache, AccessTokenCache, ProviderCredentials
 from src.dispatch import DispatchEngine, ProviderRegistry
+from src.providers.infobip import InfobipProvider
+from src.providers.soprano import SopranoProvider
 from src.providers.telesign import TelesignProvider
 
 AUTH = {"mode": "apiKey", "key_vault_secret_name": "key", "identity_key_vault_secret_name": "id"}
@@ -211,28 +213,52 @@ def test_access_token_cache_uses_sdk_refresh_metadata_and_preserves_original_exp
 
 def test_startup_only_prepares_credentials_and_shutdown_is_terminal():
     secrets = Mock(resolve=Mock(return_value="test-key"))
-    engine = DispatchEngine(ProviderRegistry([TelesignProvider()]), secrets,
-                            {"EPP_PROVIDER_NAME": "telesign", "EPP_PROVIDER_AUTH_MODE": "apiKey"})
+    engine = DispatchEngine(ProviderRegistry([InfobipProvider()]), secrets,
+                            {"EPP_PROVIDER_NAME": "infobip", "EPP_PROVIDER_AUTH_MODE": "apiKey"})
     try:
         engine.start_credential_refresh()
         engine.start_credential_refresh()
-        assert secrets.resolve.call_count == 2
+        assert secrets.resolve.call_count == 1
     finally:
         engine.close()
     with pytest.raises(ValueError, match="unavailable"):
         engine._credentials.resolve(AUTH, CONFIG)
-    no_provider = DispatchEngine(ProviderRegistry([TelesignProvider()]), secrets, {})
+    no_provider = DispatchEngine(ProviderRegistry([InfobipProvider()]), secrets, {})
     try:
         no_provider.start_credential_refresh()
-        assert secrets.resolve.call_count == 2
+        assert secrets.resolve.call_count == 1
     finally:
         no_provider.close()
-    broken = DispatchEngine(ProviderRegistry([TelesignProvider()]), Mock(resolve=Mock(side_effect=ValueError("PRIVATE"))),
-                            {"EPP_PROVIDER_NAME": "telesign"})
+    broken = DispatchEngine(ProviderRegistry([InfobipProvider()]), Mock(resolve=Mock(side_effect=ValueError("PRIVATE"))),
+                            {"EPP_PROVIDER_NAME": "infobip"})
     try:
         broken.start_credential_refresh()
     finally:
         broken.close()
+
+
+@pytest.mark.parametrize("provider", [SopranoProvider(), TelesignProvider()])
+def test_oauth_startup_prepares_only_tokens_without_key_vault(monkeypatch, provider):
+    identity = Mock(spec=["get_token"], get_token=Mock(return_value=SimpleNamespace(
+        token="PRIVATE-ASSERTION", expires_on=time.time() + 3600)))
+    access = Mock(spec=["get_token"], get_token=Mock(return_value=SimpleNamespace(
+        token="PRIVATE-TOKEN", expires_on=time.time() + 3600)))
+    monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock(return_value=identity))
+    monkeypatch.setattr(credentials_module, "ClientAssertionCredential", Mock(return_value=access))
+    secrets = Mock(resolve=Mock(side_effect=AssertionError("OAuth must not read Key Vault")))
+    engine = DispatchEngine(ProviderRegistry([provider]), secrets, {
+        "EPP_PROVIDER_NAME": provider.manifest["id"], "EPP_PROVIDER_AUTH_MODE": "oauth",
+        "EPP_PROVIDER_TENANT_ID": "tenant", "EPP_PROVIDER_SCOPE": "api://provider/.default",
+        "EPP_OUTBOUND_CLIENT_ID": "app", "EPP_OUTBOUND_MI_CLIENT_ID": "identity",
+    })
+    try:
+        engine.start_credential_refresh()
+        engine.start_credential_refresh()
+        assert isinstance(engine._credentials.cache, AccessTokenCache)
+        access.get_token.assert_called_once_with("api://provider/.default", logging_enable=False)
+        secrets.resolve.assert_not_called()
+    finally:
+        engine.close()
 
 
 def test_configuration_changes_require_a_new_worker_and_stopped_cache_cannot_restart():

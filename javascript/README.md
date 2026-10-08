@@ -10,9 +10,9 @@ each provider owns its credentials, wire request, response interpretation, outco
 1. Follow [customer onboarding](../docs/ONBOARDING.md). Choose a bundled provider and set
    `EPP_PROVIDER_NAME` to its fixed id; `<provider-id>` is a placeholder, not a default.
 2. Consult the selected implementation in [src/functions/providers/](src/functions/providers/)
-   for required credentials and options. Store credential values under the provider's Key Vault
-   secret names, grant the Function's managed identity *Key Vault Secrets User*, and configure the
-   matching endpoint and required options. This guide does not duplicate individual API contracts.
+   for required credentials and options. Telesign/Soprano require provider OAuth authorization and
+   outbound managed-identity federation. For API-key adapters, store credentials under the provider's
+   Key Vault secret names and grant *Key Vault Secrets User*. Configure the matching endpoint/options.
 3. Use [../docs/local.settings.sample.json](../docs/local.settings.sample.json) as a starting point,
    replacing placeholders with the selected provider's settings. Keep local settings private at
    the app root beside [host.json](host.json), with `FUNCTIONS_WORKER_RUNTIME=node`.
@@ -72,7 +72,9 @@ extracts the first six-digit passcode from the rendered message and sends fixed 
 gender `1` and loop `2`. It uses a nonblank SAS request locale as the language, falling back to
 `en-US` when the locale is absent or invalid. These values require no additional environment
 settings. Soprano SMS continues to forward the rendered message unchanged. The Telesign provider
-uses the configured complete endpoint and API-key credentials from Key Vault. Telesign SMS forwards
+uses the configured complete endpoint and the same managed-identity OAuth flow as Soprano, without
+API-key fallback. See the [Telesign migration guidance](../docs/ONBOARDING.md#telesign-oauth-migration).
+Telesign SMS forwards
 the rendered message unchanged; Telesign voice comma-separates each six-digit numeric run that is
 not part of a longer number and repeats the complete paced message twice.
 

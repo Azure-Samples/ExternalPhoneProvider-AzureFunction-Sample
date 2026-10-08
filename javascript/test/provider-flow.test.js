@@ -192,13 +192,16 @@ test('Sinch HTTP success requires a nonblank string ID and may infer Dispatched'
     }
 });
 
-test('Telesign request validates E.164 and voice pacing remains unchanged', () => {
+test('Telesign uses OAuth while E.164 validation and voice pacing remain unchanged', () => {
     const telesign = selectProvider('telesign');
-    const voice = telesign.createRequest({ ...input, channel: 'voice' });
-    assert.deepEqual(telesign.credentialSpec, {
-        mode: 'apiKey',
-        keyVaultSecretName: 'telesign-api-key',
-        identityKeyVaultSecretName: 'telesign-customer-id',
+    const credential = { mode: 'oauth', accessToken: 'provider-token' };
+    const voice = telesign.createRequest({ ...input, channel: 'voice', credential });
+    assert.equal(telesign.authenticationMode, 'oauth');
+    assert.deepEqual(telesign.credentialSpec, { mode: 'oauth' });
+    assert.deepEqual(voice.headers, {
+        Authorization: ['Bearer', credential.accessToken].join(' '),
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
     });
     assert.equal(JSON.parse(voice.body).message.text,
         '  Your code is 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1.\n'
@@ -206,6 +209,7 @@ test('Telesign request validates E.164 and voice pacing remains unchanged', () =
     for (const phoneNumber of ['15551234567', '+0123', '+1', '+1234567890123456', '+123\n']) {
         assert.throws(() => telesign.createRequest({
             ...input,
+            credential,
             delivery: new OtpDelivery({ ...delivery, phoneNumber }),
         }), /invalid recipient/);
     }

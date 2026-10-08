@@ -261,12 +261,12 @@ public class ContractTests
             channel,
             $"https://verify.telesign.com/epp/{channel}",
             delivery,
-            new ProviderCredentials("apiKey", "test-key", "test-id"),
+            new ProviderCredentials("oauth", AccessToken: "provider-token"),
             new TestEnv());
         AssertJsonRequest(
             request,
             $"https://verify.telesign.com/epp/{channel}",
-            "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("test-id:test-key")));
+            "Bearer " + "provider-token");
         var expectedText = channel == "voice"
             ? "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.   "
               + "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.  "
@@ -291,7 +291,7 @@ public class ContractTests
             "voice",
             "https://verify.telesign.com/epp/voice",
             delivery,
-            new ProviderCredentials("apiKey", "test-key", "test-id"),
+            new ProviderCredentials("oauth", AccessToken: "provider-token"),
             new TestEnv());
         using var body = JsonDocument.Parse(request.Body);
         Assert.Equal(
@@ -304,7 +304,8 @@ public class ContractTests
     public async Task TelesignValidatesRecipientAndFallsBackToMessageId()
     {
         var provider = new TelesignProvider();
-        var credential = new ProviderCredentials("apiKey", "key", "id");
+        Assert.Equal("oauth", provider.AuthenticationMode);
+        var credential = new ProviderCredentials("oauth", AccessToken: "provider-token");
         foreach (var phoneNumber in new[] { "15551234567", "+0123", "+1", "+1234567890123456", "+123\n", "+123\r", "+12 34" })
         {
             var error = await Assert.ThrowsAsync<PhoneProviderBase.ProviderSendException>(

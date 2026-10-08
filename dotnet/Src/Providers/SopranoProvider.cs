@@ -1,5 +1,4 @@
 using Azure.Core;
-using Azure.Identity;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
@@ -10,37 +9,24 @@ using Microsoft.Extensions.Logging;
 
 namespace Epp.Otp.Providers;
 
-public sealed class SopranoProvider : PhoneProviderBase
+public sealed class SopranoProvider : OAuthPhoneProviderBase
 {
     private const string DefaultVoiceLanguage = "en-US";
     private const int VoiceGender = 1;
     private const int VoiceLoop = 2;
-    private static readonly TimeSpan ExpirySkew = TimeSpan.FromSeconds(30);
-    private readonly object _credentialGate = new();
-    private readonly Func<string, TokenCredential> _createIdentity;
-    private readonly Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> _createCredential;
-    private TokenCredential? _identity;
-    private TokenCredential? _credential;
-    private string? _scope;
 
     public SopranoProvider()
-        : this(
-            identity => new ManagedIdentityCredential(identity, OAuthOptions()),
-            (tenant, application, assertion) =>
-                new ClientAssertionCredential(tenant, application, assertion, OAuthOptions()))
     {
     }
 
     internal SopranoProvider(
         Func<string, TokenCredential> createIdentity,
         Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> createCredential)
+        : base(createIdentity, createCredential)
     {
-        _createIdentity = createIdentity;
-        _createCredential = createCredential;
     }
 
     public override string Name => "soprano";
-    public override string AuthenticationMode => "oauth";
 
     public override Task<ProviderResult> SendOtpAsync(
         string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credentials,
@@ -110,71 +96,6 @@ public sealed class SopranoProvider : PhoneProviderBase
         {
             FailureReason = ClassifyFailure(httpStatus, finalOutcome, recognized),
         };
-    }
-
-    public override async Task<ProviderCredentials> FetchCredentialsAsync(
-        AppConfig config, CancellationToken cancellationToken = default)
-    {
-        ConfigureCredentials(config);
-        await GetAssertionAsync(cancellationToken).ConfigureAwait(false);
-        var token = CheckToken(await _credential!.GetTokenAsync(
-            new TokenRequestContext([_scope!]),
-            cancellationToken).ConfigureAwait(false));
-        return new ProviderCredentials(
-            AuthenticationMode,
-            AccessToken: token.Token,
-            ExpiresOn: token.ExpiresOn - ExpirySkew);
-    }
-
-    private void ConfigureCredentials(AppConfig config)
-    {
-        lock (_credentialGate)
-        {
-            if (_credential is not null) return;
-            if (string.IsNullOrWhiteSpace(config.ProviderTenantId)
-                || string.IsNullOrWhiteSpace(config.ProviderScope)
-                || string.IsNullOrWhiteSpace(config.OutboundClientId)
-                || string.IsNullOrWhiteSpace(config.OutboundManagedIdentityClientId))
-                throw CredentialTokenService.Unavailable();
-            _scope = config.ProviderScope;
-            _identity = _createIdentity(config.OutboundManagedIdentityClientId);
-            _credential = _createCredential(
-                config.ProviderTenantId,
-                config.OutboundClientId,
-                async cancellation => (await GetAssertionAsync(cancellation).ConfigureAwait(false)).Token);
-        }
-    }
-
-    private async Task<AccessToken> GetAssertionAsync(CancellationToken cancellationToken) =>
-        CheckToken(await _identity!.GetTokenAsync(
-            new TokenRequestContext(["api://AzureADTokenExchange/.default"]),
-            cancellationToken).ConfigureAwait(false));
-
-    private static AccessToken CheckToken(AccessToken token)
-    {
-        if (string.IsNullOrWhiteSpace(token.Token)
-            || token.ExpiresOn <= DateTimeOffset.UtcNow + ExpirySkew)
-            throw CredentialTokenService.Unavailable();
-        return token;
-    }
-
-    private static ClientAssertionCredentialOptions OAuthOptions()
-    {
-        var options = new ClientAssertionCredentialOptions
-        {
-            AuthorityHost = AzureAuthorityHosts.AzurePublicCloud,
-            Retry =
-            {
-                MaxRetries = 0,
-                NetworkTimeout = CredentialTokenService.AcquisitionTimeout,
-            },
-            Diagnostics =
-            {
-                IsLoggingEnabled = false,
-                IsLoggingContentEnabled = false,
-            },
-        };
-        return options;
     }
 
     private static (Outcome Outcome, bool Recognized) MapStatus(string? status) => status switch

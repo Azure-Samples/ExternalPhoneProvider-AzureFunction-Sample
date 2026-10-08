@@ -8,8 +8,9 @@ selected provider per deployment. Target: .NET 8 isolated worker, Azure Function
 1. Follow [customer onboarding](../docs/ONBOARDING.md). Set `EPP_PROVIDER_NAME` to the selected
 	adapter's `Name` (`<adapter-id>` is only a placeholder).
 2. Consult the selected adapter in [Src/Providers/](Src/Providers/) for required credentials and
-	options. Store credentials in Key Vault under the provider's secret names, grant
-	the Function's managed identity *Key Vault Secrets User*, and configure the matching endpoint/options.
+	options. Telesign/Soprano require provider OAuth authorization and outbound managed-identity
+	federation. For API-key adapters, store credentials in Key Vault under the provider's secret names
+	and grant *Key Vault Secrets User*. Configure the matching endpoint/options.
 3. Base private local settings on [../docs/local.settings.sample.json](../docs/local.settings.sample.json),
 	replacing placeholders and selecting `FUNCTIONS_WORKER_RUNTIME=dotnet-isolated`. Put settings
 	at the app root beside [host.json](host.json). Configure decryption from the
@@ -93,6 +94,9 @@ forward the rendered message unchanged.
 
 Telesign SMS also forwards the rendered message unchanged. Telesign voice comma-separates each
 six-digit numeric run that is not part of a longer number and repeats the complete paced message twice.
+Telesign and Soprano share `OAuthPhoneProviderBase` for managed-identity client-assertion exchange.
+Telesign no longer uses API-key/customer-ID secrets or Basic authentication; see the
+[migration guidance](../docs/ONBOARDING.md#telesign-oauth-migration).
 
 ## Source
 
@@ -124,6 +128,7 @@ independent.
 | [Src/CredentialTokenService.cs](Src/CredentialTokenService.cs) | Provider-supplied retrieval, one expiring `MemoryCache` value and startup warmup |
 | [Src/OtpLog.cs](Src/OtpLog.cs) | Source-generated, strongly typed [structured logging events](../docs/CONTRACT.md#application-logs) |
 | [Src/PhoneProviderBase.cs](Src/PhoneProviderBase.cs) | Provider extension contract and shared typed JSON/HTTP transport |
+| [Src/OAuthPhoneProviderBase.cs](Src/OAuthPhoneProviderBase.cs) | Shared managed-identity OAuth acquisition for Telesign and Soprano |
 | [Src/Providers/](Src/Providers/) | Provider identity, credential delegation and API-specific request/response protocols |
 | [Src/SecretResolver.cs](Src/SecretResolver.cs) | Key Vault transport; `ISecretResolver.ResolveAsync` accepts cancellation |
 | [Src/Models.cs](Src/Models.cs) | Outcomes and shared records |

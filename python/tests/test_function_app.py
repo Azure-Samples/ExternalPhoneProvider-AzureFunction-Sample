@@ -455,17 +455,20 @@ def test_interleaved_invocations_keep_separate_log_contexts(monkeypatch, caplog)
     assert "PRIVATE" not in caplog.text
 
 
-def test_successful_lifecycle_logs_only_allowed_body_fields_oauth_ids_and_final_endpoint(monkeypatch, caplog):
+@pytest.mark.parametrize("provider", ["soprano", "telesign"])
+def test_successful_lifecycle_logs_only_allowed_body_fields_oauth_ids_and_final_endpoint(monkeypatch, caplog, provider):
     caplog.set_level(logging.INFO)
     engine = function_app._engine
     engine.env.update({
+        "EPP_PROVIDER_NAME": provider,
         "EPP_PROVIDER_ENDPOINT": "https://provider.example/api/send?key=PRIVATE-QUERY",
         "EPP_PROVIDER_TENANT_ID": "provider-tenant-id",
         "EPP_OUTBOUND_CLIENT_ID": "outbound-client-id",
         "EPP_OUTBOUND_MI_CLIENT_ID": "outbound-mi-client-id",
     })
+    provider_response = {"status": {"code": 290}} if provider == "telesign" else {"status": "ENROUTE"}
     monkeypatch.setattr(dispatch_module.requests, "request", Mock(return_value=Mock(
-        status_code=201, json=Mock(return_value={"status": "ENROUTE"}))))
+        status_code=201, json=Mock(return_value=provider_response))))
     payload = _envelope(tenantId="PRIVATE-TENANT", diagnosticData={"token": "PRIVATE-UNKNOWN-FIELD"})
     response = _HANDLER(_request(payload, {"authorization": "PRIVATE-INBOUND-AUTH"}))
     assert response.status_code == 200
@@ -498,18 +501,18 @@ def test_successful_lifecycle_logs_only_allowed_body_fields_oauth_ids_and_final_
 def test_api_key_lifecycle_identifies_key_vault_resolution_without_logging_credentials(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     engine = function_app._engine
-    engine.env.update({"EPP_PROVIDER_NAME": "telesign", "EPP_PROVIDER_AUTH_MODE": "apiKey"})
+    engine.env.update({"EPP_PROVIDER_NAME": "infobip", "EPP_PROVIDER_AUTH_MODE": "apiKey"})
     monkeypatch.setattr(engine, "_resolve_credential",
                         dispatch_module.DispatchEngine._resolve_credential.__get__(engine))
     monkeypatch.setattr(dispatch_module.requests, "request", Mock(return_value=Mock(
-        status_code=200, json=Mock(return_value={"status": {"code": 3001}}))))
+        status_code=200, json=Mock(return_value={"messages": [{"status": {"groupName": "PENDING"}}]}))))
     assert _HANDLER(_request(_envelope())).status_code == 200
     summary = _summary(caplog)
     assert summary["providerCredentialSource"] == "key_vault" and summary["providerAuthMode"] == "apiKey"
     assert summary["providerTenantId"] is None
     assert summary["functionOutboundClientId"] is None and summary["functionOutboundManagedIdentityClientId"] is None
     assert 0 <= summary["providerCredentialElapsedMs"] <= summary["elapsedMs"]
-    assert [call.args[0] for call in engine.secrets.resolve.call_args_list] == ["telesign-api-key", "telesign-customer-id"]
+    assert [call.args[0] for call in engine.secrets.resolve.call_args_list] == ["infobip-api-key"]
     assert [record["eventName"] for record in _records(caplog)] == _FIXTURES["logging"]["liveEvents"]
 
 

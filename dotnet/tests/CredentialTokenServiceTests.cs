@@ -70,13 +70,15 @@ public class CredentialTokenServiceTests
             service.GetCredentialsAsync(provider, new AppConfig()));
     }
 
-    [Fact]
-    public async Task OAuthUsesManagedIdentityAssertionAndCachesTheProviderToken()
+    [Theory]
+    [InlineData("soprano")]
+    [InlineData("telesign")]
+    public async Task OAuthUsesManagedIdentityAssertionAndCachesTheProviderToken(string providerName)
     {
         var identityCalls = 0;
         var providerCalls = 0;
         var credentialInstances = 0;
-        var provider = new SopranoProvider(
+        var provider = CreateOAuthProvider(providerName,
             _ => new Token(async (_, _) =>
             {
                 Interlocked.Increment(ref identityCalls);
@@ -104,11 +106,13 @@ public class CredentialTokenServiceTests
         Assert.Equal(1, credentialInstances);
     }
 
-    [Fact]
-    public async Task InvalidOAuthConfigurationDoesNotCreateSdkCredentials()
+    [Theory]
+    [InlineData("soprano")]
+    [InlineData("telesign")]
+    public async Task InvalidOAuthConfigurationDoesNotCreateSdkCredentials(string providerName)
     {
         var instances = 0;
-        var provider = new SopranoProvider(
+        var provider = CreateOAuthProvider(providerName,
             _ => new Token((_, _) =>
                 ValueTask.FromResult(new AccessToken("assertion", DateTimeOffset.UtcNow.AddHours(1)))),
             (_, _, _) =>
@@ -146,6 +150,14 @@ public class CredentialTokenServiceTests
 
     private static CredentialTokenService CreateService() =>
         new();
+
+    private static PhoneProviderBase CreateOAuthProvider(
+        string name,
+        Func<string, TokenCredential> createIdentity,
+        Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> createCredential) =>
+        name == "telesign"
+            ? new TelesignProvider(createIdentity, createCredential)
+            : new SopranoProvider(createIdentity, createCredential);
 
     private static ProviderCredentials ApiKey(string value, TimeSpan? lifetime = null) =>
         new(

@@ -8,8 +8,9 @@ provider per deployment. Target: Python 3.11, Azure Functions v4, Python v2 prog
 1. Follow [customer onboarding](../docs/ONBOARDING.md). Set `EPP_PROVIDER_NAME` to the selected
 	adapter's registered manifest id (`<adapter-id>` is only a placeholder).
 2. Consult the selected adapter and its manifest in [src/providers/](src/providers/) for required
-	credentials and options. Store credentials in Key Vault under the declared secret names, grant
-	the Function's managed identity *Key Vault Secrets User*, and configure the matching endpoint/options.
+	credentials and options. Telesign/Soprano require provider OAuth authorization and outbound
+	managed-identity federation. For API-key adapters, store credentials under the declared Key Vault
+	secret names and grant *Key Vault Secrets User*. Configure the matching endpoint/options.
 3. Base private local settings on [../docs/local.settings.sample.json](../docs/local.settings.sample.json),
 	replacing placeholders and selecting `FUNCTIONS_WORKER_RUNTIME=python`. Put settings at the
 	app root beside [host.json](host.json). Configure decryption from the
@@ -87,6 +88,8 @@ forward the rendered message unchanged.
 
 Telesign SMS also forwards the rendered message unchanged. Telesign voice comma-separates each
 six-digit numeric run that is not part of a longer number and repeats the complete paced message twice.
+Its manifest selects the same `AccessTokenCache` as Soprano, with no API-key/Basic fallback.
+Existing API-key deployments require the [Telesign OAuth migration](../docs/ONBOARDING.md#telesign-oauth-migration).
 
 ## Source
 

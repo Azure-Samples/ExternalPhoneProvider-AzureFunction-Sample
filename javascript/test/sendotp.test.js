@@ -81,7 +81,8 @@ beforeEach(() => {
         token: 'PRIVATE-ASSERTION',
         expiresOnTimestamp: Date.now() + 3600000,
     }));
-    getToken = mock.method(ClientAssertionCredential.prototype, 'getToken', async function () {
+    getToken = mock.method(ClientAssertionCredential.prototype, 'getToken', async function (scope) {
+        assert.equal(scope, process.env.EPP_PROVIDER_SCOPE);
         assert.equal(await this.getAssertion(), 'PRIVATE-ASSERTION');
         return { token: 'PRIVATE-OAUTH-TOKEN', expiresOnTimestamp: Date.now() + 3600000 };
     });
@@ -420,7 +421,7 @@ test('Sinch successful HTTP without a nonblank message ID fails closed', async (
 
 test('Telesign strict integer status and voice pacing keep endpoint outcomes stable', async () => {
     process.env.EPP_PROVIDER_NAME = 'telesign';
-    process.env.EPP_PROVIDER_AUTH_MODE = 'apiKey';
+    process.env.EPP_PROVIDER_AUTH_MODE = 'oauth';
     process.env.EPP_PROVIDER_ENDPOINT = 'https://verify.telesign.com/epp/send';
     for (const [code, status] of [[290, 200], ['290', 502], [true, 502]]) {
         fetchMock.mock.mockImplementation(async () => ({
@@ -430,10 +431,70 @@ test('Telesign strict integer status and voice pacing keep endpoint outcomes sta
         }));
         const result = await invoke(await envelope({ channel: 2 }));
         assert.equal(result.status, status);
+        assert.equal(fetchMock.mock.calls.at(-1).arguments[1].headers.Authorization,
+            ['Bearer', 'PRIVATE-OAUTH-TOKEN'].join(' '));
         const sent = JSON.parse(fetchMock.mock.calls.at(-1).arguments[1].body);
         assert.equal(sent.message.text,
             '  PRIVATE-MESSAGE 9, 1, 8, 2, 7, 3.\n   PRIVATE-MESSAGE 9, 1, 8, 2, 7, 3.\n');
     }
+    assert.equal(getToken.mock.callCount(), 1);
+    assert.equal(getSecret.mock.callCount(), 0);
+});
+
+test('Telesign SMS uses only the final OAuth token and preserves the payload', async () => {
+    process.env.EPP_PROVIDER_NAME = 'telesign';
+    process.env.EPP_PROVIDER_SCOPE = 'api://f1117a41-5e56-48d1-836a-1313846d1610/.default';
+    fetchMock.mock.mockImplementation(async () => ({
+        ok: true, status: 200,
+        text: async () => JSON.stringify({ reference_id: 'reference-id', status: { code: 290 } }),
+    }));
+    assert.equal((await invoke(await envelope(), { authorization: 'FORGED-INBOUND-AUTH' })).status, 200);
+    const [url, request] = fetchMock.mock.calls[0].arguments;
+    assert.equal(url, process.env.EPP_PROVIDER_ENDPOINT);
+    assert.equal(request.headers.Authorization, ['Bearer', 'PRIVATE-OAUTH-TOKEN'].join(' '));
+    assert.deepEqual(JSON.parse(request.body), {
+        recipient: { phone_number: baseDelivery.phoneNumber },
+        message: { text: baseDelivery.message, language: baseDelivery.locale },
+        channels: [{ channel: 'sms' }],
+        correlation_id: 'correlation-id',
+    });
+    assert.equal(getSecret.mock.callCount(), 0);
+    assert.equal(getToken.mock.callCount(), 1);
+    const logs = JSON.stringify(records);
+    assert.ok(!logs.includes('PRIVATE-OAUTH-TOKEN') && !logs.includes('PRIVATE-ASSERTION'));
+});
+
+for (const setting of ['EPP_PROVIDER_TENANT_ID', 'EPP_PROVIDER_SCOPE',
+    'EPP_OUTBOUND_CLIENT_ID', 'EPP_OUTBOUND_MI_CLIENT_ID']) {
+    test(`Telesign fails closed without ${setting} and does not read API keys`, async () => {
+        process.env.EPP_PROVIDER_NAME = 'telesign';
+        delete process.env[setting];
+        failure(await invoke(await envelope()), 502);
+        assert.deepEqual([getToken.mock.callCount(), getSecret.mock.callCount(), fetchMock.mock.callCount()],
+            [0, 0, 0]);
+    });
+}
+
+for (const stage of ['assertion', 'provider token']) {
+    test(`Telesign rejects an expired ${stage} without API-key fallback or provider I/O`, async () => {
+        process.env.EPP_PROVIDER_NAME = 'telesign';
+        const method = stage === 'assertion' ? ManagedIdentityCredential.prototype.getToken : getToken;
+        method.mock.mockImplementation(async () => ({
+            token: 'PRIVATE-EXPIRED-TOKEN', expiresOnTimestamp: Date.now() - 1,
+        }));
+        failure(await invoke(await envelope()), 502);
+        assert.equal(getSecret.mock.callCount(), 0);
+        assert.equal(fetchMock.mock.callCount(), 0);
+    });
+}
+
+test('Telesign rejects legacy API-key configuration before credential or provider I/O', async () => {
+    process.env.EPP_PROVIDER_NAME = 'telesign';
+    process.env.EPP_PROVIDER_AUTH_MODE = 'apiKey';
+    failure(await invoke(await envelope()), 502);
+    assert.equal(event('request_failed').failureReason, 'authentication_mode_mismatch');
+    assert.deepEqual([getToken.mock.callCount(), getSecret.mock.callCount(), fetchMock.mock.callCount()],
+        [0, 0, 0]);
 });
 
 test('correlation precedence preserves wire IDs while logs omit unsafe values', async () => {

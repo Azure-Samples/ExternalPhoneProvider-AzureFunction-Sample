@@ -4,19 +4,21 @@
     "providerName": "Telesign",
     "tenantId": "d818b557-ea1c-4070-a3f1-928330b7a30c",
     "authentication": {
-      "mode": "apiKey",
-      "keyVaultSecretName": "telesign-api-key",
-      "identityKeyVaultSecretName": "telesign-customer-id"
+      "mode": "oauth"
     },
     "routes": {
       "sms": {
         "global": {
           "endpoint": "https://verify.telesign.com/integration/msft/cyot",
+          "appId": "f1117a41-5e56-48d1-836a-1313846d1610",
+          "scope": "api://f1117a41-5e56-48d1-836a-1313846d1610/.default",
           "timeoutMilliseconds": 1500,
           "retryIntervalSeconds": 30
         },
         "eu": {
           "endpoint": "https://verify.telesign.com/integration/msft/cyot",
+          "appId": "f1117a41-5e56-48d1-836a-1313846d1610",
+          "scope": "api://f1117a41-5e56-48d1-836a-1313846d1610/.default",
           "timeoutMilliseconds": 1500,
           "retryIntervalSeconds": 30
         }
@@ -24,11 +26,15 @@
       "voice": {
         "global": {
           "endpoint": "https://verify.telesign.com/integration/msft/cyot",
+          "appId": "f1117a41-5e56-48d1-836a-1313846d1610",
+          "scope": "api://f1117a41-5e56-48d1-836a-1313846d1610/.default",
           "timeoutMilliseconds": 1500,
           "retryIntervalSeconds": 30
         },
         "eu": {
           "endpoint": "https://verify.telesign.com/integration/msft/cyot",
+          "appId": "f1117a41-5e56-48d1-836a-1313846d1610",
+          "scope": "api://f1117a41-5e56-48d1-836a-1313846d1610/.default",
           "timeoutMilliseconds": 1500,
           "retryIntervalSeconds": 30
         }

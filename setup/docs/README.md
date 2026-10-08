@@ -14,10 +14,9 @@ Azure Function **platform**: Node.js, .NET, or Python. By default, setup resolve
 There is no package URL or checksum to enter. Setup verifies `SHA256SUMS.txt` automatically and
 performs the required build and publication for the selected language.
 
-Provider profiles contain complete channel/region route objects. Telesign contains its supplied
-route URLs, tenant, authentication, and timings. Soprano contains its provider tenant, Global/EU
-routes, API application ID, scope, authentication, and timings. The provider files contain the
-complete deployment contract.
+Provider profiles contain complete channel/region route objects. Both Telesign and Soprano contain
+their provider tenant, Global/EU routes, API application ID, `/.default` scope, OAuth authentication,
+and timings. The provider files contain the complete deployment contract.
 
 To test unpublished upstream changes, publish them to a public fork with a matching stable package
 release, then use `-SourceRepository <owner/repository>` and
@@ -35,9 +34,10 @@ Use a dedicated nonproduction tenant/subscription for the first deployment.
 2. Record the **Directory (tenant) ID** and **Application (client) ID**. The script requires the
    client ID, not the application's object ID, and will not create a replacement registration.
 3. Complete provider purchase, account/sender registration, and onboarding for the selected adapter.
-   Telesign uses `telesign-api-key` and `telesign-customer-id` in Key Vault. Soprano uses OAuth
-   client-assertion exchange with the selected provider tenant/scope/application ID. Setup does not
-   grant provider API consent or application roles.
+   Telesign and Soprano use OAuth client-assertion exchange with the selected provider
+   tenant/scope/application ID. Setup does not grant provider API consent or application roles.
+   Existing Telesign API-key deployments must follow the
+   [OAuth migration guidance](../../docs/ONBOARDING.md#telesign-oauth-migration).
 
 After the single Step 2 approval, PowerShell makes the dedicated app organizational multi-tenant,
 restricts it through the Entra allowed-tenants preview to its home tenant plus the selected provider
@@ -46,8 +46,8 @@ adds the `Epp.Invoke` application permission, creates/reuses its enterprise appl
 assignment, creates/reuses the Microsoft phone-provider service principal, and assigns `Epp.Invoke`.
 It also grants that Microsoft service principal tenant-wide Microsoft Graph `Application.Read.All`,
 adds the hostname-based identifier URI and public JWE encryption certificate, and configures Easy
-Auth to allow only the Microsoft phone-provider application. Soprano additionally creates the
-disclosed outbound managed-identity federated credential.
+Auth to allow only the Microsoft phone-provider application. Both supported providers additionally
+create or reuse the disclosed outbound managed-identity federated credential.
 
 ## Prerequisites for Step 2
 
@@ -269,19 +269,21 @@ changes, then compile the infrastructure:
 
 ```powershell
 pwsh -NoProfile -File .\setup\tests\Certificates.Tests.ps1
+pwsh -NoProfile -File .\setup\tests\Providers.Tests.ps1
 az bicep build --file .\setup\infra\main.bicep --outfile "$env:TEMP\epp-main.json"
 ```
 
 The focused tests replace certificate/Graph calls and verify creation, reuse, errors, naming, key
-mismatch, and versioned settings. CI runs them on Windows and Linux. They do not simulate the full
+mismatch, versioned settings, provider OAuth routes, federation, and the deployment handoff.
+CI runs them on Windows and Linux. They do not simulate the full
 deployment or certify live RBAC propagation, Key Vault issuance, Entra behavior, or provider delivery.
 
 ## Step 3 - manually validate and activate policy
 
 1. Save the Step 2 summary and confirm its tenant, application client ID, endpoint URL, encryption
    key ID, and certificate with the EPP onboarding owner. **Replace all test provider values** and
-   provision the adapter-named API credentials in Key Vault. Verify the package's channel routing
-   and retry behavior.
+   confirm provider authorization of the calling application and the outbound federation. Verify the
+   package's channel routing and retry behavior.
 2. Validate the deployed endpoint with synthetic, non-delivering evaluation requests first.
    Missing/invalid credentials and unauthorized callers must be rejected by Easy Auth. An admitted
    caller's valid encrypted request must return the matching nonce. Then verify live SMS/voice
