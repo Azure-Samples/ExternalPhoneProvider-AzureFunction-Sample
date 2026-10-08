@@ -7,6 +7,13 @@ each provider owns its credentials, wire request, response interpretation, outco
 
 ## Setup
 
+**Customer deployment:** start with the [root guide](../README.md). Guided setup publishes this
+runtime and its Azure settings; continue with [provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
+Do not create local settings or republish after a successful guided deployment.
+
+**The steps below are optional developer/manual deployment work**, not additional onboarding
+requirements. Guided providers are Telesign and Soprano; other adapters require separate integration.
+
 For multiple regional origins behind one URL, see [manual Front Door onboarding](../docs/FRONTDOOR.md).
 The JavaScript evaluation trials used a separate readiness handler; it is not included in this
 sample's release package. No Front Door deployment script is supplied.
@@ -91,8 +98,8 @@ Easy Auth authenticates and authorizes the caller before `POST /api/SendOtp`; th
 validates the envelope and decrypts the JWE, without parsing or echoing incoming `Authorization`.
 JWE does not authenticate SAS: anyone with the public key can encrypt a request, and a fixed nonce
 is not authentication. Request `mode`, `channel`, `ttlSeconds` and `tenantId` are request data, not
-environment settings or sources of identity trust. The caller-rendered message is forwarded unchanged;
-the endpoint does not guess a passcode.
+environment settings or sources of identity trust. SMS forwards the caller-rendered message;
+voice uses the provider-specific extraction/pacing described above.
 
 For non-delivery validation, use incoming `mode: 2` or `mode: "evaluation"`. This generic shutter
 works for every provider without provider configuration, provider Key Vault reads or provider HTTP;
@@ -104,6 +111,10 @@ Acceptance is not handset delivery; failures omit the nonce, and timeouts must n
 retries. The shared contract defines validation, HTTP outcomes and privacy-safe logging.
 
 ## Source and extension points
+
+For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and the
+[JavaScript service-event queries](../docs/MONITORING.md#4-javascript-service-event-queries).
+Logs are JSON `service` events ending in `request_completed`, not a `logType: "request"` summary.
 
 The app-start hook selects `ApiKeyCache` or `AccessTokenCache` from the provider credential spec.
 Only that cache starts: API keys use Key Vault and `lru-cache`; access tokens use the MI/Entra SDKs,
