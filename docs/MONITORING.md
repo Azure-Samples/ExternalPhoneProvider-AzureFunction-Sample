@@ -9,6 +9,11 @@ permissions, privacy, charges, and alert routing before creating anything. All
 thresholds and intervals below are **starting points, not SLAs**. This guide does not
 change deployed diagnostics, sampling, retention, or alert settings.
 
+For the first deployment, finish the [customer acceptance checks](ONBOARDING.md#validate-the-deployed-endpoint)
+with the authorized test operator. Read [Application Insights](APPLICATION-INSIGHTS.md) for
+collection/identity details, then use this guide to establish queries and alerts. You do not
+need Front Door, a Workbook, or a new exporter merely to locate your existing single-region logs.
+
 ## 1. Record the deployment and confirm telemetry
 
 Keep a private inventory with one row per expected regional endpoint:
@@ -284,6 +289,86 @@ workspace branches as in the request query, add a region label to each branch,
 and include it in the final grouping. Do not combine copies of the same event
 exported through multiple pipelines.
 
+### Runtime-specific log discovery
+
+Do not search all languages for `logType: "request"` or parse every trace as JavaScript JSON.
+Current runtimes emit fixed completion events, with different formats:
+
+| Runtime | Emission in source | Fields to verify in the deployed trace |
+|---|---|---|
+| JavaScript | JSON string from [logging.js](../javascript/src/functions/logging.js): `logType: "service"`, `eventName: "request_completed"`. | camelCase `functionRequestId`, `httpStatus`, `result`; parse `Message` using the JavaScript queries above. |
+| Python | [otp_log.py](../python/src/otp_log.py): fixed message `OTP request completed`; logging extras include `event_name`, `event_id`, `httpStatus`, `result`, `functionRequestId`. | Whether extras survive in `Properties`, and their actual names. A message alone does not retain its status/result. |
+| .NET | [OtpLog.cs](../dotnet/Src/OtpLog.cs): typed `ILogger` event `request_completed` (1401), message beginning `Request completed: HTTP`. | `HttpStatus`, `Result`, `ElapsedMs` and `FunctionRequestId` scope, if preserved by the exporter. Event ID/name may be separately exported or absent. |
+
+First discover property **names**, without dumping message bodies or values:
+
+```kusto
+AppTraces
+| where TimeGenerated >= ago(1h)
+| where _ResourceId =~ "<application-insights-resource-id>"
+    and AppRoleName == "<function-role-name>"
+| mv-expand PropertyName = bag_keys(Properties)
+| summarize StoredRows = count() by PropertyName = tostring(PropertyName)
+| order by StoredRows desc
+```
+
+No property rows does not prove no traces: the exporter may have sent only formatted messages.
+Use the [coverage query](APPLICATION-INSIGHTS.md#read-only-queries-to-establish-what-is-present)
+to distinguish absent properties from absent logs. Inspect a controlled nonproduction invocation
+privately; exporters can prefix or rename structured properties.
+
+**Python example:** use this only if `event_name`, `result`, and `httpStatus` are preserved as
+top-level `Properties` keys. The fixed-message branch makes missing completion properties
+visible instead of silently dropping those rows:
+
+```kusto
+AppTraces
+| where TimeGenerated >= ago(1h)
+| where _ResourceId =~ "<application-insights-resource-id>"
+    and AppRoleName == "<function-role-name>"
+| where tostring(Properties.event_name) == "request_completed"
+    or Message == "OTP request completed"
+| extend Result = tostring(Properties.result), HttpStatus = toint(Properties.httpStatus)
+| extend SchemaStatus = iff(isempty(Result) or isnull(HttpStatus),
+                           "missing completion properties", "properties present")
+| summarize StoredRows = count() by SchemaStatus, Result, HttpStatus
+```
+
+**.NET example:** use the emitted completion-message prefix to find candidate rows, then verify
+the structured keys. If the exporter prefixes keys, change the property accessors accordingly;
+do not assume missing status equals zero or success.
+
+```kusto
+AppTraces
+| where TimeGenerated >= ago(1h)
+| where _ResourceId =~ "<application-insights-resource-id>"
+    and AppRoleName == "<function-role-name>"
+| where Message startswith "Request completed: HTTP"
+| extend Result = tostring(Properties.Result), HttpStatus = toint(Properties.HttpStatus)
+| extend SchemaStatus = iff(isempty(Result) or isnull(HttpStatus),
+                           "missing completion properties", "properties present")
+| summarize StoredRows = count() by SchemaStatus, Result, HttpStatus
+```
+
+These discovery counts are **stored rows**, not sampled traffic totals or delivery receipts.
+Do not turn them into alerts until the selected release's schema and collection are verified.
+In particular, the .NET host's OpenTelemetry declaration is not an initialized direct worker
+exporter. Missing worker events require a collection investigation, not a green application
+health result. Malformed .NET request binding can fail before the handler emits any events.
+
+For an incident, use the host `OperationId`/invocation ID and whichever application request ID
+is actually exported. Keep raw Microsoft/provider support IDs distinct; not every runtime
+exports the provider reference. Never use OTPs/nonces or message bodies as correlation keys.
+Look for a correlated `request_failed` event's stage/reason and endpoint status, then the
+separate provider-response event's upstream status. A provider `200` can precede a body-read
+timeout and Function `504`; it is not necessarily a successful invocation.
+
+`credential_refresh_failed` also differs operationally: JavaScript/Python have a polling
+refresh loop, while .NET emits this event on failed startup/cache-fill acquisition and has no
+periodic poller. See [credential behavior](CONTRACT.md#credential-caching-and-refresh).
+Absence of a warning, especially in an idle app or a missing export pipeline, is not a credential
+health check.
+
 ## 5. Set up notifications and alert rules
 
 Have an operator review and create these resources in a nonproduction environment
@@ -325,6 +410,31 @@ Add Service Health/Resource Health notifications and review Key Vault failures o
 throttling, storage availability/latency, and credential/certificate expiry through
 their respective resource monitoring. A successful Function response alone does
 not validate those dependencies' future readiness.
+
+### Certificate, credential, and cost ownership
+
+Keep the setup summary's `certificateExpiresUtc`, vault certificate/secret versions, and Entra
+encryption credential expiry in a restricted inventory with a renewal owner and escalation backup.
+Configure the vault-wide certificate contacts and retain the certificate's `EmailContacts`
+lifetime action, following the [renewal runbook](../setup/docs/README.md#encryption-certificate-lifecycle).
+Contacts alone are not automatic renewal, and a new vault certificate version does not update
+the Function's version-pinned reference or Entra by itself.
+
+Create an independent reminder before the certificate's 30-day near-expiry window and rehearse
+same-key renewal in nonproduction. If your operations process uses Key Vault near-expiry/new-version
+events, an operator must configure an [Event Grid subscription and handler](https://learn.microsoft.com/azure/key-vault/general/event-grid-overview)
+and test its notification path. Diagnostic settings alone do not create these alerts, and those
+events do not automatically become Application Insights traces.
+
+For provider API keys, track the provider's expiration/revocation policy and verify a coordinated
+matching-key/customer-ID transition. For Soprano, monitor failed credential acquisition and provider
+authorization failures; do not treat short-lived access-token renewal as certificate renewal.
+Evaluation is insufficient for either provider's delivery readiness.
+
+Review telemetry volume, effective retention, and daily caps; caps can create blind spots, not just
+reduce cost. Configure Azure Cost Management budgets/notifications for the chosen scope and review
+provider billing separately. Budgets do not stop spending. Assign operators to act on alerts and
+periodically verify routing, firing, and resolution rather than only creating rules once.
 
 ### Log search alerts
 

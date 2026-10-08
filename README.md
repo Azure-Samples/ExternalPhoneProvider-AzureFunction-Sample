@@ -6,6 +6,13 @@ by SMS or voice. Start here to onboard **one deployment in one Azure region**.
 For implementation details, configuration, packaging, and security behavior, see the
 [technical reference](TECHNICAL.md).
 
+**New customer path:** [confirm access and collect values](docs/ONBOARDING.md#before-purchasing-or-deploying)
+→ [run guided setup](setup/docs/README.md#step-2---download-and-run-one-script)
+→ [connect and validate](docs/ONBOARDING.md#complete-provider-authentication)
+→ [activate policy](setup/docs/README.md#step-3---manually-validate-and-activate-policy)
+→ [operate and monitor](docs/MONITORING.md).
+You do not need to build locally, create `local.settings.json`, or read all three language guides.
+
 For a customer-built multi-provider customization, see the
 [implementation guide and offline feasibility findings](docs/MULTI-PROVIDER-IMPLEMENTATION.md).
 
@@ -24,6 +31,12 @@ delivery, and then have an administrator activate the endpoint in Microsoft Entr
 The guided setup deploys the Azure resources and configures the endpoint application. It does **not**
 purchase a provider offer, grant access to a provider's API, or activate your authentication method
 policy. Those steps remain part of your onboarding.
+
+**Before spending or activating:** confirm access to the provider's EPP integration and Microsoft's
+approved tenant onboarding/test procedure. The sample does not establish eligibility, licensing,
+or preview enrollment. It is not production certification: it has no durable queue, automatic
+send retries, deduplication, whole-request deadline, or overlapping key rotation. Review the
+[limitations](docs/CONTRACT.md#production-limitations) with your owners.
 
 ## Single-region architecture
 
@@ -57,7 +70,7 @@ Use a **dedicated nonproduction tenant and subscription** for your first deploym
 
 | Requirement | What to prepare |
 |---|---|
-| Provider | An offer from a provider in **Security Store**, with the required SMS or voice route, account/sender registration, and provider onboarding completed. Confirm the provider is supported by the guided setup. |
+| Provider | An offer from [Microsoft Security Store](https://securitystore.microsoft.com/private-solutions), with the required SMS or voice route, account/sender registration, and EPP account access. Guided setup supports Telesign and Soprano only. |
 | Workstation | Windows with PowerShell 7+ and Azure CLI 2.60.0+ for FC1 or 2.48.1+ for EP1 on `PATH`. Certificates are issued inside Key Vault, not the local certificate store. End-to-end setup from Linux or Azure Cloud Shell has not been validated. |
 | Network access | Access to GitHub, Azure, Microsoft Graph, and Key Vault. FC1 publication and EP1 Python builds also require access to the Function's SCM endpoint. |
 | Azure permissions | An Azure user account permitted to deploy at subscription scope, register required resource providers, and create scoped role assignments. |
@@ -75,11 +88,17 @@ deploying. If Azure reports `SubscriptionIsOverQuotaForSku`, follow the
 [regional quota troubleshooting steps](setup/docs/Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku)
 before retrying.
 
+The customer-designated **onboarding owner** coordinates the Azure operator, tenant/policy
+administrator, provider administrator, and Microsoft support. This repository does not supply
+a named contact. If the offer or required feature/test procedure is unavailable, follow the
+[access gate](docs/ONBOARDING.md#before-purchasing-or-deploying), not a workaround that weakens authentication.
+
 ## Onboard your endpoint
 
 ### 1. Set up your provider and application
 
-In **Security Store > Provider offers**, purchase an offer and complete the provider's account,
+In [Microsoft Security Store](https://securitystore.microsoft.com/private-solutions), review the
+provider offer, then purchase and complete the provider's account,
 sender, and channel onboarding. Confirm that the provider supports the required SMS or voice route.
 Purchasing the offer does not deploy the Function.
 
@@ -100,10 +119,16 @@ Have the following values ready before running setup:
 | Subscription ID | Selects the Azure subscription where resources will be deployed. |
 | Application client ID | Identifies the dedicated endpoint app you just registered. |
 | Azure region | Places this deployment in one region. |
-| Channel and provider scope | Selects SMS or voice and the provider's Global or EU route. Provider scope is separate from the Azure region. |
-| Language | Selects one of the equivalent Function implementations below. |
+| Channel and provider scope | Selects one SMS or voice route and the provider's Global or EU label. This is separate from Azure region and is not a data-residency guarantee. |
+| Language | Selects one Function implementation below. The HTTP contract is shared; caching and telemetry differ by runtime. |
 | Service plan | Selects Flex Consumption FC1 or Premium EP1. Required explicitly for unattended setup. |
 | Resource prefix | Use 2-8 lowercase letters or digits, starting with a letter, such as `contoso`. Setup adds resource-specific names and a suffix. |
+
+Use the [central values table](docs/ONBOARDING.md#values-and-ownership) for exact portal locations,
+parameter names, client-ID versus Object-ID distinctions, and settings setup creates automatically.
+For a second independent channel/provider endpoint, use a new prefix and dedicated app.
+Changing channel/provider/region with the same subscription/app/prefix is a reconfiguration,
+not an additional deployment; see [deployment separation](docs/ONBOARDING.md#inputs-you-supply-to-setup).
 
 ### 2. Deploy the endpoint
 
@@ -152,6 +177,9 @@ consent, and prerequisite-installation prompts are separate from deployment appr
 
 #### What successful setup produces
 
+**Setup has already deployed the code and Azure settings.** Skip local configuration and manual
+ZIP publication unless you are developing a custom implementation.
+
 - A dedicated resource group, selected Linux FC1 or EP1 plan, Function App, and storage account.
 - Key Vault and the encryption certificate/key configuration.
 - Managed identities, scoped role assignments, and Easy Auth caller restrictions.
@@ -164,7 +192,8 @@ an authentication error**; it is the endpoint's caller-authentication gate.
 Save the public certificate and timestamped deployment summary from `epp-output` beside the
 downloaded script, or your selected output directory. Confirm the tenant, application client ID,
 endpoint URL, and encryption key ID with your EPP onboarding owner. Private keys are not included
-in the summary.
+in the summary. Use the [summary field guide](setup/docs/README.md#read-the-deployment-summary)
+to locate the vault, Function, telemetry resources, and version information.
 
 The encryption certificate is issued inside Key Vault; setup downloads only the public certificate.
 The Function is pinned to a specific private-key secret version. Certificate renewal and the
@@ -183,15 +212,19 @@ action depends on the authentication method supported by its integration:
 
 | Authentication method | Required action |
 |---|---|
-| API key or token | Store the required credentials and any matching account/customer identifier in Key Vault using the integration's documented secret names. Confirm the Function identity has Key Vault Secrets User access. |
-| OAuth with managed identity | Complete the provider's consent/application-role onboarding for the existing multitenant application. Setup configures the supported outbound managed-identity federation, but does not grant access to the provider API. |
+| Telesign API key | Enter `telesign-api-key` and `telesign-customer-id` in the setup-created vault using the [safe portal steps](docs/ONBOARDING.md#telesign-enter-and-verify-the-two-vault-secrets). Setup already grants the Function system identity Key Vault Secrets User. |
+| Soprano OAuth | Complete the [provider-admin handoff](docs/ONBOARDING.md#soprano-provider-administrator-handoff) for the existing multitenant application. Setup configures the outbound federation, but does not grant access in the provider tenant. |
 
 Replace any test provider values before live validation. Never put API keys in source code or local
 settings. See [provider authentication](docs/ONBOARDING.md#provider-credential-names) for details.
 
 #### Validate before activation
 
-Use the supported EPP test procedure with your onboarding owner. Validate the deployed endpoint,
+Arrange Microsoft's approved EPP test procedure with your onboarding owner. This repository has
+offline tests, **not a self-service authorized caller/token tool**. A normal customer CLI token
+cannot impersonate the allowlisted Microsoft caller. See the
+[test handoff, negative check, and evidence checklist](docs/ONBOARDING.md#validate-the-deployed-endpoint).
+If the authorized procedure is unavailable, stop before activation. Validate the deployed endpoint,
 not just a locally running Function.
 
 | Check | Expected result |
@@ -201,9 +234,10 @@ not just a locally running Function.
 | Controlled live test | The provider accepts the selected SMS or voice request and the test recipient receives the message or call. Provider acceptance alone is not proof of delivery. |
 | Operational visibility | Review Application Insights for the request outcome without recording phone numbers, message bodies, tokens, private keys, or nonce values in shared logs. |
 
-Configured workers can acquire and refresh provider credentials in the background without sending
-an OTP, even while evaluation requests run. Check for `credential_refresh_failed` warnings before
-live testing; an evaluation success does not validate provider credentials.
+Configured workers can acquire credentials at startup without sending an OTP; JavaScript/Python
+also poll for refresh, whereas .NET retrieves replacements on cache misses. Check collected
+`credential_refresh_failed` warnings before live testing; an evaluation success or absence of
+warnings does not validate provider credentials.
 
 Stop and resolve failed checks before changing the authentication policy. A successful package
 deployment is not evidence that provider credentials, caller authentication, or handset delivery work.
@@ -221,6 +255,8 @@ method policy using the endpoint URL and application client ID from the deployme
 **Setup does not activate policy.** If the supported policy fields are unavailable, stop and obtain
 the supported procedure from Microsoft rather than guessing an update. Policy backup and rollback
 remain administrator-owned; deleting Azure resources does not roll back policy.
+Public Graph SMS/voice resource documentation does not document the EPP `url`/`appId` fields;
+this is an assisted product-specific step, not a public PATCH example.
 
 Follow the [validation and activation procedure](setup/docs/README.md#step-3---manually-validate-and-activate-policy)
 before using the endpoint.
@@ -232,7 +268,13 @@ before using the endpoint.
 - [ ] Unauthorized callers are rejected and authorized evaluation succeeds without delivery.
 - [ ] A controlled live test confirms both provider acceptance and recipient delivery.
 - [ ] An administrator has backed up, activated, and read back the selected authentication policy.
-- [ ] The owner has retained the deployment summary and documented the manual rollback procedure.
+- [ ] Request/log ingestion is verified for the chosen runtime, and alert notifications are tested.
+- [ ] Credential and certificate-renewal owners, expiry reminders, and retention/cost controls are assigned.
+- [ ] The owner has retained the deployment summary and documented [rollback and teardown](setup/docs/README.md#rollback-and-decommissioning).
+
+Setup creates Application Insights and a workspace, **not alerts, action groups, availability
+tests, or certificate contacts**. Complete the [monitoring setup](docs/MONITORING.md#5-set-up-notifications-and-alert-rules)
+and [certificate lifecycle](setup/docs/README.md#encryption-certificate-lifecycle) steps manually.
 
 For setup failures, start with the [troubleshooting guide](setup/docs/Troubleshooting.md). For
 application behavior or configuration details, use the technical documentation below.
@@ -244,5 +286,6 @@ application behavior or configuration details, use the technical documentation b
 - [Optional manual Azure Front Door onboarding](docs/FRONTDOOR.md) - regional setup, readiness, security, and test results. No deployment script is provided.
 - [Setup guide](setup/docs/README.md) - permissions, deployment prompts, validation, and manual rollback.
 - [Technical reference](TECHNICAL.md) - configuration, packages, provider behavior, and security.
-- [Detailed configuration and validation](docs/ONBOARDING.md) - local development and deployment checks.
-- Implementation guides: [JavaScript](javascript/README.md), [.NET](dotnet/README.md), [Python](python/README.md).
+- [Customer configuration and validation](docs/ONBOARDING.md) - value sources, automatic settings, provider handoffs, acceptance checks, and optional developer work.
+- [HTTP and provider contract](docs/CONTRACT.md) - implementation behavior and production limits.
+- Optional developer guides (not additional customer deployment steps): [JavaScript](javascript/README.md), [.NET](dotnet/README.md), [Python](python/README.md).

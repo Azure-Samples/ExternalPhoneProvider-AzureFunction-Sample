@@ -126,16 +126,18 @@ Tokens are treated as opaque: the Function checks SDK expiry metadata, not custo
 Soprano remains responsible for signature, issuer, audience, expiry, permissions, and account validation.
 
 Credential instances and their SDK caches are reused for the configured tenant/application/identity.
-One [worker-local refresh loop](#credential-caching-and-refresh) warms both exchange stages; a
-snapshot of the latest provider token keeps refresh off the delivery path. JavaScript and .NET
-bound the shared acquisition to 2.5 seconds, independent of individual waiters. JavaScript links
+JavaScript/Python use a [worker-local refresh loop](#credential-caching-and-refresh) for both
+exchange stages. .NET warms at startup and fetches a replacement on a cache miss; it has no poller.
+JavaScript bounds shared acquisition to 2.5 seconds independently of individual waiters;
+.NET bounds each fetch to 2.5 seconds with cancellation linked to that caller. JavaScript links
 cancellation through an SDK HTTP-client wrapper because `getToken` options alone are insufficient
 in the installed SDK. Python bounds caller waits and SDK connect/read inactivity to 2.5 seconds;
 shared synchronous retrieval may finish after a waiter leaves. It uses `get_token_info` for refresh
 hints when supported, otherwise `get_token`; a failed acquisition never falls back to another API.
 
-Credential SDK transport retries are disabled; failed refreshes use the fixed polling cadence described
-below. These are not end-to-end delivery deadlines. JavaScript suppresses SDK logs in the
+Credential SDK transport retries are disabled. JavaScript/Python failed refreshes use the polling
+cadence below; .NET retries credential acquisition on a later cache miss. These are not end-to-end
+delivery deadlines. JavaScript suppresses SDK logs in the
 acquisition's asynchronous context. Python filters Azure Identity/Core/MSAL records on configured
 handlers in that context; configure logging sinks before handling requests. .NET disables credential
 diagnostics. Keep platform body tracing off and never log credential objects or tokens.
@@ -260,7 +262,7 @@ specifications; never include secret values in documentation or the settings sam
 ### Telesign EPP integration
 
 SMS and Voice use the complete provider-approved URLs selected from the provider profile. The provider
-supplies `recipient.phone_number`, the unchanged `message.text`, optional `message.language`, one
+supplies `recipient.phone_number`, `message.text` (unchanged for SMS, paced/repeated for voice), optional `message.language`, one
 selected `channels[].channel`, and `correlation_id`. Keep the leading `+` in the E.164 phone number.
 
 Phase 1 supports Basic and Digest; this sample implements Basic only. Per
@@ -338,46 +340,41 @@ subscription activation and changing tenant policy belong to provisioning, not t
 
 ### Credential caching and refresh
 
-Provider credential management is automatic for configured providers in every runtime. It changes
-when credentials are fetched, not the HTTP/nonce contract, caller authentication, FIC, provider
-selection or provider request format. The decryption-key Key Vault reference remains separate and
-is still resolved by the platform; this cache does not rotate or replace JWE keys.
+Provider credentials are process-local, distinct from the platform-resolved decryption-key
+reference. Credential acquisition never sends an OTP or changes caller authentication.
+Restart workers after configuration changes. The setup-written
+`EPP_KEY_VAULT_CACHE_ENABLED` / `EPP_ACCESS_TOKEN_CACHE_ENABLED` switches are not read by the
+current checked-in implementations; verify the selected release before relying on plan-specific
+cache control.
 
-The selected provider's credential specification determines which concrete cache is created:
-
-| Authentication mode | Cache | Acquisition |
+| Runtime | Startup and replacement behavior | Operator consequence |
 |---|---|---|
-| `apiKey` | `ApiKeyCache` | Fetch the provider's Key Vault secrets using managed identity. Cache the complete key/customer-ID bundle in .NET `MemoryCache`, JavaScript `lru-cache`, or Python `cachetools.TTLCache`. |
-| `oauth` | `AccessTokenCache` | Reuse Azure Identity's managed-identity and client-assertion credentials and their SDK caches. Retain only the latest usable provider token. No Key Vault access. |
+| [JavaScript](../javascript/src/functions/credentials.js) | Selects `ApiKeyCache` (`lru-cache`) or `AccessTokenCache`; warms at startup and polls every 30 seconds. API-key bundles target refresh at four minutes and expire at five. OAuth reuses SDK credentials/caches and the latest usable token. | Warm reads do not wait for refresh. Concurrent cold callers share acquisition; failures are retried at the polling cadence, not by sending another OTP. |
+| [Python](../python/src/credentials.py) | Equivalent selected-cache/polling policy using `cachetools.TTLCache` and a daemon initialization/refresh thread. | Callers can stop waiting while synchronous acquisition remains shared. Connect/read inactivity timeouts are not a hard total I/O deadline. |
+| [.NET](../dotnet/Src/CredentialTokenService.cs) | Hosted service warms the selected provider once. `MemoryCache` holds provider-supplied credentials until absolute expiry; the next miss fetches again. No periodic refresh loop. API-key credentials expire after five minutes; Soprano entries expire 30 seconds before SDK token expiry. | The first request after expiry can pay acquisition latency. `GetOrCreateAsync` does not guarantee single-flight retrieval for concurrent misses. A quiet app need not emit periodic credential events. |
 
-Only the selected cache starts. Its credential configuration is bound on first use; app-setting
-changes require a worker restart, not live cache switching. API-key bundles are published only
-after all required reads succeed. Refresh targets four minutes after retrieval and hard expiry
-is five minutes; reads or failed refreshes never extend the lifetime. Provider tokens retain their
-original SDK expiry and are unusable with 30 seconds or less remaining. Tokens are never persisted.
+JavaScript/Python retry failed refresh on a later poll without extending cached credential
+lifetime; requests with expired credentials join acquisition or fail closed. SDK token expiry
+is preserved, and tokens with 30 seconds or less remaining are unusable. These implementations
+stop polling/prevent late publication at shutdown. .NET has no poller to stop: failed cache
+fills are not retained and later misses attempt retrieval. It does not proactively refresh a
+still-valid entry.
 
-The shared coordinator prepares credentials at startup and polls the selected cache every 30 seconds.
-`ApiKeyCache` skips retrieval until its refresh target is due; `AccessTokenCache` consults both SDK
-credentials and lets the SDK decide whether network acquisition is needed. There is no separate MI
-cache, adaptive expiry timer, or exponential retry policy. Failures retry on a later poll; requests
-cannot start another acquisition within the same 30-second window. This is best-effort scheduling,
-not an exact refresh deadline. Timing policy uses named constants, not extra app settings.
+JavaScript bounds shared acquisition to 2.5 seconds and propagates cancellation through the SDK
+transport. Python bounds waits and SDK connect/read inactivity to 2.5 seconds but cannot forcibly
+cancel synchronous I/O. .NET uses a 2.5-second fetch budget linked to the fetch caller's cancellation
+token. None is a whole-invocation deadline.
 
-Concurrent cold requests share one acquisition. Requests with usable cached credentials do not
-wait for background refresh. After hard expiry, they join the shared acquisition or fail closed.
-JavaScript's app-start hook, Python's initialization thread and .NET's hosted service start only
-credential preparation, never provider delivery. Shutdown stops polling and prevents late
-publication; `close()`/`Dispose()` is terminal. JavaScript and .NET propagate the 2.5-second
-acquisition deadline to SDK HTTP. Python bounds caller waits and SDK connect/read inactivity to
-2.5 seconds but cannot forcibly cancel synchronous I/O; daemon secret reads stay shared until
-both finish and cannot block process exit. Missing/broken provider configuration does not prevent
-evaluation.
+All runtimes fetch a complete API-key/customer-ID bundle before caching it and use managed identity
+for vault access. Soprano reuses the managed-identity and client-assertion SDK credential instances
+without Key Vault or a client-secret fallback. Evaluation skips credential resolution on the
+request path even when independent startup/refresh work runs.
 
-**Prewarming does not guarantee the first request meets the caller's timeout.** Worker readiness,
-scale-out and ingress overhead still matter. Refresh does not retry or deduplicate provider sends.
-Background failures log only `credential_refresh_failed`, `cacheKind` and the fixed
-`credential_unavailable` reason, without request IDs, credential values or SDK exception details.
-Per-request `providerCredentialElapsedMs` continues to measure the caller's resolution time.
+**Prewarming is not traffic readiness or a latency guarantee.** Test cold, warm, expired, rotated,
+and concurrent cases for the deployed runtime. The `credential_refresh_failed` event name is also
+used by .NET for startup/cache-fill failures; it does not imply a periodic job. Field casing and
+collection differ by runtime; use [runtime-specific discovery](MONITORING.md#runtime-specific-log-discovery).
+Do not log SDK exception details or tokens. No cache retries/deduplicates provider sends.
 
 ---
 
@@ -494,7 +491,8 @@ A parsed provider rejection uses `provider_response_processed` with its non-succ
 fixed failure reason.
 
 In JavaScript and Python, every service event carries the Function request/invocation IDs, the Microsoft trace IDs available
-at that point, and the known channel, evaluation flag and selected provider. The initial event can
+at that point. JavaScript also carries known channel/evaluation/provider context; Python supplies
+selected context through its logging adapter and event arguments. The initial event can
 only know header trace IDs; a valid envelope can subsequently supply the selected correlation.
 The generated Function request ID joins these events even when Microsoft IDs are absent or change
 from header to envelope. The identifiers are intentionally not named simply `requestId` or
@@ -510,7 +508,7 @@ from header to envelope. The identifiers are intentionally not named simply `req
 | `msCorrelationIdSource` | `envelope`, `header` or `none`; disambiguates the selected value when the envelope and header differ. |
 | `providerMessageId` | Raw provider-normalized message/reference ID returned by the provider, including Telesign `reference_id`, for support lookup. Not filled from delivery or Function IDs, although a provider may echo an ID it received. |
 | `providerTenantId` | Raw configured `EPP_PROVIDER_TENANT_ID` for OAuth, not incoming envelope `tenantId`. |
-| `functionOutboundClientId` | Raw application's `EPP_OUTBOUND_CLIENT_ID` used for provider access, not the endpoint application's inbound audience or a Microsoft request ID. |
+| `functionOutboundClientId` | Raw application's `EPP_OUTBOUND_CLIENT_ID` used for provider access, not a Microsoft request ID. Guided setup reuses the endpoint app client ID here; its outbound purpose is distinct from the inbound audience setting. |
 | `functionOutboundManagedIdentityClientId` | Raw configured `EPP_OUTBOUND_MI_CLIENT_ID` used to obtain the app assertion, not the Key Vault identity or the identity's principal/Object ID. |
 | `providerEndpoint` | Validated final outbound URL without userinfo, query string or fragment; scheme, host/port and API path remain visible. |
 
@@ -538,8 +536,17 @@ advisory warnings use Warning; 5xx failures and timeouts use Error. Keep applica
 enabled when investigating. This contract describes **emission**, not guaranteed collection:
 host/telemetry filters and sampling can drop trace records. Application events are logs, not
 the host's Request telemetry type, so excluding `Request` from sampling does not by itself retain
-every summary. Configure collection and retention deliberately without enabling SDK/body tracing.
-Easy Auth rejections occur before the handler and appear in platform telemetry, not these events.
+every event. Configure collection and retention deliberately without enabling SDK/body tracing.
+Easy Auth rejections occur before the handler; inspect available platform/authentication diagnostics
+and caller observations, not just application events.
+
+The camelCase/`x-ms-*` fields above describe the JavaScript schema and are **not a portable
+custom-properties contract**. Python uses `event_name` with logging extras such as `httpStatus`;
+.NET uses typed `ILogger` fields such as `HttpStatus` and scopes such as `FunctionRequestId`.
+The simpler Python/.NET provider-result events do not expose every JavaScript field (for example,
+do not assume a provider reference ID is collected). Exporters can omit extras/scopes.
+Use [runtime-specific queries](MONITORING.md#runtime-specific-log-discovery) and
+[collection guidance](APPLICATION-INSIGHTS.md) to verify what actually arrives.
 
 ---
 
@@ -554,9 +561,9 @@ Each language keeps lightweight offline tests covering representative applicatio
 - Awaited delivery, nonce acknowledgement and privacy-safe logging, including the shared
   service-event order and safe field cases in [contract.json](../tests/fixtures/contract.json),
   identifier provenance, error paths, provider-body timeouts and concurrent request isolation.
-- Selected-cache-only startup, shared credential retrieval, fixed refresh/retry cadence, hard expiry,
-  token lifetime preservation and shutdown using controlled clocks and
-  fake dependencies. JavaScript tests also exercise cancellation through the actual SDK pipeline.
+- Runtime-specific credential caching using fake dependencies: JavaScript/Python cover selected-cache
+  startup, shared retrieval, polling, expiry, and shutdown; .NET covers its startup/cache-miss model.
+  JavaScript tests also exercise cancellation through the actual SDK pipeline.
 
 The sample deliberately omits exhaustive input permutations and SDK internals. These tests use
 local keys and mocked external services; they do not send SMS and **do not test Easy Auth or platform
@@ -572,16 +579,18 @@ not prove handset delivery or support for every provider feature.
 
 - The Function imports one private PEM through a Key Vault secret reference and decrypts in-process;
   vault-resident cryptographic operations and overlapping key rotation are not implemented.
-- The Preview 1 setup guide requires asynchronous delivery after acceptance. This sample still waits
-  for the provider and has no durable queue or automatic retry implementation; it does not satisfy that
-  timing architecture merely because the setup script deploys it.
+- The sample waits for provider acceptance before replying. It has no durable queue, early
+  acknowledgement/background delivery handoff, or automatic send retries. Confirm the current
+  product-approved timing/activation requirements with Microsoft; deployment alone does not
+  establish that the sample meets them.
 - The outbound timeout is not an end-to-end deadline. Cold starts, platform authentication and Key
   Vault access can exceed the caller's budget; Python uses connect/read inactivity timeouts.
 - Credential caches are process-local and proactive preparation is best-effort, not an Azure
   traffic-readiness guarantee. Provider delivery still waits for acceptance; background refresh
   is not background OTP delivery, a queue, or protection against duplicate sends.
-- Voice text is forwarded unchanged. Digit-by-digit rendering required by the setup guide must be
-  verified for the chosen voice integration; unspaced numeric text is not guaranteed to be spoken correctly.
+- Voice is provider-specific: Soprano extracts the first six consecutive digits; Telesign paces
+  standalone six-digit numeric runs and repeats the full message. Test supported locales,
+  passcode format, and actual audio; these transforms do not guarantee spoken clarity.
 - Full body-size/content-type and E.164 validation, subscription provisioning, certification,
   least-cost routing and voice-callback workflows are outside this sample. Native fallback belongs
   to the caller, not this Function.

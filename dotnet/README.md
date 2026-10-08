@@ -5,6 +5,14 @@ selected provider per deployment. Target: .NET 8 isolated worker, Azure Function
 
 ## Setup and deployment
 
+**Customer deployment:** start with the [root guide](../README.md). Guided setup builds with the
+.NET 8 SDK, publishes this runtime, and configures its Azure settings. Continue with
+[provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication);
+do not start a local host or republish as another onboarding step.
+
+**The steps below are optional developer/manual deployment work.** Guided providers are
+Telesign and Soprano; other adapters require separate integration.
+
 For multiple regional origins behind one URL, see [manual Front Door onboarding](../docs/FRONTDOOR.md).
 No Front Door deployment script or readiness handler is supplied. The reported multi-region trials
 used JavaScript; validate an equivalent .NET readiness implementation and deployment separately.
@@ -85,7 +93,7 @@ Requests that bind successfully retain the application validation, PII-safe logg
 Use incoming `mode: 2` or `mode: "evaluation"` as the generic shutter for every provider: platform
 authentication on Azure, handler validation and decryption run, but provider lookup, provider Key Vault
 reads and provider HTTP do not. No provider configuration or diagnostic environment flag is required.
-Live requests forward the rendered message unchanged using the configured provider's API key or OAuth token and
+Live requests use the configured provider's API key or OAuth token and
 await acceptance before returning the nonce; failures omit it. Acceptance is not handset delivery.
 Platform/key prerequisites and HTTP outcomes are defined in the
 [contract](../docs/CONTRACT.md#evaluation-generic-shutter).
@@ -99,6 +107,11 @@ Telesign SMS also forwards the rendered message unchanged. Telesign voice comma-
 six-digit numeric run that is not part of a longer number and repeats the complete paced message twice.
 
 ## Source
+
+For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
+[runtime-specific log discovery](../docs/MONITORING.md#runtime-specific-log-discovery).
+The host's OpenTelemetry setting does not by itself initialize a direct worker exporter;
+verify actual `ILogger` collection before depending on event-based alerts.
 
 `SendOtp` validates and decrypts the request, selects the configured provider in its private
 `SelectProvider` method, resolves that provider's credentials, builds and sends the common bounded HTTP
@@ -114,9 +127,10 @@ tenant or other request-aware selection. No router or routing configuration abst
 It asks the selected provider for credentials at startup and on cache misses.
 Each provider owns credential acquisition and its secret names. The service stores
 the result in .NET `MemoryCache` until the credential's absolute expiry; the next request fetches a
-replacement. There is no polling timer or separate cache implementation. Each shared acquisition owns
-its cancellation budget, so a waiter cannot cancel another request's retrieval. Evaluation remains
-independent.
+replacement. There is no polling timer or separate cache implementation. The fetch has a
+2.5-second cancellation budget linked to its caller's token. `MemoryCache.GetOrCreateAsync`
+does not guarantee a single concurrent fetch on cache misses; do not assume the JavaScript/Python
+shared-acquisition behavior applies here. Evaluation remains independent.
 
 | Source | Purpose |
 |---|---|
