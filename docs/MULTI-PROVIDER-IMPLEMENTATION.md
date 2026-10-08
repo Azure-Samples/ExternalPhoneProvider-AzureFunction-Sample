@@ -178,7 +178,11 @@ do not add a shortcut that returns a nonce before decryption.
 
 Continue in [SendOtp.js](../javascript/src/functions/SendOtp.js). Keep its channel, authentication
 mode and endpoint checks, but read their outbound settings from `providerConfig`. Keep using the
-original inbound config for decryption and encryption-key checks.
+original `const config = readConfig()` for `config.decryptionKeyPem` and `config.expectedKeyId`.
+Do not redeclare `config` in the handler or replace its inbound settings with the selected context.
+After the evaluation return, change the existing checks' `config.providerChannel`,
+`config.providerAuthMode` and `config.providerEndpoint` references to the corresponding
+`providerConfig` properties; leave their failure branches intact.
 
 Inside the existing credential-resolution `try` block, replace the singleton call with:
 
@@ -240,15 +244,36 @@ first live request. A service starts its own periodic refresh when first used. P
 credential I/O, so do not do it in an offline test without fake SDK boundaries. Report acquisition
 failures through the existing safe reporting mechanism; never borrow another context's credentials.
 
-Close every context in the existing termination hook:
+If you choose startup prewarming, replace **both existing function bodies** with the following
+pattern. This assumes every context has passed your startup validation and is approved for
+credential acquisition. Keep the existing `reportRefreshFailure` import; remove the singleton
+import once no handler or lifecycle code references it.
 
 ```javascript
+async function startProviderCredentialRefresh() {
+    for (const { provider, config: providerConfig, credentials } of contexts.values()) {
+        try {
+            await credentials.getCredentials(provider.credentialSpec, providerConfig);
+        } catch {
+            // Refresh failures are reported by the service; report initialization failures here.
+            if (!credentials.current) reportRefreshFailure('configuration');
+        }
+    }
+}
+
 function stopProviderCredentialRefresh() {
     for (const { credentials } of contexts.values()) {
         credentials.close();
     }
 }
 ```
+
+Keep the existing `app.hook.appStart(startProviderCredentialRefresh)` and
+`app.hook.appTerminate(stopProviderCredentialRefresh)` registrations once each; do not add duplicate
+hooks. Build and validate `contexts` before startup runs. If you choose lazy acquisition instead,
+remove the old app-start registration and its singleton warmup function, but retain the
+context-closing termination hook above. In either case, no lifecycle code should continue to
+resolve credentials from the original process-wide provider selection.
 
 Keep cache expiry, refresh coalescing and acquisition bounds. Use a controlled worker restart when
 changing configuration, or implement safe draining and replacement of whole contexts. Do not
