@@ -97,13 +97,16 @@ Open [credentials.js](../javascript/src/functions/credentials.js). The exported
 or authentication mode does not switch that cache.
 
 Use a new `CredentialTokenService` for each context instead. Build the contexts once per worker,
-not once per request. Add the class import alongside the existing imports in your customized
-`SendOtp.js`; keep the other credential helpers that its logging code uses.
+not once per request. Consolidate the imports below with the existing imports in your customized
+`SendOtp.js`: `readConfig` and `selectProvider` are already imported, so do not paste duplicate
+`const` declarations. Add `CredentialTokenService` to the existing credentials import and retain
+required logging helpers such as `reportRefreshFailure`. Remove the `credentialTokenService`
+singleton import only after replacing all its request and lifecycle uses.
 
 ```javascript
 const { readConfig } = require('./config');
 const { selectProvider } = require('./providers');
-const { CredentialTokenService } = require('./credentials');
+const { CredentialTokenService, reportRefreshFailure } = require('./credentials');
 
 // CUSTOMER_LOAD_AND_VALIDATE_CONFIG is your startup-only configuration loader.
 // It must validate the complete list before any context is used.
