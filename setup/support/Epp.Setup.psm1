@@ -133,6 +133,37 @@ function Read-EppInput {
     }
 }
 
+function Get-EppProviderCatalog {
+    param([string] $ProfileDirectory)
+
+    $catalog = Read-EppJson (Join-Path $ProfileDirectory 'catalog.json')
+    if ($catalog['schemaVersion'] -ne 1 -or -not $catalog['providers']) { throw 'Unsupported or empty provider catalog.' }
+    $entries = @($catalog['providers'])
+    $ids = @{}
+    $aliases = @{}
+    $files = @{}
+    foreach ($entry in $entries) {
+        if ($entry -isnot [Collections.IDictionary] -or
+            $entry['id'] -isnot [string] -or $entry['id'] -cnotmatch '^[a-z][a-z0-9-]{1,31}$' -or
+            $entry['file'] -isnot [string] -or
+            $entry['file'] -cnotmatch '^[a-z][a-z0-9-]{1,31}\.json$' -or
+            $entry['displayName'] -isnot [string] -or [string]::IsNullOrWhiteSpace($entry['displayName']) -or
+            $entry['displayName'] -match '[\x00-\x1f]' -or $ids.ContainsKey($entry['id']) -or
+            $files.ContainsKey($entry['file'])) {
+            throw 'Provider catalog contains an invalid or duplicate entry.'
+        }
+        $ids[$entry['id']] = $true
+        $files[$entry['file']] = $true
+        foreach ($alias in @($entry['id'], $entry['displayName'])) {
+            if ($aliases.ContainsKey($alias) -and $aliases[$alias] -ne $entry['id']) {
+                throw 'Provider catalog contains an ambiguous ID or display name.'
+            }
+            $aliases[$alias] = $entry['id']
+        }
+    }
+    return $entries
+}
+
 function Get-EppProvider {
     param(
         [string] $AssetDirectory, [string] $SourceBaseUri, [string] $Provider, [string] $Channel,
@@ -145,18 +176,7 @@ function Get-EppProvider {
     if ($SourceBaseUri -cnotmatch $sourcePattern) {
         throw 'Provider files must come from the same commit-pinned selected repository as the deployment tools.'
     }
-    $catalog = Read-EppJson (Join-Path $AssetDirectory 'providers/catalog.json')
-    if ($catalog['schemaVersion'] -ne 1 -or -not $catalog['providers']) { throw 'Unsupported or empty provider catalog.' }
-    $entries = @($catalog['providers'])
-    $ids = @{}
-    foreach ($entry in $entries) {
-        if ($entry -isnot [Collections.IDictionary] -or $entry['id'] -cnotmatch '^[a-z][a-z0-9-]{1,31}$' -or
-            $entry['file'] -cnotmatch '^[a-z][a-z0-9-]{1,31}\.json$' -or
-            -not $entry['displayName'] -or $entry['displayName'] -match '[\x00-\x1f]' -or $ids.ContainsKey($entry['id'])) {
-            throw 'Provider catalog contains an invalid or duplicate entry.'
-        }
-        $ids[$entry['id']] = $true
-    }
+    $entries = @(Get-EppProviderCatalog -ProfileDirectory (Join-Path $AssetDirectory 'providers'))
     $selected = Select-EppOption -Entries $entries -Name Provider -Value $Provider -NonInteractive:$NonInteractive
 
     $path = Join-Path $AssetDirectory "providers/$($selected['file'])"
@@ -236,7 +256,9 @@ function ConvertTo-EppProviderSettings {
         }
     }
     if ($issues.Count) {
-        throw "Provider '$DisplayName' is not deployment-ready:`n - $($issues -join "`n - ")`nAsk the provider owner to complete its GitHub JSON. No Azure resources were changed."
+        $validationError = [IO.InvalidDataException]::new("Provider '$DisplayName' is not deployment-ready:`n - $($issues -join "`n - ")`nAsk the provider owner to complete its GitHub JSON. No Azure resources were changed.")
+        $validationError.Data['EppValidationIssues'] = $issues.ToArray()
+        throw $validationError
     }
 
     $channelEntry = Select-EppOption -Entries @(
@@ -271,6 +293,85 @@ function ConvertTo-EppProviderSettings {
         AuthenticationMode = $authenticationMode
         Settings = $settings
     }
+}
+
+function Test-EppProviderConfiguration {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyCollection()] [AllowEmptyString()] [string[]] $Provider = @(),
+        [string] $Channel,
+        [string] $EndpointRegion,
+        [string] $ProfileDirectory = (Join-Path $PSScriptRoot '../providers')
+    )
+
+    $report = [pscustomobject]@{ Valid = $false; Errors = @(); Results = @() }
+    if ($null -eq $Provider -or -not $Provider.Count) {
+        $report.Errors = @('Select at least one provider catalog ID.')
+        return $report
+    }
+    try { $entries = @(Get-EppProviderCatalog -ProfileDirectory $ProfileDirectory) }
+    catch {
+        $report.Errors = @('Cannot read a valid, unambiguous local provider catalog. Check catalog.json and its entries.')
+        return $report
+    }
+
+    $selections = @($Provider | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() })
+    $results = for ($index = 0; $index -lt $selections.Count; $index++) {
+        $id = $selections[$index]
+        $selected = $entries | Where-Object { $_['id'] -ceq $id }
+        $result = [pscustomobject]@{
+            Index = $index + 1
+            Provider = if ($selected) { $selected['id'] } else { $null }
+            Valid = $false
+            Code = 'InvalidSelection'
+            Issues = @()
+        }
+        if (-not $id) {
+            $result.Issues = @('Provider selection must not be empty.')
+        }
+        elseif (@($selections | Where-Object { $_ -ceq $id }).Count -gt 1) {
+            $result.Code = 'DuplicateSelection'
+            $result.Issues = @('Each provider catalog ID may be selected only once (case-insensitive).')
+        }
+        elseif (-not $selected) {
+            $result.Code = 'UnknownProvider'
+            $result.Issues = @('Provider selection must match an ID in the local setup catalog; aliases and runtime-only adapters are not supported.')
+        }
+        elseif ($Channel -notin @('sms', 'voice') -or $EndpointRegion -notin @('global', 'eu')) {
+            $result.Issues = @('Specify Channel sms or voice and EndpointRegion global or eu.')
+        }
+        else {
+            try {
+                $profile = Read-EppJson (Join-Path $ProfileDirectory $selected['file'])
+            }
+            catch {
+                $result.Code = 'ProfileUnreadable'
+                $result.Issues = @('Cannot read the local profile as a JSON object. Check the catalog file entry and JSON syntax.')
+                $result
+                continue
+            }
+            try {
+                $null = ConvertTo-EppProviderSettings -Profile $profile -Id $selected['id'] -DisplayName $selected['id'] `
+                    -Channel $Channel -EndpointRegion $EndpointRegion -NonInteractive
+                $result.Valid = $true
+                $result.Code = 'ConfigurationValid'
+            }
+            catch {
+                $result.Code = 'ProfileInvalid'
+                # Only validator-authored field descriptions are safe to return, not parser errors or input values.
+                $result.Issues = @(
+                    if ($_.Exception.Data.Contains('EppValidationIssues')) {
+                        $_.Exception.Data['EppValidationIssues']
+                    }
+                    else { 'Profile structure is invalid. Check deployment, authentication, and all SMS/voice Global/EU routes.' }
+                )
+            }
+        }
+        $result
+    }
+    $report.Results = @($results)
+    $report.Valid = @($report.Results | Where-Object { -not $_.Valid }).Count -eq 0
+    return $report
 }
 
 function Get-EppResourceNames {
@@ -1684,4 +1785,4 @@ function Invoke-EppSetup {
     }
 }
 
-Export-ModuleMember -Function Invoke-EppSetup
+Export-ModuleMember -Function Invoke-EppSetup, Test-EppProviderConfiguration
