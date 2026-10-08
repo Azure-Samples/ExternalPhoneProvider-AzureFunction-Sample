@@ -279,10 +279,24 @@ function stopProviderCredentialRefresh() {
 
 Keep the existing `app.hook.appStart(startProviderCredentialRefresh)` and
 `app.hook.appTerminate(stopProviderCredentialRefresh)` registrations once each; do not add duplicate
-hooks. Build and validate `contexts` before startup runs. If you choose lazy acquisition instead,
-remove the old app-start registration and its singleton warmup function, but retain the
-context-closing termination hook above. In either case, no lifecycle code should continue to
-resolve credentials from the original process-wide provider selection.
+hooks. Build and validate `contexts` before startup runs. With prewarming, retain both functions
+in the existing bottom export:
+
+```javascript
+module.exports = { startProviderCredentialRefresh, stopProviderCredentialRefresh };
+```
+
+For **lazy acquisition**, remove the app-start registration and the
+`startProviderCredentialRefresh` function together. Retain the context-closing termination
+function and its hook, and replace the bottom export with:
+
+```javascript
+module.exports = { stopProviderCredentialRefresh };
+```
+
+Leaving the removed startup function in `module.exports` causes a `ReferenceError` when the module
+loads, before any request can run. In either variant, no lifecycle code should continue to resolve
+credentials from the original process-wide provider selection.
 
 Keep cache expiry, refresh coalescing and acquisition bounds. Use a controlled worker restart when
 changing configuration, or implement safe draining and replacement of whole contexts. Do not
@@ -302,13 +316,26 @@ Start from the existing
 They show how to fake credential acquisition and provider transport. Use synthetic delivery data
 and a locally generated encryption key; make unexpected network calls fail.
 
-Run those existing tests from the repository root in PowerShell:
+**Before editing the handler**, run the existing tests as a baseline. Use Node.js 22 and restore
+missing JavaScript dependencies from the existing lockfile first. From the repository root in
+PowerShell:
+
+```powershell
+# Only if dependencies are not installed.
+npm ci --prefix .\javascript --ignore-scripts --no-audit --no-fund
+```
+
+Then run:
 
 ```powershell
 node --test .\javascript\test\provider-flow.test.js `
     .\javascript\test\credential-cache.test.js `
     .\javascript\test\sendotp.test.js
 ```
+
+**After customization**, update the test fixtures and singleton/lifecycle mocks to use your
+context services before rerunning and extending these tests. The original single-provider fixtures
+are not automatically valid for your customized handler.
 
 They are a starting point, not coverage for your new router. Add tests for concurrent requests to
 different providers **and two accounts of the same provider**. Check the exact endpoint,
