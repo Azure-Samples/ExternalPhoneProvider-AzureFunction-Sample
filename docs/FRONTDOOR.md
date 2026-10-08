@@ -416,7 +416,8 @@ a sample size of 4 with 3 successes required to consider an origin healthy.
 | 3 | 30 seconds | 33/462 (7.1%) | About 123 seconds |
 | 3, repeat | 30 seconds | 32/460 (7.0%) | About 150 seconds |
 
-Failures were mostly **HTTP 403**, with zero, one, two, and two transport errors respectively.
+The failed-request totals include HTTP error responses and transport errors, with zero, one, two,
+and two transport errors respectively.
 Transport errors were recorded as status `0`, which is not an HTTP status. No 5xx responses were
 observed in these trials; a network or full-region outage can behave differently.
 
@@ -429,7 +430,7 @@ recovered it. To keep the comparison fair, the table uses only the first eight m
 We saw no failed samples before the outages or after restarting the Functions.
 
 **This was not a complete Front Door outage, and it was not seamless failover.** Healthy origins
-continued serving, but a 403 is still a failed request. A failed request is not guaranteed to be
+continued serving, but some sampled requests still failed. A failed request is not guaranteed to be
 replayed on another origin. The actual Entra caller's handling of these errors was not tested.
 
 These trials didn't show a consistent benefit from 10-second probes or a third region.
