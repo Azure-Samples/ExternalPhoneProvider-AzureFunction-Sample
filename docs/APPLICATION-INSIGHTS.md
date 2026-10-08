@@ -11,6 +11,13 @@ deploy resources, enable additional instrumentation, or configure alert rules, a
 or availability tests. Use the [setup guide](../setup/docs/README.md) for deployment.
 Azure Front Door is optional; the Function telemetry described here also applies without it.
 
+**First-time operator:** locate `resources.applicationInsights` and `resources.logAnalytics` in
+the [saved deployment summary](../setup/docs/README.md#read-the-deployment-summary). Verify collection
+here, then follow the [runtime-specific queries](MONITORING.md#runtime-specific-log-discovery)
+and [alert setup](MONITORING.md#5-set-up-notifications-and-alert-rules). Authorized evaluation/live
+testing must use the [customer test handoff](ONBOARDING.md#validate-the-deployed-endpoint);
+deployment does not provide a customer token for the Microsoft caller.
+
 ## How telemetry reaches Application Insights
 
 There are two execution processes to consider: the **Functions host**, which dispatches

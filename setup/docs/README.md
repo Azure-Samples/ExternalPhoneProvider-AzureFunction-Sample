@@ -6,6 +6,11 @@ PowerShell script to deploy the endpoint, and activate policy manually after val
 The customer does not clone this repository or download Bicep/support scripts separately.
 `Setup-Epp.ps1` retrieves those files and the selected provider's JSON from GitHub.
 
+Start at the [customer checklist](../../README.md) and complete the
+[access/eligibility gate and values worksheet](../../docs/ONBOARDING.md#before-purchasing-or-deploying)
+first. Provider purchase is through [Microsoft Security Store](https://securitystore.microsoft.com/private-solutions);
+purchase alone does not enable the Microsoft tenant feature or authorize the provider API.
+
 This guide deploys **one Function endpoint in one Azure region**. It does not provision Azure
 Front Door or a second region. For the optional multi-region design, use the
 [manual Front Door onboarding guide](../../docs/FRONTDOOR.md). No Front Door setup script is
@@ -14,10 +19,11 @@ Front Door origins. A successful deployment or evaluation doesn't prove live del
 
 ## Availability
 
-Choose **SMS or voice**, a **Global or EU tenant scope**, **Telesign or Soprano**, and an
+Choose **SMS or voice**, a **Global or EU provider route** (the prompt calls it **Tenant scope**),
+**Telesign or Soprano**, and an
 Azure Function **platform**: Node.js, .NET, or Python, plus a **service plan**: Flex Consumption FC1
 or Premium EP1. By default, setup resolves the source repository's latest stable
-`epp-packages-*` release produced by CI. A private test branch can use its matching fork release.
+`epp-packages-*` release produced by CI. A public fork's test branch can use its matching fork release.
 There is no package URL or checksum to enter. Setup verifies `SHA256SUMS.txt` automatically and
 performs the required build and publication for the selected language.
 
@@ -25,6 +31,10 @@ Provider profiles contain complete channel/region route objects. Telesign contai
 route URLs, tenant, authentication, and timings. Soprano contains its provider tenant, Global/EU
 routes, API application ID, scope, authentication, and timings. The provider files contain the
 complete deployment contract.
+
+The current profiles use identical Global/EU URLs, and Soprano uses the same app ID/scope.
+This label is not proof of data residency or a choice of Azure region; confirm processing/routing
+with the provider. Infobip/Sinch are bundled adapters but have no guided deployment profiles.
 
 To test unpublished upstream changes, publish them to a public fork with a matching stable package
 release, then use `-SourceRepository <owner/repository>` and
@@ -46,6 +56,11 @@ Setup offers these two Linux hosting plans, with the same cache app settings for
 usage beyond the grant, Key Vault, storage, telemetry, and provider services can incur charges.
 FC1 can scale to zero and cold-start; these settings do not remove cold-start latency or force a
 new worker on every invocation.
+
+EP1 allocates paid warm capacity even without OTP traffic. Set an Azure Cost Management budget
+and notify the resource owner; a budget notification does not stop spending. Include storage,
+Key Vault, telemetry ingestion/retention, and the provider's charges, not just Function executions.
+Stopping a Function does not necessarily stop its plan or supporting-service charges.
 
 **Cache settings require runtime support.** Setup only writes the two app settings above; they do
 not change caching in a Function package that does not read them. Runtime cache-reader changes are
@@ -70,14 +85,18 @@ automatically migrate keys or activate the replacement endpoint.
 Use a dedicated nonproduction tenant/subscription for the first deployment.
 
 1. In the customer tenant's **Microsoft Entra admin center > App registrations**, register a
-   dedicated organizational application. No redirect URI, client secret, API permission, app role,
+   dedicated application with **Accounts in this organizational directory only** as its initial
+   supported account type; setup changes it to organizational multi-tenant after approval.
+   No redirect URI, client secret, API permission, app role,
    or enterprise-application configuration is required manually.
 2. Record the **Directory (tenant) ID** and **Application (client) ID**. The script requires the
    client ID, not the application's object ID, and will not create a replacement registration.
-3. Complete provider purchase, account/sender registration, and onboarding for the selected adapter.
+3. Complete provider purchase and account/sender registration, and arrange API onboarding for the selected adapter.
    Telesign uses `telesign-api-key` and `telesign-customer-id` in Key Vault. Soprano uses OAuth
    client-assertion exchange with the selected provider tenant/scope/application ID. Setup does not
-   grant provider API consent or application roles.
+   grant provider API consent or application roles. Finish the
+   [provider authentication handoff](../../docs/ONBOARDING.md#complete-provider-authentication)
+   after setup creates the vault and identity identifiers needed for those steps.
 
 After the single Step 2 approval, PowerShell makes the dedicated app organizational multi-tenant,
 restricts it through the Entra allowed-tenants preview to its home tenant plus the selected provider
@@ -126,6 +145,41 @@ disclosed outbound managed-identity federated credential.
 - **Python selection:** Azure performs the Linux dependency build. No local Python, pip, or Windows
   dependency installation is needed. The source archive is never used directly as run-from-package.
 
+### Permissions are separate
+
+For an Azure built-in-role example, **Owner at the selected subscription** includes deployment,
+resource-provider registration, and role-assignment rights. **Contributor alone is insufficient**
+for `Microsoft.Authorization/roleAssignments/write`; Contributor plus **Role Based Access Control
+Administrator** at the required scope is another administrator-reviewed option, subject to any
+role-assignment conditions. Setup deploys at subscription scope and creates a new resource group;
+a role on an unrelated existing group is not sufficient. Request only approved scope/duration
+and activate eligible PIM roles before setup. See [Azure roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles).
+
+Azure roles do not grant Entra/Graph permissions, and Entra roles do not grant Azure/vault access.
+The Entra Privileged Role Administrator and delegated Graph scopes above are for setup.
+The later Authentication Policy Administrator and policy permissions are a **separate activation**
+step. Setup grants vault data roles to its Azure operator and Function identity; it does not
+automatically grant them to every member of your operations team.
+
+### Install and check workstation tools
+
+Use the official [PowerShell installation](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows),
+[Azure CLI installation](https://learn.microsoft.com/cli/azure/install-azure-cli-windows), and
+[.NET 8 SDK download](https://dotnet.microsoft.com/download/dotnet/8.0) instructions (SDK only for C#).
+Open a new **PowerShell 7** window after installation, then check:
+
+```powershell
+$PSVersionTable.PSVersion
+az version
+Get-Module -ListAvailable Microsoft.Graph.Authentication, Microsoft.Graph.Applications |
+    Select-Object Name, Version
+# Only when choosing dotnet:
+dotnet --list-sdks
+```
+
+Missing Graph modules or Bicep can be installed by interactive setup after confirmation.
+These version checks do not establish Azure permissions, quota, feature availability, or provider access.
+
 | Choice | Azure runtime | Automatic deployment path |
 |---|---|---|
 | JavaScript | Node.js 22, Functions v4 | Verify and publish the ready ZIP with its production dependencies |
@@ -137,11 +191,9 @@ verification. Source and deployed-package hashes are recorded separately when a 
 For FC1 Python, One Deploy builds and stores the output inside Azure; the summary records the
 verified source hash and leaves `packageSha256` null rather than reporting it as the built-output hash.
 
-Setup normally detects these automatically. For unattended execution, allow installation explicitly:
-
-```powershell
-.\Setup-Epp.ps1 -NonInteractive -InstallPrerequisites ...
-```
+Setup normally detects these automatically. For noninteractive execution, preinstall prerequisites
+or explicitly allow missing Graph/Bicep installation with `-InstallPrerequisites`; see the
+[complete example](#noninteractive-example).
 
 Install Azure CLI through its official installation instructions if necessary. Setup checks the
 explicitly supplied subscription and tenant without changing the CLI's selected subscription. If no
@@ -179,7 +231,7 @@ The flow is:
 1. **Collect missing customer inputs:** tenant, subscription, existing application client ID, Azure
    region, and resource prefix. Supplied values are reused without prompts. Credentials are never
    requested as ordinary string parameters.
-2. **Choose SMS or voice**, then the **Global or EU tenant scope**.
+2. **Choose SMS or voice**, then the **Global or EU provider route** (shown as **Tenant scope**).
 3. **Choose a provider**, then an Azure Function **platform**: Node.js, .NET, or Python. Setup downloads the provider JSON,
    resolves one complete route containing endpoint, authentication, app-ID/scope
    when applicable, timeout, and retry interval. Explicit test values are allowed, shown as test
@@ -225,15 +277,23 @@ Supply known values to shorten the prompts:
 
 ```powershell
 .\Setup-Epp.ps1 `
-    -TenantId <customer-tenant-id> `
-    -SubscriptionId <subscription-id> `
-    -ApplicationId <existing-client-id> `
+    -TenantId '<customer-tenant-id>' `
+    -SubscriptionId '<subscription-id>' `
+    -ApplicationId '<existing-client-id>' `
     -Location westus2 `
     -Language javascript `
     -ServicePlan FC1 `
     -Provider telesign `
+    -Channel sms `
+    -EndpointRegion global `
     -ResourcePrefix contoso
 ```
+
+Replace the ID placeholders with quoted GUID strings before execution. For an independent
+second channel/provider deployment, use a different prefix **and a dedicated app**.
+The suffix does not include channel/provider/region, so changing those inputs with the same
+subscription/app/prefix can reconfigure the existing endpoint. See
+[deployment separation and key constraints](../../docs/ONBOARDING.md#inputs-you-supply-to-setup).
 
 The plan creates or updates a dedicated resource group, selected Linux FC1 or EP1 hosting plan, Function App,
 storage account/private package container, Key Vault, Log Analytics workspace, Application Insights,
@@ -273,12 +333,81 @@ authenticate both clients first, and explicitly authorize
 the whole displayed plan with **both** `-NonInteractive -ApproveDeployment`. `-NonInteractive`
 alone never approves changes. There is no `-Stage`, `-Resume`, `-ConfigPath`, or policy-approval switch.
 
+### Noninteractive example
+
+This is a fully specified Telesign/SMS/Global JavaScript deployment example, not a credential
+script. Replace the three IDs and choose a permitted region/prefix/plan before running.
+The preliminary user sign-ins can require MFA and consent; `-NonInteractive` does not create a
+headless service-principal deployment path. Install the Graph modules/Bicep beforehand using
+interactive setup's prerequisite prompts or your approved installation process.
+
+```powershell
+$tenantId = '<customer-tenant-guid>'
+$subscriptionId = '<subscription-guid>'
+$applicationId = '<dedicated-app-client-guid>'
+
+az login --tenant $tenantId
+if ($LASTEXITCODE -ne 0) { throw 'Azure sign-in failed.' }
+Connect-MgGraph -TenantId $tenantId -ContextScope Process `
+    -Scopes 'User.Read', 'Application.ReadWrite.All', 'Application.Read.All', 'AppRoleAssignment.ReadWrite.All'
+
+.\Setup-Epp.ps1 `
+    -TenantId $tenantId `
+    -SubscriptionId $subscriptionId `
+    -ApplicationId $applicationId `
+    -Location westus2 `
+    -Provider telesign `
+    -Channel sms `
+    -EndpointRegion global `
+    -Language javascript `
+    -ServicePlan FC1 `
+    -ResourcePrefix contoso `
+    -OutputDirectory .\epp-output `
+    -NonInteractive `
+    -ApproveDeployment
+```
+
+Use `-InstallPrerequisites` only when authorizing automatic missing-dependency installation.
+Use the [source/version options](#source-versioning) to pin repeatable deployments.
+Review the corresponding interactive plan first; `-ApproveDeployment` authorizes the complete
+mutation set, not just package upload. Do not use it as a dry run.
+
+### Read the deployment summary
+
+Open the timestamped JSON under `epp-output` in a private editor. It contains identifiers and
+configuration metadata, not provider credentials or private-key bytes. Keep it access-controlled.
+
+| Summary field | How to use it |
+|---|---|
+| `tenantId`, `subscriptionId`, `applicationId` | Verify the intended customer directory, Azure subscription, and endpoint **client ID**. |
+| `resources.functionApp`, `resources.keyVault`, `resources.applicationInsights`, `resources.logAnalytics` | Find the exact Azure resources; do not guess names or use a different environment's vault. |
+| `provider`, `channel`, `endpointRegion`, `providerTenantId` | Confirm provider routing, separate from the customer's directory and Azure location. |
+| `endpointUrl`, `identifierUri` | Exact SendOtp URL and registered app audience information for the authorized test/policy operator. |
+| `encryptionKeyId`, `certificateThumbprint`, `certificateId`, `certificateSecretId`, `certificateExpiresUtc` | Public-key identification and version/renewal inventory. A secret **ID** is not its value; do not fetch its private-key contents. |
+| `endpointServicePrincipalId`, `microsoftPhoneProviderServicePrincipalId` | Tenant-local enterprise-application Object IDs; neither is the endpoint app client ID. |
+| `source`, `packageUrl`, `sourcePackageSha256`, `packageSha256`, `language`, `servicePlan` | Source/package provenance and runtime/plan. FC1 Python's built hash can be null; source and built hashes describe different artifacts. |
+| `policyChanged` | Expected `false`: deployment has not activated policy. |
+
+For example, a healthy record can contain `"provider": "telesign"`, `"channel": "sms"`,
+`"endpointRegion": "global"`, `"certificateRenewal": "manual"`, and `"policyChanged": false`.
+Those fields do not prove credentials, delivery, or monitoring work. Follow
+[provider authentication](../../docs/ONBOARDING.md#complete-provider-authentication) next,
+**even if the script's completion text does not prompt for your provider**.
+
 ### Encryption certificate lifecycle
 
 The issuance policy uses **12-month validity, key reuse, and manual renewal**. It specifies
 `EmailContacts` 30 days before expiry, **not `AutoRenew`**. Email is sent only if the customer
 separately configures Key Vault certificate contacts; setup does not create contacts or guarantee
 notifications. Track the saved expiry and arrange renewal before the certificate expires.
+
+In **Key Vault > Certificates > Certificate contacts**, add the approved operations/renewal
+contact and verify the address and ownership. Portal labels can vary; follow
+[certificate renewal and contacts](https://learn.microsoft.com/azure/key-vault/certificates/overview-renew-certificate).
+Record `certificateExpiresUtc` in your inventory and create an independent scheduled reminder
+before the 30-day window, with an escalation owner. EmailContacts is not an Azure Monitor alert
+rule, and setup does not test email delivery. Monitor both the vault certificate's and Entra
+credential's expiration; renewing one does not renew the other automatically.
 
 Reruns reuse a valid matching cloud certificate. Only a certificate-not-found response triggers
 `az keyvault certificate create`; Azure CLI waits for self-signed issuance. Other errors, including
@@ -339,27 +468,62 @@ RBAC propagation, Key Vault issuance, Entra behavior, or provider delivery.
 
 ## Step 3 - manually validate and activate policy
 
-1. Save the Step 2 summary and confirm its tenant, application client ID, endpoint URL, encryption
-   key ID, and certificate with the EPP onboarding owner. **Replace all test provider values** and
-   provision the adapter-named API credentials in Key Vault. Verify the package's channel routing
-   and retry behavior.
-2. Validate the deployed endpoint with synthetic, non-delivering evaluation requests first.
-   Missing/invalid credentials and unauthorized callers must be rejected by Easy Auth. An admitted
-   caller's valid encrypted request must return the matching nonce. Then verify live SMS/voice
-   provider acceptance and handset delivery through the supported test procedure. Never put
-   phone numbers, messages, tokens, private keys, or nonce values in shared logs.
-3. An **Authentication Policy Administrator**, using the approved Microsoft Graph tool and delegated
-   `Policy.ReadWrite.AuthenticationMethod`, must read the selected channel configuration:
-   `https://graph.microsoft.com/beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/Sms`
-   for SMS or the same path ending in `/Voice` for voice. If the selected configuration or its
-   `url` and `appId` properties are unavailable, stop and obtain the supported onboarding procedure
-   from Microsoft rather than sending a guessed update.
-4. Save the existing channel configuration with the tenant ID and timestamp. Re-read it immediately
-   before a manual change, stop if it changed, and use `If-Match` when an ETag is available.
-5. Update `url` with the highlighted Function endpoint and `appId` with the highlighted endpoint
-   application client ID printed by setup. Preserve all other properties, then read the configuration
-   back and compare those values before considering activation complete.
+First complete [provider authentication and the deployed acceptance checks](../../docs/ONBOARDING.md#complete-provider-authentication).
+The customer onboarding owner must arrange an authorized Microsoft EPP caller; this repository's
+offline tests and an ordinary Azure CLI token do not supply that caller.
 
-Policy activation, policy backups, and policy rollback are administrator-owned manual operations.
-No policy API is called by the setup package. For rollback, restore only the reviewed prior EPP
-value through the still-supported contract; resource deletion is not a policy rollback.
+**Activation is an assisted, product-specific gate, not an executable public Graph recipe.**
+The public beta [SMS](https://learn.microsoft.com/en-us/graph/api/resources/smsauthenticationmethodconfiguration?view=graph-rest-beta)
+and [Voice](https://learn.microsoft.com/en-us/graph/api/resources/voiceauthenticationmethodconfiguration?view=graph-rest-beta)
+resource definitions do **not** document EPP `url` and `appId` fields. The general method
+configuration APIs alone do not establish EPP feature availability or an EPP update contract.
+Do not invent a PATCH payload, assume a Graph success means activation, or use the general
+Delete operation as an EPP rollback.
+
+Before a policy change, the **Authentication Policy Administrator** must obtain Microsoft's
+current approved EPP procedure for the selected tenant/channel: tool, API/version and exact
+field placement, required consent/roles, readback, validation, and rollback semantics.
+Delegated `Policy.ReadWrite.AuthenticationMethod` is a policy-management permission, not proof
+of EPP entitlement; confirm the approved procedure's permission requirements separately from setup.
+If this information or the feature is unavailable, leave policy unchanged and record the blocker.
+
+Once that procedure is available:
+
+1. Save the existing selected-channel configuration, including EPP settings if present, target
+   groups, state, and other properties, with the tenant ID, UTC time, and change owner. Protect
+   the snapshot as tenant configuration. Agree on a maintenance window and rollback trigger.
+2. Re-read immediately before changing; stop if another administrator changed the policy.
+   Use conditional updates only where the approved endpoint documents their support.
+3. Apply only the reviewed EPP changes using `endpointUrl` and `applicationId` from the saved
+   deployment summary in the **approved field locations**. Preserve other policy properties
+   and group targeting. Setup's endpoint Service Principal Object ID is not `applicationId`.
+4. Read back and compare both changed values and preserved settings. Have the authorized
+   operator verify the selected channel through an actual controlled Entra flow; record
+   acceptance and separate recipient delivery, not secrets or OTPs.
+5. If validation fails, execute the agreed rollback below. Do not leave a broken channel
+   activated while deleting its resources or changing authentication to debug it.
+
+### Rollback and decommissioning
+
+Policy rollback, package/configuration rollback, and resource deletion are different operations.
+Setup does none of them automatically.
+
+1. The policy administrator restores only the reviewed prior EPP configuration through the
+   approved procedure (or its documented removal operation if there was no prior EPP endpoint).
+   Preserve unrelated settings, read back, and validate the restored authentication route.
+   Keep the old endpoint available until traffic has safely moved.
+2. For an endpoint release rollback, use the retained package/source version and reviewed
+   settings. Do not blindly rerun setup on an active app: it can mutate Entra, reset settings,
+   and disable ingress. Coordinate certificate/key continuity; never delete credentials to
+   bypass a mismatch. Repeat the authorized evaluation and live checks.
+3. Only after policy/traffic and rollback retention are confirmed, have the Azure owner inventory
+   and retire the dedicated resource group and any separately created monitors/Front Door resources.
+   Confirm exact subscription/resource IDs and dependencies before deletion. Respect vault
+   soft-delete/purge protection and approved log/certificate retention; do not purge for a rerun.
+4. Have the Entra/provider administrators separately review app registrations, enterprise
+   applications, app-role assignments/consents, federated credentials, and provider subscriptions.
+   Azure resource deletion does not remove these. The Microsoft phone-provider service principal
+   and its Graph grant may be shared with other endpoints: do not delete/revoke shared objects
+   without an impact review.
+5. Confirm billing and provider subscription status, retain required audit evidence, and close
+   alerts only after decommissioning. Stopping a Function or removing policy alone is not teardown.
