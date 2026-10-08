@@ -6,8 +6,8 @@ by SMS or voice. Start here to onboard **one deployment in one Azure region**.
 For implementation details, configuration, packaging, and security behavior, see the
 [technical reference](TECHNICAL.md).
 
-To check multiple provider profiles locally without sending messages or changing a deployment,
-see [offline multi-provider configuration validation](docs/MULTI-PROVIDER-VALIDATION.md).
+For a customer-built multi-provider customization, see the
+[implementation guide and offline feasibility findings](docs/MULTI-PROVIDER-IMPLEMENTATION.md).
 
 ## Deployment options
 
