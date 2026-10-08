@@ -285,6 +285,39 @@ Once these checks pass, have an **Authentication Policy Administrator** follow t
 using the Front Door SendOtp URL and endpoint application client ID. Save the previous policy first,
 preserve unrelated properties, and read the policy back to confirm the change. This step is manual.
 
+### Test scenarios to plan and record
+
+Use this checklist to agree what you will test and what counts as a pass. **These are proposed
+tests, not a report that they have all been run.** The historical JavaScript evaluation, access
+rejection, and individual app-stop/restart tests are described in
+[scope and observed behavior](#scope-and-observed-behavior) and
+[observed failover results](#observed-failover-results-and-limitations). Those results do not prove
+double-load capacity, complete dependency isolation, or a full regional outage.
+
+Run only in an approved, isolated nonproduction environment, with synthetic data, bounded load,
+and the [fire-drill's approval, abort, and restoration safeguards](#6-regional-failover-fire-drill).
+Use an authorized test harness calling the Front Door endpoint, not a real Entra/SAS sign-in flow.
+**SAS evaluation can trigger native fallback; do not assume it is non-delivering.** Real-SAS and
+delivery testing require separate safety approval and are not part of this checklist.
+Agree load, headroom, recovery time, error/latency limits, soak duration, and restoration deadlines
+before starting; do not substitute the historical measurements for your acceptance targets.
+
+| What to test | How and where to test safely | Expected outcome / acceptance | Evidence to keep |
+|---|---|---|---|
+| Baseline encrypted evaluation | Send synthetic encrypted `mode: 2` requests through Front Door with both origins healthy. Confirm each origin serves requests. | Matching nonce checked locally, no delivery, and agreed baseline error/latency limits met. | Offered/completed rates, latency/errors, safe correlation IDs and serving region; no nonce values or request bodies. |
+| Bad caller credentials, unauthorized callers, and direct-origin access | From the test harness, try missing/invalid/wrong-audience tokens, an unauthorized app, and direct-origin requests including a spoofed `X-Azure-FDID`. Send valid evaluations before and after. | Invalid calls are rejected while valid evaluations still work. Authentication and ingress restrictions remain enabled. | Response status and sanitized access diagnostics identifying the rejection; successful surrounding evaluations. |
+| Failover from A to B | Follow the fire-drill: isolate only approved test origin A while leaving it **enabled in Front Door**. Keep B healthy and evaluation traffic bounded. | Health-based rerouting to B meets agreed recovery and transition-error limits, without changing the public URL, trust, or encryption key. | Fault/probe/client timestamps, every failure/timeout, and B's request/health signals. |
+| Failover from B to A | After A is fully restored and stable, repeat with B isolated but **enabled in Front Door**. | A meets the same agreed criteria; a one-direction pass is insufficient. | The same evidence, identifying A as the survivor and confirming B's subsequent restoration. |
+| Sustained survivor capacity | In each direction, maintain the [combined peak offered load plus planned headroom](#capacity-gate-each-region-must-support-the-combined-peak-load) for the agreed soak. | **Each region handles at least double its normal share in the balanced two-region case, plus headroom**, within agreed error/latency and dependency limits. Evaluation proves only the exercised path. | Offered/completed rates, concurrency, latency percentiles, errors/timeouts, saturation/throttling, quotas and available capacity per region. |
+| Restart, cold start, and credential refresh without the failed region | In a separately approved dependency-isolation test environment, make the failed region's storage/vault paths unavailable and start or restart the survivor stack. Exercise key resolution and credential refresh using the non-delivering provider setup below. Do not add a second fault to the basic fire-drill. | The survivor starts and serves using its own dependencies; warm caches do not hide cross-region access. Missing failed-region telemetry is not treated as success. | Dependency configuration/access evidence, startup/key/credential-refresh results, client outcomes and timestamps captured outside the failed region. |
+| Complete live-path capacity and provider credential failures | Separately use a provider-approved, production-representative **non-delivering sandbox/stub** exercising credential acquisition/refresh and provider latency/quota behavior. Test valid and invalid/expired test credentials without production accounts or recipients. | Both survivor regions meet the capacity criteria on this path; credential failures are surfaced, not reported as successful sends. Evaluation-only throughput cannot pass this test. | Credential/provider timing, failures/throttling, load results, and provider capacity/quota evidence for behavior the sandbox/stub cannot reproduce. |
+| Restoration and conservative failback | Restore the original approved state even after a failed test. Verify the restored origin's own readiness and successful evaluations, then observe traffic returning for the agreed window. | Both origins are healthy and serving within agreed limits, with original security settings intact, before any next fault. | Restoration confirmation, origin-specific readiness/request evidence and failback latency/errors. |
+| Interrupted-controller recovery | Verify the independent restoration timer or backup operator before fault injection. In an approved drill, interrupt the controller while the independent safeguard remains available. | The fault is removed by the agreed deadline without relying on the interrupted controller; unsafe load stops and unresolved recovery is escalated. | Interruption/restoration timestamps, safeguard or backup-operator actions, and both origins' final state. |
+
+For every row, record **pass, fail, or not tested**, the approved target, observed outcome, and
+evidence location. Assign an owner and retest date to gaps. A successful routing test is useful,
+but is not a substitute for the separate capacity and dependency tests.
+
 ## 6. Regional failover fire-drill
 
 This runbook is for an approved, dedicated nonproduction deployment. It exercises health-based
