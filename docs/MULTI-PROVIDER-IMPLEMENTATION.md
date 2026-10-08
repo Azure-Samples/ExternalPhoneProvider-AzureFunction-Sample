@@ -155,15 +155,15 @@ Authenticate -> validate envelope -> decrypt -> check delivery context
   -> otherwise select one provider context
 ```
 
-Immediately after the existing evaluation early return, replace the single-provider lookup with
-your route lookup. This fragment uses the handler's existing `fail`, `respond`, `payload`,
-`correlationId` and `requestId` variables:
+Immediately after the existing evaluation early return, replace the block beginning
+`const provider = selectProvider(config.providerName)` through the end of `if (!provider)` with
+the following. Keep the `logContext = providerContext(...)` and `provider_selected` lines that
+follow it. This fragment uses the handler's existing response helpers and request variables:
 
 ```javascript
 const contextId = routeByChannel[payload.channelName];
 const selectedContext = contexts.get(contextId);
-if (!selectedContext
-    || selectedContext.config.providerChannel !== payload.channelName) {
+if (!selectedContext) {
     fail('provider_selection', 'unknown_provider', 400);
     return respond(400, {
         error: 'provider_delivery_failed', correlationId, requestId,
@@ -172,6 +172,7 @@ if (!selectedContext
 const { provider, config: providerConfig, credentials } = selectedContext;
 ```
 
+The existing channel check below this block will reject a mismatched channel in step 5.
 For customer/account-based routing, this is where your **verified, authorized** customer binding
 must select the context instead of `routeByChannel`. Evaluation must not depend on that selection
 or acquire provider credentials. An invalid encrypted evaluation still fails the existing checks;
@@ -201,8 +202,8 @@ the `credential_unavailable` error path. For OAuth logging, pass `providerConfig
 `credentialContext` too.
 
 Keep the handler's [OtpDelivery](../javascript/src/functions/delivery.js) construction so phone,
-message, locale and correlation handling stay unchanged. In the existing request-build and
-transport `try` blocks, use the selected endpoint, adapter settings and timeout:
+message, locale and correlation handling stay unchanged. In the existing **request-build**
+`try` block, replace only the `provider.createRequest` call:
 
 ```javascript
 providerRequest = provider.createRequest({
@@ -212,8 +213,13 @@ providerRequest = provider.createRequest({
     credential,
     env: providerConfig.env,
 });
+```
 
-// Keep this in the existing transport try/catch, not the request-build block.
+In the separate **transport** `try` block, replace only the `sendProviderRequest` call.
+Keep both blocks' existing catches so build failures and transport failures retain their
+different error classifications:
+
+```javascript
 transportResponse = await sendProviderRequest(
     providerRequest,
     parseProviderTimeout(providerConfig.providerTimeoutMs),
@@ -357,12 +363,13 @@ owns one selected cache. Update warmup/shutdown and preserve
 
 ## Scope of this guidance
 
-An offline JavaScript prototype checked isolated Telesign API-key and Soprano OAuth contexts,
-concurrent SMS dispatch, failure isolation and evaluation ordering using fake SDK/transport
-boundaries. It was not a deployed or authenticated end-to-end test. Multi-provider voice,
-real OAuth/Key Vault, trusted customer routing, production refresh/scale-out and live delivery
-still need your implementation and validation. .NET/Python pointers are based on code inspection,
-not equivalent multi-context tests.
+An offline, in-memory adaptation of the registered JavaScript `SendOtp` handler checked this
+SMS/Telesign and voice/Soprano design, same-provider account isolation, failures and evaluation
+ordering. Its registered startup/shutdown callbacks and simulated refresh were also exercised.
+Functions host registration, Azure SDK calls and provider HTTP were faked: this was not a deployed
+or authenticated end-to-end test. Real OAuth/Key Vault, trusted customer routing, production
+refresh/scale-out and handset delivery still need your validation. .NET/Python pointers are
+based on code inspection, not equivalent multi-context tests.
 
 Runtime adapters also include Infobip and Sinch; the [setup catalog](../setup/providers/catalog.json)
 contains only Telesign and Soprano. Adapter availability does not imply setup coverage or account
