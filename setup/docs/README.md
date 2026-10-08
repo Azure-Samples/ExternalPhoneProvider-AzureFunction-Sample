@@ -62,10 +62,12 @@ and notify the resource owner; a budget notification does not stop spending. Inc
 Key Vault, telemetry ingestion/retention, and the provider's charges, not just Function executions.
 Stopping a Function does not necessarily stop its plan or supporting-service charges.
 
-**Cache settings require runtime support.** Setup only writes the two app settings above; they do
-not change caching in a Function package that does not read them. Runtime cache-reader changes are
-separate and must be released and deployed before these settings take effect. Rerunning setup
-restores the selected plan's values. The decryption-key Key Vault reference remains platform-managed.
+**Deploy a Function package that supports these switches.** Older packages ignore them.
+Each switch independently controls its provider credential cache; unset defaults to `true`.
+With the selected cache disabled, live requests acquire credentials on demand without startup
+preparation, polling, or cross-request reuse. Values must be trimmed, case-insensitive `true` or
+`false`; restart after edits. Rerunning setup restores the selected plan's values.
+The decryption-key Key Vault reference remains platform-managed.
 
 Use `-ServicePlan FC1` or `-ServicePlan EP1` to skip the prompt. Unattended setup requires this
 parameter; it never silently chooses a paid plan. The approval and deployment summary include

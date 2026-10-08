@@ -44,6 +44,7 @@ const envKeys = [
     'EPP_PROVIDER_AUTH_MODE', 'EPP_PROVIDER_TENANT_ID', 'EPP_PROVIDER_SCOPE',
     'EPP_OUTBOUND_CLIENT_ID', 'EPP_OUTBOUND_MI_CLIENT_ID', 'KEY_VAULT_URL',
     'EPP_DECRYPTION_KEY_PEM', 'SINCH_SERVICE_PLAN_ID',
+    'EPP_KEY_VAULT_CACHE_ENABLED', 'EPP_ACCESS_TOKEN_CACHE_ENABLED',
 ];
 const baseDelivery = {
     nonce: 'PRIVATE-NONCE',
@@ -158,6 +159,42 @@ function failure(result, status, error = 'provider_delivery_failed') {
 function event(name) {
     return records.find((record) => record.eventName === name);
 }
+
+for (const provider of ['telesign', 'soprano']) {
+    test(`${provider}: disabled cache skips startup and evaluation but acquires for every live request`, async () => {
+        const apiKey = provider === 'telesign';
+        process.env.EPP_PROVIDER_NAME = provider;
+        process.env.EPP_PROVIDER_AUTH_MODE = apiKey ? 'apiKey' : 'oauth';
+        process.env[apiKey ? 'EPP_KEY_VAULT_CACHE_ENABLED' : 'EPP_ACCESS_TOKEN_CACHE_ENABLED'] = 'false';
+        process.env[apiKey ? 'EPP_ACCESS_TOKEN_CACHE_ENABLED' : 'EPP_KEY_VAULT_CACHE_ENABLED'] = 'PRIVATE-UNUSED';
+        if (apiKey) fetchMock.mock.mockImplementation(async () => ({
+            ok: true, status: 200, text: async () => JSON.stringify({ status: { code: 3001 } }),
+        }));
+        await startHook();
+        const evaluated = await invoke(await envelope({ mode: 2 }));
+        assert.equal(evaluated.status, 200);
+        assert.equal(evaluated.jsonBody.nonce, baseDelivery.nonce);
+        assert.deepEqual([getSecret.mock.callCount(), getToken.mock.callCount(), fetchMock.mock.callCount()], [0, 0, 0]);
+        for (let i = 0; i < 2; i++) assert.equal((await invoke(await envelope())).status, 200);
+        assert.equal(getSecret.mock.callCount(), apiKey ? 4 : 0);
+        assert.equal(getToken.mock.callCount(), apiKey ? 0 : 2);
+        assert.equal(service.current, null);
+        assert.equal(service.timer, null);
+    });
+}
+
+test('invalid cache settings fail live credentials but leave evaluation and private logs unchanged', async () => {
+    const warnings = mock.method(console, 'warn', () => {});
+    process.env.EPP_KEY_VAULT_CACHE_ENABLED = 'PRIVATE-INVALID';
+    process.env.EPP_ACCESS_TOKEN_CACHE_ENABLED = 'PRIVATE-INVALID';
+    await startHook();
+    assert.equal((await invoke(await envelope({ mode: 2 }))).status, 200);
+    failure(await invoke(await envelope()), 502);
+    assert.equal(event('request_failed').failureReason, 'credential_unavailable');
+    assert.deepEqual([getToken.mock.callCount(), getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0, 0]);
+    assert.ok(warnings.mock.callCount() > 0);
+    assert.doesNotMatch(JSON.stringify(warnings.mock.calls.map((call) => call.arguments)), /PRIVATE/);
+});
 
 test('startup prewarms only the configured provider and shutdown closes the service', async () => {
     await startHook();

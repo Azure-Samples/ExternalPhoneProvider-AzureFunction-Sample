@@ -19,6 +19,8 @@ class AppConfig:
     outbound_managed_identity_client_id: str
     provider_timeout_ms: str | None
     env: Mapping[str, str]
+    key_vault_cache_enabled: str | None = None
+    access_token_cache_enabled: str | None = None
 
 
 def read_config(env: Mapping[str, str] | None = None) -> AppConfig:
@@ -35,5 +37,8 @@ def read_config(env: Mapping[str, str] | None = None) -> AppConfig:
         outbound_client_id=(env.get("EPP_OUTBOUND_CLIENT_ID") or "").strip(),
         outbound_managed_identity_client_id=(env.get("EPP_OUTBOUND_MI_CLIENT_ID") or "").strip(),
         provider_timeout_ms=env.get("EPP_PROVIDER_TIMEOUT_MS"),
+        # Validate only on credential paths so evaluation stays independent.
+        key_vault_cache_enabled=env.get("EPP_KEY_VAULT_CACHE_ENABLED"),
+        access_token_cache_enabled=env.get("EPP_ACCESS_TOKEN_CACHE_ENABLED"),
         env=env,  # Preserve raw adapter settings and the injected environment.
     )

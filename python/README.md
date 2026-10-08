@@ -107,7 +107,11 @@ For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHT
 Python emits fixed messages with `event_name` and other logging extras, not a universal JSON
 request summary. Verify which properties the host/export pipeline preserves.
 
-Worker initialization selects `ApiKeyCache` or `AccessTokenCache` from the provider's credential specification.
+`EPP_KEY_VAULT_CACHE_ENABLED` controls API-key caching; `EPP_ACCESS_TOKEN_CACHE_ENABLED` controls
+OAuth caching. Both default to `true`. Setting the selected switch to `false` acquires credentials
+per live request, with no startup preparation, polling, or cross-request reuse.
+
+With caching enabled, worker initialization selects `ApiKeyCache` or `AccessTokenCache` from the provider's credential specification.
 Only the selected cache starts: API keys use Key Vault and `cachetools.TTLCache`; access tokens use
 the MI/Entra SDKs without Key Vault. One daemon loop polls every 30 seconds. Configuration changes
 require restart. Callers can stop waiting without abandoning shared reads; synchronous SDK I/O uses connect/read

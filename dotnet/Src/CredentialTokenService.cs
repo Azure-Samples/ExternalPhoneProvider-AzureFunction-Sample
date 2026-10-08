@@ -41,14 +41,12 @@ public sealed class CredentialTokenService : IHostedService, IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         try
         {
+            if (!IsCacheEnabled(provider.AuthenticationMode, config))
+                return await FetchAsync(provider, config, cancellationToken).ConfigureAwait(false);
+
             var value = await _cache.GetOrCreateAsync(provider.Name, async entry =>
             {
-                using var acquisition = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                acquisition.CancelAfter(AcquisitionTimeout);
-                var credentials = await provider.FetchCredentialsAsync(
-                    config, acquisition.Token).ConfigureAwait(false);
-                if (credentials.ExpiresOn <= DateTimeOffset.UtcNow)
-                    throw Unavailable();
+                var credentials = await FetchAsync(provider, config, cancellationToken).ConfigureAwait(false);
                 entry.AbsoluteExpiration = credentials.ExpiresOn;
                 return credentials;
             }).ConfigureAwait(false);
@@ -63,6 +61,33 @@ public sealed class CredentialTokenService : IHostedService, IDisposable
             ReportFailure(provider.Name);
             throw Unavailable();
         }
+    }
+
+    private static async Task<ProviderCredentials> FetchAsync(
+        PhoneProviderBase provider, AppConfig config, CancellationToken cancellationToken)
+    {
+        using var acquisition = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        acquisition.CancelAfter(AcquisitionTimeout);
+        var credentials = await provider.FetchCredentialsAsync(config, acquisition.Token).ConfigureAwait(false);
+        if (credentials.ExpiresOn <= DateTimeOffset.UtcNow)
+            throw Unavailable();
+        return credentials;
+    }
+
+    internal static bool IsCacheEnabled(string authenticationMode, AppConfig config)
+    {
+        var setting = authenticationMode switch
+        {
+            "apiKey" => config.KeyVaultCacheEnabled,
+            "oauth" => config.AccessTokenCacheEnabled,
+            _ => throw Unavailable(),
+        };
+        return setting?.Trim().ToLowerInvariant() switch
+        {
+            null or "true" => true,
+            "false" => false,
+            _ => throw Unavailable(),
+        };
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -80,6 +105,7 @@ public sealed class CredentialTokenService : IHostedService, IDisposable
         }
         try
         {
+            if (!IsCacheEnabled(provider.AuthenticationMode, config)) return;
             await GetCredentialsAsync(provider, config, cancellationToken).ConfigureAwait(false);
         }
         catch

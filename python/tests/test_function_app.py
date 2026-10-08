@@ -12,6 +12,7 @@ from jwcrypto import jwe, jwk
 import function_app
 import src.provider as provider_module
 from src.jwe import JweDecryptor
+from src.credentials import CredentialTokenService
 
 _KEY = jwk.JWK.generate(kty="RSA", size=2048)
 _PRIVATE_PEM = _KEY.export_to_pem(True, None).decode()
@@ -36,6 +37,8 @@ def _isolate(monkeypatch):
     monkeypatch.setenv("EPP_PROVIDER_ENDPOINT", "https://qa4.example/oauth/messages")
     monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", "oauth")
     monkeypatch.delenv("EPP_PROVIDER_CHANNEL", raising=False)
+    monkeypatch.delenv("EPP_KEY_VAULT_CACHE_ENABLED", raising=False)
+    monkeypatch.delenv("EPP_ACCESS_TOKEN_CACHE_ENABLED", raising=False)
     monkeypatch.setattr(function_app, "_decryptor", JweDecryptor(function_app.os.environ))
     monkeypatch.setattr(function_app, "_credentials", Mock(
         get_credentials=Mock(return_value={"mode": "oauth", "access_token": "provider-token"})))
@@ -72,6 +75,52 @@ def _envelope(**overrides):
 
 def _events(caplog):
     return [record for record in caplog.records if hasattr(record, "event_name")]
+
+
+@pytest.mark.parametrize(("provider", "mode", "switch"), [
+    ("telesign", "apiKey", "EPP_KEY_VAULT_CACHE_ENABLED"),
+    ("soprano", "oauth", "EPP_ACCESS_TOKEN_CACHE_ENABLED"),
+])
+def test_disabled_cache_skips_startup_and_evaluation_but_not_live_credentials(monkeypatch, provider, mode, switch):
+    monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
+    monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", mode)
+    for name in ("EPP_KEY_VAULT_CACHE_ENABLED", "EPP_ACCESS_TOKEN_CACHE_ENABLED"):
+        monkeypatch.setenv(name, "false" if name == switch else "PRIVATE-UNUSED")
+    function_app._credentials.get_credentials.return_value = {
+        "mode": mode, "secret": "key", "identity": "customer", "access_token": "token",
+    }
+    provider_module.requests.request.return_value = Mock(
+        status_code=200, json=Mock(return_value={"status": {"code": 3001} if mode == "apiKey" else "ENROUTE"}))
+    function_app._warm_selected_credentials()
+    response = _HANDLER(_request(_envelope(mode=2)))
+    assert response.status_code == 200 and json.loads(response.get_body())["nonce"] == _NONCE
+    function_app._credentials.get_credentials.assert_not_called()
+    provider_module.requests.request.assert_not_called()
+    for _ in range(2):
+        assert _HANDLER(_request(_envelope())).status_code == 200
+    assert function_app._credentials.get_credentials.call_count == 2
+
+
+@pytest.mark.parametrize(("provider", "mode"), [("telesign", "apiKey"), ("soprano", "oauth")])
+def test_invalid_cache_setting_fails_live_but_not_evaluation(monkeypatch, caplog, provider, mode):
+    monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
+    monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", mode)
+    monkeypatch.setenv("EPP_KEY_VAULT_CACHE_ENABLED", "PRIVATE-INVALID")
+    monkeypatch.setenv("EPP_ACCESS_TOKEN_CACHE_ENABLED", "PRIVATE-INVALID")
+    secrets = Mock()
+    service = CredentialTokenService(secrets)
+    monkeypatch.setattr(function_app, "_credentials", service)
+    try:
+        function_app._warm_selected_credentials()
+        assert _HANDLER(_request(_envelope(mode=2))).status_code == 200
+        response = _HANDLER(_request(_envelope()))
+        assert response.status_code == 502 and "nonce" not in json.loads(response.get_body())
+        secrets.resolve.assert_not_called()
+        provider_module.requests.request.assert_not_called()
+        assert any(record.event_name == "credential_refresh_failed" for record in _events(caplog))
+        assert "PRIVATE" not in caplog.text
+    finally:
+        service.close()
 
 
 def test_invalid_requests_return_contract_reasons_before_provider_work(caplog):

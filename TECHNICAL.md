@@ -178,6 +178,8 @@ how code accesses configuration, not the environment-variable names.
 | `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE` | Soprano OAuth | Provider tenant and selected API scope. |
 | `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | Soprano OAuth | Existing multitenant application and outbound user-assigned managed identity used for client-assertion exchange. |
 | `EPP_PROVIDER_TIMEOUT_MS` | Optional | Decimal milliseconds. Defaults to `1500`, capped at `2500`; not an end-to-end deadline. |
+| `EPP_KEY_VAULT_CACHE_ENABLED` | Optional | `true` enables provider API-key bundle caching; `false` reads the bundle for each live request. Unset defaults to `true`. |
+| `EPP_ACCESS_TOKEN_CACHE_ENABLED` | Optional | `true` enables OAuth credential caching; `false` uses request-scoped MI/client-assertion credentials. Unset defaults to `true`. |
 | `EPP_PROVIDER_ACCOUNT_NAME` | Adapter-dependent | Sender/account metadata, not an API key or credential identity. |
 | `KEY_VAULT_URL` | Provider credential lookup | URI of the vault containing the manifest-named provider secrets. Separate from the encryption-key reference. |
 | `AZURE_CLIENT_ID` | Optional | User-assigned managed identity's client ID for Key Vault. Leave unset for system-assigned identity. |
@@ -198,13 +200,18 @@ login; ordinary local machines have no managed-identity endpoint. Use offline te
 evaluation locally, or an explicitly injected test resolver for integration work. Never commit local
 settings, keys or test credentials.
 
-Configured providers are [prepared per worker](docs/CONTRACT.md#credential-caching-and-refresh).
+When their selected cache is enabled, configured providers are
+[prepared per worker](docs/CONTRACT.md#credential-caching-and-refresh).
 JavaScript/Python warm credentials and poll for refresh; .NET warms at startup and retrieves
 replacements on cache misses, without a periodic poller. Credential acquisition never sends an OTP.
 Evaluation skips provider work, but configured workers can independently acquire credentials at
-startup. Leave `EPP_PROVIDER_NAME` unset for local evaluation-only work without credential acquisition.
-The setup-written cache switches do not change current checked-in runtime behavior; verify your
-selected package rather than assuming plan selection enables/disables caching.
+startup. Disabling the selected cache skips startup preparation, polling, and cross-request reuse,
+but live requests still acquire credentials. Each switch accepts trimmed, case-insensitive `true` or
+`false`; an invalid selected value fails live credential resolution closed without preventing evaluation.
+The other provider-auth mode's switch is ignored. Setup writes both as `false` for FC1 or `true` for
+EP1; older packages that do not read these settings still require a supporting release. Restart after
+changes. Leave `EPP_PROVIDER_NAME` unset or disable its cache for local evaluation-only work without
+credential acquisition. Platform-managed identity caching and decryption-key references are separate.
 
 Core Tools does not resolve Azure Key Vault reference expressions locally. Supply the local test PEM
 or base64 PEM directly; use a reference such as `@Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/<private-key-secret>/)`

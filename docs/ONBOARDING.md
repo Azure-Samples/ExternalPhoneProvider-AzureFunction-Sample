@@ -97,7 +97,7 @@ can restore setup-managed values.
 | `KEY_VAULT_URL` | Summary's `resources.keyVault`; vault Overview > Vault URI. | Put Telesign credentials in this vault. Setup grants its Function system identity Key Vault Secrets User. |
 | `EPP_DECRYPTION_KEY_PEM`, `EPP_ENCRYPTION_KEY_ID` | Versioned Key Vault reference and registered encryption credential ID. Summary includes certificate/secret identifiers and expiry, **not** private-key bytes. | Do not view/copy the private key. Assign a [renewal owner](../setup/docs/README.md#encryption-certificate-lifecycle). |
 | `EPP_PROVIDER_TIMEOUT_MS`, `EPP_PROVIDER_RETRY_INTERVAL_MS` | Profile timing values. Runtime provider HTTP timeout is capped at 2500 ms. | Neither is a whole-request deadline; retry interval metadata does **not** enable send retries. |
-| `EPP_KEY_VAULT_CACHE_ENABLED`, `EPP_ACCESS_TOKEN_CACHE_ENABLED` | Setup writes `false` for FC1, `true` for EP1. | Current checked-in runtimes do not read these switches. Verify the selected release before assuming cache control; see [plan guidance](../setup/docs/README.md#service-plan-selection). |
+| `EPP_KEY_VAULT_CACHE_ENABLED`, `EPP_ACCESS_TOKEN_CACHE_ENABLED` | Setup writes `false` for FC1, `true` for EP1. | Independently control API-key/OAuth caching and startup preparation. Unset defaults to `true`; deploy a supporting package and restart after changes. See [plan guidance](../setup/docs/README.md#service-plan-selection). |
 | Application Insights, storage, runtime/package settings and identities | Created/configured for the selected plan; system identity handles vault/storage/telemetry, outbound identity handles Soprano exchange. | Verify telemetry ingestion. Do not copy local emulator settings or EP1-only settings into FC1. |
 | Inbound caller issuer, audience and allowlist | Function App > Authentication; setup configures Easy Auth for the Microsoft phone-provider caller. | Read back platform authentication, not just `EPP_EXPECTED_*` metadata. App settings are not an alternative caller-authentication gate. |
 
@@ -212,8 +212,8 @@ this did not demonstrate the expected authentication gate. Transport/redirect er
 passes. This only checks the missing-token case, not all authorization or readiness properties.
 
 Evaluation skips provider selection/credential lookup and provider HTTP **on its request path**.
-Configured workers can independently acquire credentials at startup; JavaScript/Python also
-poll for refresh. Do not confuse those background events with an evaluation sending a message.
+With the selected cache enabled, configured workers can independently acquire credentials at startup;
+JavaScript/Python also poll for refresh. Do not confuse those events with an evaluation sending a message.
 
 For live requests, `200` with matching nonce means **provider acceptance, not delivery**.
 Soprano voice extracts the first six-digit sequence; Telesign voice paces standalone six-digit

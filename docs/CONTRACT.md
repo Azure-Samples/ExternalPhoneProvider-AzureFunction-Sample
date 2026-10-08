@@ -125,7 +125,8 @@ there is no API-key fallback. Evaluation skips acquisition. A provider rejection
 Tokens are treated as opaque: the Function checks SDK expiry metadata, not custom JWT claims.
 Soprano remains responsible for signature, issuer, audience, expiry, permissions, and account validation.
 
-Credential instances and their SDK caches are reused for the configured tenant/application/identity.
+With `EPP_ACCESS_TOKEN_CACHE_ENABLED=true` (the default), credential instances and their SDK caches
+are reused for the configured tenant/application/identity.
 JavaScript/Python use a [worker-local refresh loop](#credential-caching-and-refresh) for both
 exchange stages. .NET warms at startup and fetches a replacement on a cache miss; it has no poller.
 JavaScript bounds shared acquisition to 2.5 seconds independently of individual waiters;
@@ -135,7 +136,7 @@ in the installed SDK. Python bounds caller waits and SDK connect/read inactivity
 shared synchronous retrieval may finish after a waiter leaves. It uses `get_token_info` for refresh
 hints when supported, otherwise `get_token`; a failed acquisition never falls back to another API.
 
-Credential SDK transport retries are disabled. JavaScript/Python failed refreshes use the polling
+Credential SDK transport retries are disabled. With caching enabled, JavaScript/Python failed refreshes use the polling
 cadence below; .NET retries credential acquisition on a later cache miss. These are not end-to-end
 delivery deadlines. JavaScript suppresses SDK logs in the
 acquisition's asynchronous context. Python filters Azure Identity/Core/MSAL records on configured
@@ -200,9 +201,10 @@ are needed. Platform authentication and resolution of the decryption-key referen
 network access. Core Tools has no Easy Auth; local evaluation must remain loopback-only, without tunnels.
 
 This describes the evaluation **request path**. Independently, workers with a configured provider
-automatically prewarm and refresh credentials, even if their current traffic is evaluation-only.
+and its cache enabled prepare credentials at startup; JavaScript/Python also poll for refresh,
+even if their current traffic is evaluation-only.
 No background task dispatches an OTP. A worker without `EPP_PROVIDER_NAME` performs no credential
-prewarming, and evaluation does not require that prewarming succeed.
+prewarming. Disabling the selected cache also suppresses this preparation; evaluation never requires it to succeed.
 
 There is no diagnostic environment flag. A live request is not an evaluation request. Adapter-specific
 wire fields, where required by an API, remain internal and cannot enable a separate non-delivery mode.
@@ -301,6 +303,8 @@ Set by provisioning. **Identical names across all languages.**
 | `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | client application and user-assigned identity used for Soprano client-assertion exchange |
 | `EPP_PROVIDER_ACCOUNT_NAME` | sender/source only when required by the selected provider |
 | `EPP_PROVIDER_TIMEOUT_MS` | trimmed ASCII decimal milliseconds; default 1500 for missing/invalid/nonpositive values; capped at 2500. Not a whole-invocation deadline |
+| `EPP_KEY_VAULT_CACHE_ENABLED` | `true`/`false`: API-key bundle caching and startup/refresh; unset defaults to `true` |
+| `EPP_ACCESS_TOKEN_CACHE_ENABLED` | `true`/`false`: OAuth credential caching and startup/refresh; unset defaults to `true` |
 | `EPP_DECRYPTION_KEY_PEM` | single RSA private key for JWE decryption, PEM or base64-encoded PEM; use a Key Vault secret reference in Azure, not a plaintext private key in shared settings |
 | `EPP_ENCRYPTION_KEY_ID` | optional expected JWE `kid`; after successful decryption, a mismatch emits only `encryption_key_id_mismatch`. Advisory, not a key selector or authentication check |
 | `KEY_VAULT_URL` | Key Vault URI for API-key providers |
@@ -342,10 +346,22 @@ subscription activation and changing tenant policy belong to provisioning, not t
 
 Provider credentials are process-local, distinct from the platform-resolved decryption-key
 reference. Credential acquisition never sends an OTP or changes caller authentication.
-Restart workers after configuration changes. The setup-written
-`EPP_KEY_VAULT_CACHE_ENABLED` / `EPP_ACCESS_TOKEN_CACHE_ENABLED` switches are not read by the
-current checked-in implementations; verify the selected release before relying on plan-specific
-cache control.
+All runtimes use `EPP_KEY_VAULT_CACHE_ENABLED` for the selected `apiKey` provider or
+`EPP_ACCESS_TOKEN_CACHE_ENABLED` for the selected `oauth` provider. The switches are independent;
+runtime selection does not depend on the hosting plan. Unset defaults to enabled. Values accept
+trimmed, case-insensitive `true` or `false`; blank or other explicit selected values fail live
+credential acquisition closed with a sanitized warning, without blocking evaluation.
+Restart workers after configuration changes. Setup writes both as `false` for FC1 or `true` for EP1;
+deploy a supporting package, since older releases do not read these settings.
+
+With caching **disabled**, each live request retrieves a complete Key Vault bundle or uses fresh
+managed-identity/client-assertion SDK credentials for OAuth. There is no startup preparation,
+periodic polling, cross-request credential sharing, or failure cooldown. Request-scoped state is
+discarded after acquisition; Python closes its SDK clients when synchronous acquisition finishes.
+The same expiry checks and acquisition budgets below still apply. Azure's managed-identity service
+and platform Key Vault-reference caching remain outside these switches.
+
+With caching **enabled**, each runtime retains its existing policy:
 
 | Runtime | Startup and replacement behavior | Operator consequence |
 |---|---|---|
@@ -365,8 +381,8 @@ transport. Python bounds waits and SDK connect/read inactivity to 2.5 seconds bu
 cancel synchronous I/O. .NET uses a 2.5-second fetch budget linked to the fetch caller's cancellation
 token. None is a whole-invocation deadline.
 
-All runtimes fetch a complete API-key/customer-ID bundle before caching it and use managed identity
-for vault access. Soprano reuses the managed-identity and client-assertion SDK credential instances
+All runtimes fetch a complete API-key/customer-ID bundle before use and use managed identity
+for vault access. With caching enabled, Soprano reuses managed-identity and client-assertion SDK credentials
 without Key Vault or a client-secret fallback. Evaluation skips credential resolution on the
 request path even when independent startup/refresh work runs.
 
