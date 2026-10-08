@@ -1,4 +1,52 @@
-# Troubleshooting Step 2
+# Setup and onboarding troubleshooting
+
+Return to the [customer checklist](../../README.md) for the complete path. This guide separates
+setup failures from provider, validation, and telemetry failures; a successful deployment is
+only one onboarding gate.
+
+## After-deployment triage
+
+Keep the timestamped deployment summary and original error. Record the intended tenant,
+subscription, resource group, runtime/release, test UTC time, and safe correlation IDs in a private
+support case. Never attach complete app settings, tokens, phone numbers, OTPs, private keys,
+encrypted request bodies, or raw provider responses. Do not enable body tracing for diagnosis.
+
+| Symptom | First checks / owner | Do not do this |
+|---|---|---|
+| Cannot see an offer or EPP activation/test capability | Customer onboarding owner verifies the [Security Store and feature-access gate](../../docs/ONBOARDING.md#before-purchasing-or-deploying) with provider/Microsoft support. | Do not infer eligibility from Azure Owner or a successful purchase. |
+| Setup reports success, but no OTP delivery | Finish [Telesign vault entry or Soprano provider consent](../../docs/ONBOARDING.md#complete-provider-authentication); confirm authorized testing and policy activation are separately complete. | Do not redeploy all runtimes or paste credentials into local settings. |
+| Endpoint returns 401/403 with no invocation | Azure operator checks Easy Auth, issuer/audience/caller restrictions, network access, and available platform/auth logs. An ordinary customer CLI token is not the allowlisted Microsoft caller. | Do not disable Easy Auth, add a test caller, or interpret rejection as readiness. |
+| App failure after invocation, including 401 | Inspect correlated `request_failed` and provider-response events. A provider's 401/403 is mapped to a handler 401; this differs from Easy Auth rejection. | Do not change inbound trust to fix outbound provider authorization. |
+| `decryption_failed` or unresolved key reference | Compare summary certificate/thumbprint/key ID and versioned reference; verify Function identity vault access and reference resolution, then use an authorized evaluation. | Do not export the private key, delete registered certificates, or assume new vault versions automatically update Entra. |
+| Provider credentials unavailable | Check secret names/enabled versions/vault access for Telesign; customer federation plus provider-side authorization/tenant/scope for Soprano. Allow RBAC propagation. | Do not assume evaluation validates outbound credentials. |
+| Timeout, 502/504, or provider acceptance without handset receipt | Separate credential, outbound HTTP, host, and caller timings; ask the provider for supported delivery evidence. Confirm locale/digit clarity for voice. | Do not blindly resend: the first request may already have been accepted. |
+| No requests/traces in Application Insights | Check the exact component/workspace, UTC window, actual authorized traffic, host/worker startup, ingestion identity/network, filters/sampling/caps, and effective exporter. Use [collection guidance](../../docs/APPLICATION-INSIGHTS.md). | Do not treat an empty table/Failures view as healthy or search every runtime for a JSON request summary. |
+| Requests exist but Python/.NET event query is empty | Use [runtime-specific discovery](../../docs/MONITORING.md#runtime-specific-log-discovery). Python extras/.NET scopes may not be exported; .NET host OpenTelemetry does not initialize direct worker export. | Do not apply JavaScript's JSON parser to other runtimes or promise complete dependencies/exceptions. |
+| No expiry email or alert | Operations owner checks vault certificate contacts/lifetime policy, independently configured reminders/action groups/rules, and notification tests. | Do not assume setup created alerts, or diagnostic settings deliver Key Vault expiry events. |
+
+An accepted provider response, HTTP 200, a matching evaluation nonce, and actual recipient
+delivery are different evidence. Retain only nonce-match booleans, statuses, latency, safe support
+IDs, and delivery-confirmation outcomes. [Run the complete acceptance checks](../../docs/ONBOARDING.md#validate-the-deployed-endpoint)
+before activation.
+
+## Recover without destructive cleanup
+
+Before approval, setup's read-only checks can fail without Azure resource mutation (local module
+installation and sign-in may already have occurred). After approval, partial Azure/Entra changes
+can remain even if no success summary was written. Inspect the Azure subscription/resource-group
+deployment operations and the original failure before retrying.
+
+Correct the underlying error, then use the same reviewed tenant, subscription, app, runtime,
+plan, prefix, provider/channel/route, and intended source/package versions for a recovery rerun.
+Changing identifiers can create new resources or break certificate continuity; changing a route
+can reconfigure the existing endpoint. Setup does not resume from a checkpoint or undo previous
+steps. For an active endpoint, arrange a change window because reruns can disable ingress and
+update app settings/Entra.
+
+Do not delete a resource group, purge/recreate the vault, remove encryption credentials, or revoke
+shared Microsoft service-principal grants as a generic retry strategy. Use the separate
+[rollback and decommissioning procedure](README.md#rollback-and-decommissioning) if retirement
+is actually intended.
 
 ## Optional Front Door deployments
 
@@ -96,7 +144,7 @@ Query parameters are passed in a file to avoid Windows command-shell escaping pr
 The actual deployment remains **EP1**; it is not changed to a Dedicated App Service Premium SKU.
 
 The accompanying 32-bit Python cryptography message is a performance warning, not the cause of
-the invalid-SKU error. Rerun with the updated test-branch helper; changing the SKU or installing
+the invalid-SKU error. Rerun with the reviewed current-main helper; changing the SKU or installing
 another Python runtime is not required to fix this check.
 
 ## A required Azure resource provider is not registered
@@ -292,6 +340,9 @@ Keep Easy Auth enabled. Check the trusted tenant, actual token version, audience
 and nonempty Microsoft caller allowlist. Keep `tokenEncryptionKeyId` null on the endpoint app;
 payload JWE encryption is separate from signed bearer-token validation.
 
-For live delivery, replace dummy endpoints and configure the provider's exact Key Vault secret
-names. Test with synthetic evaluation requests before live messages. EPP policy remains a
-separate, administrator-approved manual operation; no setup code updates it.
+For live delivery, confirm the setup-selected complete provider URL and its account authorization.
+Telesign needs its exact Key Vault secret names; Soprano needs provider-side authorization, not
+API-key secrets. Arrange an authorized evaluation through the
+[test handoff](../../docs/ONBOARDING.md#validate-the-deployed-endpoint) before controlled live
+messages. EPP policy remains a separate assisted administrator-approved operation; no setup code
+updates it. Public Graph SMS/voice schemas do not document the EPP activation fields.

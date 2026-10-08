@@ -21,9 +21,10 @@ secrets in Key Vault.
 | Python (v2 model) | Available | [python/](python/) |
 
 All implementations conform to the **language-agnostic contract** in
-[docs/CONTRACT.md](docs/CONTRACT.md): identical HTTP API, provider-adapter shape, config/env var
-names, Key Vault secret names, and behaviors (fail-closed, managed identity, privacy). Pick any folder
-and follow its README.
+[docs/CONTRACT.md](docs/CONTRACT.md): shared HTTP intent, config/env var names, Key Vault secret
+names, and fail-closed/managed-identity/privacy boundaries. Internal provider APIs, binding errors,
+credential caching, and telemetry differ by runtime; consult the documented differences rather
+than assuming identical internals.
 
 Choose one language and configure the adapter for your provider. No provider is preferred or selected
 by default. Deploy each language separately, not all three to the same Function App. See the
@@ -46,6 +47,11 @@ setup downloads only its public certificate and pins the Function to its PEM sec
 Certificate renewal and policy activation remain manual. The home tenant remains allowed by Entra.
 
 ## Download a Function ZIP
+
+**Optional developer/manual deployment path:** guided setup already selects, verifies, builds as
+needed, and publishes the package. Customers using it should continue with
+[provider authentication and validation](docs/ONBOARDING.md#complete-provider-authentication),
+not deploy a second ZIP.
 
 Download the latest successful CI ZIP for your chosen language:
 
@@ -126,7 +132,7 @@ extend it deliberately if you add runtime assets, and never put secrets in appli
 ## The design in one line
 
 SAS → Easy Auth → anonymous HTTP handler (`POST /api/SendOtp`, validate envelope + decrypt JWE) →
-configured provider (API key) → HTTP result with nonce on success.
+configured provider (API key or OAuth) → HTTP result with nonce on success.
 Only provider acceptance returns the nonce for live requests. Incoming `mode: 2` (evaluation) is the
 generic shutter: after platform authentication, validate and decrypt, then echo the nonce without
 calling a provider.
@@ -138,6 +144,10 @@ The trusted tenant issuer, endpoint-app audience and authorized SAS caller are c
 not in application environment settings or incoming request data.
 
 ## Configure environment variables
+
+For guided deployment, use the [customer values and ownership table](docs/ONBOARDING.md#values-and-ownership)
+to inspect what setup already configured. The following sample/local instructions are for
+developers and manual deployments; they are not an extra guided-setup step.
 
 Use the [sample settings](docs/local.settings.sample.json) as the starting point for the chosen
 runtime. All entries in its `Values` object are **strings**. The application reads environment
@@ -157,7 +167,7 @@ how code accesses configuration, not the environment-variable names.
 | Variable | When needed | Value |
 |---|---|---|
 | `AzureWebJobsStorage` | Functions host storage | Local sample: `UseDevelopmentStorage=true` with Azurite running. Configure Azure host storage separately for the selected plan. |
-| `FUNCTIONS_WORKER_RUNTIME` | Functions host | `node`, `python`, or `dotnet-isolated`. Choose the value matching your implementation. |
+| `FUNCTIONS_WORKER_RUNTIME` | Local host / EP1 | `node`, `python`, or `dotnet-isolated`. FC1 uses `functionAppConfig.runtime` instead; do not add this EP1 setting to FC1. |
 | `EPP_DECRYPTION_KEY_PEM` | Every request | Local test PEM or base64 PEM. In Azure, use a Key Vault reference resolving to the private-key secret. Guided setup pins the PEM backing secret of its Key Vault certificate. |
 | `EPP_ENCRYPTION_KEY_ID` | Optional | Expected encryption key ID; mismatch only produces an advisory warning. |
 | `EPP_PROVIDER_NAME` | Live delivery | Selected adapter's manifest ID. No default provider. |
@@ -188,12 +198,13 @@ login; ordinary local machines have no managed-identity endpoint. Use offline te
 evaluation locally, or an explicitly injected test resolver for integration work. Never commit local
 settings, keys or test credentials.
 
-Configured providers are [prepared automatically per worker](docs/CONTRACT.md#credential-caching-and-refresh):
-Telesign's Key Vault credentials, Soprano's managed-identity assertion, and its final Entra access
-token are cached and refreshed before expiry. Refresh never sends an OTP. Evaluation handling still
-skips provider work, but a worker with a configured provider can independently acquire credentials
-at startup or during background refresh. Leave `EPP_PROVIDER_NAME` unset for local evaluation-only
-work without credential acquisition. No extra refresh app settings are required.
+Configured providers are [prepared per worker](docs/CONTRACT.md#credential-caching-and-refresh).
+JavaScript/Python warm credentials and poll for refresh; .NET warms at startup and retrieves
+replacements on cache misses, without a periodic poller. Credential acquisition never sends an OTP.
+Evaluation skips provider work, but configured workers can independently acquire credentials at
+startup. Leave `EPP_PROVIDER_NAME` unset for local evaluation-only work without credential acquisition.
+The setup-written cache switches do not change current checked-in runtime behavior; verify your
+selected package rather than assuming plan selection enables/disables caching.
 
 Core Tools does not resolve Azure Key Vault reference expressions locally. Supply the local test PEM
 or base64 PEM directly; use a reference such as `@Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/<private-key-secret>/)`
@@ -277,16 +288,19 @@ authentication; [separate deployed security checks](docs/ONBOARDING.md#4-package
 ## Docs
 
 - **[README.md](README.md)**: single-region customer onboarding.
-- **[docs/ONBOARDING.md](docs/ONBOARDING.md)**: detailed configuration, security, deployment, and validation.
+- **[docs/ONBOARDING.md](docs/ONBOARDING.md)**: customer value sources, provider handoffs, validation, and optional manual deployment.
 - **[docs/FRONTDOOR.md](docs/FRONTDOOR.md)**: optional manual multi-region onboarding and observed failover limitations.
 - **[docs/CONTRACT.md](docs/CONTRACT.md)**: the language-agnostic contract every implementation follows.
-- **[Application logs](docs/CONTRACT.md#application-logs)**: separate service events, per-request summaries,
+- **[Application logs](docs/CONTRACT.md#application-logs)**: separate service and completion events,
   and the meaning of Microsoft, Function and provider identifier fields.
+- **[Application Insights](docs/APPLICATION-INSIGHTS.md)** and **[monitoring](docs/MONITORING.md)**:
+  collection, runtime-aware queries, alert setup, and ongoing operations.
 
 ## Contributing a language or provider
 
-- **New provider** (in any language): add one adapter file exposing `manifest` + `buildRequest` +
-  `parseResponse`; no engine changes. See the language folder's README.
+- **New provider**: follow the selected language's provider base/interface and registration steps.
+  Internal method names differ by runtime. A bundled adapter is not automatically a guided setup
+  profile or an approved provider offer.
 - **New language**: mirror the folder structure, implement the contract, add the same test scenarios,
   and wire it into [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
