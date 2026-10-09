@@ -13,6 +13,9 @@ For implementation details, configuration, packaging, and security behavior, see
 → [operate and monitor](docs/MONITORING.md).
 You do not need to build locally, create `local.settings.json`, or read all three language guides.
 
+For a customer-built multi-provider customization, see the
+[step-by-step implementation guide](docs/MULTI-PROVIDER-IMPLEMENTATION.md).
+
 ## Deployment options
 
 | Option | Onboarding |
