@@ -21,100 +21,63 @@ account must be allowed to consent to or use these Microsoft Graph delegated per
 - `AuditLog.Read.All`
 
 Access to sign-in logs also depends on your Microsoft Entra licensing, directory role,
-and log-retention period. Review the requested permissions before consenting. The output
-contains user principal names and sign-in location data; store, share, and delete it
-according to your organization's privacy and retention requirements.
+and log-retention period. Review the requested permissions before consenting. The script
+processes directory users, authentication methods, and sign-in location data. Store, share,
+and delete the aggregated output according to your organization's privacy and retention
+requirements.
 
-Create `C:\temp` before running the script, or change `$outputPath` to an approved folder.
+Create `C:\temp` before running the script, or change the `Export-Csv` path to an
+approved folder.
 
 ## Generate the activity report
 
 The following sample installs any missing Microsoft Graph modules for the current user,
 connects to Microsoft Graph, identifies users with a phone authentication method, and
-groups up to 500 recent sign-ins per user by sign-in country or region.
+groups sign-ins from a selected UTC time range by sign-in country or region. Replace
+`$start` and `$end` with the period you want to analyze.
 
 ```powershell
 # 1. Install missing modules silently
 "Microsoft.Graph.Users", "Microsoft.Graph.Identity.SignIns", "Microsoft.Graph.Reports" |
-    ForEach-Object {
-        if (-not (Get-Module -ListAvailable $_)) {
-            Install-Module $_ -Scope CurrentUser -Force -AllowClobber | Out-Null
-        }
-    }
+    ? { -not (Get-Module -ListAvailable $_) } |
+    % { Install-Module $_ -Scope CurrentUser -Force -AllowClobber | Out-Null }
 
-# 2. Connect to Microsoft Graph
-Connect-MgGraph `
-    -Scopes "User.Read.All", "UserAuthenticationMethod.Read.All", "AuditLog.Read.All" |
-    Out-Null
+# 2. Connect to Graph API
+Connect-MgGraph -Scopes "User.Read.All", "UserAuthenticationMethod.Read.All", "AuditLog.Read.All" | Out-Null
 
-# 3. Process users and build the report
-$report = [System.Collections.Generic.List[PSCustomObject]]::new()
-$users = Get-MgUser -All -Property Id, UserPrincipalName
+# 3. Define Start and End Time Range (ISO 8601 UTC)
+$start = "2026-10-01T00:00:00Z"
+$end   = "2026-10-30T23:59:59Z"
 
-foreach ($user in $users) {
-    $phoneMethods = Get-MgUserAuthenticationPhoneMethod `
-        -UserId $user.Id `
-        -ErrorAction SilentlyContinue
+# 4. Single Pipeline: Filter users with Phone Auth -> Fetch Sign-ins -> Extract Country -> Group & Count
+$report = Get-MgUser -All -Property Id |
+    ? { Get-MgUserAuthenticationPhoneMethod -UserId $_.Id -ErrorAction SilentlyContinue } |
+    % { Get-MgAuditLogSignIn -Filter "userId eq '$($_.Id)' and createdDateTime ge $start and createdDateTime le $end" -All -ErrorAction SilentlyContinue } |
+    Group-Object -Property { $_.Location.CountryOrRegion } |
+    Select-Object @{N="CountryCode"; E={$_.Name}}, @{N="SignInCount"; E={$_.Count}} |
+    Sort-Object SignInCount -Descending
 
-    if ($phoneMethods) {
-        $logs = Get-MgAuditLogSignIn `
-            -Filter "userId eq '$($user.Id)'" `
-            -Top 500 `
-            -ErrorAction SilentlyContinue
-
-        if ($logs) {
-            $logs |
-                Group-Object -Property { $_.Location.CountryOrRegion } |
-                ForEach-Object {
-                    $countryOrRegion = if ([string]::IsNullOrWhiteSpace($_.Name)) {
-                        "Unknown"
-                    }
-                    else {
-                        $_.Name
-                    }
-
-                    $report.Add([PSCustomObject]@{
-                        UserPrincipalName = $user.UserPrincipalName
-                        CountryOrRegion   = $countryOrRegion
-                        SignInCount       = $_.Count
-                    })
-                }
-        }
-    }
-}
-
-# 4. Display and export the report
-$outputPath = "C:\temp\SMS_Voice_Users_Country_Counts.csv"
-$report | Sort-Object CountryOrRegion, UserPrincipalName | Format-Table -AutoSize
-$report | Export-Csv -Path $outputPath -NoTypeInformation
+# 5. Output and Export
+$report | Format-Table -AutoSize
+$report | Export-Csv -Path "C:\temp\SMS_Voice_SignIns_By_Country.csv" -NoTypeInformation
 ```
 
 The script suppresses per-user read errors so that one inaccessible record does not stop
 the report. Investigate unexpectedly missing users or countries before relying on the
-result. For a large tenant or a longer analysis window, replace the 500-record cap with
-an organization-approved reporting approach that handles Microsoft Graph pagination,
-throttling, and your available sign-in-log retention.
+result. `-All` requests all available pages, but large tenants should still account for
+Microsoft Graph throttling and execution time.
+
+The Microsoft Graph
+[list signIns API documentation](https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-1.0&tabs=http)
+states: **"The maximum and default page size is 1,000 objects and by default, the most
+recent sign-ins are returned first. Only sign-in events that occurred within the
+Microsoft Entra ID default retention period are available."** Selecting an earlier
+`$start` date does not make events outside the available retention period accessible.
 
 ## Convert activity into a cost estimate
 
-First, summarize the exported activity by country or region:
-
-```powershell
-$activity = Import-Csv "C:\temp\SMS_Voice_Users_Country_Counts.csv"
-
-$activity |
-    Group-Object CountryOrRegion |
-    ForEach-Object {
-        [PSCustomObject]@{
-            CountryOrRegion = $_.Name
-            SignInCount     = ($_.Group.SignInCount | Measure-Object -Sum).Sum
-        }
-    } |
-    Sort-Object CountryOrRegion |
-    Export-Csv "C:\temp\SMS_Activity_By_Country.csv" -NoTypeInformation
-```
-
-For each country or region, obtain the provider's applicable price and estimate:
+The exported report already contains one aggregated row per sign-in country or region.
+For each row, obtain the provider's applicable price and estimate:
 
 ```text
 Estimated messages = sign-in count x assumed SMS messages per sign-in
