@@ -1,9 +1,10 @@
 # Add conservative primary-to-secondary provider fallback
 
 You can adapt this application to try a secondary provider **only when the primary is known
-not to have accepted the message**. Keep one SAS-facing URL, `/api/SendOtp`, and use Telesign
-as the SMS primary and Infobip as the SMS secondary. Both serve the same channel; the caller
-does not select an account or supply a provider header.
+not to have accepted the message**. Keep one SAS-facing URL, `/api/SendOtp`, with a primary
+account and a secondary account for the same SMS channel. You choose their order according to
+your approved account policy; these roles do not imply a vendor ranking or recommendation.
+The caller does not select an account or supply a provider header.
 
 The sample still ships with one provider per deployment and **no provider fallback**. This guide
 describes customer code you must implement and review. A timeout, lost response or generic
@@ -17,8 +18,8 @@ Define the provider order in server-owned startup configuration:
 ```javascript
 const providerOrder = Object.freeze({
     channel: 'sms',
-    primary: 'telesign-primary',
-    secondary: 'infobip-secondary',
+    primary: 'primary-account',
+    secondary: 'secondary-account',
 });
 ```
 
@@ -37,7 +38,7 @@ Keep **routing order** separate from **fallback eligibility**. Use this policy:
 | Primary-only credential acquisition fails before transport is entered | Eligible only if this pre-dispatch fact is recorded, the account policy explicitly permits it, the durable operation guard allows the transition, and the request budget is sufficient. |
 | Provider-specific, documented proof that the primary did not accept the operation | Eligible only through a reviewed nonacceptance classifier, explicit account policy, the durable guard and sufficient budget. |
 
-**Default to no fallback.** No real Telesign or Infobip response is designated safe to fall back
+**Default to no fallback.** No real provider response is designated safe to fall back
 from by this guide. Obtain and review provider-specific semantics before enabling that path.
 An expired/rejected inbound token never reaches it. A provider credential failure must not bypass
 account suspension, consent requirements, entitlement restrictions or a provider block.
@@ -46,31 +47,35 @@ account suspension, consent requirements, entitlement restrictions or a provider
 
 [config.js](../javascript/src/functions/config.js) accepts `readConfig(settings)`, so each
 account can use its own immutable settings without changing `process.env` per request.
-The following is a **customer-owned configuration format**, not a file the sample loads:
+The following is a **customer-owned configuration format**, not a file the sample loads.
+The account IDs are role labels. Replace each `<supported-adapter-name>` with the adapter selected
+for that account from the [existing lookup](../javascript/src/functions/providers/index.js);
+placeholders are not valid runtime provider names. This example uses API-key authentication;
+each account's settings must match its selected adapter's actual credential requirements.
 
 ```json
 [
   {
-    "id": "telesign-primary",
+    "id": "primary-account",
     "settings": {
-      "EPP_PROVIDER_NAME": "telesign",
+      "EPP_PROVIDER_NAME": "<supported-adapter-name>",
       "EPP_PROVIDER_CHANNEL": "sms",
       "EPP_PROVIDER_AUTH_MODE": "apiKey",
-      "EPP_PROVIDER_ENDPOINT": "https://<approved-telesign-host>/<path>",
-      "KEY_VAULT_URL": "https://<telesign-vault>.vault.azure.net",
-      "AZURE_CLIENT_ID": "<telesign-vault-reader-client-id>"
+      "EPP_PROVIDER_ENDPOINT": "<approved-primary-endpoint-or-base-url>",
+      "KEY_VAULT_URL": "https://<primary-vault>.vault.azure.net",
+      "AZURE_CLIENT_ID": "<primary-vault-reader-client-id>"
     }
   },
   {
-    "id": "infobip-secondary",
+    "id": "secondary-account",
     "settings": {
-      "EPP_PROVIDER_NAME": "infobip",
+      "EPP_PROVIDER_NAME": "<supported-adapter-name>",
       "EPP_PROVIDER_CHANNEL": "sms",
       "EPP_PROVIDER_AUTH_MODE": "apiKey",
-      "EPP_PROVIDER_ENDPOINT": "https://<approved-infobip-base-host>",
+      "EPP_PROVIDER_ENDPOINT": "<approved-secondary-endpoint-or-base-url>",
       "EPP_PROVIDER_ACCOUNT_NAME": "<approved-sender>",
-      "KEY_VAULT_URL": "https://<infobip-vault>.vault.azure.net",
-      "AZURE_CLIENT_ID": "<infobip-vault-reader-client-id>"
+      "KEY_VAULT_URL": "https://<secondary-vault>.vault.azure.net",
+      "AZURE_CLIENT_ID": "<secondary-vault-reader-client-id>"
     }
   }
 ]
@@ -80,13 +85,14 @@ Your startup loader must reject duplicate/missing IDs, mismatched channels/authe
 unapproved endpoints, missing credential references and invalid deadline policy. Validate both
 contexts before enabling the endpoint, not only after the primary fails.
 
-The [Telesign adapter](../javascript/src/functions/providers/telesign.js) requests
-`telesign-api-key` and `telesign-customer-id`. The
-[Infobip adapter](../javascript/src/functions/providers/infobip.js) requests `infobip-api-key`
-and appends `/sms/3/messages` to its configured **base URL**. Reject an operation suffix, query
-or fragment in that base URL; reject or normalize a trailing slash before freezing settings.
-The suffix must appear once. Set an account/destination-approved sender; the adapter's `Verify`
-default is not proof that this sender is valid for your account.
+For each selected [adapter](../javascript/src/functions/providers), inspect `credentialSpec`
+for the required secret names and any account identifier, and `createRequest` for endpoint and
+sender requirements. Some adapters accept a complete operation URL; others append an operation
+path to a **base URL**. Use the approved HTTPS form expected by that adapter. For base URLs,
+reject an already-appended operation suffix, query or fragment, and reject or normalize a trailing
+slash before freezing settings so the operation path appears exactly once.
+Set an account/destination-approved sender where required; an adapter's default sender is not
+proof of approval. These requirements apply equally to primary and secondary roles.
 
 Store no credential values in the configuration. Attach each referenced user-assigned managed
 identity to the Function App and grant the vault-reading identity scoped secret-read access,
@@ -316,7 +322,7 @@ a send or proves real SAS integration, capacity, regional resilience or live del
 [AppConfig.Read(IEnv)](../dotnet/Src/AppConfig.cs) and
 [PhoneProviderBase](../dotnet/Src/PhoneProviderBase.cs).
 [CredentialTokenService](../dotnet/Src/CredentialTokenService.cs) caches by provider name, while
-[SopranoProvider](../dotnet/Src/Providers/SopranoProvider.cs) retains initialized OAuth state and
+the [OAuth adapter implementation](../dotnet/Src/Providers) retains initialized OAuth state and
 [SecretResolver](../dotnet/Src/SecretResolver.cs) retains its vault client. Isolate the full
 account object graph and update [Program.cs](../dotnet/Program.cs) lifecycle registrations.
 Review cancellation, concurrent acquisition and failure classification rather than assuming
