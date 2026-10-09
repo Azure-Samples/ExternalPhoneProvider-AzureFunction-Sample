@@ -10,6 +10,10 @@ The sample still ships with one provider per deployment and **no provider fallba
 describes customer code you must implement and review. A timeout, lost response or generic
 provider error is not proof of nonacceptance: in those cases, do not automatically send again.
 
+For a normal deployment, follow the [main setup guide](../README.md) instead. This is an advanced
+developer walkthrough: it requires custom code, durable operation state, provider-specific
+approval, and separate testing. It is not another step in guided onboarding.
+
 ## 1. Set a fixed provider order and a deny-by-default policy
 
 Keep the existing HTTP registration in [SendOtp.js](../javascript/src/functions/SendOtp.js).
@@ -103,8 +107,8 @@ see [provider onboarding](ONBOARDING.md#complete-provider-authentication).
 
 ## 3. Give each context its own credential service and lifecycle
 
-Open [credentials.js](../javascript/src/functions/credentials.js). Its singleton caches the
-first selected configuration; passing another account to it does not switch its cache.
+Open [credentials.js](../javascript/src/functions/credentials.js). When caching is enabled, its
+singleton retains the first selected configuration; passing another account does not switch that cache.
 Create a long-lived service for each account instead, with an immutable configuration:
 
 ```javascript
@@ -145,8 +149,12 @@ app.hook.appTerminate(stopProviderCredentialRefresh);
 module.exports = { stopProviderCredentialRefresh };
 ```
 
-Remove the singleton import only after replacing its request/lifecycle uses. Each service begins
-periodic refresh when first used. An evaluation request must not start credential acquisition;
+Remove the singleton import only after replacing its request/lifecycle uses. With its selected
+cache enabled, each service begins periodic refresh when first used. With caching disabled,
+each live attempt acquires credentials without a poller or cross-request reuse. Preserve
+the [cache switches](CONTRACT.md#credential-caching-and-refresh) in each account's configuration;
+setup sets them to `false` for FC1 and `true` for EP1, while omitted values default to `true`.
+An evaluation request must not start credential acquisition;
 already-running refresh is independent. Rebuild contexts on controlled restart when configuration
 changes; never repurpose a live service for another account.
 

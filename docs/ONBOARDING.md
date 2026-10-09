@@ -1,14 +1,16 @@
 # Customer configuration and validation
 
-Start with the [root onboarding checklist](../README.md). This is the detailed customer runbook
-for values, provider access, and acceptance checks; [the setup guide](../setup/docs/README.md)
-covers workstation preparation and the deployment command.
+Start with the [five-step setup guide](../README.md). Come here when you need exact IDs,
+provider credential names, or the checks to complete before activation.
 
-**The normal path is: confirm access, register an app, run setup once, complete provider
-authentication, validate, then activate policy.** Setup already builds/publishes the Function and
-configures its Azure settings. Local settings, Core Tools, and a second manual deployment are
-**not** required. [Optional developer work](#optional-local-development-and-manual-deployment)
-is separate.
+**After successful guided setup, go straight to [provider authentication](#complete-provider-authentication),
+then [validate the endpoint](#validate-the-deployed-endpoint).** The script has already published
+the code and configured Azure. You do not need local settings, Core Tools, or a second deployment.
+
+For earlier steps, use [access requirements](#before-purchasing-or-deploying),
+the [values worksheet](#values-and-ownership), or the [setup reference](../setup/docs/README.md).
+[Local development and manual deployment](#optional-local-development-and-manual-deployment)
+are separate, optional paths.
 
 ## Before purchasing or deploying
 
@@ -137,8 +139,9 @@ developer integrations, not additional guided provider offers:
    the encryption certificate secret, grant broad access, or put credentials into Function
    settings to bypass a vault failure.
 5. Follow the authorized evaluation and controlled live checks below. Evaluation cannot validate
-   these secrets. Workers cache credentials; use the [runtime cache behavior](CONTRACT.md#credential-caching-and-refresh)
-   to plan first-use/rotation checks. Absence of a warning does not prove account authorization.
+   these secrets. Credential caching depends on your settings: setup disables it for FC1 and
+   enables it for EP1. Use the [runtime cache behavior](CONTRACT.md#credential-caching-and-refresh)
+   to plan first-use and rotation checks. Absence of a warning does not prove account authorization.
 
 Use portal secret entry rather than command-line literal values, transcripts, source files,
 screenshots, or chat. During rotation, coordinate the matching pair and provider validity window;

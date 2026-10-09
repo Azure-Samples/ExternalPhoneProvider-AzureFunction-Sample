@@ -1,21 +1,23 @@
-# EPP endpoint setup
+# EPP endpoint setup reference
 
-**Only Step 2 is scripted.** Register the customer application manually, run one downloaded
-PowerShell script to deploy the endpoint, and activate policy manually after validation.
+New to the sample? Follow the [main setup guide](../../README.md). This reference explains the
+permissions, hosting choices, script prompts, and maintenance steps in more detail.
 
-The customer does not clone this repository or download Bicep/support scripts separately.
-`Setup-Epp.ps1` retrieves those files and the selected provider's JSON from GitHub.
+The three stages in this reference are:
 
-Start at the [customer checklist](../../README.md) and complete the
-[access/eligibility gate and values worksheet](../../docs/ONBOARDING.md#before-purchasing-or-deploying)
-first. Provider purchase is through [Microsoft Security Store](https://securitystore.microsoft.com/private-solutions);
-purchase alone does not enable the Microsoft tenant feature or authorize the provider API.
+1. [Register a dedicated application](#step-1---manually-create-the-application).
+2. [Run the setup script](#step-2---download-and-run-one-script), after checking
+   [prerequisites](#prerequisites-for-step-2). It downloads its support files and deploys the
+   resources and code; no repository clone or manual Bicep download is needed.
+3. [Validate and activate policy](#step-3---manually-validate-and-activate-policy), with your
+   onboarding owner and policy administrator. The script does not activate policy.
 
-This guide deploys **one Function endpoint in one Azure region**. It does not provision Azure
-Front Door or a second region. For the optional multi-region design, use the
-[manual Front Door onboarding guide](../../docs/FRONTDOOR.md). No Front Door setup script is
-provided. Running this setup again in another region won't coordinate encryption keys or
-Front Door origins. A successful deployment or evaluation doesn't prove live delivery or seamless failover.
+Confirm [provider access and the approved Microsoft procedure](../../docs/ONBOARDING.md#before-purchasing-or-deploying)
+before purchasing or deploying. A provider purchase alone does not enable the tenant feature or authorize its API.
+
+Setup creates **one endpoint in one Azure region**. For multiple regions, use the separate
+[manual Front Door guide](../../docs/FRONTDOOR.md). Running setup again in another region does
+not coordinate encryption keys or Front Door origins.
 
 ## Availability
 
@@ -35,12 +37,6 @@ complete deployment contract.
 The current profiles use identical Global/EU URLs, and Soprano uses the same app ID/scope.
 This label is not proof of data residency or a choice of Azure region; confirm processing/routing
 with the provider. Infobip/Sinch are bundled adapters but have no guided deployment profiles.
-
-To test unpublished upstream changes, publish them to a public fork with a matching stable package
-release, then use `-SourceRepository <owner/repository>` and
-`-SourceRef <branch-or-full-commit-sha>`. Both options must identify the same source as the downloaded
-launcher. Use `-PackageReleaseTag` if the fork contains more than one stable package release.
-Unpublished worktree changes are not downloadable from GitHub.
 
 ## Service plan selection
 
@@ -213,12 +209,17 @@ validated `oid`; Graph `/me` is tracked separately for application-management op
 
 ## Step 2 - download and run one script
 
-Download and inspect [Setup-Epp.ps1](../Setup-Epp.ps1), or save it from the upstream raw URL:
+Download [Setup-Epp.ps1](../Setup-Epp.ps1) from the upstream raw URL:
 
 ```powershell
 Invoke-WebRequest `
     -Uri 'https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/main/setup/Setup-Epp.ps1' `
     -OutFile .\Setup-Epp.ps1
+```
+
+Review the downloaded script before running it:
+
+```powershell
 .\Setup-Epp.ps1
 ```
 
@@ -230,8 +231,8 @@ Force explicit account selection when testing on a shared or multi-account compu
 
 The flow is:
 
-1. **Collect missing customer inputs:** tenant, subscription, existing application client ID, Azure
-   region, and resource prefix. Supplied values are reused without prompts. Credentials are never
+1. **Collect missing customer inputs:** tenant, subscription, existing application client ID, and Azure
+   region. Supplied values are reused without prompts. Credentials are never
    requested as ordinary string parameters.
 2. **Choose SMS or voice**, then the **Global or EU provider route** (shown as **Tenant scope**).
 3. **Choose a provider**, then an Azure Function **platform**: Node.js, .NET, or Python. Setup downloads the provider JSON,
@@ -258,7 +259,7 @@ The flow is:
    settings, scoped roles, certificate creation, and application configuration. Bicep receives these
    exact names; it does not independently calculate a different naming scheme.
    The plan also lists the six required **Azure resource providers** and their registration states.
-   This is separate from the Telesign/Soprano provider selection.
+   These Azure service registrations are separate from your phone-provider selection.
 8. **Type `Yes` once to deploy.** `No` or Enter cancels without Azure changes. Invalid answers prompt
    again; individual resources do not request additional approvals.
 
@@ -438,6 +439,12 @@ an existing encryption credential. This is not a pre-deployment migration check:
 be updated and ingress disabled when it stops. Do not delete encryption credentials to bypass it.
 
 ### Source versioning
+
+**For developers testing unpublished changes:** publish to a public fork with a matching stable
+package release, then use `-SourceRepository <owner/repository>` and
+`-SourceRef <branch-or-full-commit-sha>`. Both must identify the same source as the downloaded
+launcher. Use `-PackageReleaseTag` if the fork contains more than one stable package release.
+Unpublished worktree changes are not downloadable from GitHub.
 
 `-SourceRepository` defaults to `Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample`.
 The small entry point resolves `-SourceRef` (default `main`) to a single commit in that repository. All supporting

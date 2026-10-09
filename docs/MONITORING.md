@@ -1,18 +1,24 @@
 # Monitoring setup and sample queries
 
-Use this guide to operate a **single-region Azure Function** or **multiple regional
-Functions**. Azure Front Door is optional; it adds an edge monitoring layer and does
-not replace Function, credential, or provider monitoring.
+Use this guide to find your endpoint's logs and set up alerts. Guided setup creates Application
+Insights and a Log Analytics workspace, but **you still need to configure and test notifications**.
 
-These are operator-run examples, not an automatic deployment of monitors. Review
-permissions, privacy, charges, and alert routing before creating anything. All
-thresholds and intervals below are **starting points, not SLAs**. This guide does not
-change deployed diagnostics, sampling, retention, or alert settings.
+For your first single-region deployment:
 
-For the first deployment, finish the [customer acceptance checks](ONBOARDING.md#validate-the-deployed-endpoint)
-with the authorized test operator. Read [Application Insights](APPLICATION-INSIGHTS.md) for
-collection/identity details, then use this guide to establish queries and alerts. You do not
-need Front Door, a Workbook, or a new exporter merely to locate your existing single-region logs.
+1. [Find the monitoring resources and confirm data is arriving](#1-record-the-deployment-and-confirm-telemetry)
+   after an [authorized test](ONBOARDING.md#validate-the-deployed-endpoint).
+2. Check [requests, failures, and latency](#2-single-region-function-queries), then use
+   [the log format for your runtime](#runtime-specific-log-discovery).
+3. [Set up and test alerts](#5-set-up-notifications-and-alert-rules), including certificate
+   reminders and cost ownership.
+
+The multi-region queries, shared Workbook, and Front Door sections are optional.
+You do not need them to find single-region logs. For collection and identity details, see
+[Application Insights](APPLICATION-INSIGHTS.md).
+
+These examples do not create monitors automatically. Review permissions, privacy, and charges
+before applying them. Thresholds and intervals are **starting points, not SLAs**; tune them to
+your deployment.
 
 ## 1. Record the deployment and confirm telemetry
 
