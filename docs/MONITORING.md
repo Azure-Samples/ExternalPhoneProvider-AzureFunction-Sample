@@ -43,6 +43,23 @@ methods can differ. The current setup template requests 30-day retention; confir
 effective workspace/table retention and organizational policy before changing it.
 It does not create the action groups, Workbooks, or alert rules described here.
 
+### Find the linked resources in the portal
+
+1. Open the Function App named in your deployment summary.
+2. Select **Monitoring > Application Insights**. Follow the linked resource name; do not
+   select **Change your resource** or **Apply** just to view your logs.
+
+![Function App Monitoring menu with Application Insights selected and its connected resource link](images/onboarding/monitoring-link.png)
+
+3. On that Application Insights resource's **Overview**, find **Logs workspace** and open
+   the linked workspace. Then select **Logs** in the workspace to use the queries below.
+
+![Application Insights Overview showing the Logs workspace link with account and connection details redacted](images/onboarding/monitoring-workspace.png)
+
+These are real portal views of an existing test deployment, with identifying information and
+connection details permanently hidden. Resource names, regions, and portal layouts may differ.
+The links show where to navigate; they do not prove that test traffic or delivery succeeded.
+
 In the Azure portal, inspect each Function's Application Insights association,
 monitoring settings, managed-identity ingestion authorization, and diagnostic
 destinations. Do not expose connection strings or credential values. Application

@@ -7,6 +7,10 @@ You register an application, run a guided setup script, then connect and test yo
 An administrator activates the endpoint only after those checks pass. You do not need to clone
 this repository, build locally, or follow all three language guides.
 
+The screenshots below show the Azure portal; the same app registration is available in the
+Microsoft Entra admin center. Account details and resource names have been permanently hidden.
+Your portal layout may look slightly different.
+
 ## 1. Get ready
 
 Start in a **dedicated nonproduction tenant and subscription**.
@@ -50,6 +54,11 @@ In the customer tenant's **Microsoft Entra admin center > App registrations > Ne
    its allowed tenants after you approve the deployment plan.
 3. On **Overview**, save the **Directory (tenant) ID** and **Application (client) ID** privately.
    Use the client ID, not the Object ID.
+
+![App registration form with an example name, Single tenant only selected, and no redirect URI](docs/images/onboarding/app-registration.png)
+
+*Some portal versions label the account type **Single tenant only**. Choose your own directory.
+The example above is an unsaved form, not an application you can reuse.*
 
 Do not add a client secret, API permission, or app role yourself; setup handles the remaining
 configuration. See [application registration details](setup/docs/README.md#step-1---manually-create-the-application).
@@ -105,12 +114,30 @@ Setup verifies **Easy Auth**, the endpoint's caller-authentication protection, b
 public access. Never disable it to fix a setup or testing problem. If setup fails, use the
 [troubleshooting guide](setup/docs/Troubleshooting.md) rather than deleting resources and starting over.
 
+To find the deployed resources, open **Azure portal > Resource groups** and select the group
+listed in your deployment summary.
+
+![Example regional resource group showing a Function App, monitoring, Key Vault, managed identity, hosting plan, and storage](docs/images/onboarding/resource-group.png)
+
+*This existing Premium test deployment shows the resource types to look for, not a new
+deployment or a guarantee that your resource list will be identical. Use setup rather than
+the portal's Create button to deploy the endpoint.*
+
 ## 4. Connect your provider and test
 
 Complete the [provider authentication instructions](docs/ONBOARDING.md#complete-provider-authentication)
 for your selected integration. This means either entering credentials in the setup-created Key Vault
 or having the provider administrator authorize the application. Azure deployment alone does not
 complete that step. Keep credentials out of source code, screenshots, and shared logs.
+
+In your Function App, open **Settings > Authentication**. Check that authentication is
+**Enabled**, access is set to **Require authentication**, and unauthenticated requests receive
+**HTTP 401 Unauthorized**. These are checks, not instructions to change the approved caller.
+
+![Function Authentication page showing Enabled, Require authentication, and Return HTTP 401 Unauthorized](docs/images/onboarding/authentication.png)
+
+*The **Microsoft** identity provider on this page validates the caller. It is not the phone
+provider you selected for SMS or voice.*
 
 Ask your onboarding owner to arrange the
 [approved deployed-endpoint checks](docs/ONBOARDING.md#validate-the-deployed-endpoint):
@@ -120,6 +147,9 @@ Ask your onboarding owner to arrange the
 3. Run a separately approved **live test** and confirm both provider acceptance and receipt of
    the SMS or voice call. Acceptance alone is not proof of delivery.
 4. Check that the request and relevant logs appear in Application Insights.
+
+The [illustrated monitoring steps](docs/MONITORING.md#find-the-linked-resources-in-the-portal)
+show where to open Application Insights and its Logs workspace.
 
 This repository does not supply a self-service token tool for the authorized Microsoft caller.
 An ordinary Azure CLI token is not a substitute. If the approved test procedure is unavailable
