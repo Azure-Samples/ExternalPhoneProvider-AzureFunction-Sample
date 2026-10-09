@@ -444,7 +444,13 @@ Use the sender approved for your Infobip account and destination; do not rely on
 `Verify` default as evidence of approval.
 
 Create a separate long-lived credential service/cache for each account, with the required vault
-permissions and managed identity access. Complete each provider's account, route, sender and
+permissions and managed identity access. Attach each referenced user-assigned managed identity
+to the Function App and grant the vault-reading identity scoped secret-read access to its intended
+vault, such as **Key Vault Secrets User** under RBAC or the approved access-policy equivalent.
+If using the Function App's system-assigned identity, grant that identity instead. Context IDs and
+managed-identity client-ID settings do not attach identities or grant permissions. See the
+[provider credential onboarding guidance](ONBOARDING.md#complete-provider-authentication).
+Complete each provider's account, route, sender and
 recipient prerequisites. Keep shared inbound authentication/decryption separate from these
 outbound credentials. The existing setup catalog does not provision this Infobip customization.
 
