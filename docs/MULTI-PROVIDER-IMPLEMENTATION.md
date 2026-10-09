@@ -402,6 +402,10 @@ The caller chooses the URL; server code binds that URL to its approved provider 
 No provider-selection header is needed. Authorize the caller for the account behind each entry
 point: the URL's existence alone is not account authorization.
 
+If these URLs are behind a proxy or Front Door, configure and verify forwarding for both intended
+paths while retaining authentication and origin restrictions. Adding a Function route does not
+automatically update upstream routing configuration.
+
 In your customization of [SendOtp.js](../javascript/src/functions/SendOtp.js), extract the common
 callback into a handler factory that captures a fixed context ID. Register two HTTP-triggered
 functions using the existing `app.http` pattern, with explicit `route: 'SendOtp'` and
@@ -488,6 +492,11 @@ and origin/network restrictions for both functions; use only the approved test a
 path is unavailable, stop and arrange authorized access rather than opening ingress or bypassing
 restrictions. This section documents a custom test design, not authorization to execute it or a
 claim that all planned messages were accepted or delivered.
+
+Keep the evidence separate: the earlier offline registered-handler checks exercised channel-based
+Telesign SMS/Soprano voice routing, not this Telesign/Infobip pair of fixed HTTP routes. Their
+concurrency results do not validate the new deployment or extend the user's reported sequential
+URL-based test into a concurrency test.
 
 ## Using .NET or Python instead
 
