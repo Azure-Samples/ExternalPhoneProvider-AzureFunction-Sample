@@ -1,23 +1,22 @@
 # Add multiple provider configurations to your application
 
-You can adapt this sample to choose between multiple provider accounts in one application.
-The key is to give each account its own configuration and credential cache, then select exactly
-one account for each request.
+You can adapt this sample to use multiple provider accounts behind **one SAS-facing URL:
+`/api/SendOtp`**. SAS keeps calling its configured URL. The server maps the validated channel to
+exactly one active provider/account context: Telesign for SMS and Soprano for voice in this
+walkthrough. Each context has its own configuration and credential cache.
 
 The sample does **not** do this out of the box: it still uses one provider per deployment through
 `EPP_PROVIDER_NAME`. This walkthrough shows where to make the changes in your own JavaScript
-application. It does not add a router or setup script to the repository. If accounts need a strong
-security boundary, keep them in separate deployments instead.
+application. It does not add a router or setup script to the repository.
 
 The snippets are **integration examples, not a drop-in handler**. They fit into
 [SendOtp.js](../javascript/src/functions/SendOtp.js) and use its existing variables and helpers.
 Anything named `CUSTOMER_*` is a placeholder you must implement; it is not a repository API.
 
-## 1. Choose a routing rule you control
+## 1. Bind each channel to one provider at startup
 
-Start with a simple, server-owned rule. The steps below use an **illustrative channel policy**:
-one account for SMS and another for voice. This is different from the
-[two-SMS fixed-URL test](#testing-two-sms-providers-in-one-deployment) later in this guide.
+Keep the existing `SendOtp` HTTP-trigger registration and `/api/SendOtp` path. Define this
+server-owned map once at startup; do not add another SAS endpoint or a caller-selected provider:
 
 ```javascript
 // Module scope in your customized SendOtp.js, not supplied by the caller.
@@ -31,11 +30,12 @@ Open [entraPayload.js](../javascript/src/functions/entraPayload.js) to see how t
 validates the channel and exposes `payload.channelName`. Use that validated value with your
 approved policy. Reject unsupported or ambiguous routes; do not silently choose a default.
 
-If you need two accounts for the same channel, first decide how your application will verify
-the customer or endpoint identity that owns the request. The existing contract has no trusted
-provider-selector field. An arbitrary header, `providerId`, correlation ID or unverified body
-`tenantId` is **not** authority to select an account. The SAS caller identity may not distinguish
-your customers either. Keep endpoint URLs, vaults, scopes and secret names under server control.
+Each supported channel has exactly one active account. Two SMS providers cannot both be
+caller-selected in this design. Changing the active SMS provider is an administrative configuration
+change, validated and applied through deployment or a controlled restart as described below.
+Do not use headers, `providerId`, correlation IDs or body `tenantId` to override the map. There is
+no random or round-robin selection, automatic switching, fallback, fan-out or resend. Keep provider
+endpoint URLs, vaults, scopes and secret names under server control.
 
 ## 2. Define one configuration per provider account
 
@@ -175,10 +175,9 @@ const { provider, config: providerConfig, credentials } = selectedContext;
 ```
 
 The existing channel check below this block will reject a mismatched channel in step 5.
-For customer/account-based routing, this is where your **verified, authorized** customer binding
-must select the context instead of `routeByChannel`. Evaluation must not depend on that selection
-or acquire provider credentials. An invalid encrypted evaluation still fails the existing checks;
-do not add a shortcut that returns a nonce before decryption.
+Use only the startup-owned `routeByChannel` map for selection. Evaluation must not depend on
+that selection or acquire provider credentials. An invalid encrypted evaluation still fails the
+existing checks; do not add a shortcut that returns a nonce before decryption.
 
 ## 5. Use the selected context for one dispatch
 
@@ -301,13 +300,12 @@ loads, before any request can run. In either variant, no lifecycle code should c
 credentials from the original process-wide provider selection.
 
 Keep cache expiry, refresh coalescing and acquisition bounds. Use a controlled worker restart when
-changing configuration, or implement safe draining and replacement of whole contexts. Do not
+changing startup-loaded configuration, rebuilding each context and its cache. Do not
 modify a live service's inputs. Evaluation requests must not start credential acquisition, but
 already-running background refresh is independent of a request's evaluation branch.
 
 Separate contexts provide logical isolation, not a tenant security boundary. A compromised worker
-may reach every identity assigned to it. Review least privilege and use separate deployments when
-that risk is unacceptable.
+may reach every identity assigned to it. Review least privilege before approving this design.
 
 ## 7. Test your changes offline first
 
@@ -340,7 +338,8 @@ context services before rerunning and extending these tests. The original single
 are not automatically valid for your customized handler.
 
 They are a starting point, not coverage for your new router. Add tests for concurrent requests to
-different providers **and two accounts of the same provider**. Check the exact endpoint,
+different channel bindings, including separate SMS/voice test accounts of the same adapter.
+Do not introduce two active SMS choices to run these tests. Check the exact endpoint,
 credential, message and correlation ID for each request. Test unknown/duplicate/ambiguous routes,
 channel mismatch, expired or failing credentials, provider errors, timeouts, malformed responses,
 shutdown and configuration replacement. Failures must cause no second dispatch.
@@ -368,55 +367,32 @@ Nothing in this walkthrough authorizes a SAS trigger or provider send.
 
 Deploy your customized application code once, after its offline tests pass. Adding provider
 settings to an unchanged checkout does not implement this guide: the shipped handler still
-selects one provider per deployment. A customer implementation can host multiple account
-contexts in **one Function App and one code package**, with multiple HTTP-triggered functions
-sharing handler code. This is not one deployment per provider. Separate deployments are needed
-only when your security or operational isolation requirements call for them.
+selects one provider per deployment. This customization hosts the SMS and voice account contexts
+in **one Function App and one code package**, behind the existing `SendOtp` HTTP-triggered function.
+It is not one deployment per provider, and it does not change the SAS-facing URL.
 
 | Change | Required action |
 | --- | --- |
-| Add or change the router, an adapter, a Function entry point, or a code-owned endpoint allowlist | Build, test and deploy a new application package. |
-| Change account references, scopes, identities, or routing in an already implemented startup configuration loader | Validate the complete configuration, apply it, and perform a controlled worker restart. If configuration is embedded in code, deploy a new package instead. |
+| Change the handler, channel map, an adapter, or a code-owned endpoint allowlist | Build, test and deploy a new application package. |
+| Change account references, scopes or identities in the startup configuration loader | Validate the complete configuration, apply it, and perform a controlled worker restart. If configuration is embedded in code, deploy a new package instead. |
 | Rotate a referenced secret | Update the approved secret and verify credential-cache refresh. Updating the vault alone is not proof that running workers use the new version; use a controlled restart when needed. Update pinned secret-version references explicitly. |
 | Repeat an authorized test with unchanged code and configuration | No redeployment is needed. Verify the deployed package identifier, routing, authentication and credential readiness first. |
 | Update only this documentation | No runtime deployment is needed. |
 
-The existing deployment automation does not create your custom account registry, routes or
+The existing deployment automation does not create your custom account contexts, channel map or
 configuration loader. Adapt your deployment process to provision only the required identities,
 vault permissions and provider consent, then deploy the same reviewed package and validated
 configuration to each intended instance. Preserve inbound authentication and decryption settings.
 Treat code and configuration as one rollout, and retain their previous versions for rollback.
 
-### Testing two SMS providers in one deployment
+### Replace the active SMS provider with Infobip
 
-The channel example earlier distinguishes SMS/Telesign from voice/Soprano. It cannot choose
-between two SMS providers. For the reported customer test design, use these fixed bindings in
-**one Function App and one package**:
+This is an optional administrative replacement of Telesign for SMS, not an additional caller
+choice. `/api/SendOtp` and the Soprano voice binding remain unchanged.
 
-```text
-POST /api/SendOtp        -> telesign-primary -> Telesign -> channel=sms
-POST /api/SendOtpInfobip -> infobip-primary  -> Infobip  -> channel=sms
-```
-
-The caller chooses the URL; server code binds that URL to its approved provider context.
-No provider-selection header is needed. Authorize the caller for the account behind each entry
-point: the URL's existence alone is not account authorization.
-
-If these URLs are behind a proxy or Front Door, configure and verify forwarding for both intended
-paths while retaining authentication and origin restrictions. Adding a Function route does not
-automatically update upstream routing configuration.
-
-In your customization of [SendOtp.js](../javascript/src/functions/SendOtp.js), extract the common
-callback into a handler factory that captures a fixed context ID. Register two HTTP-triggered
-functions using the existing `app.http` pattern, with explicit `route: 'SendOtp'` and
-`route: 'SendOtpInfobip'` (assuming the standard `/api` route prefix). Register each name/route
-once; replace the original registration rather than adding a duplicate. The shared handler keeps
-the same validation, decryption, evaluation early return and error/response mapping. Only after
-evaluation returns does it look up its captured ID, instead of using `routeByChannel`. Both
-contexts must require `sms`. A handler factory is **code you implement**, not a shipped
-`createHandler` API. Neither payload fields nor headers may override the captured binding.
-
-Keep the Telesign configuration from step 2 and add this entry through your custom loader:
+1. Replace the `telesign-primary` entry in your custom loader's active configuration with the
+   following `infobip-primary` entry. Keep the Soprano entry. Supply approved account values,
+   never secret values:
 
 ```json
 {
@@ -426,7 +402,7 @@ Keep the Telesign configuration from step 2 and add this entry through your cust
     "EPP_PROVIDER_CHANNEL": "sms",
     "EPP_PROVIDER_AUTH_MODE": "apiKey",
     "EPP_PROVIDER_ENDPOINT": "https://<approved-infobip-base-host>",
-    "EPP_PROVIDER_ACCOUNT_NAME": "Verify",
+    "EPP_PROVIDER_ACCOUNT_NAME": "<approved-sender>",
     "EPP_PROVIDER_TIMEOUT_MS": "1500",
     "KEY_VAULT_URL": "https://<infobip-vault>.vault.azure.net",
     "AZURE_CLIENT_ID": "<vault-reader-managed-identity-client-id>"
@@ -439,76 +415,43 @@ and appends `/sms/3/messages` to the configured **base URL**. Do not put that op
 in `EPP_PROVIDER_ENDPOINT`: it must be appended exactly once. In your startup loader, validate
 the approved HTTPS base host with no operation path, query or fragment, and either reject a
 trailing slash or remove it before freezing the settings; otherwise the adapter creates a double
-separator. `Verify` was the sender setting for this test design, not a universally valid sender.
-Use the sender approved for your Infobip account and destination; do not rely on the adapter's
-`Verify` default as evidence of approval.
+separator. The adapter defaults to `Verify` if the sender setting is absent; that is not a
+universally valid sender. Set the sender approved for your Infobip account and destination.
 
-Create a separate long-lived credential service/cache for each account, with the required vault
-permissions and managed identity access. Attach each referenced user-assigned managed identity
-to the Function App and grant the vault-reading identity scoped secret-read access to its intended
+2. Complete the account, sender, destination and vault-access prerequisites before activating
+   the replacement. Create a new long-lived credential service/cache for the Infobip context;
+   never reuse the Telesign cache with different inputs.
+
+Attach each referenced user-assigned managed identity to the Function App and grant the
+vault-reading identity scoped secret-read access to its intended
 vault, such as **Key Vault Secrets User** under RBAC or the approved access-policy equivalent.
 If using the Function App's system-assigned identity, grant that identity instead. Context IDs and
 managed-identity client-ID settings do not attach identities or grant permissions. See the
 [provider credential onboarding guidance](ONBOARDING.md#complete-provider-authentication).
-Complete each provider's account, route, sender and
-recipient prerequisites. Keep shared inbound authentication/decryption separate from these
-outbound credentials. The existing setup catalog does not provision this Infobip customization.
+Keep shared inbound authentication/decryption separate from these outbound credentials.
+The existing setup catalog does not provision this Infobip customization.
 
-This is **provider selection, not automatic provider failover**. The test caller chooses a fixed
-entry point; its server-owned binding chooses the account. Both requests still use the validated
-`sms` channel, and no provider-selection header is needed. A failed or timed-out request must not
-silently switch accounts, retry or send through both. **SAS calling one configured URL keeps
-using that URL**; adding another function does not make SAS select it. Single-URL provider
-selection or automatic fallback requires a separately designed trusted policy and handling for
-delivery uncertainty and duplicates. [Front Door regional failover](FRONTDOOR.md) is separate
-from provider selection.
+3. Change only the `sms` value in `routeByChannel` from `telesign-primary` to `infobip-primary`.
+   Validate that each supported channel resolves to one configured context with the matching
+   channel/authentication mode and an approved provider endpoint. Reject missing or duplicate
+   configuration, and rerun the offline handler tests with the replacement binding.
+4. The map in section 1 is code-owned, so build and deploy the reviewed package with the new map
+   and active configuration. For later changes to values already read by the startup loader,
+   validate and apply the complete configuration with a controlled worker restart. Close old
+   contexts and initialize fresh caches; do not switch an in-flight request or retry its delivery.
+   Verify the deployed package/configuration version before any separately authorized live check.
 
-Only under a separately approved test plan, after authorized encrypted evaluation and rejection
-checks pass on both entry points, a bounded comparison can use **five paired rounds**:
-one Telesign message and one Infobip message per round, **ten planned message attempts if all
-five pairs finish**. Agree on that limit and an approved recipient before running. These labels
-describe planned attempts, not verified sends or delivery:
+SAS still sends to `/api/SendOtp`; it does not select the replacement provider. An SMS failure
+must not return to Telesign, retry or send through both providers. [Front Door regional
+failover](FRONTDOOR.md) remains separate: retain forwarding for `/api/SendOtp` and preserve
+inbound authentication and origin/network restrictions.
 
-```text
-EPP multi-provider test: Telesign - attempt 1/5.
-EPP multi-provider test: Infobip - attempt 1/5.
-...
-EPP multi-provider test: Telesign - attempt 5/5.
-EPP multi-provider test: Infobip - attempt 5/5.
-```
-
-Alternate providers while keeping the deployed package and account configuration unchanged.
-Assign a unique correlation ID to every request. Atomically persist a durable guard recording
-intent before dispatch, keyed by test run, provider and attempt number; refuse an already-recorded
-attempt, including after a runner restart. This guard is **not provider idempotency or proof of
-exactly-once delivery**: a crash or timeout can leave the outcome uncertain.
-Do not retry an uncertain send automatically. Stop on unexpected failures, report actual attempted
-counts and partial results, and obtain separate approval for any replacement attempt. Do not
-automatically top up an aborted run to ten or turn errors into fallback sends.
-
-For each planned request, record its provider, round, package identifier, endpoint response,
-nonce validation, latency and correlated provider-dispatch evidence. Verify exactly one dispatch
-to the intended provider and no cross-account fallback. Record provider acceptance and handset
-receipt separately; `PENDING` or HTTP 200 is not a delivery receipt. Keep phone numbers, message
-contents, tokens and credentials out of telemetry.
-
-**Test-owner-confirmed handset receipt:** the test owner reports that all SMS in the reported
-sequential fixed-URL Telesign/Infobip test were received. This confirmation comes from the owner,
-not from HTTP 200, provider acceptance or `PENDING` statuses. It does not establish exact
-per-provider/per-attempt counts, timestamps, provider delivery receipts or independently verified
-provider attribution.
-
-A sequential comparison does not prove concurrency, capacity, automatic provider failover,
-Front Door regional resilience or real SAS integration. Preserve the existing inbound authentication
-and origin/network restrictions for both functions; use only the approved test access path. If that
-path is unavailable, stop and arrange authorized access rather than opening ingress or bypassing
-restrictions. This section documents a custom test design and the owner's reported receipt,
-not authorization for another test or an independently verified accounting of every planned attempt.
-
-Keep the evidence separate: the earlier offline registered-handler checks exercised channel-based
-Telesign SMS/Soprano voice routing, not this Telesign/Infobip pair of fixed HTTP routes. Their
-concurrency results do not validate the new deployment or extend the user's reported sequential
-URL-based test into a concurrency test.
+For an authorized live check, record unique correlations and durable intent-before-send attempt
+guards. Stop on unexpected failures and do not retry uncertain sends automatically. A guard is
+not provider idempotency or proof of exactly-once delivery. Record actual attempts, provider
+acceptance and handset receipt separately: HTTP 200 or `PENDING` alone is not handset proof.
+A sequential check does not establish concurrency, capacity, automatic failover, regional
+resilience or real SAS integration. This replacement procedure authorizes no live operation.
 
 ## Using .NET or Python instead
 
@@ -542,7 +485,7 @@ An offline, in-memory adaptation of the registered JavaScript `SendOtp` handler 
 SMS/Telesign and voice/Soprano design, same-provider account isolation, failures and evaluation
 ordering. Its registered startup/shutdown callbacks and simulated refresh were also exercised.
 Functions host registration, Azure SDK calls and provider HTTP were faked: this was not a deployed
-or authenticated end-to-end test. Real OAuth/Key Vault, trusted customer routing, production
+or authenticated end-to-end test. Real OAuth/Key Vault, deployed authentication, production
 refresh/scale-out and handset delivery still need your validation. .NET/Python pointers are
 based on code inspection, not equivalent multi-context tests.
 
