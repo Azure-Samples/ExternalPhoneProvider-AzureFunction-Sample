@@ -1,52 +1,52 @@
-# Add multiple provider configurations to your application
+# Add conservative primary-to-secondary provider fallback
 
-You can adapt this sample to use multiple provider accounts behind **one SAS-facing URL:
-`/api/SendOtp`**. SAS keeps calling its configured URL. The server maps the validated channel to
-exactly one active provider/account context: Telesign for SMS and Soprano for voice in this
-walkthrough. Each context has its own configuration and credential cache.
+You can adapt this application to try a secondary provider **only when the primary is known
+not to have accepted the message**. Keep one SAS-facing URL, `/api/SendOtp`, and use Telesign
+as the SMS primary and Infobip as the SMS secondary. Both serve the same channel; the caller
+does not select an account or supply a provider header.
 
-The sample does **not** do this out of the box: it still uses one provider per deployment through
-`EPP_PROVIDER_NAME`. This walkthrough shows where to make the changes in your own JavaScript
-application. It does not add a router or setup script to the repository.
+The sample still ships with one provider per deployment and **no provider fallback**. This guide
+describes customer code you must implement and review. A timeout, lost response or generic
+provider error is not proof of nonacceptance: in those cases, do not automatically send again.
 
-The snippets are **integration examples, not a drop-in handler**. They fit into
-[SendOtp.js](../javascript/src/functions/SendOtp.js) and use its existing variables and helpers.
-Anything named `CUSTOMER_*` is a placeholder you must implement; it is not a repository API.
+## 1. Set a fixed provider order and a deny-by-default policy
 
-## 1. Bind each channel to one provider at startup
-
-Keep the existing `SendOtp` HTTP-trigger registration and `/api/SendOtp` path. Define this
-server-owned map once at startup; do not add another SAS endpoint or a caller-selected provider:
+Keep the existing HTTP registration in [SendOtp.js](../javascript/src/functions/SendOtp.js).
+Define the provider order in server-owned startup configuration:
 
 ```javascript
-// Module scope in your customized SendOtp.js, not supplied by the caller.
-const routeByChannel = Object.freeze({
-    sms: 'telesign-primary',
-    voice: 'soprano-primary',
+const providerOrder = Object.freeze({
+    channel: 'sms',
+    primary: 'telesign-primary',
+    secondary: 'infobip-secondary',
 });
 ```
 
-Open [entraPayload.js](../javascript/src/functions/entraPayload.js) to see how the handler
-validates the channel and exposes `payload.channelName`. Use that validated value with your
-approved policy. Reject unsupported or ambiguous routes; do not silently choose a default.
+Reject unsupported channels and invalid configuration. Do not accept provider IDs, endpoints,
+vaults or scopes from request headers or bodies. There is no round-robin selection, fan-out,
+recursive fallback or primary retry. The secondary can be attempted at most once.
 
-Each supported channel has exactly one active account. Two SMS providers cannot both be
-caller-selected in this design. Changing the active SMS provider is an administrative configuration
-change, validated and applied through deployment or a controlled restart as described below.
-Do not use headers, `providerId`, correlation IDs or body `tenantId` to override the map. There is
-no random or round-robin selection, automatic switching, fallback, fan-out or resend. Keep provider
-endpoint URLs, vaults, scopes and secret names under server control.
+Keep **routing order** separate from **fallback eligibility**. Use this policy:
 
-## 2. Define one configuration per provider account
+| Primary result | Action |
+| --- | --- |
+| Accepted, successful, or `PENDING` | Stop. Do not contact the secondary. Acceptance is not handset delivery. |
+| Block/fraud denial, bad recipient or payload, invalid inbound authentication | Stop. Never use another provider to bypass the denial or validation. |
+| Unknown status, malformed/lost response, timeout, connection/read error, or cancellation after dispatch | Record a terminal or uncertain outcome. Do not automatically contact the secondary. |
+| Generic 4xx/5xx, `Fail`, or `provider_rejected` | No fallback based on that classification alone. |
+| Primary-only credential acquisition fails before transport is entered | Eligible only if this pre-dispatch fact is recorded, the account policy explicitly permits it, the durable operation guard allows the transition, and the request budget is sufficient. |
+| Provider-specific, documented proof that the primary did not accept the operation | Eligible only through a reviewed nonacceptance classifier, explicit account policy, the durable guard and sufficient budget. |
 
-Open [config.js](../javascript/src/functions/config.js). Its `readConfig(env)` function accepts
-an explicit settings object, so you can reuse it without changing `process.env` per request.
+**Default to no fallback.** No real Telesign or Infobip response is designated safe to fall back
+from by this guide. Obtain and review provider-specific semantics before enabling that path.
+An expired/rejected inbound token never reaches it. A provider credential failure must not bypass
+account suspension, consent requirements, entitlement restrictions or a provider block.
 
-Give each account a unique context ID. For example, two Telesign accounts would need different
-IDs even though both have `EPP_PROVIDER_NAME: "telesign"`.
+## 2. Configure and prevalidate both accounts
 
-Use the following as a starting point for **your own configuration format**. Replace the
-placeholders with approved values. The sample does not load this JSON automatically.
+[config.js](../javascript/src/functions/config.js) accepts `readConfig(settings)`, so each
+account can use its own immutable settings without changing `process.env` per request.
+The following is a **customer-owned configuration format**, not a file the sample loads:
 
 ```json
 [
@@ -57,441 +57,276 @@ placeholders with approved values. The sample does not load this JSON automatica
       "EPP_PROVIDER_CHANNEL": "sms",
       "EPP_PROVIDER_AUTH_MODE": "apiKey",
       "EPP_PROVIDER_ENDPOINT": "https://<approved-telesign-host>/<path>",
-      "EPP_PROVIDER_TIMEOUT_MS": "1500",
       "KEY_VAULT_URL": "https://<telesign-vault>.vault.azure.net",
-      "AZURE_CLIENT_ID": "<vault-reader-managed-identity-client-id>"
+      "AZURE_CLIENT_ID": "<telesign-vault-reader-client-id>"
     }
   },
   {
-    "id": "soprano-primary",
+    "id": "infobip-secondary",
     "settings": {
-      "EPP_PROVIDER_NAME": "soprano",
-      "EPP_PROVIDER_CHANNEL": "voice",
-      "EPP_PROVIDER_AUTH_MODE": "oauth",
-      "EPP_PROVIDER_ENDPOINT": "https://<approved-soprano-host>/<path>",
-      "EPP_PROVIDER_TIMEOUT_MS": "1500",
-      "EPP_PROVIDER_TENANT_ID": "<provider-tenant-id>",
-      "EPP_PROVIDER_SCOPE": "api://<provider-api-resource>/.default",
-      "EPP_OUTBOUND_CLIENT_ID": "<outbound-application-client-id>",
-      "EPP_OUTBOUND_MI_CLIENT_ID": "<outbound-managed-identity-client-id>"
+      "EPP_PROVIDER_NAME": "infobip",
+      "EPP_PROVIDER_CHANNEL": "sms",
+      "EPP_PROVIDER_AUTH_MODE": "apiKey",
+      "EPP_PROVIDER_ENDPOINT": "https://<approved-infobip-base-host>",
+      "EPP_PROVIDER_ACCOUNT_NAME": "<approved-sender>",
+      "KEY_VAULT_URL": "https://<infobip-vault>.vault.azure.net",
+      "AZURE_CLIENT_ID": "<infobip-vault-reader-client-id>"
     }
   }
 ]
 ```
 
-Store **references and identifiers, not secret values**. The
-[Telesign adapter](../javascript/src/functions/providers/telesign.js) requests the secret names
-`telesign-api-key` and `telesign-customer-id`. Separate vaults let two accounts use those same
-names. Different names in one vault require your own per-context credential specification;
-do not mutate the shared adapter's `credentialSpec`.
+Your startup loader must reject duplicate/missing IDs, mismatched channels/authentication modes,
+unapproved endpoints, missing credential references and invalid deadline policy. Validate both
+contexts before enabling the endpoint, not only after the primary fails.
 
-The [Soprano adapter](../javascript/src/functions/providers/soprano.js) uses OAuth. Keep its
-provider tenant, resource scope, outbound application and managed identity together as one
-configuration. These settings do not grant consent or provider entitlement.
+The [Telesign adapter](../javascript/src/functions/providers/telesign.js) requests
+`telesign-api-key` and `telesign-customer-id`. The
+[Infobip adapter](../javascript/src/functions/providers/infobip.js) requests `infobip-api-key`
+and appends `/sms/3/messages` to its configured **base URL**. Reject an operation suffix, query
+or fragment in that base URL; reject or normalize a trailing slash before freezing settings.
+The suffix must appear once. Set an account/destination-approved sender; the adapter's `Verify`
+default is not proof that this sender is valid for your account.
 
-Keep inbound authentication and decryption configuration separate. Selecting an outbound provider
-must not change the key used to decrypt the incoming request.
+Store no credential values in the configuration. Attach each referenced user-assigned managed
+identity to the Function App and grant the vault-reading identity scoped secret-read access,
+such as Key Vault Secrets User under RBAC or the approved access-policy equivalent. If using
+the system-assigned identity, grant that identity instead. Client-ID settings do not attach
+identities or grant access. Complete provider account, recipient, sender and consent prerequisites;
+see [provider onboarding](ONBOARDING.md#complete-provider-authentication).
 
-## 3. Create isolated, long-lived credential contexts
+## 3. Give each context its own credential service and lifecycle
 
-Open [credentials.js](../javascript/src/functions/credentials.js). The exported
-`credentialTokenService` singleton keeps **one selected cache**. Passing it a different account
-or authentication mode does not switch that cache.
-
-Use a new `CredentialTokenService` for each context instead. Build the contexts once per worker,
-not once per request. Consolidate the imports below with the existing imports in your customized
-`SendOtp.js`: `readConfig` and `selectProvider` are already imported, so do not paste duplicate
-`const` declarations. Add `CredentialTokenService` to the existing credentials import and retain
-required logging helpers such as `reportRefreshFailure`. Remove the `credentialTokenService`
-singleton import only after replacing all its request and lifecycle uses.
+Open [credentials.js](../javascript/src/functions/credentials.js). Its singleton caches the
+first selected configuration; passing another account to it does not switch its cache.
+Create a long-lived service for each account instead, with an immutable configuration:
 
 ```javascript
+// Consolidate with existing imports in your customized SendOtp.js; do not duplicate consts.
 const { readConfig } = require('./config');
 const { selectProvider } = require('./providers');
-const { CredentialTokenService, reportRefreshFailure } = require('./credentials');
+const { CredentialTokenService } = require('./credentials');
 
-// CUSTOMER_LOAD_AND_VALIDATE_CONFIG is your startup-only configuration loader.
-// It must validate the complete list before any context is used.
-const entries = CUSTOMER_LOAD_AND_VALIDATE_CONFIG();
+// CUSTOMER_* helpers are your implementation, not repository APIs.
+const entries = CUSTOMER_LOAD_AND_VALIDATE_ACCOUNTS_AND_POLICY();
 const contexts = new Map();
-
 for (const entry of entries) {
-    if (!entry.id || contexts.has(entry.id)) {
-        throw new Error('Missing or duplicate provider context ID');
-    }
     const settings = Object.freeze({ ...entry.settings });
     const config = Object.freeze(readConfig(settings));
     const provider = selectProvider(config.providerName);
-    if (!provider || config.providerAuthMode !== provider.authenticationMode) {
-        throw new Error('Invalid provider context');
-    }
     contexts.set(entry.id, Object.freeze({
-        config,
-        provider,
-        credentials: new CredentialTokenService(),
+        config, provider, credentials: new CredentialTokenService(),
     }));
 }
 ```
 
-Your loader must also validate required credential settings, allowed channels, approved endpoint
-allowlists, timeout values, a bounded context count, and that every routing rule identifies exactly
-one matching context. The checks above are not a complete configuration validator.
-[providers/index.js](../javascript/src/functions/providers/index.js) supplies the fixed adapter
-lookup; unknown names return `null`.
+The loader must finish all checks in step 2 before this loop runs. Do not share caches between
+accounts, even if they use the same adapter. Keep expiry, acquisition bounds, refresh coalescing
+and sanitized failure reporting. Logical isolation within a worker is not a tenant security boundary.
 
-Freeze both the settings and config objects: `readConfig` retains the settings object as `env`.
-Never reuse a context's service for a different vault, account, OAuth scope or identity. A provider
-name alone is not enough to identify cached credentials.
-
-## 4. Select the context only after evaluation returns
-
-In [SendOtp.js](../javascript/src/functions/SendOtp.js), find `if (evaluation)`. Leave that branch,
-the preceding envelope checks, [JWE decryption](../javascript/src/functions/jwe.js), and the
-complete-delivery-context check in place. Keep Easy Auth enabled at the application boundary.
-
-The order must remain:
-
-```text
-Authenticate -> validate envelope -> decrypt -> check delivery context
-  -> evaluation? Return the existing nonce response
-  -> otherwise select one provider context
-```
-
-Immediately after the existing evaluation early return, replace the block beginning
-`const provider = selectProvider(config.providerName)` through the end of `if (!provider)` with
-the following. Keep the `logContext = providerContext(...)` and `provider_selected` lines that
-follow it. This fragment uses the handler's existing response helpers and request variables:
+For this walkthrough, acquire credentials lazily. In `SendOtp.js`, remove the singleton's
+`startProviderCredentialRefresh` function and its `app.hook.appStart(...)` registration. Replace
+the termination function, retain its registration once, and update the **bottom export** together:
 
 ```javascript
-const contextId = routeByChannel[payload.channelName];
-const selectedContext = contexts.get(contextId);
-if (!selectedContext) {
-    fail('provider_selection', 'unknown_provider', 400);
-    return respond(400, {
-        error: 'provider_delivery_failed', correlationId, requestId,
-    });
-}
-const { provider, config: providerConfig, credentials } = selectedContext;
-```
-
-The existing channel check below this block will reject a mismatched channel in step 5.
-Use only the startup-owned `routeByChannel` map for selection. Evaluation must not depend on
-that selection or acquire provider credentials. An invalid encrypted evaluation still fails the
-existing checks; do not add a shortcut that returns a nonce before decryption.
-
-## 5. Use the selected context for one dispatch
-
-Continue in [SendOtp.js](../javascript/src/functions/SendOtp.js). Keep its channel, authentication
-mode and endpoint checks, but read their outbound settings from `providerConfig`. Keep using the
-original `const config = readConfig()` for `config.decryptionKeyPem` and `config.expectedKeyId`.
-Do not redeclare `config` in the handler or replace its inbound settings with the selected context.
-After the evaluation return, change the existing checks' `config.providerChannel`,
-`config.providerAuthMode` and `config.providerEndpoint` references to the corresponding
-`providerConfig` properties; leave their failure branches intact.
-
-Inside the existing credential-resolution `try` block, replace the singleton call with:
-
-```javascript
-credential = await credentials.getCredentials(
-    provider.credentialSpec,
-    providerConfig,
-);
-```
-
-Keep the existing completeness checks for API-key identity/secret and OAuth access token, and
-the `credential_unavailable` error path. For OAuth logging, pass `providerConfig` to
-`credentialContext` too.
-
-Keep the handler's [OtpDelivery](../javascript/src/functions/delivery.js) construction so phone,
-message, locale and correlation handling stay unchanged. In the existing **request-build**
-`try` block, replace only the `provider.createRequest` call:
-
-```javascript
-providerRequest = provider.createRequest({
-    channel,
-    endpoint: providerConfig.providerEndpoint,
-    delivery,
-    credential,
-    env: providerConfig.env,
-});
-```
-
-In the separate **transport** `try` block, replace only the `sendProviderRequest` call.
-Keep both blocks' existing catches so build failures and transport failures retain their
-different error classifications:
-
-```javascript
-transportResponse = await sendProviderRequest(
-    providerRequest,
-    parseProviderTimeout(providerConfig.providerTimeoutMs),
-    logContext,
-);
-```
-
-The imports and error handling for `sendProviderRequest` and `parseProviderTimeout` already exist
-in `SendOtp.js`. See [providerTransport.js](../javascript/src/functions/providerTransport.js)
-for URL checks, manual redirects and timeout behavior. Preserve those controls and your approved
-endpoint allowlist. Do not forward the inbound authorization header.
-
-Keep `provider.interpretResponse(transportResponse)` and the existing
-[response mapping](../javascript/src/functions/providerResult.js). Preserve success/block/failure
-statuses, the success nonce and correlation ID, and the handler's error responses. A provider
-timeout, rejection or unknown response must not trigger another account or provider.
-**One request gets one dispatch: no fan-out, automatic fallback or resend.**
-
-Retain the [logging helpers](../javascript/src/functions/logging.js) and their fixed failure
-classifications. If you add a context ID to telemetry, use an approved non-secret identifier.
-Never log OTP/phone data, request bodies, credentials, raw provider descriptions or exceptions.
-
-## 6. Update startup, refresh and shutdown together
-
-Find `startProviderCredentialRefresh` and `stopProviderCredentialRefresh` in
-[SendOtp.js](../javascript/src/functions/SendOtp.js). They currently use the singleton. Replace
-that lifecycle wiring as part of your customization; leaving it behind could warm the wrong account.
-
-Decide explicitly whether to prewarm approved contexts at startup or acquire credentials on the
-first live request. A service starts its own periodic refresh when first used. Prewarming performs
-credential I/O, so do not do it in an offline test without fake SDK boundaries. Report acquisition
-failures through the existing safe reporting mechanism; never borrow another context's credentials.
-
-If you choose startup prewarming, replace **both existing function bodies** with the following
-pattern. This assumes every context has passed your startup validation and is approved for
-credential acquisition. Keep the existing `reportRefreshFailure` import; remove the singleton
-import once no handler or lifecycle code references it.
-
-```javascript
-async function startProviderCredentialRefresh() {
-    for (const { provider, config: providerConfig, credentials } of contexts.values()) {
-        try {
-            await credentials.getCredentials(provider.credentialSpec, providerConfig);
-        } catch {
-            // Refresh failures are reported by the service; report initialization failures here.
-            if (!credentials.current) reportRefreshFailure('configuration');
-        }
-    }
-}
-
 function stopProviderCredentialRefresh() {
-    for (const { credentials } of contexts.values()) {
-        credentials.close();
-    }
+    for (const { credentials } of contexts.values()) credentials.close();
 }
-```
 
-Keep the existing `app.hook.appStart(startProviderCredentialRefresh)` and
-`app.hook.appTerminate(stopProviderCredentialRefresh)` registrations once each; do not add duplicate
-hooks. Build and validate `contexts` before startup runs. With prewarming, retain both functions
-in the existing bottom export:
-
-```javascript
-module.exports = { startProviderCredentialRefresh, stopProviderCredentialRefresh };
-```
-
-For **lazy acquisition**, remove the app-start registration and the
-`startProviderCredentialRefresh` function together. Retain the context-closing termination
-function and its hook, and replace the bottom export with:
-
-```javascript
+// Keep this registration once, replacing the original lifecycle wiring.
+app.hook.appTerminate(stopProviderCredentialRefresh);
+// At the bottom of the module; do not leave the removed startup function here.
 module.exports = { stopProviderCredentialRefresh };
 ```
 
-Leaving the removed startup function in `module.exports` causes a `ReferenceError` when the module
-loads, before any request can run. In either variant, no lifecycle code should continue to resolve
-credentials from the original process-wide provider selection.
+Remove the singleton import only after replacing its request/lifecycle uses. Each service begins
+periodic refresh when first used. An evaluation request must not start credential acquisition;
+already-running refresh is independent. Rebuild contexts on controlled restart when configuration
+changes; never repurpose a live service for another account.
 
-Keep cache expiry, refresh coalescing and acquisition bounds. Use a controlled worker restart when
-changing startup-loaded configuration, rebuilding each context and its cache. Do not
-modify a live service's inputs. Evaluation requests must not start credential acquisition, but
-already-running background refresh is independent of a request's evaluation branch.
+## 4. Add durable operation state before enabling fallback
 
-Separate contexts provide logical isolation, not a tenant security boundary. A compromised worker
-may reach every identity assigned to it. Review least privilege before approving this design.
+The repository has **no durable attempt store or idempotency contract**. Implement these before
+adding a second possible submission. Agree on a stable, authorized logical-operation key with
+the caller/test contract. Do not assume a generated invocation ID, correlation GUID or nonce is
+an idempotency key. Bind the key to the authorized caller, operation and immutable request/policy
+identity so another request cannot reuse it to obtain a different delivery.
 
-## 7. Test your changes offline first
+Use transactional/conditional writes in a durable shared store, not an in-memory map or lock.
+Atomically claim an operation across concurrent invocations and worker restarts. Persist intent
+**before** entering each provider transport call. For example, your state machine can use:
 
-Start from the existing
-[adapter tests](../javascript/test/provider-flow.test.js),
-[credential-cache tests](../javascript/test/credential-cache.test.js) and
-[handler tests](../javascript/test/sendotp.test.js).
-They show how to fake credential acquisition and provider transport. Use synthetic delivery data
-and a locally generated encryption key; make unexpected network calls fail.
+```text
+NEW -> CLAIMED -> PRIMARY_INTENT -> ACCEPTED | TERMINAL | UNCERTAIN
+                |                         -> VERIFIED_NONACCEPTANCE
+                -> PRIMARY_PRE_DISPATCH_FAILURE
 
-**Before editing the handler**, run the existing tests as a baseline. Use Node.js 22 and restore
-missing JavaScript dependencies from the existing lockfile first. From the repository root in
-PowerShell:
-
-```powershell
-# Only if dependencies are not installed.
-npm ci --prefix .\javascript --ignore-scripts --no-audit --no-fund
+PRIMARY_PRE_DISPATCH_FAILURE or VERIFIED_NONACCEPTANCE
+  -> SECONDARY_RESERVED (atomic, policy-approved, once)
+  -> SECONDARY_INTENT -> ACCEPTED | TERMINAL | UNCERTAIN
 ```
 
-Then run:
+All transitions require the expected state/version and valid ownership. A duplicate invocation
+must not send; handle its response using the agreed operation contract. Never reset an intent
+or uncertain dispatched attempt after a timeout, lease expiry or restart. An abandoned intent
+may mean a message was sent even if no result was saved. Fail closed when the store is unavailable.
+Do not let stale owners send after a claim is revoked or let a new owner reclaim a reserved attempt.
+
+Record operation state, safe provider context ID and per-attempt classifications separately from
+request logs. Do not store/log bodies, OTPs or credentials as attempt evidence. Retention and key
+reuse rules must cover the caller's replay window. A store guard cannot atomically commit an
+external provider send: it is **not provider-side idempotency or true exactly-once delivery**.
+Real SAS/native fallback outside this endpoint can still produce duplicates; coordinate that
+behavior with the owner rather than promising the local guard prevents it.
+
+## 5. Integrate one guarded fallback into the handler
+
+In [SendOtp.js](../javascript/src/functions/SendOtp.js), preserve authentication at the platform
+boundary, [envelope validation](../javascript/src/functions/entraPayload.js),
+[decryption](../javascript/src/functions/jwe.js), completeness checks and the existing evaluation
+early return. Keep inbound `config.decryptionKeyPem` and `config.expectedKeyId` unchanged.
+Only live validated requests proceed to the operation claim and provider attempts.
+
+Replace the flow from `const provider = selectProvider(config.providerName)` through the
+single-provider result handling with your guarded orchestration. Extract the existing credential,
+request-build, transport and response blocks into an attempt helper that takes one context and
+returns a structured category. Use `providerConfig` for outbound settings and that context's
+`credentials.getCredentials(provider.credentialSpec, providerConfig)`. Keep
+[OtpDelivery](../javascript/src/functions/delivery.js) construction and content handling intact.
+
+The existing credential catch immediately returns 502, and transport/result failures immediately
+return errors. Your attempt helper must report the stage to the orchestrator instead of hiding
+it in a catch that calls the secondary. Preserve their final HTTP classifications when fallback
+is denied. This is **policy pseudocode**, not executable glue or a complete handler:
+
+```javascript
+// Runs after existing validation/decryption/evaluation handling.
+const operation = await CUSTOMER_ATOMIC_CLAIM_AUTHORIZED_OPERATION();
+if (!operation.owned) return CUSTOMER_DUPLICATE_RESPONSE_WITHOUT_SENDING();
+
+const primary = await CUSTOMER_ATTEMPT_ONCE(
+    operation, contexts.get(providerOrder.primary), aggregateDeadline);
+if (primary.category === 'accepted') return CUSTOMER_EXISTING_SUCCESS_RESPONSE();
+if (!['primary_pre_dispatch_failure', 'verified_nonacceptance']
+    .includes(primary.category)) return CUSTOMER_TERMINAL_OR_UNCERTAIN_RESPONSE(primary);
+
+const approval = CUSTOMER_CHECK_ACCOUNT_POLICY_AND_EVIDENCE(primary);
+if (!approval.allowed || !CUSTOMER_HAS_SECONDARY_BUDGET(aggregateDeadline))
+    return CUSTOMER_TERMINAL_OR_UNCERTAIN_RESPONSE(primary);
+if (!await CUSTOMER_ATOMIC_RESERVE_SECONDARY(operation, approval))
+    return CUSTOMER_DUPLICATE_RESPONSE_WITHOUT_SENDING();
+
+const secondary = await CUSTOMER_ATTEMPT_ONCE(
+    operation, contexts.get(providerOrder.secondary), aggregateDeadline);
+return CUSTOMER_FINAL_RESPONSE_WITHOUT_ANOTHER_ATTEMPT(secondary);
+```
+
+Every `CUSTOMER_*` helper, result category, classifier, store and deadline here is new customer
+code. `CUSTOMER_ATTEMPT_ONCE` must reserve/persist transport intent and recheck ownership and
+remaining budget immediately before sending. Only the primary's approved pre-dispatch or proven
+nonacceptance outcome can reserve a secondary; secondary failure is final.
+Persist each outcome, including policy/budget denial, before the final response. If saving a
+result fails after intent, leave that attempt non-reclaimable; do not send through the secondary.
+
+**Do not use `result.httpStatus >= 400` or `catch -> sendSecondary`.**
+[providerResult.js](../javascript/src/functions/providerResult.js) exposes `Continue`, `Fail`
+and `Block`, not a safe-to-fallback receipt. Preserve Block as terminal and recognized
+accepted/`PENDING` as accepted. A customer classifier must require provider-specific,
+documented nonacceptance for this exact attempt and account policy approval. It must not
+reinterpret generic `Fail` or a broad status range as proof.
+
+[providerTransport.js](../javascript/src/functions/providerTransport.js) collapses fetch and
+response-body failures into `provider_timeout`/`provider_network_error`. Those errors do **not**
+expose whether the request was transmitted. Treat them as uncertain after intent, including
+connection errors; do not guess they happened before send. A primary credential failure can
+be pre-dispatch only when control flow and operation state prove transport was never entered,
+the failure is isolated to that primary, and account policy still permits the secondary.
+
+Keep endpoint allowlists, HTTPS checks, manual redirects and per-provider response mapping.
+Never forward inbound authorization. Preserve the endpoint success nonce/correlation response
+only for evaluation or an accepted delivery result; terminal/uncertain outcomes get no success
+nonce. Continue using [safe logging](../javascript/src/functions/logging.js), with an explicit
+per-attempt provider ID/classification and one final request outcome.
+
+## 6. Enforce one aggregate deadline
+
+Define an end-to-end budget with the service/caller owner; this guide provides no SLA or magic
+timeout value. Include validation, durable-store waits, primary credential acquisition/transport,
+secondary credential acquisition/transport and final response work. An operation must not receive
+a fresh budget when a duplicate invocation arrives.
+
+The current credential service has its own acquisition bound and the transport its own timeout.
+`parseProviderTimeout` normalizes a single provider timeout, **not** an aggregate deadline.
+Add explicit remaining-budget checks and cancellation propagation in your customer integration.
+Do not use `Promise.race` to return while a send continues in the background. If ownership,
+deadline or cancellation changes after dispatch, record uncertainty and never fall back.
+Reserve enough time for the whole secondary attempt and finalization, rechecking before intent;
+insufficient budget means no secondary even when nonacceptance is otherwise eligible.
+
+## 7. Validate offline, then deploy only after separate approval
+
+Before editing, run the existing JavaScript tests from the repository root. Restore missing
+dependencies from the existing lockfile only when needed:
 
 ```powershell
+# Only if dependencies are missing.
+npm ci --prefix .\javascript --ignore-scripts --no-audit --no-fund
 node --test .\javascript\test\provider-flow.test.js `
     .\javascript\test\credential-cache.test.js `
     .\javascript\test\sendotp.test.js
 ```
 
-**After customization**, update the test fixtures and singleton/lifecycle mocks to use your
-context services before rerunning and extending these tests. The original single-provider fixtures
-are not automatically valid for your customized handler.
+After customization, adapt the original singleton/lifecycle fixtures and extend the
+[adapter](../javascript/test/provider-flow.test.js),
+[credential](../javascript/test/credential-cache.test.js) and
+[handler](../javascript/test/sendotp.test.js) tests. Use fake credentials, transport, clocks and
+store faults; block external network. Verify:
 
-They are a starting point, not coverage for your new router. Add tests for concurrent requests to
-different channel bindings, including separate SMS/voice test accounts of the same adapter.
-Do not introduce two active SMS choices to run these tests. Check the exact endpoint,
-credential, message and correlation ID for each request. Test unknown/duplicate/ambiguous routes,
-channel mismatch, expired or failing credentials, provider errors, timeouts, malformed responses,
-shutdown and configuration replacement. Failures must cause no second dispatch.
+- Primary acceptance means zero secondary calls. Approved credential-before-transport failure
+  or explicitly modeled nonacceptance allows at most one secondary, only with guard and budget.
+- Blocks, invalid input, generic provider errors, unknown/malformed responses and all uncertain
+  dispatches mean zero secondary calls. Secondary failure never restarts the sequence.
+- Concurrent/retried logical operations and process restarts cannot reclaim intent/reservations.
+  Store failure, deadline exhaustion and cancellation fail closed.
+- Evaluation returns before operation claims/provider calls; incomplete/decryption failures remain
+  errors. Credentials, endpoints and wire responses stay isolated between accounts.
 
-Check that valid evaluation returns before routing/credentials/transport and invalid evaluation
-still fails. Cover voice and every adapter you intend to enable. The shared
-[contract fixtures](../tests/fixtures/contract.json) help preserve endpoint response behavior.
+An offline policy-model experiment can check those branches, but a fake classifier does not
+prove any real provider's nonacceptance semantics, and a fake store does not prove distributed
+durability. Earlier routing/isolation tests are **not fallback tests**. No production
+nonacceptance classifier is supplied here; keep response-based fallback disabled until reviewed.
 
-## 8. Review and approve live rollout separately
+Use one Function App/package and the existing `/api/SendOtp` entry point. Deploy new code for the
+orchestrator, classifier, durable-store integration or code-owned policy changes. Validate
+startup-loaded configuration changes and perform a controlled restart. For secret rotation,
+verify cache refresh; update pinned references explicitly. Repeating an unchanged approved test
+or editing Markdown needs no redeployment.
 
-Before deployment, review identity/vault permissions, OAuth consent, provider entitlement,
-sender/channel approval, rate limits, secret rotation and operational ownership. Rotate any exposed
-credentials first. Offline checks do not establish any of these prerequisites.
+Preserve inbound authentication and origin/network restrictions, including any Front Door
+forwarding. Regional failover is separate from provider fallback. Before live use, review
+account permissions/consent, sender/recipient entitlement, durable-store guarantees and caller
+retry/native-fallback behavior. Resolve exposed-credential rotation first. Any real SAS or
+provider test needs separate authorization, an approved recipient, explicit attempt limits and
+stop conditions for uncertainty. HTTP 200/`PENDING` is not handset receipt. Nothing here authorizes
+a send or proves real SAS integration, capacity, regional resilience or live delivery.
 
-Use a separately approved nonproduction deployment. Verify authentication, encryption and policy
-readback before authorized evaluation. A real SAS trigger can involve surrounding fallback
-behavior, so do not assume it is harmless because this Function's evaluation branch skips delivery.
+## .NET and Python integration pointers
 
-Only attempt live delivery with explicit authorization, an approved recipient, coordinated policy
-and attempt limits, and a **one-attempt safety gate**. Provider acceptance is not proof of handset
-delivery. Plan an explicit rollout and rollback; do not hide failures behind automatic fallback.
-Nothing in this walkthrough authorizes a SAS trigger or provider send.
+**.NET:** Start with [SendOtp.cs](../dotnet/Functions/SendOtp.cs),
+[AppConfig.Read(IEnv)](../dotnet/Src/AppConfig.cs) and
+[PhoneProviderBase](../dotnet/Src/PhoneProviderBase.cs).
+[CredentialTokenService](../dotnet/Src/CredentialTokenService.cs) caches by provider name, while
+[SopranoProvider](../dotnet/Src/Providers/SopranoProvider.cs) retains initialized OAuth state and
+[SecretResolver](../dotnet/Src/SecretResolver.cs) retains its vault client. Isolate the full
+account object graph and update [Program.cs](../dotnet/Program.cs) lifecycle registrations.
+Review cancellation, concurrent acquisition and failure classification rather than assuming
+the JavaScript behavior transfers unchanged.
 
-### What needs deployment, configuration, or restart?
-
-Deploy your customized application code once, after its offline tests pass. Adding provider
-settings to an unchanged checkout does not implement this guide: the shipped handler still
-selects one provider per deployment. This customization hosts the SMS and voice account contexts
-in **one Function App and one code package**, behind the existing `SendOtp` HTTP-triggered function.
-It is not one deployment per provider, and it does not change the SAS-facing URL.
-
-| Change | Required action |
-| --- | --- |
-| Change the handler, channel map, an adapter, or a code-owned endpoint allowlist | Build, test and deploy a new application package. |
-| Change account references, scopes or identities in the startup configuration loader | Validate the complete configuration, apply it, and perform a controlled worker restart. If configuration is embedded in code, deploy a new package instead. |
-| Rotate a referenced secret | Update the approved secret and verify credential-cache refresh. Updating the vault alone is not proof that running workers use the new version; use a controlled restart when needed. Update pinned secret-version references explicitly. |
-| Repeat an authorized test with unchanged code and configuration | No redeployment is needed. Verify the deployed package identifier, routing, authentication and credential readiness first. |
-| Update only this documentation | No runtime deployment is needed. |
-
-The existing deployment automation does not create your custom account contexts, channel map or
-configuration loader. Adapt your deployment process to provision only the required identities,
-vault permissions and provider consent, then deploy the same reviewed package and validated
-configuration to each intended instance. Preserve inbound authentication and decryption settings.
-Treat code and configuration as one rollout, and retain their previous versions for rollback.
-
-### Replace the active SMS provider with Infobip
-
-This is an optional administrative replacement of Telesign for SMS, not an additional caller
-choice. `/api/SendOtp` and the Soprano voice binding remain unchanged.
-
-1. Replace the `telesign-primary` entry in your custom loader's active configuration with the
-   following `infobip-primary` entry. Keep the Soprano entry. Supply approved account values,
-   never secret values:
-
-```json
-{
-  "id": "infobip-primary",
-  "settings": {
-    "EPP_PROVIDER_NAME": "infobip",
-    "EPP_PROVIDER_CHANNEL": "sms",
-    "EPP_PROVIDER_AUTH_MODE": "apiKey",
-    "EPP_PROVIDER_ENDPOINT": "https://<approved-infobip-base-host>",
-    "EPP_PROVIDER_ACCOUNT_NAME": "<approved-sender>",
-    "EPP_PROVIDER_TIMEOUT_MS": "1500",
-    "KEY_VAULT_URL": "https://<infobip-vault>.vault.azure.net",
-    "AZURE_CLIENT_ID": "<vault-reader-managed-identity-client-id>"
-  }
-}
-```
-
-The [Infobip adapter](../javascript/src/functions/providers/infobip.js) reads `infobip-api-key`
-and appends `/sms/3/messages` to the configured **base URL**. Do not put that operation suffix
-in `EPP_PROVIDER_ENDPOINT`: it must be appended exactly once. In your startup loader, validate
-the approved HTTPS base host with no operation path, query or fragment, and either reject a
-trailing slash or remove it before freezing the settings; otherwise the adapter creates a double
-separator. The adapter defaults to `Verify` if the sender setting is absent; that is not a
-universally valid sender. Set the sender approved for your Infobip account and destination.
-
-2. Complete the account, sender, destination and vault-access prerequisites before activating
-   the replacement. Create a new long-lived credential service/cache for the Infobip context;
-   never reuse the Telesign cache with different inputs.
-
-Attach each referenced user-assigned managed identity to the Function App and grant the
-vault-reading identity scoped secret-read access to its intended
-vault, such as **Key Vault Secrets User** under RBAC or the approved access-policy equivalent.
-If using the Function App's system-assigned identity, grant that identity instead. Context IDs and
-managed-identity client-ID settings do not attach identities or grant permissions. See the
-[provider credential onboarding guidance](ONBOARDING.md#complete-provider-authentication).
-Keep shared inbound authentication/decryption separate from these outbound credentials.
-The existing setup catalog does not provision this Infobip customization.
-
-3. Change only the `sms` value in `routeByChannel` from `telesign-primary` to `infobip-primary`.
-   Validate that each supported channel resolves to one configured context with the matching
-   channel/authentication mode and an approved provider endpoint. Reject missing or duplicate
-   configuration, and rerun the offline handler tests with the replacement binding.
-4. The map in section 1 is code-owned, so build and deploy the reviewed package with the new map
-   and active configuration. For later changes to values already read by the startup loader,
-   validate and apply the complete configuration with a controlled worker restart. Close old
-   contexts and initialize fresh caches; do not switch an in-flight request or retry its delivery.
-   Verify the deployed package/configuration version before any separately authorized live check.
-
-SAS still sends to `/api/SendOtp`; it does not select the replacement provider. An SMS failure
-must not return to Telesign, retry or send through both providers. [Front Door regional
-failover](FRONTDOOR.md) remains separate: retain forwarding for `/api/SendOtp` and preserve
-inbound authentication and origin/network restrictions.
-
-For an authorized live check, record unique correlations and durable intent-before-send attempt
-guards. Stop on unexpected failures and do not retry uncertain sends automatically. A guard is
-not provider idempotency or proof of exactly-once delivery. Record actual attempts, provider
-acceptance and handset receipt separately: HTTP 200 or `PENDING` alone is not handset proof.
-A sequential check does not establish concurrency, capacity, automatic failover, regional
-resilience or real SAS integration. This replacement procedure authorizes no live operation.
-
-## Using .NET or Python instead
-
-**.NET:** Start with [SendOtp.cs](../dotnet/Functions/SendOtp.cs) and
-[AppConfig.Read(IEnv)](../dotnet/Src/AppConfig.cs). Isolate the entire configuration, provider,
-credential service and secret resolver per account.
-[CredentialTokenService](../dotnet/Src/CredentialTokenService.cs) caches by `provider.Name`;
-[SopranoProvider](../dotnet/Src/Providers/SopranoProvider.cs) retains its initial OAuth
-identity/scope, and [SecretResolver](../dotnet/Src/SecretResolver.cs) retains its initial vault
-client. Changing only the outer cache key is not enough. Update the singleton registrations and
-lifecycle in [Program.cs](../dotnet/Program.cs), preserve
-[PhoneProviderBase](../dotnet/Src/PhoneProviderBase.cs) transport/response behavior, and test
-concurrent cold acquisition rather than assuming JavaScript's coalescing behavior.
-Extend [SendOtpTests](../dotnet/tests/SendOtpTests.cs) and
-[CredentialTokenServiceTests](../dotnet/tests/CredentialTokenServiceTests.cs).
-
-**Python:** Start with `_send_to_provider` and the evaluation branch in
-[function_app.py](../python/function_app.py). Pass a selected context explicitly instead of
-rereading process settings. Use [read_config(env)](../python/src/config.py), a separate
+**Python:** Start with [function_app.py](../python/function_app.py),
+[read_config(env)](../python/src/config.py) and [PhoneProviderBase](../python/src/provider.py).
+Pass explicit account contexts instead of rereading process settings. Use a separate
 [CredentialTokenService](../python/src/credentials.py) and
-[SecretResolver(env)](../python/src/secrets.py) per account; the module-level credential service
-owns one selected cache. Update warmup/shutdown and preserve
-[PhoneProviderBase](../python/src/provider.py) transport/response behavior. Extend
-[test_engine.py](../python/tests/test_engine.py),
-[test_credential_cache.py](../python/tests/test_credential_cache.py) and
-[test_function_app.py](../python/tests/test_function_app.py).
-
-## Scope of this guidance
-
-An offline, in-memory adaptation of the registered JavaScript `SendOtp` handler checked this
-SMS/Telesign and voice/Soprano design, same-provider account isolation, failures and evaluation
-ordering. Its registered startup/shutdown callbacks and simulated refresh were also exercised.
-Functions host registration, Azure SDK calls and provider HTTP were faked: this was not a deployed
-or authenticated end-to-end test. Real OAuth/Key Vault, deployed authentication, production
-refresh/scale-out and handset delivery still need your validation. .NET/Python pointers are
-based on code inspection, not equivalent multi-context tests.
-
-Runtime adapters also include Infobip and Sinch; the [setup catalog](../setup/providers/catalog.json)
-contains only Telesign and Soprano. Adapter availability does not imply setup coverage or account
-entitlement. The original offline feasibility check performed no Azure, Graph, Key Vault, SAS or
-provider operations. Report any subsequent live test of a customer customization separately,
-including its deployed revision, authorized workload, provider responses and delivery limitations.
-Such a test does not make the custom router part of the shipped sample.
+[SecretResolver(env)](../python/src/secrets.py) per account; update warmup/shutdown.
+Both runtimes still need customer-owned durable operation state, deadline enforcement and
+reviewed fallback classification. These pointers are not evidence that fallback is implemented
+or validated in either runtime.
