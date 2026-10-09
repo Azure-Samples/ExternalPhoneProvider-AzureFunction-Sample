@@ -116,7 +116,11 @@ For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHT
 [JavaScript service-event queries](../docs/MONITORING.md#4-javascript-service-event-queries).
 Logs are JSON `service` events ending in `request_completed`, not a `logType: "request"` summary.
 
-The app-start hook selects `ApiKeyCache` or `AccessTokenCache` from the provider credential spec.
+`EPP_KEY_VAULT_CACHE_ENABLED` controls API-key caching; `EPP_ACCESS_TOKEN_CACHE_ENABLED` controls
+OAuth caching. Both default to `true`. Setting the selected switch to `false` acquires credentials
+per live request, with no startup preparation, polling, or cross-request reuse.
+
+With caching enabled, the app-start hook selects `ApiKeyCache` or `AccessTokenCache` from the provider credential spec.
 Only that cache starts: API keys use Key Vault and `lru-cache`; access tokens use the MI/Entra SDKs,
 without Key Vault. One shared 30-second refresh loop and one in-flight acquisition keep warm reads
 nonblocking. Configuration changes require restart; failures never extend expiry. A small HTTP-client

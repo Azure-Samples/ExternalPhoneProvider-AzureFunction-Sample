@@ -19,6 +19,9 @@ class AppConfig {
         this.outboundClientId = (env.EPP_OUTBOUND_CLIENT_ID || '').trim();
         this.outboundManagedIdentityClientId = (env.EPP_OUTBOUND_MI_CLIENT_ID || '').trim();
         this.providerTimeoutMs = env.EPP_PROVIDER_TIMEOUT_MS || '';
+        // Validate cache switches only on credential paths; evaluation needs neither cache.
+        this.keyVaultCacheEnabled = env.EPP_KEY_VAULT_CACHE_ENABLED;
+        this.accessTokenCacheEnabled = env.EPP_ACCESS_TOKEN_CACHE_ENABLED;
         this.keyVaultUrl = (env.KEY_VAULT_URL || '').trim();
         this.managedIdentityClientId = (env.AZURE_CLIENT_ID || '').trim();
         this.env = env;

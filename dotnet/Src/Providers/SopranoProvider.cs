@@ -19,9 +19,7 @@ public sealed class SopranoProvider : PhoneProviderBase
     private readonly object _credentialGate = new();
     private readonly Func<string, TokenCredential> _createIdentity;
     private readonly Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> _createCredential;
-    private TokenCredential? _identity;
-    private TokenCredential? _credential;
-    private string? _scope;
+    private (TokenCredential Identity, TokenCredential Credential, string Scope)? _credentials;
 
     public SopranoProvider()
         : this(
@@ -115,10 +113,10 @@ public sealed class SopranoProvider : PhoneProviderBase
     public override async Task<ProviderCredentials> FetchCredentialsAsync(
         AppConfig config, CancellationToken cancellationToken = default)
     {
-        ConfigureCredentials(config);
-        await GetAssertionAsync(cancellationToken).ConfigureAwait(false);
-        var token = CheckToken(await _credential!.GetTokenAsync(
-            new TokenRequestContext([_scope!]),
+        var (identity, credential, scope) = ConfigureCredentials(config);
+        await GetAssertionAsync(identity, cancellationToken).ConfigureAwait(false);
+        var token = CheckToken(await credential.GetTokenAsync(
+            new TokenRequestContext([scope]),
             cancellationToken).ConfigureAwait(false));
         return new ProviderCredentials(
             AuthenticationMode,
@@ -126,27 +124,30 @@ public sealed class SopranoProvider : PhoneProviderBase
             ExpiresOn: token.ExpiresOn - ExpirySkew);
     }
 
-    private void ConfigureCredentials(AppConfig config)
+    private (TokenCredential Identity, TokenCredential Credential, string Scope) ConfigureCredentials(AppConfig config)
     {
+        var cacheEnabled = CredentialTokenService.IsCacheEnabled(AuthenticationMode, config);
         lock (_credentialGate)
         {
-            if (_credential is not null) return;
+            if (cacheEnabled && _credentials is { } cached) return cached;
             if (string.IsNullOrWhiteSpace(config.ProviderTenantId)
                 || string.IsNullOrWhiteSpace(config.ProviderScope)
                 || string.IsNullOrWhiteSpace(config.OutboundClientId)
                 || string.IsNullOrWhiteSpace(config.OutboundManagedIdentityClientId))
                 throw CredentialTokenService.Unavailable();
-            _scope = config.ProviderScope;
-            _identity = _createIdentity(config.OutboundManagedIdentityClientId);
-            _credential = _createCredential(
+            var identity = _createIdentity(config.OutboundManagedIdentityClientId);
+            var credential = _createCredential(
                 config.ProviderTenantId,
                 config.OutboundClientId,
-                async cancellation => (await GetAssertionAsync(cancellation).ConfigureAwait(false)).Token);
+                async cancellation => (await GetAssertionAsync(identity, cancellation).ConfigureAwait(false)).Token);
+            var configured = (identity, credential, config.ProviderScope);
+            if (cacheEnabled) _credentials = configured;
+            return configured;
         }
     }
 
-    private async Task<AccessToken> GetAssertionAsync(CancellationToken cancellationToken) =>
-        CheckToken(await _identity!.GetTokenAsync(
+    private static async Task<AccessToken> GetAssertionAsync(TokenCredential identity, CancellationToken cancellationToken) =>
+        CheckToken(await identity.GetTokenAsync(
             new TokenRequestContext(["api://AzureADTokenExchange/.default"]),
             cancellationToken).ConfigureAwait(false));
 

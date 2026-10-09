@@ -10,7 +10,7 @@ import azure.functions as func
 
 from src import otp_log
 from src.config import read_config
-from src.credentials import CredentialTokenService, report_refresh_failure
+from src.credentials import CredentialTokenService, report_refresh_failure, is_cache_enabled
 from src.jwe import JweDecryptor
 from src.models import EntraSendOtpPayload, OtpDelivery
 from src.provider import (
@@ -248,6 +248,8 @@ def _warm_selected_credentials():
         report_refresh_failure("configuration")
         return
     try:
+        if not is_cache_enabled(provider.credential_spec, config):
+            return
         _credentials.get_credentials(provider, config)
     except Exception:
         report_refresh_failure("initialization")

@@ -12,7 +12,8 @@ from src.credentials import CredentialTokenService
 
 
 @pytest.mark.parametrize("refresh_in", [None, 60])
-def test_real_provider_sdk_reuses_tokens_and_preserves_refresh_metadata(monkeypatch, refresh_in):
+@pytest.mark.parametrize("cache_enabled", [None, " TrUe ", "false"])
+def test_real_provider_sdk_honors_cache_setting_and_refresh_metadata(monkeypatch, refresh_in, cache_enabled):
     token_endpoint_calls = []
     mi_calls = []
 
@@ -46,8 +47,9 @@ def test_real_provider_sdk_reuses_tokens_and_preserves_refresh_metadata(monkeypa
         return SimpleNamespace(token="PRIVATE-ASSERTION", expires_on=time.time() + 3600)
 
     monkeypatch.setattr(requests.Session, "request", send)
-    monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock(
-        return_value=Mock(spec=["get_token"], get_token=Mock(side_effect=managed))))
+    identity = Mock(spec=["get_token", "close"], get_token=Mock(side_effect=managed))
+    create_identity = Mock(return_value=identity)
+    monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", create_identity)
     secrets = Mock()
     now = time.time()
     manager = CredentialTokenService(secrets, cache_options={
@@ -58,20 +60,28 @@ def test_real_provider_sdk_reuses_tokens_and_preserves_refresh_metadata(monkeypa
         "EPP_OUTBOUND_CLIENT_ID": "22222222-2222-2222-2222-222222222222",
         "EPP_OUTBOUND_MI_CLIENT_ID": "33333333-3333-3333-3333-333333333333",
         "EPP_PROVIDER_SCOPE": "api://provider/.default",
+        **({"EPP_ACCESS_TOKEN_CACHE_ENABLED": cache_enabled} if cache_enabled is not None else {}),
+        "EPP_KEY_VAULT_CACHE_ENABLED": "PRIVATE-UNUSED",
     })
     try:
         with ThreadPoolExecutor(max_workers=10) as pool:
             results = list(pool.map(lambda _: manager.resolve({"mode": "oauth"}, config), range(10)))
         assert all(value["access_token"] == "PRIVATE-PROVIDER" for value in results)
-        assert len(token_endpoint_calls) == 1
-        assert len(mi_calls) == 2
+        enabled = cache_enabled != "false"
+        assert len(token_endpoint_calls) == (1 if enabled else 10)
+        assert len(mi_calls) == (2 if enabled else 20)
         assert manager.resolve({"mode": "oauth"}, config)["access_token"] == "PRIVATE-PROVIDER"
-        assert len(token_endpoint_calls) == 1 and len(mi_calls) == 2
-        assert len(token_endpoint_calls) == 1 and len(mi_calls) == 2
         now += 60
         assert manager.resolve({"mode": "oauth"}, config)["access_token"] == "PRIVATE-PROVIDER"
-        manager.refresh().result(timeout=3)
-        assert len(token_endpoint_calls) == 1
+        if enabled:
+            manager.refresh().result(timeout=3)
+            assert len(token_endpoint_calls) == 1
+            assert create_identity.call_count == 1
+            identity.close.assert_not_called()
+        else:
+            assert len(token_endpoint_calls) == 12
+            assert create_identity.call_count == identity.close.call_count == 12
+            assert manager.cache is None and not manager._requests
         secrets.resolve.assert_not_called()
     finally:
         manager.close()

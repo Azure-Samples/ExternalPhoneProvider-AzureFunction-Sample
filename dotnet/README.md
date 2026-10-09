@@ -124,7 +124,10 @@ default method selects by `EPP_PROVIDER_NAME`; replace only its body if deployme
 tenant or other request-aware selection. No router or routing configuration abstraction is required.
 
 `CredentialTokenService` is the hosted startup warmer and runtime credential cache.
-It asks the selected provider for credentials at startup and on cache misses.
+`EPP_KEY_VAULT_CACHE_ENABLED` controls API-key caching; `EPP_ACCESS_TOKEN_CACHE_ENABLED` controls
+OAuth caching. Both default to `true`. Setting the selected switch to `false` skips startup warmup
+and fetches on every live request, using fresh SDK credentials for OAuth.
+When enabled, it asks the selected provider for credentials at startup and on cache misses.
 Each provider owns credential acquisition and its secret names. The service stores
 the result in .NET `MemoryCache` until the credential's absolute expiry; the next request fetches a
 replacement. There is no polling timer or separate cache implementation. The fetch has a

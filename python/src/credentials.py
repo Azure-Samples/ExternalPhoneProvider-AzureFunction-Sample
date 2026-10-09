@@ -69,6 +69,19 @@ def report_refresh_failure(kind: str) -> None:
     otp_log.credential_refresh_failed(logging.getLogger(__name__), kind)
 
 
+def is_cache_enabled(spec: Mapping[str, str], config: AppConfig) -> bool:
+    mode = spec.get("mode")
+    if mode not in (API_KEY_MODE, OAUTH_MODE):
+        raise ValueError(CREDENTIAL_ERROR)
+    setting = config.key_vault_cache_enabled if mode == API_KEY_MODE else config.access_token_cache_enabled
+    if setting is None:
+        return True
+    value = setting.strip().lower()
+    if value not in ("true", "false"):
+        raise ValueError(CREDENTIAL_ERROR)
+    return value == "true"
+
+
 def _private_acquisition(load: Callable[[], T]) -> T:
     for logger in (logging.getLogger(), *logging.Logger.manager.loggerDict.copy().values()):
         if isinstance(logger, logging.Logger):
@@ -188,6 +201,13 @@ class AccessTokenCache:
             self._closed = True
             self._token = None
 
+    def close(self) -> None:
+        self.stop()
+        try:
+            self._credential.close()
+        finally:
+            self._identity.close()
+
 
 class CredentialTokenService:
     """Caches credentials for the provider selected by this worker."""
@@ -202,34 +222,44 @@ class CredentialTokenService:
         self._stop = threading.Event()
         self.cache: ApiKeyCache | AccessTokenCache | None = None
         self._pending: Future[ApiKeyCredential | OAuthCredential] | None = None
+        self._requests: dict[Future[ApiKeyCredential | OAuthCredential], ApiKeyCache | AccessTokenCache] = {}
         self._next_attempt = 0.0
 
     def get_credentials(self, provider, config: AppConfig) -> ApiKeyCredential | OAuthCredential:
         return self.resolve(provider.credential_spec, config)
 
+    def _create_cache(self, spec: Mapping[str, str], config: AppConfig) -> ApiKeyCache | AccessTokenCache:
+        if spec.get("mode") == API_KEY_MODE:
+            return ApiKeyCache(self._secrets, spec, self._clock)
+        return _private_acquisition(lambda: AccessTokenCache(config, self._clock))
+
     def resolve(self, spec: Mapping[str, str], config: AppConfig) -> ApiKeyCredential | OAuthCredential:
         with self._lock:
             if self._stop.is_set():
                 raise ValueError(CREDENTIAL_ERROR)
-            if self.cache is None:
-                try:
-                    if spec.get("mode") == API_KEY_MODE:
-                        self.cache = ApiKeyCache(self._secrets, spec, self._clock)
-                    elif spec.get("mode") == OAUTH_MODE:
-                        self.cache = _private_acquisition(lambda: AccessTokenCache(config, self._clock))
-                    else:
-                        raise ValueError(CREDENTIAL_ERROR)
-                except Exception:
-                    self._report_failure("configuration")
-                    raise ValueError(CREDENTIAL_ERROR) from None
-                threading.Thread(target=self._loop, daemon=True).start()
-            value = self.cache.get()
-            if value is not None:
-                return value
-            pending = self.refresh()
+            try:
+                enabled = is_cache_enabled(spec, config)
+                cache = self.cache if enabled and self.cache is not None else self._create_cache(spec, config)
+            except Exception:
+                self._report_failure("configuration")
+                raise ValueError(CREDENTIAL_ERROR) from None
+            if not enabled:
+                pending: Future[ApiKeyCredential | OAuthCredential] = Future()
+                self._requests[pending] = cache
+                threading.Thread(target=self._run, args=(cache, pending, False), daemon=True).start()
+            else:
+                if self.cache is None:
+                    self.cache = cache
+                    threading.Thread(target=self._loop, daemon=True).start()
+                value = self.cache.get()
+                if value is not None:
+                    return value
+                pending = self.refresh()
         try:
             return pending.result(timeout=self._wait_timeout)
         except Exception:
+            if not enabled:
+                cache.stop()
             raise ValueError(CREDENTIAL_ERROR) from None
 
     def refresh(self) -> Future[ApiKeyCredential | OAuthCredential]:
@@ -246,16 +276,27 @@ class CredentialTokenService:
             threading.Thread(target=self._run, args=(self.cache, future), daemon=True).start()
             return future
 
-    def _run(self, cache: ApiKeyCache | AccessTokenCache, future: Future[ApiKeyCredential | OAuthCredential]) -> None:
+    def _run(self, cache: ApiKeyCache | AccessTokenCache, future: Future[ApiKeyCredential | OAuthCredential],
+             shared: bool = True) -> None:
         value = None
         try:
-            _private_acquisition(cache.refresh)
-            value = cache.get()
+            try:
+                _private_acquisition(cache.refresh)
+                value = cache.get()
+            finally:
+                if not shared:
+                    if isinstance(cache, AccessTokenCache):
+                        cache.close()
+                    else:
+                        cache.stop()
         except Exception:
-            pass  # Report only the sanitized failure below.
+            value = None  # Report only the sanitized failure below.
         with self._lock:
-            self._pending = None
-            if not self._stop.is_set():
+            if shared:
+                self._pending = None
+            else:
+                self._requests.pop(future, None)
+            if not self._stop.is_set() and not future.done():
                 if value is None:
                     self._report_failure(cache.stage)
                     future.set_exception(ValueError(CREDENTIAL_ERROR))
@@ -276,3 +317,7 @@ class CredentialTokenService:
                 self.cache.stop()
             if self._pending is not None and not self._pending.done():
                 self._pending.set_exception(ValueError(CREDENTIAL_ERROR))
+            for future, cache in self._requests.items():
+                cache.stop()
+                if not future.done():
+                    future.set_exception(ValueError(CREDENTIAL_ERROR))

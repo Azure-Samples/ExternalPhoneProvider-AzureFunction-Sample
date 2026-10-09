@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { inspect } = require('node:util');
-const { ApiKeyCache, AccessTokenCache, CredentialTokenService } = require('../src/functions/credentials');
+const { ApiKeyCache, AccessTokenCache, CredentialTokenService, isCacheEnabled } = require('../src/functions/credentials');
 const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { readConfig } = require('../src/functions/config');
@@ -42,6 +42,94 @@ function clock() {
         },
     };
 }
+
+test('cache switches default to enabled and independently accept only trimmed true or false', () => {
+    for (const [value, expected] of [[undefined, true], ['true', true], [' TRUE ', true], ['false', false], [' FaLsE ', false]]) {
+        const settings = readConfig({ EPP_KEY_VAULT_CACHE_ENABLED: value, EPP_ACCESS_TOKEN_CACHE_ENABLED: value });
+        assert.equal(isCacheEnabled(auth, settings), expected);
+        assert.equal(isCacheEnabled({ mode: 'oauth' }, settings), expected);
+    }
+    const settings = readConfig({ EPP_KEY_VAULT_CACHE_ENABLED: 'false', EPP_ACCESS_TOKEN_CACHE_ENABLED: 'true' });
+    assert.equal(isCacheEnabled(auth, settings), false);
+    assert.equal(isCacheEnabled({ mode: 'oauth' }, settings), true);
+});
+
+test('invalid selected cache switches fail before acquisition or scheduling with sanitized errors', async (t) => {
+    const time = clock();
+    const vault = t.mock.method(SecretClient.prototype, 'getSecret', () => assert.fail('Unexpected Key Vault'));
+    const token = t.mock.method(ClientAssertionCredential.prototype, 'getToken', () => assert.fail('Unexpected OAuth'));
+    for (const mode of ['apiKey', 'oauth']) {
+        for (const value of ['', '1', '0', 'yes', 'PRIVATE-INVALID']) {
+            const failures = [];
+            const manager = new CredentialTokenService({ cacheOptions: time.options, reportFailure: (kind) => failures.push(kind) });
+            try {
+                await assert.rejects(manager.getCredentials({ ...auth, mode }, {
+                    ...config, ...oauth, keyVaultCacheEnabled: value, accessTokenCacheEnabled: value,
+                }), /^Error: provider credential unavailable$/);
+                assert.deepEqual(failures, ['configuration']);
+                assert.equal(manager.current, null);
+                assert.equal(time.timerCount, 0);
+            } finally { manager.close(); }
+        }
+    }
+    assert.equal(vault.mock.callCount(), 0);
+    assert.equal(token.mock.callCount(), 0);
+});
+
+test('disabled Key Vault cache reads each bundle without polling, stale fallback, or failure cooldown', async (t) => {
+    const time = clock();
+    let version = 1;
+    let fail = false;
+    const vault = t.mock.method(SecretClient.prototype, 'getSecret', async (name) => {
+        if (fail && name === 'id') throw new Error('PRIVATE-FAILURE');
+        return { value: `${name}-${version}` };
+    });
+    const manager = new CredentialTokenService({ cacheOptions: time.options, reportFailure() {} });
+    const settings = { ...config, keyVaultCacheEnabled: 'false', accessTokenCacheEnabled: 'PRIVATE-UNUSED' };
+    try {
+        assert.equal((await manager.getCredentials(auth, settings)).secret, 'key-1');
+        version = 2;
+        assert.deepEqual(await manager.getCredentials(auth, settings), { mode: 'apiKey', secret: 'key-2', identity: 'id-2' });
+        fail = true;
+        await assert.rejects(manager.getCredentials(auth, settings), /unavailable/);
+        fail = false;
+        version = 3;
+        assert.equal((await manager.getCredentials(auth, settings)).identity, 'id-3');
+        assert.equal(vault.mock.callCount(), 8);
+        assert.equal(manager.current, null);
+        assert.equal(manager.pending, null);
+        assert.equal(manager.controllers.size, 0);
+        assert.equal(time.timerCount, 0);
+        await time.advance(300000);
+        assert.equal(vault.mock.callCount(), 8);
+    } finally { manager.close(); }
+});
+
+test('disabled concurrent acquisitions are independent and all stop at shutdown', async (t) => {
+    const time = clock();
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const vault = t.mock.method(SecretClient.prototype, 'getSecret', async () => {
+        await gate;
+        return { value: 'PRIVATE-LATE-KEY' };
+    });
+    const manager = new CredentialTokenService({ cacheOptions: time.options });
+    const settings = { ...config, keyVaultCacheEnabled: 'false' };
+    try {
+        const pending = Array.from({ length: 3 }, () => manager.getCredentials(auth, settings));
+        const rejected = pending.map((request) => assert.rejects(request, /unavailable/));
+        await flush();
+        assert.equal(vault.mock.callCount(), 6);
+        assert.equal(time.timerCount, 0);
+        manager.close();
+        await Promise.all(rejected);
+        release();
+        await flush();
+        assert.equal(manager.current, null);
+        assert.equal(manager.controllers.size, 0);
+        await assert.rejects(manager.getCredentials(auth, settings), /unavailable/);
+    } finally { release(); manager.close(); }
+});
 
 test('library-backed bundle shares concurrent reads, serves during refresh, and publishes pairs atomically', async (t) => {
     const time = clock();
@@ -110,12 +198,12 @@ test('partial refresh failure retains the old pair only until hard expiry, with 
 test('invalid or disabled secret values are never published', async (t) => {
     const time = clock();
     const getSecret = t.mock.method(SecretClient.prototype, 'getSecret', async () => ({ value: 'old' }));
-    for (const invalid of [{ value: '' }, { value: 'bad', properties: { enabled: false } },
+    for (const keyVaultCacheEnabled of [undefined, 'false']) for (const invalid of [{ value: '' }, { value: 'bad', properties: { enabled: false } },
         { value: 'bad', properties: { notBefore: new Date(time.now + 3600000) } },
         { value: 'bad', properties: { expiresOn: new Date(time.now) } }]) {
         const manager = new CredentialTokenService({ cacheOptions: time.options, reportFailure() {} });
         getSecret.mock.mockImplementation(async () => invalid);
-        await assert.rejects(manager.resolve(auth, config), /unavailable/);
+        await assert.rejects(manager.resolve(auth, { ...config, keyVaultCacheEnabled }), /unavailable/);
         manager.close();
     }
 });
