@@ -492,12 +492,18 @@ to the intended provider and no cross-account fallback. Record provider acceptan
 receipt separately; `PENDING` or HTTP 200 is not a delivery receipt. Keep phone numbers, message
 contents, tokens and credentials out of telemetry.
 
+**Test-owner-confirmed handset receipt:** the test owner reports that all SMS in the reported
+sequential fixed-URL Telesign/Infobip test were received. This confirmation comes from the owner,
+not from HTTP 200, provider acceptance or `PENDING` statuses. It does not establish exact
+per-provider/per-attempt counts, timestamps, provider delivery receipts or independently verified
+provider attribution.
+
 A sequential comparison does not prove concurrency, capacity, automatic provider failover,
 Front Door regional resilience or real SAS integration. Preserve the existing inbound authentication
 and origin/network restrictions for both functions; use only the approved test access path. If that
 path is unavailable, stop and arrange authorized access rather than opening ingress or bypassing
-restrictions. This section documents a custom test design, not authorization to execute it or a
-claim that all planned messages were accepted or delivered.
+restrictions. This section documents a custom test design and the owner's reported receipt,
+not authorization for another test or an independently verified accounting of every planned attempt.
 
 Keep the evidence separate: the earlier offline registered-handler checks exercised channel-based
 Telesign SMS/Soprano voice routing, not this Telesign/Infobip pair of fixed HTTP routes. Their
