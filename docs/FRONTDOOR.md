@@ -416,10 +416,10 @@ a sample size of 4 with 3 successes required to consider an origin healthy.
 | 3 | 30 seconds | 33/462 (7.1%) | About 123 seconds |
 | 3, repeat | 30 seconds | 32/460 (7.0%) | About 150 seconds |
 
-The failed-request totals include HTTP error responses and transport errors, with zero, one, two,
-and two transport errors respectively.
-Transport errors were recorded as status `0`, which is not an HTTP status. No 5xx responses were
-observed in these trials; a network or full-region outage can behave differently.
+Transient request failures occurred during the controlled app-stop tests. Healthy origins continued
+serving, and sustained successful responses resumed. No HTTP 5xx responses were observed. These
+results show recovery in the tested scenarios, not uninterrupted service or resilience to a complete
+regional outage.
 
 "Sustained success" means every sampled request after the last failure succeeded, with at least
 30 seconds of successful traffic before we restarted the Function. We measured from when Azure
@@ -429,9 +429,8 @@ The test controller was interrupted during one three-origin trial, extending tha
 recovered it. To keep the comparison fair, the table uses only the first eight minutes of each outage.
 We saw no failed samples before the outages or after restarting the Functions.
 
-**This was not a complete Front Door outage, and it was not seamless failover.** Healthy origins
-continued serving, but some sampled requests still failed. A failed request is not guaranteed to be
-replayed on another origin. The actual Entra caller's handling of these errors was not tested.
+A failed request is not guaranteed to be replayed on another origin. The actual Entra caller's
+handling of these errors was not tested.
 
 These trials didn't show a consistent benefit from 10-second probes or a third region.
 More regions can add capacity and help tolerate additional failures, but they don't remove routing
