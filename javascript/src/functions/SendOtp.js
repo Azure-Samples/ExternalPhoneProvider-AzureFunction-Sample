@@ -15,6 +15,7 @@ const { selectProvider } = require('./providers');
 const {
     credentialTokenService,
     reportRefreshFailure,
+    isCacheEnabled,
 } = require('./credentials');
 const {
     ProviderTransportError,
@@ -44,6 +45,7 @@ async function startProviderCredentialRefresh() {
         return;
     }
     try {
+        if (!isCacheEnabled(provider.credentialSpec, config)) return;
         await credentialTokenService.getCredentials(provider.credentialSpec, config);
     } catch {
         if (!credentialTokenService.current) reportRefreshFailure('configuration');

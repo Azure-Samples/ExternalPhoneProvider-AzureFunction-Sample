@@ -8,8 +8,10 @@ namespace Epp.Otp.Tests;
 
 public class CredentialTokenServiceTests
 {
-    [Fact]
-    public async Task CachedCredentialsAreReusedUntilExpiration()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(" TrUe ")]
+    public async Task CachedCredentialsAreReusedUntilExpiration(string? setting)
     {
         var calls = 0;
         using var service = CreateService();
@@ -19,10 +21,59 @@ public class CredentialTokenServiceTests
             return Task.FromResult(ApiKey("value"));
         }
         var provider = new TestProvider("provider", Fetch);
+        var config = new AppConfig { KeyVaultCacheEnabled = setting, AccessTokenCacheEnabled = "PRIVATE-UNUSED" };
 
-        Assert.Equal("value", (await service.GetCredentialsAsync(provider, new AppConfig())).Secret);
-        Assert.Equal("value", (await service.GetCredentialsAsync(provider, new AppConfig())).Secret);
+        Assert.Equal("value", (await service.GetCredentialsAsync(provider, config)).Secret);
+        Assert.Equal("value", (await service.GetCredentialsAsync(provider, config)).Secret);
         Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task DisabledCacheFetchesEveryTimeAndRetriesAfterFailureOrExpiry()
+    {
+        var calls = 0;
+        using var service = CreateService();
+        var provider = new TestProvider("provider", _ => Task.FromResult(++calls switch
+        {
+            3 => throw new InvalidOperationException("PRIVATE-FAILURE"),
+            4 => ApiKey("expired", TimeSpan.FromSeconds(-1)),
+            _ => ApiKey("value-" + calls),
+        }));
+        var config = new AppConfig { KeyVaultCacheEnabled = " FaLsE ", AccessTokenCacheEnabled = "PRIVATE-UNUSED" };
+        Assert.Equal("value-1", (await service.GetCredentialsAsync(provider, config)).Secret);
+        Assert.Equal("value-2", (await service.GetCredentialsAsync(provider, config)).Secret);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.GetCredentialsAsync(provider, config));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.GetCredentialsAsync(provider, config));
+        Assert.Equal("value-5", (await service.GetCredentialsAsync(provider, config)).Secret);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("1")]
+    [InlineData("yes")]
+    [InlineData("PRIVATE-INVALID")]
+    public async Task InvalidCacheSwitchFailsBeforeAcquisitionWithSanitizedLogging(string setting)
+    {
+        foreach (var mode in new[] { "apiKey", "oauth" })
+        {
+            var calls = 0;
+            var logger = new CredentialLogger();
+            using var service = new CredentialTokenService(log: logger);
+            var provider = new TestProvider("provider", _ =>
+            {
+                calls++;
+                return Task.FromResult(ApiKey("unused"));
+            }, mode);
+            var config = new AppConfig { KeyVaultCacheEnabled = setting, AccessTokenCacheEnabled = setting };
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.GetCredentialsAsync(provider, config));
+            Assert.Equal("provider credential unavailable", error.Message);
+            Assert.Equal(0, calls);
+            var entry = Assert.Single(logger.Entries);
+            Assert.Equal("credential_refresh_failed", entry.EventId.Name);
+            Assert.Null(entry.Error);
+            Assert.DoesNotContain("PRIVATE", entry.Message);
+        }
     }
 
     [Fact]
@@ -40,8 +91,10 @@ public class CredentialTokenServiceTests
         Assert.Equal("value-2", (await service.GetCredentialsAsync(provider, new AppConfig())).Secret);
     }
 
-    [Fact]
-    public async Task CallerCancellationCancelsItsCredentialFetch()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("false")]
+    public async Task CallerCancellationCancelsItsCredentialFetch(string? setting)
     {
         CancellationToken observed = default;
         using var service = CreateService();
@@ -54,35 +107,45 @@ public class CredentialTokenServiceTests
         var provider = new TestProvider("provider", Fetch);
 
         using var waiter = new CancellationTokenSource();
-        var pending = service.GetCredentialsAsync(provider, new AppConfig(), waiter.Token);
+        var pending = service.GetCredentialsAsync(provider, new AppConfig { KeyVaultCacheEnabled = setting }, waiter.Token);
         waiter.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
         Assert.True(observed.IsCancellationRequested);
     }
 
-    [Fact]
-    public async Task DisposalPreventsFurtherUse()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("false")]
+    public async Task DisposalPreventsFurtherUse(string? setting)
     {
         using var service = CreateService();
         service.Dispose();
         var provider = new TestProvider("provider", _ => Task.FromResult(ApiKey("unused")));
         await Assert.ThrowsAsync<ObjectDisposedException>(() =>
-            service.GetCredentialsAsync(provider, new AppConfig()));
+            service.GetCredentialsAsync(provider, new AppConfig { KeyVaultCacheEnabled = setting }));
     }
 
-    [Fact]
-    public async Task OAuthUsesManagedIdentityAssertionAndCachesTheProviderToken()
+    [Theory]
+    [InlineData(null, 1)]
+    [InlineData(" TrUe ", 1)]
+    [InlineData(" FaLsE ", 2)]
+    public async Task OAuthScopesSdkCredentialsAccordingToCacheSetting(string? setting, int acquisitions)
     {
         var identityCalls = 0;
         var providerCalls = 0;
+        var identityInstances = 0;
         var credentialInstances = 0;
         var provider = new SopranoProvider(
-            _ => new Token(async (_, _) =>
+            _ =>
             {
-                Interlocked.Increment(ref identityCalls);
-                await Task.Yield();
-                return new("PRIVATE-ASSERTION", DateTimeOffset.UtcNow.AddHours(1));
-            }),
+                identityInstances++;
+                return new Token(async (_, _) =>
+                {
+                    Interlocked.Increment(ref identityCalls);
+                    await Task.Yield();
+                    return new("PRIVATE-ASSERTION", DateTimeOffset.UtcNow.AddHours(1));
+                });
+            },
             (_, _, assertion) =>
             {
                 credentialInstances++;
@@ -94,14 +157,15 @@ public class CredentialTokenServiceTests
                 });
             });
         using var service = CreateService();
-        var config = OAuthConfig();
+        var config = OAuthConfig(cacheEnabled: setting);
 
         var initial = await service.GetCredentialsAsync(provider, config);
         Assert.Equal("PRIVATE-PROVIDER", initial.AccessToken);
         await service.GetCredentialsAsync(provider, config);
-        Assert.Equal(2, identityCalls);
-        Assert.Equal(1, providerCalls);
-        Assert.Equal(1, credentialInstances);
+        Assert.Equal(acquisitions * 2, identityCalls);
+        Assert.Equal(acquisitions, providerCalls);
+        Assert.Equal(acquisitions, identityInstances);
+        Assert.Equal(acquisitions, credentialInstances);
     }
 
     [Fact]
@@ -153,20 +217,23 @@ public class CredentialTokenServiceTests
             Secret: value,
             ExpiresOn: DateTimeOffset.UtcNow + (lifetime ?? TimeSpan.FromMinutes(5)));
 
-    private static AppConfig OAuthConfig(string scope = "api://provider/.default") => new()
+    private static AppConfig OAuthConfig(string scope = "api://provider/.default", string? cacheEnabled = null) => new()
     {
         ProviderTenantId = "tenant",
         ProviderScope = scope,
         OutboundClientId = "application",
         OutboundManagedIdentityClientId = "identity",
+        AccessTokenCacheEnabled = cacheEnabled,
+        KeyVaultCacheEnabled = "PRIVATE-UNUSED",
     };
 
     private sealed class TestProvider(
         string name,
-        Func<CancellationToken, Task<ProviderCredentials>> fetch) : PhoneProviderBase
+        Func<CancellationToken, Task<ProviderCredentials>> fetch,
+        string authenticationMode = "apiKey") : PhoneProviderBase
     {
         public override string Name => name;
-        public override string AuthenticationMode => "test";
+        public override string AuthenticationMode => authenticationMode;
         public override Task<ProviderCredentials> FetchCredentialsAsync(
             AppConfig config,
             CancellationToken cancellationToken = default) =>

@@ -50,7 +50,7 @@ The single-region request flow is:
 
 The diagram's delivery path describes **live requests**. An authorized, valid encrypted
 **evaluation request (`mode: 2`)** returns the matching nonce without submitting a message to the
-provider. Background credential refresh can still run independently. Authentication failures may
+provider. With caching enabled, background credential refresh can still run independently. Authentication failures may
 return **401 or 403**; neither is a successful evaluation.
 
 **East US in the diagram is illustrative, not a required or guaranteed deployment location.**
@@ -231,7 +231,8 @@ not just a locally running Function.
 | Controlled live test | The provider accepts the selected SMS or voice request and the test recipient receives the message or call. Provider acceptance alone is not proof of delivery. |
 | Operational visibility | Review Application Insights for the request outcome without recording phone numbers, message bodies, tokens, private keys, or nonce values in shared logs. |
 
-Configured workers can acquire credentials at startup without sending an OTP; JavaScript/Python
+With the selected [credential cache](docs/CONTRACT.md#credential-caching-and-refresh) enabled,
+configured workers can acquire credentials at startup without sending an OTP; JavaScript/Python
 also poll for refresh, whereas .NET retrieves replacements on cache misses. Check collected
 `credential_refresh_failed` warnings before live testing; an evaluation success or absence of
 warnings does not validate provider credentials.

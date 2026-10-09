@@ -12,7 +12,7 @@ import pytest
 
 import src.credentials as credentials_module
 from src.config import read_config
-from src.credentials import ApiKeyCache, AccessTokenCache, CredentialTokenService
+from src.credentials import ApiKeyCache, AccessTokenCache, CredentialTokenService, is_cache_enabled
 from src.providers.telesign import TelesignProvider
 
 AUTH = {"mode": "apiKey", "key_vault_secret_name": "key", "identity_key_vault_secret_name": "id"}
@@ -36,6 +36,113 @@ class Clock:
 
     def advance(self, seconds):
         self.now += seconds
+
+
+@pytest.mark.parametrize(("value", "expected"), [(None, True), ("true", True), (" TRUE ", True),
+                                                ("false", False), (" FaLsE ", False)])
+def test_cache_switches_parse_independently(value, expected):
+    env = {} if value is None else {"EPP_KEY_VAULT_CACHE_ENABLED": value, "EPP_ACCESS_TOKEN_CACHE_ENABLED": value}
+    assert is_cache_enabled(AUTH, read_config(env)) is expected
+    assert is_cache_enabled({"mode": "oauth"}, read_config(env)) is expected
+    mixed = read_config({"EPP_KEY_VAULT_CACHE_ENABLED": "false", "EPP_ACCESS_TOKEN_CACHE_ENABLED": "true"})
+    assert not is_cache_enabled(AUTH, mixed)
+    assert is_cache_enabled({"mode": "oauth"}, mixed)
+
+
+@pytest.mark.parametrize("value", ["", "1", "0", "yes", "PRIVATE-INVALID"])
+@pytest.mark.parametrize("mode", ["apiKey", "oauth"])
+def test_invalid_selected_switch_fails_before_acquisition(value, mode):
+    secrets, failures = Mock(), []
+    manager = CredentialTokenService(secrets, report_failure=failures.append)
+    config = read_config({"EPP_KEY_VAULT_CACHE_ENABLED": value, "EPP_ACCESS_TOKEN_CACHE_ENABLED": value})
+    try:
+        with pytest.raises(ValueError, match="^provider credential unavailable$"):
+            manager.resolve({**AUTH, "mode": mode}, config)
+        assert failures == ["configuration"]
+        assert manager.cache is None and manager._pending is None and not manager._requests
+        secrets.resolve.assert_not_called()
+    finally:
+        manager.close()
+
+
+def test_disabled_key_vault_cache_reads_each_bundle_without_polling_stale_fallback_or_cooldown(monkeypatch):
+    clock = Clock()
+    version, fail = 1, False
+
+    def read(name):
+        if fail and name == "id":
+            raise ValueError("PRIVATE-FAILURE")
+        return f"{name}-{version}"
+
+    secrets = Mock(resolve=Mock(side_effect=read))
+    manager = CredentialTokenService(secrets, cache_options=clock.options, report_failure=lambda _: None)
+    loop = Mock(side_effect=AssertionError("Disabled cache must not poll"))
+    monkeypatch.setattr(manager, "_loop", loop)
+    config = read_config({"EPP_KEY_VAULT_CACHE_ENABLED": "false", "EPP_ACCESS_TOKEN_CACHE_ENABLED": "PRIVATE-UNUSED"})
+    try:
+        assert manager.resolve(AUTH, config)["secret"] == "key-1"
+        version = 2
+        assert manager.resolve(AUTH, config) == {"mode": "apiKey", "secret": "key-2", "identity": "id-2"}
+        fail = True
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.resolve(AUTH, config)
+        fail, version = False, 3
+        assert manager.resolve(AUTH, config)["identity"] == "id-3"
+        assert secrets.resolve.call_count == 8
+        assert manager.cache is None and manager._pending is None and not manager._requests
+        loop.assert_not_called()
+        clock.advance(300)
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.refresh()
+        assert secrets.resolve.call_count == 8
+    finally:
+        manager.close()
+
+
+def test_disabled_concurrent_requests_stop_at_shutdown_without_publishing_late_values():
+    release, calls = Event(), []
+
+    def read(name):
+        calls.append(name)
+        assert release.wait(3)
+        return "PRIVATE-LATE-KEY"
+
+    manager = CredentialTokenService(Mock(resolve=read))
+    config = read_config({"EPP_KEY_VAULT_CACHE_ENABLED": "false"})
+    try:
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            requests = [pool.submit(manager.resolve, AUTH, config) for _ in range(3)]
+            wait_until(lambda: len(calls) == 6)
+            manager.close()
+            for request in requests:
+                with pytest.raises(ValueError, match="unavailable"):
+                    request.result(timeout=1)
+            release.set()
+        wait_until(lambda: not manager._requests)
+        assert manager.cache is None
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.resolve(AUTH, config)
+    finally:
+        release.set()
+        manager.close()
+
+
+def test_disabled_acquisition_timeout_discards_late_values_without_retry_cooldown():
+    release = Event()
+    secrets = Mock(resolve=Mock(side_effect=lambda _: release.wait(3) and "value"))
+    manager = CredentialTokenService(secrets, cache_options={"wait_timeout": 0.1}, report_failure=lambda _: None)
+    config = read_config({"EPP_KEY_VAULT_CACHE_ENABLED": "false"})
+    try:
+        with pytest.raises(ValueError, match="unavailable"):
+            manager.resolve(AUTH, config)
+        release.set()
+        wait_until(lambda: not manager._requests)
+        assert manager.cache is None
+        assert manager.resolve(AUTH, config)["secret"] == "value"
+        assert secrets.resolve.call_count == 4
+    finally:
+        release.set()
+        manager.close()
 
 
 def test_library_cache_shares_parallel_reads_and_serves_a_complete_pair_during_refresh(monkeypatch):

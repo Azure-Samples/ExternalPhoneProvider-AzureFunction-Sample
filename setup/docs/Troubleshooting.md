@@ -132,8 +132,11 @@ validation does not prove successful publication, runtime startup, Easy Auth enf
 Check `EPP_KEY_VAULT_CACHE_ENABLED` and `EPP_ACCESS_TOKEN_CACHE_ENABLED` on the serving Function App.
 Setup writes both as `"false"` for FC1 or `"true"` for EP1; rerunning setup restores those values.
 These settings only affect a deployed Function package that implements the cache readers.
-This setup change does not add runtime cache control, so `"false"` alone does not disable caching
-in an unsupported package. Deploy a supporting runtime release before relying on these settings.
+Deploy a supporting runtime release and restart after edits; older packages ignore the switches.
+Values must be `true` or `false` (case-insensitive, trimmed); unset defaults to enabled.
+Invalid selected values fail live credential acquisition closed without blocking evaluation.
+Only the selected provider's authentication mode chooses the switch; disabling it skips startup
+preparation and cross-request reuse, not live credential acquisition or the platform's decryption-key reference.
 
 ## appservice list-locations rejects EP1
 
