@@ -2,14 +2,16 @@
 
 Use this guide to create a planning estimate for SMS traffic before onboarding an
 External Phone Provider (EPP). The report groups recent sign-in activity for users
-who have a phone authentication method. Apply your provider's country or region
-rates to the report to estimate a budget.
+who have a phone authentication method by the registered phone number's international
+calling code, such as `+1` or `+91`. Apply your provider's destination rates to the
+report to estimate a budget.
 
 **This is an estimate, not a usage or billing report.** A sign-in does not prove that
-an SMS was sent, and one sign-in can result in no message or more than one message.
-The sign-in location is based on the sign-in event and might not match the country
-of the destination phone number. Confirm the assumptions, supported destinations,
-message segmentation, taxes, fees, and final pricing with your provider.
+an SMS or voice call was sent. This guide uses one message or call per counted sign-in
+as its planning assumption. Actual traffic can differ because a user can use another
+authentication method, reuse an existing session, retry authentication, or fall back
+between methods. Confirm the assumptions, supported destinations, message segmentation,
+taxes, fees, and final pricing with your provider.
 
 ## Prerequisites
 
@@ -22,9 +24,9 @@ account must be allowed to consent to or use these Microsoft Graph delegated per
 
 Access to sign-in logs also depends on your Microsoft Entra licensing, directory role,
 and log-retention period. Review the requested permissions before consenting. The script
-processes directory users, authentication methods, and sign-in location data. Store, share,
-and delete the aggregated output according to your organization's privacy and retention
-requirements.
+processes directory users, registered phone numbers, and sign-in records. It exports only
+aggregated calling codes and counts, not full phone numbers. Store, share, and delete the
+output according to your organization's privacy and retention requirements.
 
 Create `C:\temp` before running the script, or change the `Export-Csv` path to an
 approved folder.
@@ -33,8 +35,8 @@ approved folder.
 
 The following sample installs any missing Microsoft Graph modules for the current user,
 connects to Microsoft Graph, identifies users with a phone authentication method, and
-groups sign-ins from a selected UTC time range by sign-in country or region. Replace
-`$start` and `$end` with the period you want to analyze.
+groups sign-ins from a selected UTC time range by the registered phone number's calling
+code. Replace `$start` and `$end` with the period you want to analyze.
 
 ```powershell
 # 1. Install missing modules silently
@@ -49,23 +51,62 @@ Connect-MgGraph -Scopes "User.Read.All", "UserAuthenticationMethod.Read.All", "A
 $start = "2026-10-01T00:00:00Z"
 $end   = "2026-10-30T23:59:59Z"
 
-# 4. Single Pipeline: Filter users with Phone Auth -> Fetch Sign-ins -> Extract Country -> Group & Count
-$report = Get-MgUser -All -Property Id |
-    ? { Get-MgUserAuthenticationPhoneMethod -UserId $_.Id -ErrorAction SilentlyContinue } |
-    % { Get-MgAuditLogSignIn -Filter "userId eq '$($_.Id)' and createdDateTime ge $start and createdDateTime le $end" -All -ErrorAction SilentlyContinue } |
-    Group-Object -Property { $_.Location.CountryOrRegion } |
-    Select-Object @{N="CountryCode"; E={$_.Name}}, @{N="SignInCount"; E={$_.Count}} |
+# 4. Fetch sign-ins and associate them with the user's preferred registered phone method
+$activity = Get-MgUser -All -Property Id |
+    % {
+        $user = $_
+        $phoneMethod = Get-MgUserAuthenticationPhoneMethod `
+            -UserId $user.Id `
+            -ErrorAction SilentlyContinue |
+            Sort-Object @{ E = {
+                switch ($_.PhoneType) {
+                    "mobile"          { 1 }
+                    "alternateMobile" { 2 }
+                    "office"          { 3 }
+                    default           { 4 }
+                }
+            }} |
+            Select-Object -First 1
+
+        if ($phoneMethod) {
+            $callingCode = if ($phoneMethod.PhoneNumber -match '^\s*(\+\d{1,3})(?:\s|$)') {
+                $Matches[1]
+            }
+            else {
+                "Unknown"
+            }
+
+            Get-MgAuditLogSignIn `
+                -Filter "userId eq '$($user.Id)' and createdDateTime ge $start and createdDateTime le $end" `
+                -All `
+                -ErrorAction SilentlyContinue |
+                % {
+                    [PSCustomObject]@{
+                        CountryCallingCode = $callingCode
+                    }
+                }
+        }
+    }
+
+# 5. Group and count by the phone number's international calling code
+$report = $activity |
+    Group-Object CountryCallingCode |
+    Select-Object @{N="CountryCallingCode"; E={$_.Name}}, @{N="SignInCount"; E={$_.Count}} |
     Sort-Object SignInCount -Descending
 
-# 5. Output and Export
+# 6. Output and Export
 $report | Format-Table -AutoSize
-$report | Export-Csv -Path "C:\temp\SMS_Voice_SignIns_By_Country.csv" -NoTypeInformation
+$report | Export-Csv -Path "C:\temp\SMS_Voice_SignIns_By_Calling_Code.csv" -NoTypeInformation
 ```
 
 The script suppresses per-user read errors so that one inaccessible record does not stop
-the report. Investigate unexpectedly missing users or countries before relying on the
-result. `-All` requests all available pages, but large tenants should still account for
-Microsoft Graph throttling and execution time.
+the report. It prefers a user's `mobile` method, followed by `alternateMobile`, then
+`office`, so each sign-in is counted once when more than one phone method is registered.
+The calling-code extraction expects the number to start with a plus-prefixed code followed
+by a space, such as `+91 1234567890`; other formats are grouped as `Unknown`. Investigate
+unexpectedly missing users or calling codes before relying on the result. `-All` requests
+all available pages, but large tenants should still account for Microsoft Graph throttling
+and execution time.
 
 The Microsoft Graph
 [list signIns API documentation](https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-1.0&tabs=http)
@@ -76,23 +117,22 @@ Microsoft Entra ID default retention period are available."** Selecting an earli
 
 ## Convert activity into a cost estimate
 
-The exported report already contains one aggregated row per sign-in country or region.
-For each row, obtain the provider's applicable price and estimate:
+The exported report contains one aggregated row per registered phone-number calling code.
+Under this guide's one-request-per-sign-in planning assumption, estimate:
 
 ```text
-Estimated messages = sign-in count x assumed SMS messages per sign-in
-Estimated cost     = estimated messages x provider price per SMS
-Projected cost     = estimated cost x projected days / observed days
+Estimated SMS/voice requests = sign-in count
+Estimated cost               = sign-in count x provider price per request
+Projected cost               = estimated cost x projected days / observed days
 ```
 
-For example, if the report covers 30 days, contains 10,000 relevant sign-ins, and your
-planning assumption is 0.25 SMS messages per sign-in:
+For example, if the report covers 30 days and contains 10,000 relevant sign-ins:
 
 ```text
-Estimated messages = 10,000 x 0.25 = 2,500
+Estimated SMS/voice requests = 10,000
 ```
 
-Apply the provider's destination-specific rates to those estimated messages. Use separate
+Apply the provider's destination-specific rates to those estimated requests. Use separate
 rows when rates differ by destination, sender type, route, or message category. Include a
 contingency for growth, retries, fallback behavior, and seasonal peaks.
 
@@ -100,7 +140,7 @@ contingency for growth, retries, fallback behavior, and seasonal peaks.
 
 Work with your provider to validate:
 
-- Whether pricing uses the destination phone number rather than sign-in location.
+- How each international calling code maps to the provider's destination pricing.
 - Country and carrier coverage, sender registration, and route-specific rates.
 - SMS segment rules, including Unicode and messages that exceed one segment.
 - Minimum commitments, volume tiers, taxes, regulatory fees, and other surcharges.
