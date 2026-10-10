@@ -20,6 +20,12 @@ channel, pricing, and access to the provider's **EPP integration**, not just its
 An offer purchase does not deploy Azure resources, enable a Microsoft tenant feature, or install
 a missing adapter.
 
+![Cropped examples of phone-provider offer cards in Microsoft Security Store](images/onboarding/security-store-providers.png)
+
+*These are sample cards, not recommendations or a complete provider list. Offers, preview
+labels, pricing, and access can change. A store listing does not mean the setup script supports
+that integration; check [guided provider support](#provider-credential-names).*
+
 Have your tenant administrator confirm the supported EPP onboarding/activation procedure with
 Microsoft and the provider **before incurring deployment costs**. This repository does not define
 tenant eligibility, licensing, preview enrollment, or a self-service activation entitlement.

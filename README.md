@@ -25,11 +25,8 @@ approved procedure is unavailable, **stop here** and follow the
 In Security Store, open **Private solutions** and select the subscription approved for your
 deployment. Review the phone-provider offers available to that subscription.
 
-![Cropped examples of phone-provider offer cards in Microsoft Security Store](docs/images/onboarding/security-store-providers.png)
-
-*These are cropped sample cards from Security Store, not recommendations or a complete provider
-list. Offers, preview labels, pricing, and access can change. A store listing does not mean the
-setup script supports that integration; check [guided provider support](docs/ONBOARDING.md#provider-credential-names).*
+See [sample offers and access guidance](docs/ONBOARDING.md#before-purchasing-or-deploying) in the
+detailed guide. A store listing does not mean the setup script supports that integration.
 
 Have these ready:
 
@@ -68,6 +65,13 @@ In the customer tenant's **Microsoft Entra admin center > App registrations > Ne
 
 *Some portal versions label the account type **Single tenant only**. Choose your own directory.
 The example above is an unsaved form, not an application you can reuse.*
+
+On the registered application's **Overview**, copy these two values privately:
+
+![App registration Overview with Application client ID and Directory tenant ID identified for setup and Object ID marked DO NOT USE](docs/images/onboarding/app-registration-overview.png)
+
+*Use **Application (client) ID** for `ApplicationId` and **Directory (tenant) ID** for `TenantId`.
+The **Object ID** is not either of these setup inputs. All ID values are hidden in this example.*
 
 Do not add a client secret, API permission, or app role yourself; setup handles the remaining
 configuration. See [application registration details](setup/docs/README.md#step-1---manually-create-the-application).
@@ -112,7 +116,7 @@ See [hosting plan details](setup/docs/README.md#service-plan-selection).
 The **Global/EU** prompt is a provider route label, not your Azure region or a data-residency guarantee.
 For the resource prefix, use 2-8 lowercase letters or digits, starting with a letter.
 
-![Actual setup choices for channel, provider route, provider, language, and hosting plan, with provider names hidden](docs/images/onboarding/setup-choices.png)
+![Cropped setup choices for provider route, provider, language, and hosting plan, with provider names hidden](docs/images/onboarding/setup-choices.png)
 
 *Choose the options approved for your deployment; do not copy the example selection numbers.
 The Global/EU choice is not the Azure region. The hosting-plan warning applies even when a

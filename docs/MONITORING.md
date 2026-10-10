@@ -92,6 +92,35 @@ necessary resource/workspace access; saving a Workbook does not grant its reader
 access to its data. Cross-workspace alert evaluation also needs access to each
 workspace under the rule's configured identity.
 
+### Run a first query and read the results
+
+1. In your workspace's **Logs**, close any welcome or Queries hub dialog. If the portal opens
+   in **Agent** mode, switch it off for this walkthrough, then choose **KQL mode**.
+2. Paste the query below. Replace `<function-role-name>` with the `AppRoleName` you verified
+   using the discovery query above. If a workspace contains multiple Application Insights
+   components with that same role name, also filter by your component's `_ResourceId`.
+3. Select **Run**, then read the **Results** grid. Adjust `ago(48h)` to include the time of
+   your authorized test; this query sets its own time range.
+
+```kusto
+AppRequests
+| where TimeGenerated >= ago(48h)
+| where AppRoleName == "<function-role-name>" and Name == "SendOtp"
+| summarize StoredRows = count() by ResultCode, Success
+| order by ResultCode asc
+```
+
+![Workspace Logs in KQL mode with a scoped request-status query, Run button, and one aggregate result row](images/onboarding/logs-query-results.png)
+
+*This real query returned 11 stored rows with result code 200 and `Success=true` in the example
+window. The role and workspace names are hidden. The query shows counts only: no phone numbers,
+message bodies, credentials, or raw trace messages. Your result counts will differ.*
+
+`StoredRows` counts stored telemetry records, not delivered messages or necessarily all requests.
+Sampling can change the count, and evaluation and live calls can both return HTTP 200. No rows
+means no matching records in the selected scope/time range; it is not proof that nothing failed.
+Use the scoped and sampling-aware queries below for ongoing monitoring.
+
 ## 2. Single-region Function queries
 
 ### Requests, failures, and latency
