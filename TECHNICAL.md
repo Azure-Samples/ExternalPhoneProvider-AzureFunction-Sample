@@ -7,10 +7,29 @@ Azure Front Door is an [optional manual multi-region design](docs/FRONTDOOR.md),
 enabled by the single-region setup script. Its additional readiness endpoint is not shipped in
 the release packages, and regional failover does not change the SendOtp contract.
 
-A provider-agnostic **OTP-delivery Azure Function** sample, implemented across multiple languages.
-Each language folder is a self-contained implementation of the **same design and the same
-[contract](docs/CONTRACT.md)**: one engine, drop-in provider adapters, env-provisioned config, and
-secrets in Key Vault.
+Use this reference when developing or customizing the endpoint. Each language folder implements
+the same [HTTP contract](docs/CONTRACT.md), with provider-specific adapters, environment settings,
+and managed-identity access to credentials.
+
+## Single-region architecture
+
+![Single-region External Phone Provider architecture](docs/images/single-region-architecture.png)
+
+Microsoft Entra ID sends an authenticated, encrypted request. Easy Auth checks the caller,
+then the Function decrypts the request using its Key Vault-backed key. For a live request, the
+selected adapter submits the message and returns success after provider acceptance, not after
+confirmed recipient delivery. Application Insights collects the available request and log telemetry.
+
+The diagram is an overview, not a portal screenshot. East US is illustrative; select a region
+with capacity and quota for your hosting plan. The provider-secret path applies to API-key
+integrations; OAuth integrations use managed-identity token exchange instead. Credential caching
+depends on the [selected cache settings](docs/CONTRACT.md#credential-caching-and-refresh), and
+[log formats vary by runtime](docs/MONITORING.md#runtime-specific-log-discovery).
+
+An authorized, valid encrypted **evaluation request (`mode: 2`)** returns the matching nonce
+without submitting a message to the provider. When caching is enabled, credential preparation
+can run independently; it never sends an OTP. Authentication failures can return **401 or 403**,
+neither of which is a successful evaluation.
 
 ## Implementations
 

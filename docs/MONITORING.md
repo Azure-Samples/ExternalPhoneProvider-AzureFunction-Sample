@@ -1,18 +1,24 @@
 # Monitoring setup and sample queries
 
-Use this guide to operate a **single-region Azure Function** or **multiple regional
-Functions**. Azure Front Door is optional; it adds an edge monitoring layer and does
-not replace Function, credential, or provider monitoring.
+Use this guide to find your endpoint's logs and set up alerts. Guided setup creates Application
+Insights and a Log Analytics workspace, but **you still need to configure and test notifications**.
 
-These are operator-run examples, not an automatic deployment of monitors. Review
-permissions, privacy, charges, and alert routing before creating anything. All
-thresholds and intervals below are **starting points, not SLAs**. This guide does not
-change deployed diagnostics, sampling, retention, or alert settings.
+For your first single-region deployment:
 
-For the first deployment, finish the [customer acceptance checks](ONBOARDING.md#validate-the-deployed-endpoint)
-with the authorized test operator. Read [Application Insights](APPLICATION-INSIGHTS.md) for
-collection/identity details, then use this guide to establish queries and alerts. You do not
-need Front Door, a Workbook, or a new exporter merely to locate your existing single-region logs.
+1. [Find the monitoring resources and confirm data is arriving](#1-record-the-deployment-and-confirm-telemetry)
+   after an [authorized test](ONBOARDING.md#validate-the-deployed-endpoint).
+2. Check [requests, failures, and latency](#2-single-region-function-queries), then use
+   [the log format for your runtime](#runtime-specific-log-discovery).
+3. [Set up and test alerts](#5-set-up-notifications-and-alert-rules), including certificate
+   reminders and cost ownership.
+
+The multi-region queries, shared Workbook, and Front Door sections are optional.
+You do not need them to find single-region logs. For collection and identity details, see
+[Application Insights](APPLICATION-INSIGHTS.md).
+
+These examples do not create monitors automatically. Review permissions, privacy, and charges
+before applying them. Thresholds and intervals are **starting points, not SLAs**; tune them to
+your deployment.
 
 ## 1. Record the deployment and confirm telemetry
 
@@ -36,6 +42,23 @@ actual deployment rather than assuming that configuration succeeded. Other deplo
 methods can differ. The current setup template requests 30-day retention; confirm
 effective workspace/table retention and organizational policy before changing it.
 It does not create the action groups, Workbooks, or alert rules described here.
+
+### Find the linked resources in the portal
+
+1. Open the Function App named in your deployment summary.
+2. Select **Monitoring > Application Insights**. Follow the linked resource name; do not
+   select **Change your resource** or **Apply** just to view your logs.
+
+![Function App Monitoring menu with Application Insights selected and its connected resource link](images/onboarding/monitoring-link.png)
+
+3. On that Application Insights resource's **Overview**, find **Logs workspace** and open
+   the linked workspace. Then select **Logs** in the workspace to use the queries below.
+
+![Application Insights Overview showing the Logs workspace link with account and connection details redacted](images/onboarding/monitoring-workspace.png)
+
+These are real portal views of an existing test deployment, with identifying information and
+connection details permanently hidden. Resource names, regions, and portal layouts may differ.
+The links show where to navigate; they do not prove that test traffic or delivery succeeded.
 
 In the Azure portal, inspect each Function's Application Insights association,
 monitoring settings, managed-identity ingestion authorization, and diagnostic
@@ -68,6 +91,35 @@ Read access is required on every workspace queried. Give operators only the
 necessary resource/workspace access; saving a Workbook does not grant its readers
 access to its data. Cross-workspace alert evaluation also needs access to each
 workspace under the rule's configured identity.
+
+### Run a first query and read the results
+
+1. In your workspace's **Logs**, close any welcome or Queries hub dialog. If the portal opens
+   in **Agent** mode, switch it off for this walkthrough, then choose **KQL mode**.
+2. Paste the query below. Replace `<function-role-name>` with the `AppRoleName` you verified
+   using the discovery query above. If a workspace contains multiple Application Insights
+   components with that same role name, also filter by your component's `_ResourceId`.
+3. Select **Run**, then read the **Results** grid. Adjust `ago(48h)` to include the time of
+   your authorized test; this query sets its own time range.
+
+```kusto
+AppRequests
+| where TimeGenerated >= ago(48h)
+| where AppRoleName == "<function-role-name>" and Name == "SendOtp"
+| summarize StoredRows = count() by ResultCode, Success
+| order by ResultCode asc
+```
+
+![Workspace Logs in KQL mode with a scoped request-status query, Run button, and one aggregate result row](images/onboarding/logs-query-results.png)
+
+*This real query returned 11 stored rows with result code 200 and `Success=true` in the example
+window. The role and workspace names are hidden. The query shows counts only: no phone numbers,
+message bodies, credentials, or raw trace messages. Your result counts will differ.*
+
+`StoredRows` counts stored telemetry records, not delivered messages or necessarily all requests.
+Sampling can change the count, and evaluation and live calls can both return HTTP 200. No rows
+means no matching records in the selected scope/time range; it is not proof that nothing failed.
+Use the scoped and sampling-aware queries below for ongoing monitoring.
 
 ## 2. Single-region Function queries
 

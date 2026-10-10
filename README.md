@@ -1,139 +1,90 @@
 # External Phone Provider: Azure Function Sample
 
-Deploy an External Phone Provider (EPP) endpoint on Azure Functions to deliver one-time passwords
-by SMS or voice. Start here to onboard **one deployment in one Azure region**.
+Connect Microsoft Entra ID to your phone provider to send one-time passwords by SMS or voice.
+This guide walks you through **one endpoint in one Azure region**.
 
-For implementation details, configuration, packaging, and security behavior, see the
-[technical reference](TECHNICAL.md).
+You register an application, run a guided setup script, then connect and test your provider.
+An administrator activates the endpoint only after those checks pass. You do not need to clone
+this repository, build locally, or follow all three language guides.
 
-**New customer path:** [confirm access and collect values](docs/ONBOARDING.md#before-purchasing-or-deploying)
-→ [run guided setup](setup/docs/README.md#step-2---download-and-run-one-script)
-→ [connect and validate](docs/ONBOARDING.md#complete-provider-authentication)
-→ [activate policy](setup/docs/README.md#step-3---manually-validate-and-activate-policy)
-→ [operate and monitor](docs/MONITORING.md).
-You do not need to build locally, create `local.settings.json`, or read all three language guides.
+The screenshots below show the Azure portal; the same app registration is available in the
+Microsoft Entra admin center. Account details and resource names have been permanently hidden.
+Your portal layout may look slightly different.
 
-For a customer-built multi-provider customization, see the
-[step-by-step implementation guide](docs/MULTI-PROVIDER-IMPLEMENTATION.md).
+## 1. Get ready
 
-## Deployment options
+Start in a **dedicated nonproduction tenant and subscription**.
 
-| Option | Onboarding |
-|---|---|
-| Single region | Follow the steps below. `Setup-Epp.ps1` deploys one endpoint. |
-| Multiple regions behind Azure Front Door | Follow the [manual guide](docs/FRONTDOOR.md). You'll need to configure the regions and implement a readiness endpoint yourself. We don't provide a Front Door setup script. |
+Before purchasing or deploying, confirm access to a supported provider's EPP integration through
+[Microsoft Security Store](https://securitystore.microsoft.com/private-solutions). Arrange
+Microsoft's approved testing and activation procedure with your tenant administrator.
+Buying an offer does not enable the tenant feature or deploy this sample. If access or the
+approved procedure is unavailable, **stop here** and follow the
+[access and support guidance](docs/ONBOARDING.md#before-purchasing-or-deploying).
 
-## What you will set up
+In Security Store, open **Private solutions** and select the subscription approved for your
+deployment. Review the phone-provider offers available to that subscription.
 
-You will connect a provider account to a dedicated Azure Function endpoint, validate SMS or voice
-delivery, and then have an administrator activate the endpoint in Microsoft Entra ID.
+See [sample offers and access guidance](docs/ONBOARDING.md#before-purchasing-or-deploying) in the
+detailed guide. A store listing does not mean the setup script supports that integration.
 
-The guided setup deploys the Azure resources and configures the endpoint application. It does **not**
-purchase a provider offer, grant access to a provider's API, or activate your authentication method
-policy. Those steps remain part of your onboarding.
+Have these ready:
 
-**Before spending or activating:** confirm access to the provider's EPP integration and Microsoft's
-approved tenant onboarding/test procedure. The sample does not establish eligibility, licensing,
-or preview enrollment. It is not production certification: it has no durable queue, automatic
-send retries, deduplication, whole-request deadline, or overlapping key rotation. Review the
-[limitations](docs/CONTRACT.md#production-limitations) with your owners.
+- **Provider account:** complete the provider's account and sender registration for your chosen
+  SMS or voice service. Check [guided provider support](docs/ONBOARDING.md#provider-credential-names).
+- **Workstation:** Windows, PowerShell 7+, and Azure CLI 2.60.0+ for Flex Consumption (FC1),
+  or 2.48.1+ for Premium (EP1). Allow access to GitHub, Azure, Microsoft Graph, Key Vault, and
+  the deployment endpoints. C# also needs the .NET 8 SDK and NuGet access.
+- **Administrators:** an Azure operator with subscription deployment, resource-provider registration,
+  and role-assignment permissions; an Entra Privileged Role Administrator for setup; and an
+  Authentication Policy Administrator for later activation. These are separate permissions.
+- **Azure region and budget:** check availability and subscription quota for your chosen Linux
+  plan. Azure resources and provider services can incur charges.
 
-## Single-region architecture
+Review the [full prerequisites](setup/docs/README.md#prerequisites-for-step-2), including the
+required Entra allowed-tenants preview, before running setup. The script can install missing
+Graph modules and Bicep after confirmation; Azure CLI must already be installed.
 
-![Single-region External Phone Provider architecture](docs/images/single-region-architecture.png)
+Choose an **onboarding owner** in your organization to coordinate the administrators, provider,
+and Microsoft support. This is a sample, not production certification: it does not provide
+automatic send retries, duplicate-send protection, or automatic certificate renewal.
+Review the [production limitations](docs/CONTRACT.md#production-limitations) with that owner.
 
-The single-region request flow is:
+## 2. Register your application
 
-1. Microsoft Entra ID's Strong Authentication Service (SAS) sends an authenticated, encrypted request.
-2. App Service Authentication (Easy Auth) validates the caller before the Function runs.
-3. The Function decrypts the request using a key stored in Azure Key Vault.
-4. The selected provider adapter authenticates to the phone provider and submits the SMS or voice message.
-5. For a live request, the Function returns a success response after provider acceptance. Confirming delivery to the
-   recipient is a separate validation step.
+In the customer tenant's **Microsoft Entra admin center > App registrations > New registration**:
 
-The diagram's delivery path describes **live requests**. An authorized, valid encrypted
-**evaluation request (`mode: 2`)** returns the matching nonce without submitting a message to the
-provider. With caching enabled, background credential refresh can still run independently. Authentication failures may
-return **401 or 403**; neither is a successful evaluation.
+1. Give the application a recognizable name.
+2. Select **Accounts in this organizational directory only**. Leave the redirect URI blank,
+   then select **Register**. Setup will make the app organizational multitenant and restrict
+   its allowed tenants after you approve the deployment plan.
+3. On **Overview**, save the **Directory (tenant) ID** and **Application (client) ID** privately.
+   Use the client ID, not the Object ID.
 
-**East US in the diagram is illustrative, not a required or guaranteed deployment location.**
-Choose a region with capacity and subscription quota for the selected Linux FC1 or EP1 plan.
+![App registration form with an example name, Single tenant only selected, and no redirect URI](docs/images/onboarding/app-registration.png)
 
-Application Insights provides operational telemetry. Provider API keys stay in Key Vault; supported
-OAuth integrations use managed identity. The guided steps below cover the single-region topology
-shown above. For one public URL backed by multiple regional origins, see the
-[manual Front Door option](docs/FRONTDOOR.md), including the request failures seen during testing.
+*Some portal versions label the account type **Single tenant only**. Choose your own directory.
+The example above is an unsaved form, not an application you can reuse.*
 
-## Before you start
+On the registered application's **Overview**, copy these two values privately:
 
-Use a **dedicated nonproduction tenant and subscription** for your first deployment.
+![App registration Overview with Application client ID and Directory tenant ID identified for setup and Object ID marked DO NOT USE](docs/images/onboarding/app-registration-overview.png)
 
-| Requirement | What to prepare |
-|---|---|
-| Provider | An offer from [Microsoft Security Store](https://securitystore.microsoft.com/private-solutions), with the required SMS or voice route, account/sender registration, and EPP account access. Guided setup supports Telesign and Soprano only. |
-| Workstation | Windows with PowerShell 7+ and Azure CLI 2.60.0+ for FC1 or 2.48.1+ for EP1 on `PATH`. Certificates are issued inside Key Vault, not the local certificate store. End-to-end setup from Linux or Azure Cloud Shell has not been validated. |
-| Network access | Access to GitHub, Azure, Microsoft Graph, and Key Vault. FC1 publication and EP1 Python builds also require access to the Function's SCM endpoint. |
-| Azure permissions | An Azure user account permitted to deploy at subscription scope, register required resource providers, and create scoped role assignments. |
-| Microsoft Entra permissions | A Privileged Role Administrator for the application and Microsoft Graph configuration. Setup uses the allowed-tenants preview and requires Microsoft Graph beta access. |
-| Policy activation | An Authentication Policy Administrator to activate the endpoint after validation. Deployment alone does not activate it. |
-| Region and hosting | A region supporting the selected Linux FC1 or EP1 plan with sufficient subscription quota. Resource-provider registration does not grant quota. Deployed resources can incur Azure charges; review the hosting plan before approval. |
-| C# only | The .NET 8 SDK and NuGet access. Setup builds and publishes the selected .NET package automatically. |
+*Use **Application (client) ID** for `ApplicationId` and **Directory (tenant) ID** for `TenantId`.
+The **Object ID** is not either of these setup inputs. All ID values are hidden in this example.*
 
-Setup can install missing Microsoft Graph PowerShell modules and the Azure CLI Bicep component
-after confirmation. Azure CLI itself must already be installed. JavaScript and Python do not
-require a local build toolchain for this guided deployment; Python dependencies are built in Azure.
+Do not add a client secret, API permission, or app role yourself; setup handles the remaining
+configuration. See [application registration details](setup/docs/README.md#step-1---manually-create-the-application).
 
-Review the complete [setup prerequisites](setup/docs/README.md#prerequisites-for-step-2) before
-deploying. If Azure reports `SubscriptionIsOverQuotaForSku`, follow the
-[regional quota troubleshooting steps](setup/docs/Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku)
-before retrying.
+Also keep your Azure subscription ID handy. The
+[setup values worksheet](docs/ONBOARDING.md#inputs-you-supply-to-setup) explains where to find
+each value. Use a new dedicated application and resource prefix for another independent endpoint;
+changing the channel or region on a rerun does not create a separate deployment.
 
-The customer-designated **onboarding owner** coordinates the Azure operator, tenant/policy
-administrator, provider administrator, and Microsoft support. This repository does not supply
-a named contact. If the offer or required feature/test procedure is unavailable, follow the
-[access gate](docs/ONBOARDING.md#before-purchasing-or-deploying), not a workaround that weakens authentication.
+## 3. Run guided setup
 
-## Onboard your endpoint
-
-### 1. Set up your provider and application
-
-In [Microsoft Security Store](https://securitystore.microsoft.com/private-solutions), review the
-provider offer, then purchase and complete the provider's account,
-sender, and channel onboarding. Confirm that the provider supports the required SMS or voice route.
-Purchasing the offer does not deploy the Function.
-
-In **Microsoft Entra admin center > App registrations**, create a dedicated organizational
-application. Record its **Directory (tenant) ID** and **Application (client) ID**.
-Use the client ID, not the application's object ID. Setup requires this existing registration and
-does not create a replacement.
-
-Do not create a client secret, redirect URI, API permission, or app role. The setup script configures
-the remaining application settings. See the
-[application registration steps](setup/docs/README.md#step-1---manually-create-the-application).
-
-Have the following values ready before running setup:
-
-| Input | How it is used |
-|---|---|
-| Tenant ID | Identifies the customer Microsoft Entra tenant containing the endpoint application. |
-| Subscription ID | Selects the Azure subscription where resources will be deployed. |
-| Application client ID | Identifies the dedicated endpoint app you just registered. |
-| Azure region | Places this deployment in one region. |
-| Channel and provider scope | Selects one SMS or voice route and the provider's Global or EU label. This is separate from Azure region and is not a data-residency guarantee. |
-| Language | Selects one Function implementation below. The HTTP contract is shared; caching and telemetry differ by runtime. |
-| Service plan | Selects Flex Consumption FC1 or Premium EP1. Required explicitly for unattended setup. |
-| Resource prefix | Use 2-8 lowercase letters or digits, starting with a letter, such as `contoso`. Setup adds resource-specific names and a suffix. |
-
-Use the [central values table](docs/ONBOARDING.md#values-and-ownership) for exact portal locations,
-parameter names, client-ID versus Object-ID distinctions, and settings setup creates automatically.
-For a second independent channel/provider endpoint, use a new prefix and dedicated app.
-Changing channel/provider/region with the same subscription/app/prefix is a reconfiguration,
-not an additional deployment; see [deployment separation](docs/ONBOARDING.md#inputs-you-supply-to-setup).
-
-### 2. Deploy the endpoint
-
-No repository clone is needed. Download [Setup-Epp.ps1](setup/Setup-Epp.ps1), inspect it, then run it
-from PowerShell 7+. First, download the script:
+Open **PowerShell 7** in a folder where you want to keep the script and deployment summary.
+Download the script:
 
 ```powershell
 Invoke-WebRequest `
@@ -141,152 +92,143 @@ Invoke-WebRequest `
     -OutFile .\Setup-Epp.ps1
 ```
 
-After reviewing the downloaded script, run:
+Review the downloaded script, then run it:
 
 ```powershell
 .\Setup-Epp.ps1
 ```
 
-On a shared workstation or one with multiple cached accounts, use
-`.\Setup-Epp.ps1 -ForceAuthentication` instead to request explicit Azure and Microsoft Graph sign-in.
+On a shared or multi-account workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` to request
+explicit Azure and Microsoft Graph sign-in.
 
-Choose **one language**; do not deploy all three implementations into the same Function App:
+Follow the prompts for your tenant, subscription, application, Azure region, provider, and channel.
+Choose **one** language: JavaScript, C#, or Python. Setup downloads and verifies the package,
+builds it if needed, and deploys it for you; you do not need a separate ZIP upload or local settings file.
 
-| Implementation | Runtime | What setup does |
-|---|---|---|
-| JavaScript | Node.js 22, Functions v4 | Verifies and publishes the ready-to-run package. |
-| C# | .NET 8 isolated, Functions v4 | Verifies the source package, builds it with your .NET SDK, and publishes the output. |
-| Python | Python 3.11, Functions v4 | Verifies the source package and uses Azure remote build to install dependencies before publishing. |
+![Actual PowerShell setup prompts for tenant, subscription, application, region, and SMS or voice, with identifiers hidden](docs/images/onboarding/setup-identifiers.png)
 
-Choose **Flex Consumption FC1** for zero always-ready instances and scale-to-zero, or **Premium EP1**
-for a warm instance. FC1 includes a free usage grant, not a zero-charge guarantee, and can cold-start.
-See [service plan selection](setup/docs/README.md#service-plan-selection) for cache app settings and
-migration limits. Unattended runs require `-ServicePlan FC1` or `-ServicePlan EP1`.
+*Enter your own values from Step 2. These are captures of the real script's terminal output,
+not example deployment results.*
 
-The script prompts for missing inputs, retrieves its support files and provider profile, and selects
-the latest stable Function package release by default. It verifies package checksums; you do not
-need to locate a ZIP or enter a package URL manually.
+Choose **FC1** for on-demand hosting that can scale to zero, or **EP1** for paid warm capacity.
+FC1 can cold-start, and its free usage grant does not make the whole deployment free.
+See [hosting plan details](setup/docs/README.md#service-plan-selection).
+The **Global/EU** prompt is a provider route label, not your Azure region or a data-residency guarantee.
+For the resource prefix, use 2-8 lowercase letters or digits, starting with a letter.
 
-Before approving, review the displayed **tenant, subscription, application ID, region, provider
-route, language, service plan, cache app settings, resource names, permissions, and certificate changes**. Setup configures the
-endpoint app and grants the Microsoft phone-provider service principal Microsoft Graph
-`Application.Read.All`; understand these permissions before proceeding.
+![Cropped setup choices for provider route, provider, language, and hosting plan, with provider names hidden](docs/images/onboarding/setup-choices.png)
 
-Type **`Yes`** to approve the deployment plan. `No` or Enter cancels deployment. Sign-in,
-consent, and prerequisite-installation prompts are separate from deployment approval.
+*Choose the options approved for your deployment; do not copy the example selection numbers.
+The Global/EU choice is not the Azure region. The hosting-plan warning applies even when a
+plan has a free usage grant.*
 
-#### What successful setup produces
+Next, setup checks prerequisites, signs in to Azure and Microsoft Graph when needed, verifies
+the selected package, and prepares the deployment plan. Complete sign-in and MFA yourself.
+If a permission or prerequisite check fails, stop and resolve it before continuing.
 
-**Setup has already deployed the code and Azure settings.** Skip local configuration and manual
-ZIP publication unless you are developing a custom implementation.
+**Review the complete deployment plan before typing `Yes`.** Check the accounts, region,
+provider route, plan, resource names, permissions, and certificate changes. Setup grants the
+Microsoft phone-provider service principal Microsoft Graph `Application.Read.All`, a tenant-wide
+application-read permission. `No` or Enter cancels deployment; sign-in and prerequisite prompts
+are separate from this approval.
 
-- A dedicated resource group, selected Linux FC1 or EP1 plan, Function App, and storage account.
-- Key Vault and the encryption certificate/key configuration.
-- Managed identities, scoped role assignments, and Easy Auth caller restrictions.
-- Application Insights, a Log Analytics workspace, and diagnostics.
-- The selected Function package, with `SendOtp` registered.
+**Want to review without deploying?** Run interactively and choose **No** at that final prompt.
+There is no `-DryRun` or `-WhatIf` switch. This is not an offline dry run: sign-in, prerequisite
+checks, downloads, and template compilation happen first. Do not pass `-ApproveDeployment`
+when you only want to review the plan.
 
-Setup verifies Easy Auth before enabling public ingress. **Do not disable Easy Auth to work around
-an authentication error**; it is the endpoint's caller-authentication gate.
+After you approve, leave the script running while it configures the application, creates the
+Azure resources, sets up encryption and authentication, and publishes the code. Wait for
+**Deployment completed** and the saved summary before moving to Step 4. The input screenshots
+above do not show or prove that this deployment stage completed.
 
-Save the public certificate and timestamped deployment summary from `epp-output` beside the
-downloaded script, or your selected output directory. Confirm the tenant, application client ID,
-endpoint URL, and encryption key ID with your EPP onboarding owner. Private keys are not included
-in the summary. Use the [summary field guide](setup/docs/README.md#read-the-deployment-summary)
-to locate the vault, Function, telemetry resources, and version information.
+On success, setup has created the Function App, storage, Key Vault, identities, and monitoring
+resources, and published the endpoint code. **Do not create these resources manually first.**
+Keep the public certificate and timestamped summary in `epp-output` beside the script.
+Use the [summary field guide](setup/docs/README.md#read-the-deployment-summary) to find your
+resources, endpoint URL, application client ID, and encryption key ID. No private key is downloaded.
 
-The encryption certificate is issued inside Key Vault; setup downloads only the public certificate.
-The Function is pinned to a specific private-key secret version. Certificate renewal and the
-corresponding Entra update remain manual, so assign an owner for the
-[certificate lifecycle](setup/docs/README.md#encryption-certificate-lifecycle).
+Setup verifies **Easy Auth**, the endpoint's caller-authentication protection, before opening
+public access. Never disable it to fix a setup or testing problem. If setup fails, use the
+[troubleshooting guide](setup/docs/Troubleshooting.md) rather than deleting resources and starting over.
 
-See the [guided deployment instructions](setup/docs/README.md#step-2---download-and-run-one-script)
-for the full setup procedure.
+To find the deployed resources, open **Azure portal > Resource groups** and select the group
+listed in your deployment summary.
 
-### 3. Connect, validate, and activate
+![Example regional resource group showing a Function App, monitoring, Key Vault, managed identity, hosting plan, and storage](docs/images/onboarding/resource-group.png)
 
-#### Complete provider authentication
+*This existing Premium test deployment shows the resource types to look for, not a new
+deployment or a guarantee that your resource list will be identical. Use setup rather than
+the portal's Create button to deploy the endpoint.*
 
-Follow the authentication instructions for your selected **Security Store provider**. The required
-action depends on the authentication method supported by its integration:
+## 4. Connect your provider and test
 
-| Authentication method | Required action |
+Complete the [provider authentication instructions](docs/ONBOARDING.md#complete-provider-authentication)
+for your selected integration. This means either entering credentials in the setup-created Key Vault
+or having the provider administrator authorize the application. Azure deployment alone does not
+complete that step. Keep credentials out of source code, screenshots, and shared logs.
+
+For an API-key integration, open the Key Vault named in your deployment summary, then select
+**Objects > Secrets > Generate/Import**. Enter each credential under the exact secret name
+required by your provider. The [illustrated Key Vault steps](docs/ONBOARDING.md#where-to-enter-api-key-credentials-in-key-vault)
+show the location and an unsaved example. OAuth integrations use the provider-administrator
+handoff instead; do not create an API-key secret for them.
+
+In your Function App, open **Settings > Authentication**. Check that authentication is
+**Enabled**, access is set to **Require authentication**, and unauthenticated requests receive
+**HTTP 401 Unauthorized**. These are checks, not instructions to change the approved caller.
+
+![Function Authentication page showing Enabled, Require authentication, and Return HTTP 401 Unauthorized](docs/images/onboarding/authentication.png)
+
+*The **Microsoft** identity provider on this page validates the caller. It is not the phone
+provider you selected for SMS or voice.*
+
+Ask your onboarding owner to arrange the
+[approved deployed-endpoint checks](docs/ONBOARDING.md#validate-the-deployed-endpoint):
+
+1. Confirm that missing or unauthorized caller credentials are rejected.
+2. Run an authorized **evaluation** to check authentication and decryption without a provider send.
+3. Run a separately approved **live test** and confirm both provider acceptance and receipt of
+   the SMS or voice call. Acceptance alone is not proof of delivery.
+4. Check that the request and relevant logs appear in Application Insights.
+
+The [illustrated monitoring steps](docs/MONITORING.md#find-the-linked-resources-in-the-portal)
+show where to open Application Insights and its Logs workspace.
+
+This repository does not supply a self-service token tool for the authorized Microsoft caller.
+An ordinary Azure CLI token is not a substitute. If the approved test procedure is unavailable
+or any check fails, **do not activate the endpoint**. Do not blindly retry a timed-out live send:
+the provider may already have accepted it.
+
+## 5. Activate and hand over
+
+Have an **Authentication Policy Administrator** follow the
+[supported activation procedure](setup/docs/README.md#step-3---manually-validate-and-activate-policy).
+They must save the existing policy, apply the approved endpoint URL and application client ID,
+preserve other settings, and read back and validate the change. **Setup does not activate policy.**
+The EPP policy fields require Microsoft's assisted procedure; do not guess a Graph update.
+
+Before handing over, confirm:
+
+- [ ] Provider authentication, authorized testing, and recipient delivery are verified.
+- [ ] Policy is backed up, activated, and checked, with a [rollback plan](setup/docs/README.md#rollback-and-decommissioning).
+- [ ] [Monitoring and alert notifications](docs/MONITORING.md) work for your chosen runtime.
+- [ ] Owners are assigned for provider credentials, [certificate renewal](setup/docs/README.md#encryption-certificate-lifecycle),
+  support, and costs.
+
+Setup creates telemetry resources, **not alert rules or renewal notifications**.
+Keep the deployment summary and validation evidence in restricted storage.
+Deleting Azure resources does not undo an authentication policy change.
+
+## Find more detail
+
+| When you need to... | Read |
 |---|---|
-| Telesign API key | Enter `telesign-api-key` and `telesign-customer-id` in the setup-created vault using the [safe portal steps](docs/ONBOARDING.md#telesign-enter-and-verify-the-two-vault-secrets). Setup already grants the Function system identity Key Vault Secrets User. |
-| Soprano OAuth | Complete the [provider-admin handoff](docs/ONBOARDING.md#soprano-provider-administrator-handoff) for the existing multitenant application. Setup configures the outbound federation, but does not grant access in the provider tenant. |
-
-Replace any test provider values before live validation. Never put API keys in source code or local
-settings. See [provider authentication](docs/ONBOARDING.md#provider-credential-names) for details.
-
-#### Validate before activation
-
-Arrange Microsoft's approved EPP test procedure with your onboarding owner. This repository has
-offline tests, **not a self-service authorized caller/token tool**. A normal customer CLI token
-cannot impersonate the allowlisted Microsoft caller. See the
-[test handoff, negative check, and evidence checklist](docs/ONBOARDING.md#validate-the-deployed-endpoint).
-If the authorized procedure is unavailable, stop before activation. Validate the deployed endpoint,
-not just a locally running Function.
-
-| Check | Expected result |
-|---|---|
-| Caller authentication | Missing/invalid credentials and unauthorized callers are rejected by Easy Auth. |
-| Non-delivering evaluation | An authorized caller's valid encrypted evaluation request returns the matching nonce without calling the provider. |
-| Controlled live test | The provider accepts the selected SMS or voice request and the test recipient receives the message or call. Provider acceptance alone is not proof of delivery. |
-| Operational visibility | Review Application Insights for the request outcome without recording phone numbers, message bodies, tokens, private keys, or nonce values in shared logs. |
-
-With the selected [credential cache](docs/CONTRACT.md#credential-caching-and-refresh) enabled,
-configured workers can acquire credentials at startup without sending an OTP; JavaScript/Python
-also poll for refresh, whereas .NET retrieves replacements on cache misses. Check collected
-`credential_refresh_failed` warnings before live testing; an evaluation success or absence of
-warnings does not validate provider credentials.
-
-Stop and resolve failed checks before changing the authentication policy. A successful package
-deployment is not evidence that provider credentials, caller authentication, or handset delivery work.
-
-#### Activate the selected authentication method
-
-After validation, have an **Authentication Policy Administrator** activate the selected authentication
-method policy using the endpoint URL and application client ID from the deployment summary:
-
-1. Read and save the existing selected-channel configuration with its tenant ID and timestamp.
-2. Follow the supported activation procedure to update the endpoint URL and application client ID,
-   preserving all other policy properties.
-3. Read the policy back and verify the saved values.
-
-**Setup does not activate policy.** If the supported policy fields are unavailable, stop and obtain
-the supported procedure from Microsoft rather than guessing an update. Policy backup and rollback
-remain administrator-owned; deleting Azure resources does not roll back policy.
-Public Graph SMS/voice resource documentation does not document the EPP `url`/`appId` fields;
-this is an assisted product-specific step, not a public PATCH example.
-
-Follow the [validation and activation procedure](setup/docs/README.md#step-3---manually-validate-and-activate-policy)
-before using the endpoint.
-
-## Onboarding completion checklist
-
-- [ ] The deployment summary matches the intended tenant, subscription, app, provider route, and region.
-- [ ] Provider credentials or API consent are complete.
-- [ ] Unauthorized callers are rejected and authorized evaluation succeeds without delivery.
-- [ ] A controlled live test confirms both provider acceptance and recipient delivery.
-- [ ] An administrator has backed up, activated, and read back the selected authentication policy.
-- [ ] Request/log ingestion is verified for the chosen runtime, and alert notifications are tested.
-- [ ] Credential and certificate-renewal owners, expiry reminders, and retention/cost controls are assigned.
-- [ ] The owner has retained the deployment summary and documented [rollback and teardown](setup/docs/README.md#rollback-and-decommissioning).
-
-Setup creates Application Insights and a workspace, **not alerts, action groups, availability
-tests, or certificate contacts**. Complete the [monitoring setup](docs/MONITORING.md#5-set-up-notifications-and-alert-rules)
-and [certificate lifecycle](setup/docs/README.md#encryption-certificate-lifecycle) steps manually.
-
-For setup failures, start with the [troubleshooting guide](setup/docs/Troubleshooting.md). For
-application behavior or configuration details, use the technical documentation below.
-
-## More documentation
-
-- [Application Insights guide](docs/APPLICATION-INSIGHTS.md) - telemetry flow, collected signals, identity, and single-region or multi-region collection limits.
-- [Monitoring setup and sample queries](docs/MONITORING.md) - single-region and multi-region Functions, alert setup, Workbooks, and optional Front Door monitoring.
-- [Optional manual Azure Front Door onboarding](docs/FRONTDOOR.md) - regional setup, readiness, security, and test results. No deployment script is provided.
-- [Setup guide](setup/docs/README.md) - permissions, deployment prompts, validation, and manual rollback.
-- [Technical reference](TECHNICAL.md) - configuration, packages, provider behavior, and security.
-- [Customer configuration and validation](docs/ONBOARDING.md) - value sources, automatic settings, provider handoffs, acceptance checks, and optional developer work.
-- [HTTP and provider contract](docs/CONTRACT.md) - implementation behavior and production limits.
-- Optional developer guides (not additional customer deployment steps): [JavaScript](javascript/README.md), [.NET](dotnet/README.md), [Python](python/README.md).
+| Check permissions, prompts, hosting plans, or renewal | [Setup reference](setup/docs/README.md) |
+| Find IDs, add provider credentials, or run acceptance checks | [Customer configuration and validation](docs/ONBOARDING.md) |
+| Resolve a setup or delivery problem | [Troubleshooting](setup/docs/Troubleshooting.md) |
+| Find logs and set up alerts | [Monitoring](docs/MONITORING.md) and [Application Insights](docs/APPLICATION-INSIGHTS.md) |
+| Understand the architecture, settings, or packages | [Technical reference](TECHNICAL.md) and [HTTP contract](docs/CONTRACT.md) |
+| Explore multiple Azure regions | [Manual Front Door guide](docs/FRONTDOOR.md); not included in guided setup |
+| Build a custom implementation | [JavaScript](javascript/README.md), [C#](dotnet/README.md), or [Python](python/README.md) |
+| Design primary-to-secondary provider fallback | [Developer walkthrough](docs/MULTI-PROVIDER-IMPLEMENTATION.md); not a built-in feature |
