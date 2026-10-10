@@ -120,6 +120,39 @@ developer integrations, not additional guided provider offers:
 | `infobip` | `infobip-api-key`; `Authorization: App ...` | Adapter only; no guided profile. Validate its account/options separately. |
 | `sinch` | `sinch-api-token`; static token | Adapter only; no guided profile. Validate its account/options separately. |
 
+### Where to enter API-key credentials in Key Vault
+
+Use the vault created for **your endpoint**, not a vault chosen from a screenshot:
+
+1. Open the saved deployment summary and find `resources.keyVault`.
+2. In **Azure portal > Key vaults**, open that vault.
+3. Select **Objects > Secrets**. This list shows secret names and status, not their values.
+   Select **Generate/Import** to enter a credential.
+
+![Key Vault Objects menu with Secrets selected and the Generate/Import action visible](images/onboarding/key-vault-secrets.png)
+
+*This existing test vault contains examples for more than one adapter. Create only the secrets
+required by your chosen integration in the table above. The screenshot does not mean guided
+setup configures multiple providers or supports every adapter.*
+
+4. Choose **Manual**. For **Name**, use the exact name in the provider table above.
+   For **Secret value**, paste the credential obtained through your provider's secure process.
+   Leave **Enabled** set to **Yes** and set activation/expiry dates to match your provider agreement.
+5. Select **Create** only after checking the vault, name, and value. Repeat for any additional
+   required credential, such as an account/customer ID.
+
+![Unsaved Create a secret form showing a sample name, masked placeholder value, and Enabled set to Yes](images/onboarding/key-vault-create-secret.png)
+
+*The screenshot uses `example-provider-api-key` and a fake masked value to show the form.
+Neither is a working configuration. The form was cancelled without saving. Use the exact
+provider-specific secret names, not this example name, and never reveal a real key for a screenshot.*
+
+After saving, verify the name, enabled state, and version metadata without selecting
+**Show Secret Value**. Do not edit or replace the setup-created encryption certificate secret.
+If the vault denies access, ask the approved credential administrator for help; do not disable
+vault protection or copy credentials into Function settings. See the permission and runtime
+checks in the provider-specific steps below.
+
 ### Telesign: enter and verify the two vault secrets
 
 1. Obtain the raw API key and matching Customer ID from your Telesign account's approved secure

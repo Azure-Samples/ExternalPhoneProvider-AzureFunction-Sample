@@ -22,6 +22,15 @@ Buying an offer does not enable the tenant feature or deploy this sample. If acc
 approved procedure is unavailable, **stop here** and follow the
 [access and support guidance](docs/ONBOARDING.md#before-purchasing-or-deploying).
 
+In Security Store, open **Private solutions** and select the subscription approved for your
+deployment. Review the phone-provider offers available to that subscription.
+
+![Cropped examples of phone-provider offer cards in Microsoft Security Store](docs/images/onboarding/security-store-providers.png)
+
+*These are cropped sample cards from Security Store, not recommendations or a complete provider
+list. Offers, preview labels, pricing, and access can change. A store listing does not mean the
+setup script supports that integration; check [guided provider support](docs/ONBOARDING.md#provider-credential-names).*
+
 Have these ready:
 
 - **Provider account:** complete the provider's account and sender registration for your chosen
@@ -154,6 +163,12 @@ Complete the [provider authentication instructions](docs/ONBOARDING.md#complete-
 for your selected integration. This means either entering credentials in the setup-created Key Vault
 or having the provider administrator authorize the application. Azure deployment alone does not
 complete that step. Keep credentials out of source code, screenshots, and shared logs.
+
+For an API-key integration, open the Key Vault named in your deployment summary, then select
+**Objects > Secrets > Generate/Import**. Enter each credential under the exact secret name
+required by your provider. The [illustrated Key Vault steps](docs/ONBOARDING.md#where-to-enter-api-key-credentials-in-key-vault)
+show the location and an unsaved example. OAuth integrations use the provider-administrator
+handoff instead; do not create an API-key secret for them.
 
 In your Function App, open **Settings > Authentication**. Check that authentication is
 **Enabled**, access is set to **Require authentication**, and unauthenticated requests receive
