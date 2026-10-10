@@ -5,8 +5,8 @@ public sealed class AppConfig
     public string? DecryptionKeyPem { get; init; }
     public string? ExpectedKeyId { get; init; }
     public string? ProviderName { get; init; }
-    public string? ProviderEndpoint { get; init; }
-    public string? ProviderChannel { get; init; }
+    public string? ProviderSmsEndpoint { get; init; }
+    public string? ProviderVoiceEndpoint { get; init; }
     public string? ProviderAuthMode { get; init; }
     public string? ProviderTenantId { get; init; }
     public string? ProviderScope { get; init; }
@@ -23,8 +23,8 @@ public sealed class AppConfig
         DecryptionKeyPem = env.Get("EPP_DECRYPTION_KEY_PEM"),
         ExpectedKeyId = env.Get("EPP_ENCRYPTION_KEY_ID"),
         ProviderName = env.Get("EPP_PROVIDER_NAME")?.Trim().ToLowerInvariant(),
-        ProviderEndpoint = env.Get("EPP_PROVIDER_ENDPOINT"),
-        ProviderChannel = env.Get("EPP_PROVIDER_CHANNEL")?.Trim().ToLowerInvariant(),
+        ProviderSmsEndpoint = env.Get("EPP_PROVIDER_SMS_ENDPOINT"),
+        ProviderVoiceEndpoint = env.Get("EPP_PROVIDER_VOICE_ENDPOINT"),
         ProviderAuthMode = env.Get("EPP_PROVIDER_AUTH_MODE")?.Trim(),
         ProviderTenantId = env.Get("EPP_PROVIDER_TENANT_ID")?.Trim(),
         ProviderScope = env.Get("EPP_PROVIDER_SCOPE")?.Trim(),

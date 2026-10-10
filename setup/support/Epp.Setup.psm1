@@ -135,7 +135,7 @@ function Read-EppInput {
 
 function Get-EppProvider {
     param(
-        [string] $AssetDirectory, [string] $SourceBaseUri, [string] $Provider, [string] $Channel,
+        [string] $AssetDirectory, [string] $SourceBaseUri, [string] $Provider,
         [string] $EndpointRegion, [switch] $NonInteractive,
         [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
         [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample'
@@ -163,13 +163,13 @@ function Get-EppProvider {
     Invoke-WebRequest -Uri "$SourceBaseUri/providers/$($selected['file'])" -OutFile $path -TimeoutSec 60 -MaximumRedirection 0
     $profile = Read-EppJson $path
     return ConvertTo-EppProviderSettings -Profile $profile -Id $selected['id'] -DisplayName $selected['displayName'] `
-        -Channel $Channel -EndpointRegion $EndpointRegion -NonInteractive:$NonInteractive
+        -EndpointRegion $EndpointRegion -NonInteractive:$NonInteractive
 }
 
 function ConvertTo-EppProviderSettings {
     param(
         [Collections.IDictionary] $Profile, [string] $Id, [string] $DisplayName,
-        [string] $Channel, [string] $EndpointRegion, [switch] $NonInteractive
+        [string] $EndpointRegion, [switch] $NonInteractive
     )
 
     $issues = [Collections.Generic.List[string]]::new()
@@ -197,41 +197,37 @@ function ConvertTo-EppProviderSettings {
 
     $routes = $deployment['routes']
     if ($routes -isnot [Collections.IDictionary]) { throw "Provider '$DisplayName' is missing deployment.routes." }
-    foreach ($channelId in @('sms', 'voice')) {
-        if ($routes[$channelId] -isnot [Collections.IDictionary]) {
-            $issues.Add("deployment.routes.$channelId is missing")
+    foreach ($regionId in @('global', 'eu')) {
+        $route = $routes[$regionId]
+        if ($route -isnot [Collections.IDictionary]) {
+            $issues.Add("deployment.routes.$regionId is missing")
             continue
         }
-        foreach ($regionId in @('global', 'eu')) {
-            $route = $routes[$channelId][$regionId]
-            if ($route -isnot [Collections.IDictionary]) {
-                $issues.Add("deployment.routes.$channelId.$regionId is missing")
-                continue
-            }
-            try { Assert-EppHttpsUrl $route['endpoint'] }
-            catch { $issues.Add("deployment.routes.$channelId.$regionId.endpoint must be a public HTTPS endpoint") }
-            $timeout = $route['timeoutMilliseconds']
-            $retry = $route['retryIntervalSeconds']
-            if (($timeout -isnot [long] -and $timeout -isnot [int]) -or $timeout -lt 1 -or $timeout -gt 2500) {
-                $issues.Add("deployment.routes.$channelId.$regionId.timeoutMilliseconds must be an integer from 1 to 2500")
-            }
-            if (($retry -isnot [long] -and $retry -isnot [int]) -or $retry -lt 0 -or $retry -gt 2147483) {
-                $issues.Add("deployment.routes.$channelId.$regionId.retryIntervalSeconds must be a nonnegative integer fitting Int32 milliseconds")
-            }
-            if ($authenticationMode -eq 'oauth') {
-                try { $null = ConvertTo-EppGuid $route['appId'] }
-                catch { $issues.Add("deployment.routes.$channelId.$regionId.appId must identify the provider API application") }
-                $scope = [string]$route['scope']
-                $resource = $scope -replace '/\.default$', ''
-                $resourceUri = $null
-                $resourceGuid = [Guid]::Empty
-                $validResource = ([Guid]::TryParse($resource, [ref] $resourceGuid) -and $resourceGuid -ne [Guid]::Empty) -or
-                    ([Uri]::TryCreate($resource, [UriKind]::Absolute, [ref] $resourceUri) -and
-                        $resourceUri.Scheme -in @('api', 'https') -and $resourceUri.Host -and
-                        -not $resourceUri.UserInfo -and -not $resourceUri.Query -and -not $resourceUri.Fragment)
-                if (-not $validResource -or $scope -notmatch '/\.default$' -or $scope -match '[\s<>]') {
-                    $issues.Add("deployment.routes.$channelId.$regionId.scope must be the provider API resource followed by /.default")
-                }
+        foreach ($endpointName in @('smsEndpoint', 'voiceEndpoint')) {
+            try { Assert-EppHttpsUrl $route[$endpointName] }
+            catch { $issues.Add("deployment.routes.$regionId.$endpointName must be a public HTTPS endpoint") }
+        }
+        $timeout = $route['timeoutMilliseconds']
+        $retry = $route['retryIntervalSeconds']
+        if (($timeout -isnot [long] -and $timeout -isnot [int]) -or $timeout -lt 1 -or $timeout -gt 2500) {
+            $issues.Add("deployment.routes.$regionId.timeoutMilliseconds must be an integer from 1 to 2500")
+        }
+        if (($retry -isnot [long] -and $retry -isnot [int]) -or $retry -lt 0 -or $retry -gt 2147483) {
+            $issues.Add("deployment.routes.$regionId.retryIntervalSeconds must be a nonnegative integer fitting Int32 milliseconds")
+        }
+        if ($authenticationMode -eq 'oauth') {
+            try { $null = ConvertTo-EppGuid $route['appId'] }
+            catch { $issues.Add("deployment.routes.$regionId.appId must identify the provider API application") }
+            $scope = [string]$route['scope']
+            $resource = $scope -replace '/\.default$', ''
+            $resourceUri = $null
+            $resourceGuid = [Guid]::Empty
+            $validResource = ([Guid]::TryParse($resource, [ref] $resourceGuid) -and $resourceGuid -ne [Guid]::Empty) -or
+                ([Uri]::TryCreate($resource, [UriKind]::Absolute, [ref] $resourceUri) -and
+                    $resourceUri.Scheme -in @('api', 'https') -and $resourceUri.Host -and
+                    -not $resourceUri.UserInfo -and -not $resourceUri.Query -and -not $resourceUri.Fragment)
+            if (-not $validResource -or $scope -notmatch '/\.default$' -or $scope -match '[\s<>]') {
+                $issues.Add("deployment.routes.$regionId.scope must be the provider API resource followed by /.default")
             }
         }
     }
@@ -239,19 +235,15 @@ function ConvertTo-EppProviderSettings {
         throw "Provider '$DisplayName' is not deployment-ready:`n - $($issues -join "`n - ")`nAsk the provider owner to complete its GitHub JSON. No Azure resources were changed."
     }
 
-    $channelEntry = Select-EppOption -Entries @(
-        @{ id = 'sms'; displayName = 'SMS' }
-        @{ id = 'voice'; displayName = 'Voice' }
-    ) -Name Channel -Value $Channel -NonInteractive:$NonInteractive
     $regionEntry = Select-EppOption -Entries @(
         @{ id = 'global'; displayName = 'Global endpoint' }
         @{ id = 'eu'; displayName = 'EU endpoint' }
     ) -Name EndpointRegion -Value $EndpointRegion -NonInteractive:$NonInteractive
-    $selectedRoute = $routes[$channelEntry['id']][$regionEntry['id']]
+    $selectedRoute = $routes[$regionEntry['id']]
     $settings = @{
         EPP_PROVIDER_NAME = $Id
-        EPP_PROVIDER_ENDPOINT = [string]$selectedRoute['endpoint']
-        EPP_PROVIDER_CHANNEL = [string]$channelEntry['id']
+        EPP_PROVIDER_SMS_ENDPOINT = [string]$selectedRoute['smsEndpoint']
+        EPP_PROVIDER_VOICE_ENDPOINT = [string]$selectedRoute['voiceEndpoint']
         EPP_PROVIDER_ENDPOINT_REGION = [string]$regionEntry['id']
         EPP_PROVIDER_TIMEOUT_MS = [string]$selectedRoute['timeoutMilliseconds']
         EPP_PROVIDER_RETRY_INTERVAL_MS = [string]([long]$selectedRoute['retryIntervalSeconds'] * 1000)
@@ -266,7 +258,6 @@ function ConvertTo-EppProviderSettings {
         Id = $Id
         DisplayName = $DisplayName
         Manifest = $Profile
-        Channel = [string]$channelEntry['id']
         EndpointRegion = [string]$regionEntry['id']
         AuthenticationMode = $authenticationMode
         Settings = $settings
@@ -905,12 +896,14 @@ function Show-EppPlan {
     Write-Host "Cache app settings: EPP_KEY_VAULT_CACHE_ENABLED=$cacheEnabled; EPP_ACCESS_TOKEN_CACHE_ENABLED=$cacheEnabled"
     Write-Host 'Cache control requires a Function package that reads these settings; setting them alone does not change runtime caching.' -ForegroundColor Yellow
     Write-Host "Provider:     $($ProviderConfiguration.DisplayName)"
-    Write-Host "Channel:      $($ProviderConfiguration.Channel)"
+    Write-Host 'Channels:     SMS and voice (selected by each request)'
     $tenantScope = if ($ProviderConfiguration.EndpointRegion -eq 'eu') { 'EU' } else { 'Global' }
     Write-Host "Tenant scope: $tenantScope"
     Write-Host "Provider auth: $($ProviderConfiguration.AuthenticationMode)"
     Write-Host "Provider tenant: $($ProviderConfiguration.Settings.EPP_PROVIDER_TENANT_ID)"
-    Write-Host "API endpoint: $($ProviderConfiguration.Settings.EPP_PROVIDER_ENDPOINT)"
+    Write-Host "SMS endpoint: $($ProviderConfiguration.Settings.EPP_PROVIDER_SMS_ENDPOINT)"
+    Write-Host "Voice endpoint: $($ProviderConfiguration.Settings.EPP_PROVIDER_VOICE_ENDPOINT)"
+    Write-Host 'Per-channel routing requires a Function package that reads EPP_PROVIDER_SMS_ENDPOINT and EPP_PROVIDER_VOICE_ENDPOINT.' -ForegroundColor Yellow
     if ($ProviderConfiguration.AuthenticationMode -eq 'oauth') {
         Write-Host "Provider API: $($ProviderConfiguration.Settings.EPP_PROVIDER_APP_ID) / $($ProviderConfiguration.Settings.EPP_PROVIDER_SCOPE)"
     }
@@ -1021,11 +1014,11 @@ function Show-EppDeploymentResult {
     }
 
     Write-Host "`nNext steps" -ForegroundColor Cyan
-    $authenticationMethod = if ($ProviderConfiguration.Channel -eq 'voice') { 'Voice' } else { 'Sms' }
-    $graphPolicyEndpoint = "https://graph.microsoft.com/beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/$authenticationMethod"
-    Write-Host 'After validating the endpoint, update the External Phone Provider policy in Microsoft Graph:'
-    Write-Host '   Microsoft Graph endpoint: ' -NoNewline
-    Write-Host $graphPolicyEndpoint -ForegroundColor Yellow
+    Write-Host 'After validating each channel you intend to enable, update its External Phone Provider policy in Microsoft Graph:'
+    foreach ($authenticationMethod in @('Sms', 'Voice')) {
+        Write-Host "   ${authenticationMethod}: " -NoNewline
+        Write-Host "https://graph.microsoft.com/beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/$authenticationMethod" -ForegroundColor Yellow
+    }
     Write-Host '   url:   ' -NoNewline
     Write-Host $EndpointUrl -ForegroundColor Yellow
     Write-Host '   appId: ' -NoNewline
@@ -1520,9 +1513,11 @@ function Invoke-EppDeployment {
         -SiteId $siteId -Package $Package -Directory $AssetDirectory
     $result = [ordered]@{
         tenantId = $Inputs.TenantId; subscriptionId = $Inputs.SubscriptionId; applicationId = $Inputs.ApplicationId
-        provider = $ProviderConfiguration.Id; channel = $ProviderConfiguration.Channel
+        provider = $ProviderConfiguration.Id
         endpointRegion = $ProviderConfiguration.EndpointRegion; providerAuthentication = $Inputs.ProviderAuthentication
         providerTenantId = $Inputs.ProviderTenantId
+        providerSmsEndpoint = $ProviderConfiguration.Settings.EPP_PROVIDER_SMS_ENDPOINT
+        providerVoiceEndpoint = $ProviderConfiguration.Settings.EPP_PROVIDER_VOICE_ENDPOINT
         resourcePrefix = $Inputs.ResourcePrefix; resources = $Names
         language = $Inputs.Language; servicePlan = $Inputs.ServicePlan
         keyVaultCacheEnabled = $Inputs.ServicePlan -eq 'EP1'
@@ -1616,7 +1611,7 @@ function Invoke-EppSetup {
     [CmdletBinding()]
     param(
         [string] $TenantId, [string] $SubscriptionId, [string] $ApplicationId, [string] $Location,
-        [string] $Provider, [string] $Channel, [string] $EndpointRegion,
+        [string] $Provider, [string] $EndpointRegion,
         [string] $ResourcePrefix,
         [string] $Language,
         [string] $ServicePlan,
@@ -1635,17 +1630,13 @@ function Invoke-EppSetup {
             -NonInteractive:$NonInteractive
     }
     $inputs.Location = Read-EppInput Location $Location -Kind Location -Hint 'Azure region, for example westus2' -NonInteractive:$NonInteractive
-    $channelSelection = Select-EppOption -Entries @(
-        @{ id = 'sms'; displayName = 'SMS' }
-        @{ id = 'voice'; displayName = 'Voice' }
-    ) -Name Channel -Value $Channel -NonInteractive:$NonInteractive
     $tenantScopeSelection = Select-EppOption -Entries @(
         @{ id = 'global'; displayName = 'Global' }
         @{ id = 'eu'; displayName = 'EU' }
     ) -Name EndpointRegion -PromptName 'Tenant scope' -Value $EndpointRegion -NonInteractive:$NonInteractive
 
     $providerConfiguration = Get-EppProvider -AssetDirectory $AssetDirectory -SourceBaseUri $SourceBaseUri -Provider $Provider `
-        -Channel $channelSelection['id'] -EndpointRegion $tenantScopeSelection['id'] `
+        -EndpointRegion $tenantScopeSelection['id'] `
         -NonInteractive:$NonInteractive -SourceRepository $SourceRepository
     $inputs.ProviderAuthentication = $providerConfiguration.AuthenticationMode
     $inputs.ProviderTenantId = $providerConfiguration.Settings.EPP_PROVIDER_TENANT_ID

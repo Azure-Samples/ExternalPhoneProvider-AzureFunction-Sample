@@ -41,9 +41,10 @@ try {
 const envKeys = [
     'EPP_ENCRYPTION_KEY_ID', 'AZURE_CLIENT_ID', 'EPP_PROVIDER_NAME',
     'EPP_PROVIDER_ENDPOINT', 'EPP_PROVIDER_CHANNEL', 'EPP_PROVIDER_TIMEOUT_MS',
+    'EPP_PROVIDER_SMS_ENDPOINT', 'EPP_PROVIDER_VOICE_ENDPOINT',
     'EPP_PROVIDER_AUTH_MODE', 'EPP_PROVIDER_TENANT_ID', 'EPP_PROVIDER_SCOPE',
     'EPP_OUTBOUND_CLIENT_ID', 'EPP_OUTBOUND_MI_CLIENT_ID', 'KEY_VAULT_URL',
-    'EPP_DECRYPTION_KEY_PEM', 'SINCH_SERVICE_PLAN_ID',
+    'EPP_DECRYPTION_KEY_PEM', 'SINCH_SERVICE_PLAN_ID', 'SINCH_VOICE_ENDPOINT',
     'EPP_KEY_VAULT_CACHE_ENABLED', 'EPP_ACCESS_TOKEN_CACHE_ENABLED',
 ];
 const baseDelivery = {
@@ -67,7 +68,8 @@ beforeEach(() => {
         EPP_DECRYPTION_KEY_PEM: privateKey.export({ type: 'pkcs8', format: 'pem' }),
         KEY_VAULT_URL: 'https://unit-test.vault.azure.net',
         EPP_PROVIDER_NAME: 'soprano',
-        EPP_PROVIDER_ENDPOINT: 'https://provider.example/epp/messages',
+        EPP_PROVIDER_SMS_ENDPOINT: 'https://provider.example/epp/messages',
+        EPP_PROVIDER_VOICE_ENDPOINT: 'https://provider.example/epp/messages',
         EPP_PROVIDER_AUTH_MODE: 'oauth',
         EPP_PROVIDER_TENANT_ID: '11111111-1111-1111-1111-111111111111',
         EPP_PROVIDER_SCOPE: 'api://provider/.default',
@@ -297,7 +299,8 @@ test('JWE authenticates original protected bytes and caches PEM-compatible keys'
 });
 
 test('evaluation checks advisory key ID but remains provider-independent', async () => {
-    delete process.env.EPP_PROVIDER_ENDPOINT;
+    delete process.env.EPP_PROVIDER_SMS_ENDPOINT;
+    delete process.env.EPP_PROVIDER_VOICE_ENDPOINT;
     delete process.env.KEY_VAULT_URL;
     process.env.EPP_ENCRYPTION_KEY_ID = 'different-kid';
     const result = await invoke(await envelope({ mode: 2 }));
@@ -307,6 +310,97 @@ test('evaluation checks advisory key ID but remains provider-independent', async
     assert.deepEqual([getToken.mock.callCount(), getSecret.mock.callCount(), fetchMock.mock.callCount()],
         [0, 0, 0]);
 });
+
+for (const provider of ['telesign', 'soprano']) {
+    for (const legacyChannel of [undefined, 'sms', 'voice', 'invalid']) {
+        test(`${provider}: request selects either channel with legacy setting ${legacyChannel}`, async () => {
+            process.env.EPP_PROVIDER_NAME = provider;
+            process.env.EPP_PROVIDER_AUTH_MODE = provider === 'telesign' ? 'apiKey' : 'oauth';
+            if (legacyChannel !== undefined) process.env.EPP_PROVIDER_CHANNEL = legacyChannel;
+            fetchMock.mock.mockImplementation(async () => ({
+                ok: true,
+                status: 200,
+                text: async () => JSON.stringify({
+                    status: provider === 'telesign' ? { code: 3001 } : 'ENROUTE',
+                }),
+            }));
+
+            for (const [channel, channelName] of [[1, 'sms'], ['SMS', 'sms'], [2, 'voice'], ['VOICE', 'voice']]) {
+                const result = await invoke(await envelope({ channel }));
+                assert.equal(result.status, 200);
+                assert.equal(result.jsonBody.nonce, baseDelivery.nonce);
+                const [url, init] = fetchMock.mock.calls.at(-1).arguments;
+                assert.equal(url, channelName === 'voice'
+                    ? process.env.EPP_PROVIDER_VOICE_ENDPOINT : process.env.EPP_PROVIDER_SMS_ENDPOINT);
+                const body = JSON.parse(init.body);
+                if (provider === 'telesign') {
+                    assert.deepEqual(body.channels, [{ channel: channelName }]);
+                } else {
+                    assert.deepEqual(body.messageTypes, [channelName]);
+                }
+            }
+            assert.equal(fetchMock.mock.callCount(), 4);
+        });
+    }
+}
+
+for (const [provider, response, smsPath, voicePath] of [
+    ['telesign', { status: { code: 3001 } }, '', ''],
+    ['soprano', { status: 'ENROUTE' }, '', ''],
+    ['infobip', { messages: [{ status: { groupName: 'PENDING' } }] }, '/sms/3/messages', '/tts/3/advanced'],
+    ['sinch', { id: 'provider-id' }, '/xms/v1/plan/batches', '/calling/v1/callouts'],
+]) {
+    test(`${provider}: request channel selects distinct configured endpoints`, async () => {
+        Object.assign(process.env, {
+            EPP_PROVIDER_NAME: provider,
+            EPP_PROVIDER_AUTH_MODE: provider === 'soprano' ? 'oauth' : 'apiKey',
+            EPP_PROVIDER_SMS_ENDPOINT: 'https://sms.provider.example/send',
+            EPP_PROVIDER_VOICE_ENDPOINT: 'https://voice.provider.example/send',
+            SINCH_SERVICE_PLAN_ID: 'plan',
+            SINCH_VOICE_ENDPOINT: 'https://legacy.provider.example',
+        });
+        fetchMock.mock.mockImplementation(async () => ({
+            ok: true, status: 200, text: async () => JSON.stringify(response),
+        }));
+        for (const legacyEndpoint of [undefined, 'https://legacy.provider.example']) {
+            if (legacyEndpoint === undefined) delete process.env.EPP_PROVIDER_ENDPOINT;
+            else process.env.EPP_PROVIDER_ENDPOINT = legacyEndpoint;
+            for (const [channel, endpoint, path] of [
+                [1, process.env.EPP_PROVIDER_SMS_ENDPOINT, smsPath],
+                [2, process.env.EPP_PROVIDER_VOICE_ENDPOINT, voicePath],
+            ]) {
+                const result = await invoke(await envelope({ channel }));
+                assert.equal(result.status, 200);
+                assert.equal(result.jsonBody.nonce, baseDelivery.nonce);
+                assert.equal(fetchMock.mock.calls.at(-1).arguments[0], endpoint + path);
+            }
+        }
+        assert.equal(fetchMock.mock.callCount(), 4);
+    });
+}
+
+for (const channel of ['sms', 'voice']) {
+    test(`${channel}: requires its endpoint without legacy or cross-channel fallback`, async () => {
+        const selected = channel === 'sms' ? 'EPP_PROVIDER_SMS_ENDPOINT' : 'EPP_PROVIDER_VOICE_ENDPOINT';
+        const other = channel === 'sms' ? 'EPP_PROVIDER_VOICE_ENDPOINT' : 'EPP_PROVIDER_SMS_ENDPOINT';
+        process.env.EPP_PROVIDER_ENDPOINT = 'https://legacy.provider.example/send';
+        process.env[other] = 'https://other.provider.example/send';
+        for (const value of [undefined, '', '   ', 'http://invalid.provider.example']) {
+            if (value === undefined) delete process.env[selected];
+            else process.env[selected] = value;
+            failure(await invoke(await envelope({ channel })), 502);
+            assert.equal(event('request_failed').failureReason, 'invalid_provider_endpoint');
+            assert.equal((await invoke(await envelope({ channel, mode: 2 }))).status, 200);
+        }
+        assert.equal(fetchMock.mock.callCount(), 0);
+
+        process.env[selected] = 'https://selected.provider.example/send';
+        process.env[other] = 'http://invalid.provider.example';
+        assert.equal((await invoke(await envelope({ channel }))).status, 200);
+        assert.equal(fetchMock.mock.calls[0].arguments[0], process.env[selected]);
+        assert.equal(fetchMock.mock.callCount(), 1);
+    });
+}
 
 test('live Soprano flow preserves message/correlation and never forwards inbound authorization', async () => {
     const result = await invoke(await envelope(), {
@@ -323,7 +417,7 @@ test('live Soprano flow preserves message/correlation and never forwards inbound
         },
     });
     const [url, init] = fetchMock.mock.calls[0].arguments;
-    assert.equal(url, process.env.EPP_PROVIDER_ENDPOINT);
+    assert.equal(url, process.env.EPP_PROVIDER_SMS_ENDPOINT);
     assert.equal(init.redirect, 'manual');
     assert.equal(init.headers.Authorization, 'Bearer PRIVATE-OAUTH-TOKEN');
     assert.notEqual(init.headers.Authorization, 'FORGED-INBOUND-AUTH');
@@ -373,14 +467,11 @@ test('provider selection, configuration, credential and request-build failures a
         ['provider_selection', 'unknown_provider', 400, () => {
             process.env.EPP_PROVIDER_NAME = 'PRIVATE-UNKNOWN';
         }, {}],
-        ['provider_configuration', 'channel_not_configured', 400, () => {
-            process.env.EPP_PROVIDER_CHANNEL = 'voice';
-        }, {}],
         ['provider_configuration', 'authentication_mode_mismatch', 502, () => {
             process.env.EPP_PROVIDER_AUTH_MODE = 'apiKey';
         }, {}],
         ['provider_configuration', 'invalid_provider_endpoint', 502, () => {
-            process.env.EPP_PROVIDER_ENDPOINT = 'http://PRIVATE-ENDPOINT';
+            process.env.EPP_PROVIDER_SMS_ENDPOINT = 'http://PRIVATE-ENDPOINT';
         }, {}],
         ['provider_request_build', 'request_build_failed', 502, () => {}, {
             delivery: { ...baseDelivery, message: 'No passcode here.' },
@@ -395,10 +486,9 @@ test('provider selection, configuration, credential and request-build failures a
             [stage, reason]);
         Object.assign(process.env, {
             EPP_PROVIDER_NAME: 'soprano',
-            EPP_PROVIDER_ENDPOINT: 'https://provider.example/epp/messages',
+            EPP_PROVIDER_SMS_ENDPOINT: 'https://provider.example/epp/messages',
             EPP_PROVIDER_AUTH_MODE: 'oauth',
         });
-        delete process.env.EPP_PROVIDER_CHANNEL;
     }
 });
 
@@ -458,7 +548,7 @@ test('Sinch successful HTTP without a nonblank message ID fails closed', async (
 test('Telesign strict integer status and voice pacing keep endpoint outcomes stable', async () => {
     process.env.EPP_PROVIDER_NAME = 'telesign';
     process.env.EPP_PROVIDER_AUTH_MODE = 'apiKey';
-    process.env.EPP_PROVIDER_ENDPOINT = 'https://verify.telesign.com/epp/send';
+    process.env.EPP_PROVIDER_VOICE_ENDPOINT = 'https://verify.telesign.com/epp/send';
     for (const [code, status] of [[290, 200], ['290', 502], [true, 502]]) {
         fetchMock.mock.mockImplementation(async () => ({
             ok: true,
@@ -497,7 +587,7 @@ test('correlation precedence preserves wire IDs while logs omit unsafe values', 
 });
 
 test('fixed logging excludes bodies, secrets, query strings, descriptions and exceptions', async () => {
-    process.env.EPP_PROVIDER_ENDPOINT = 'https://provider.example/api/send?key=PRIVATE-QUERY';
+    process.env.EPP_PROVIDER_SMS_ENDPOINT = 'https://provider.example/api/send?key=PRIVATE-QUERY';
     fetchMock.mock.mockImplementation(async () => ({
         ok: true,
         status: 201,

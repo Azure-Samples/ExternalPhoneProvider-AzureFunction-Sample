@@ -5,6 +5,7 @@
 .DESCRIPTION
     Download only this file. Supporting PowerShell, Bicep, and provider JSON files come from
     the selected public GitHub repository (Azure-Samples by default).
+    The endpoint supports SMS and voice, selected by each request.
     Application registration and policy activation are manual steps.
     No Azure resources are changed until you approve the complete plan.
 .PARAMETER SourceRepository
@@ -31,7 +32,6 @@ param(
     [string] $ApplicationId,
     [string] $Location,
     [string] $Provider,
-    [string] $Channel,
     [string] $EndpointRegion,
     [string] $ResourcePrefix,
     [string] $Language,

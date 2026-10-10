@@ -7,8 +7,8 @@
     "EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>",
 
     "EPP_PROVIDER_NAME": "<registered-adapter-id>",
-    "EPP_PROVIDER_ENDPOINT": "https://<provider-host>/<complete-send-path>",
-    "EPP_PROVIDER_CHANNEL": "<sms-or-voice>",
+    "EPP_PROVIDER_SMS_ENDPOINT": "https://<sms-provider-host>/<complete-send-path>",
+    "EPP_PROVIDER_VOICE_ENDPOINT": "https://<voice-provider-host>/<complete-send-path>",
     "EPP_PROVIDER_ENDPOINT_REGION": "<global-or-eu>",
     "EPP_PROVIDER_AUTH_MODE": "<apiKey-or-oauth>",
     "EPP_PROVIDER_TENANT_ID": "<provider-tenant-id>",

@@ -9,29 +9,17 @@
       "identityKeyVaultSecretName": "telesign-customer-id"
     },
     "routes": {
-      "sms": {
-        "global": {
-          "endpoint": "https://verify.telesign.com/integration/msft/cyot",
-          "timeoutMilliseconds": 1500,
-          "retryIntervalSeconds": 30
-        },
-        "eu": {
-          "endpoint": "https://verify.telesign.com/integration/msft/cyot",
-          "timeoutMilliseconds": 1500,
-          "retryIntervalSeconds": 30
-        }
+      "global": {
+        "smsEndpoint": "https://verify.telesign.com/integration/msft/cyot",
+        "voiceEndpoint": "https://verify.telesign.com/integration/msft/cyot",
+        "timeoutMilliseconds": 1500,
+        "retryIntervalSeconds": 30
       },
-      "voice": {
-        "global": {
-          "endpoint": "https://verify.telesign.com/integration/msft/cyot",
-          "timeoutMilliseconds": 1500,
-          "retryIntervalSeconds": 30
-        },
-        "eu": {
-          "endpoint": "https://verify.telesign.com/integration/msft/cyot",
-          "timeoutMilliseconds": 1500,
-          "retryIntervalSeconds": 30
-        }
+      "eu": {
+        "smsEndpoint": "https://verify.telesign.com/integration/msft/cyot",
+        "voiceEndpoint": "https://verify.telesign.com/integration/msft/cyot",
+        "timeoutMilliseconds": 1500,
+        "retryIntervalSeconds": 30
       }
     }
   }

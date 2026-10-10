@@ -19,18 +19,26 @@ Front Door origins. A successful deployment or evaluation doesn't prove live del
 
 ## Availability
 
-Choose **SMS or voice**, a **Global or EU provider route** (the prompt calls it **Tenant scope**),
+Choose a **Global or EU provider route** (the prompt calls it **Tenant scope**),
 **Telesign or Soprano**, and an
 Azure Function **platform**: Node.js, .NET, or Python, plus a **service plan**: Flex Consumption FC1
 or Premium EP1. By default, setup resolves the source repository's latest stable
 `epp-packages-*` release produced by CI. A public fork's test branch can use its matching fork release.
 There is no package URL or checksum to enter. Setup verifies `SHA256SUMS.txt` automatically and
 performs the required build and publication for the selected language.
+The Function endpoint accepts both SMS and voice; the request body's `channel` selects its provider URL.
+Setup does not prompt for a channel or write a channel restriction to app settings.
 
-Provider profiles contain complete channel/region route objects. Telesign contains its supplied
+Provider profiles contain complete region route objects at `deployment.routes.global` and
+`deployment.routes.eu`. Each route has separate `smsEndpoint` and `voiceEndpoint` URLs plus shared
+authentication and timing settings. The URLs can differ; setup always provisions both as
+`EPP_PROVIDER_SMS_ENDPOINT` and `EPP_PROVIDER_VOICE_ENDPOINT`. Telesign contains its supplied
 route URLs, tenant, authentication, and timings. Soprano contains its provider tenant, Global/EU
 routes, API application ID, scope, authentication, and timings. The provider files contain the
 complete deployment contract.
+
+Use a Function package that supports these channel-specific settings. Both URLs are configured
+explicitly; neither channel uses a shared endpoint fallback. Older packages must be upgraded.
 
 The current profiles use identical Global/EU URLs, and Soprano uses the same app ID/scope.
 This label is not proof of data residency or a choice of Azure region; confirm processing/routing
@@ -233,9 +241,9 @@ The flow is:
 1. **Collect missing customer inputs:** tenant, subscription, existing application client ID, Azure
    region, and resource prefix. Supplied values are reused without prompts. Credentials are never
    requested as ordinary string parameters.
-2. **Choose SMS or voice**, then the **Global or EU provider route** (shown as **Tenant scope**).
+2. **Choose the Global or EU provider route** (shown as **Tenant scope**).
 3. **Choose a provider**, then an Azure Function **platform**: Node.js, .NET, or Python. Setup downloads the provider JSON,
-   resolves one complete route containing endpoint, authentication, app-ID/scope
+   resolves one complete regional route containing both SMS and voice endpoints, authentication, app-ID/scope
    when applicable, timeout, and retry interval. Explicit test values are allowed, shown as test
    configuration, and passed to Azure settings. It also resolves the latest stable CI package
    release and looks up the language asset name in `packages/catalog.json`; there are no
@@ -286,14 +294,14 @@ Supply known values to shorten the prompts:
     -Language javascript `
     -ServicePlan FC1 `
     -Provider telesign `
-    -Channel sms `
     -EndpointRegion global `
     -ResourcePrefix contoso
 ```
 
-Replace the ID placeholders with quoted GUID strings before execution. For an independent
-second channel/provider deployment, use a different prefix **and a dedicated app**.
-The suffix does not include channel/provider/region, so changing those inputs with the same
+Replace the ID placeholders with quoted GUID strings before execution. The `-Channel` parameter
+has been removed; omit it from existing setup commands. For an independent second provider
+deployment, use a different prefix **and a dedicated app**.
+The suffix does not include provider/region, so changing those inputs with the same
 subscription/app/prefix can reconfigure the existing endpoint. See
 [deployment separation and key constraints](../../docs/ONBOARDING.md#inputs-you-supply-to-setup).
 
@@ -337,8 +345,8 @@ alone never approves changes. There is no `-Stage`, `-Resume`, `-ConfigPath`, or
 
 ### Noninteractive example
 
-This is a fully specified Telesign/SMS/Global JavaScript deployment example, not a credential
-script. Replace the three IDs and choose a permitted region/prefix/plan before running.
+This is a fully specified Telesign/Global JavaScript deployment example supporting both SMS and
+voice, not a credential script. Replace the three IDs and choose a permitted region/prefix/plan before running.
 The preliminary user sign-ins can require MFA and consent; `-NonInteractive` does not create a
 headless service-principal deployment path. Install the Graph modules/Bicep beforehand using
 interactive setup's prerequisite prompts or your approved installation process.
@@ -359,7 +367,6 @@ Connect-MgGraph -TenantId $tenantId -ContextScope Process `
     -ApplicationId $applicationId `
     -Location westus2 `
     -Provider telesign `
-    -Channel sms `
     -EndpointRegion global `
     -Language javascript `
     -ServicePlan FC1 `
@@ -383,14 +390,15 @@ configuration metadata, not provider credentials or private-key bytes. Keep it a
 |---|---|
 | `tenantId`, `subscriptionId`, `applicationId` | Verify the intended customer directory, Azure subscription, and endpoint **client ID**. |
 | `resources.functionApp`, `resources.keyVault`, `resources.applicationInsights`, `resources.logAnalytics` | Find the exact Azure resources; do not guess names or use a different environment's vault. |
-| `provider`, `channel`, `endpointRegion`, `providerTenantId` | Confirm provider routing, separate from the customer's directory and Azure location. |
+| `provider`, `endpointRegion`, `providerTenantId` | Confirm provider routing, separate from the customer's directory and Azure location. Both SMS and voice use this configuration. |
+| `providerSmsEndpoint`, `providerVoiceEndpoint` | Confirm the distinct or identical provider URLs for SMS and voice. These are outbound provider URLs, not the Function's `endpointUrl`. |
 | `endpointUrl`, `identifierUri` | Exact SendOtp URL and registered app audience information for the authorized test/policy operator. |
 | `encryptionKeyId`, `certificateThumbprint`, `certificateId`, `certificateSecretId`, `certificateExpiresUtc` | Public-key identification and version/renewal inventory. A secret **ID** is not its value; do not fetch its private-key contents. |
 | `endpointServicePrincipalId`, `microsoftPhoneProviderServicePrincipalId` | Tenant-local enterprise-application Object IDs; neither is the endpoint app client ID. |
 | `source`, `packageUrl`, `sourcePackageSha256`, `packageSha256`, `language`, `servicePlan` | Source/package provenance and runtime/plan. FC1 Python's built hash can be null; source and built hashes describe different artifacts. |
 | `policyChanged` | Expected `false`: deployment has not activated policy. |
 
-For example, a healthy record can contain `"provider": "telesign"`, `"channel": "sms"`,
+For example, a healthy record can contain `"provider": "telesign"`,
 `"endpointRegion": "global"`, `"certificateRenewal": "manual"`, and `"policyChanged": false`.
 Those fields do not prove credentials, delivery, or monitoring work. Follow
 [provider authentication](../../docs/ONBOARDING.md#complete-provider-authentication) next,
@@ -453,19 +461,22 @@ PowerShell is executed locally.
 
 ### Offline setup checks
 
-From the repository root, run the certificate regression suite, compile the infrastructure, and
+From the repository root, run the certificate and provider regression suites, compile the infrastructure, and
 check both service plans without Azure sign-in or resource changes:
 
 ```powershell
 pwsh -NoProfile -File .\setup\tests\Certificates.Tests.ps1
+pwsh -NoProfile -File .\setup\tests\Providers.Tests.ps1
 az bicep build --file .\setup\infra\main.bicep --outfile "$env:TEMP\epp-main.json"
 pwsh -NoProfile -File .\setup\tests\ServicePlans.Tests.ps1 -TemplatePath "$env:TEMP\epp-main.json"
 ```
 
 The focused tests replace certificate/Graph calls and verify creation, reuse, errors, naming, key
-mismatch, and versioned settings. The service-plan suite checks selections, approval details, regional
-checks, CLI requirements, migration guards, parameter forwarding, and plan-specific publication
-with mocked Azure calls. CI runs both on Windows and Linux. They do not certify live deployments,
+mismatch, and versioned settings. The provider suite checks separate regional SMS/voice URLs,
+channel-independent interactive/unattended setup, and both policy handoff targets.
+The service-plan suite checks selections, approval details, regional checks, CLI requirements,
+migration guards, parameter forwarding, and plan-specific publication
+with mocked Azure calls. CI runs all three suites on Windows and Linux. They do not certify live deployments,
 RBAC propagation, Key Vault issuance, Entra behavior, or provider delivery.
 
 ## Step 3 - manually validate and activate policy
@@ -473,6 +484,9 @@ RBAC propagation, Key Vault issuance, Entra behavior, or provider delivery.
 First complete [provider authentication and the deployed acceptance checks](../../docs/ONBOARDING.md#complete-provider-authentication).
 The customer onboarding owner must arrange an authorized Microsoft EPP caller; this repository's
 offline tests and an ordinary Azure CLI token do not supply that caller.
+
+SMS and voice can share the same endpoint URL and application client ID. Setup's handoff lists
+both policy targets; validate and activate only the channels you intend to enable, separately.
 
 **Activation is an assisted, product-specific gate, not an executable public Graph recipe.**
 The public beta [SMS](https://learn.microsoft.com/en-us/graph/api/resources/smsauthenticationmethodconfiguration?view=graph-rest-beta)

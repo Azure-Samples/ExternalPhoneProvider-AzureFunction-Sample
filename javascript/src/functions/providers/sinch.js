@@ -21,9 +21,8 @@ const provider = Object.freeze({
             Accept: 'application/json',
         };
         if (channel === 'voice') {
-            const voiceBase = env.SINCH_VOICE_ENDPOINT || 'https://calling.api.sinch.com';
             return {
-                url: `${voiceBase}/calling/v1/callouts`,
+                url: `${endpoint}/calling/v1/callouts`,
                 method: 'POST',
                 headers,
                 body: JSON.stringify({

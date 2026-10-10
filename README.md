@@ -24,6 +24,9 @@ You do not need to build locally, create `local.settings.json`, or read all thre
 
 You will connect a provider account to a dedicated Azure Function endpoint, validate SMS or voice
 delivery, and then have an administrator activate the endpoint in Microsoft Entra ID.
+The same Function endpoint supports both SMS and voice; each request's `channel` selects the
+corresponding provider URL. The SMS and voice provider URLs can differ. Validate every channel
+you intend to activate.
 
 The guided setup deploys the Azure resources and configures the endpoint application. It does **not**
 purchase a provider offer, grant access to a provider's API, or activate your authentication method
@@ -116,15 +119,15 @@ Have the following values ready before running setup:
 | Subscription ID | Selects the Azure subscription where resources will be deployed. |
 | Application client ID | Identifies the dedicated endpoint app you just registered. |
 | Azure region | Places this deployment in one region. |
-| Channel and provider scope | Selects one SMS or voice route and the provider's Global or EU label. This is separate from Azure region and is not a data-residency guarantee. |
+| Provider and scope | Selects Telesign or Soprano and the provider's Global or EU label. Setup configures both provider URLs; each request selects SMS or voice. The scope is separate from Azure region and is not a data-residency guarantee. |
 | Language | Selects one Function implementation below. The HTTP contract is shared; caching and telemetry differ by runtime. |
 | Service plan | Selects Flex Consumption FC1 or Premium EP1. Required explicitly for unattended setup. |
 | Resource prefix | Use 2-8 lowercase letters or digits, starting with a letter, such as `contoso`. Setup adds resource-specific names and a suffix. |
 
 Use the [central values table](docs/ONBOARDING.md#values-and-ownership) for exact portal locations,
 parameter names, client-ID versus Object-ID distinctions, and settings setup creates automatically.
-For a second independent channel/provider endpoint, use a new prefix and dedicated app.
-Changing channel/provider/region with the same subscription/app/prefix is a reconfiguration,
+For a second independent provider endpoint, use a new prefix and dedicated app.
+Changing provider/region with the same subscription/app/prefix is a reconfiguration,
 not an additional deployment; see [deployment separation](docs/ONBOARDING.md#inputs-you-supply-to-setup).
 
 ### 2. Deploy the endpoint
@@ -164,8 +167,8 @@ The script prompts for missing inputs, retrieves its support files and provider 
 the latest stable Function package release by default. It verifies package checksums; you do not
 need to locate a ZIP or enter a package URL manually.
 
-Before approving, review the displayed **tenant, subscription, application ID, region, provider
-route, language, service plan, cache app settings, resource names, permissions, and certificate changes**. Setup configures the
+Before approving, review the displayed **tenant, subscription, application ID, region, SMS and voice
+provider URLs, language, service plan, cache app settings, resource names, permissions, and certificate changes**. Setup configures the
 endpoint app and grants the Microsoft phone-provider service principal Microsoft Graph
 `Application.Read.All`; understand these permissions before proceeding.
 
@@ -228,7 +231,7 @@ not just a locally running Function.
 |---|---|
 | Caller authentication | Missing/invalid credentials and unauthorized callers are rejected by Easy Auth. |
 | Non-delivering evaluation | An authorized caller's valid encrypted evaluation request returns the matching nonce without calling the provider. |
-| Controlled live test | The provider accepts the selected SMS or voice request and the test recipient receives the message or call. Provider acceptance alone is not proof of delivery. |
+| Controlled live test | For each channel you intend to activate, the provider accepts the request and the test recipient receives the message or call. Provider acceptance alone is not proof of delivery. |
 | Operational visibility | Review Application Insights for the request outcome without recording phone numbers, message bodies, tokens, private keys, or nonce values in shared logs. |
 
 With the selected [credential cache](docs/CONTRACT.md#credential-caching-and-refresh) enabled,
@@ -249,6 +252,9 @@ method policy using the endpoint URL and application client ID from the deployme
 2. Follow the supported activation procedure to update the endpoint URL and application client ID,
    preserving all other policy properties.
 3. Read the policy back and verify the saved values.
+
+Repeat for each authentication method you intend to enable. SMS and voice can share the same
+endpoint URL and application client ID; no additional setup run is needed for the second channel.
 
 **Setup does not activate policy.** If the supported policy fields are unavailable, stop and obtain
 the supported procedure from Microsoft rather than guessing an update. Policy backup and rollback

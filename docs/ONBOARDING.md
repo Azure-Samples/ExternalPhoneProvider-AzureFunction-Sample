@@ -50,7 +50,7 @@ same parameters. No parameter accepts a provider API key or private key.
 | Azure subscription ID | Azure portal > Subscriptions > selected subscription > Overview. Confirm its directory is the customer tenant. | `-SubscriptionId`; all deployments. Not a tenant ID. |
 | Endpoint application client ID | Entra > App registrations > the dedicated app > Overview > Application (client) ID. Select the registration by this ID, not just its display name. | `-ApplicationId`; all deployments. **Not** the app Object ID or Enterprise application's Object ID. |
 | Azure region | Subscription's available Linux FC1/EP1 regions and quota, plus your organization's requirements. | `-Location`, for example `westus2`; all deployments. |
-| Provider / channel | Provider's approved account integration: guided catalog supports `telesign` or `soprano`, and one `sms` or `voice` route. | `-Provider` and `-Channel`; all deployments. |
+| Provider | Provider's approved account integration: guided catalog supports `telesign` or `soprano`. The endpoint accepts both SMS and voice, selected by each request. | `-Provider`; all deployments. No channel selection is needed in setup. |
 | Provider route label | Provider-confirmed Global/EU selection; see the caveat below. | `-EndpointRegion global` or `eu`; all deployments. The prompt calls this **Tenant scope**. |
 | Language / hosting | One of `javascript`, `dotnet`, `python`; FC1 or EP1 after reviewing billing and cold starts. | `-Language`, `-ServicePlan`; all deployments. |
 | Resource prefix | A unique deployment label, 2-8 lowercase letters/digits, starting with a letter. | `-ResourcePrefix`; all deployments. Keep it with your inventory for reruns. |
@@ -63,10 +63,11 @@ Soprano also uses the same API app ID/scope. The label alone does not establish 
 credentials, logs, or personal data are processed. Obtain account-level routing and residency
 assurances from the provider and separately choose Azure resource/telemetry locations.
 
-**One guided deployment has one provider and one channel.** The resource-name suffix uses the
-subscription ID, app client ID, and prefix, not the provider, channel, or Azure region. Rerunning
-with those same identifiers and changing SMS to voice updates the existing deployment; it does
-not add another endpoint. For an independent channel/provider/region deployment, use a distinct
+**One guided deployment has one provider and accepts both SMS and voice.** Enabling the second
+channel does not require another setup run; validate and activate each intended channel separately.
+The resource-name suffix uses the subscription ID, app client ID, and prefix, not the provider or
+Azure region. Changing provider/region with the same identifiers can reconfigure the existing
+endpoint rather than add another one. For an independent provider/region deployment, use a distinct
 prefix and a new dedicated app, then validate it before changing policy. Reusing an existing
 app across new vaults can fail its encryption-key continuity checks after resources have changed.
 The [manual Front Door design](FRONTDOOR.md) requires coordinated same-key regional origins,
@@ -77,7 +78,8 @@ not independent setup runs.
 <a id="setup-script-compatibility"></a>
 Review the deployment plan, then retain `deployment-*.json` and the public certificate in
 `epp-output` (or your chosen directory). Compare the saved `tenantId`, `subscriptionId`,
-`applicationId`, `resources`, `provider`, `channel`, and `endpointRegion` with the approved plan.
+`applicationId`, `resources`, `provider`, `endpointRegion`, `providerSmsEndpoint`, and
+`providerVoiceEndpoint` with the approved plan.
 The [setup output guide](../setup/docs/README.md#read-the-deployment-summary) explains the remaining
 fields. `policyChanged: false` is expected, not a failed deployment.
 
@@ -88,8 +90,8 @@ can restore setup-managed values.
 
 | Value or setting | Source / verification | Customer action |
 |---|---|---|
-| `EPP_PROVIDER_NAME`, `EPP_PROVIDER_CHANNEL`, `EPP_PROVIDER_ENDPOINT_REGION`, `EPP_PROVIDER_AUTH_MODE` | Selected profile: Telesign `apiKey`, Soprano `oauth`. | Compare with approved provider/channel. |
-| `EPP_PROVIDER_ENDPOINT` | Full selected provider send URL; setup writes the complete path. | Have the provider confirm account access. Do not append another API path or substitute an arbitrary test URL. |
+| `EPP_PROVIDER_NAME`, `EPP_PROVIDER_ENDPOINT_REGION`, `EPP_PROVIDER_AUTH_MODE` | Selected profile: Telesign `apiKey`, Soprano `oauth`. | Compare with approved provider/region. |
+| `EPP_PROVIDER_SMS_ENDPOINT`, `EPP_PROVIDER_VOICE_ENDPOINT` | Complete SMS and voice URLs from the selected regional profile; they may differ. Setup writes both, and each request's `channel` selects one. | Have the provider confirm account access for each intended channel. Do not append another API path or substitute an arbitrary test URL. |
 | `EPP_PROVIDER_TENANT_ID` | Profile's provider directory; also appears as `providerTenantId` in the summary. | Do not replace it with the customer's tenant ID. Used for provider tenant restriction and Soprano OAuth authority. |
 | `EPP_PROVIDER_APP_ID`, `EPP_PROVIDER_SCOPE` | Soprano API resource client ID and exact `api://.../.default` scope from the profile. | Provider administrator confirms these; API-key providers do not need them. The app ID is setup metadata; the runtime requests the configured scope. Neither is the endpoint app ID. |
 | `EPP_OUTBOUND_CLIENT_ID` | Dedicated endpoint application's **client ID**, reused as the Soprano calling app. | Do not create a second client secret or substitute the Soprano API app ID. |
@@ -100,6 +102,10 @@ can restore setup-managed values.
 | `EPP_KEY_VAULT_CACHE_ENABLED`, `EPP_ACCESS_TOKEN_CACHE_ENABLED` | Setup writes `false` for FC1, `true` for EP1. | Independently control API-key/OAuth caching and startup preparation. Unset defaults to `true`; deploy a supporting package and restart after changes. See [plan guidance](../setup/docs/README.md#service-plan-selection). |
 | Application Insights, storage, runtime/package settings and identities | Created/configured for the selected plan; system identity handles vault/storage/telemetry, outbound identity handles Soprano exchange. | Verify telemetry ingestion. Do not copy local emulator settings or EP1-only settings into FC1. |
 | Inbound caller issuer, audience and allowlist | Function App > Authentication; setup configures Easy Auth for the Microsoft phone-provider caller. | Read back platform authentication, not just `EPP_EXPECTED_*` metadata. App settings are not an alternative caller-authentication gate. |
+
+Guided setup writes both channel-specific endpoint settings and requires a package that reads
+them. Manual configurations must also supply the endpoint for each intended channel;
+a missing, empty, or invalid selected endpoint fails closed.
 
 There are **three separate trust paths**: Easy Auth admits the Microsoft caller; the Key Vault
 certificate decrypts its JWE; provider credentials authorize outbound delivery. The HTTPS
@@ -121,7 +127,7 @@ developer integrations, not additional guided provider offers:
 ### Telesign: enter and verify the two vault secrets
 
 1. Obtain the raw API key and matching Customer ID from your Telesign account's approved secure
-   credential process. Confirm that this account can call the EPP URL for the chosen channel.
+   credential process. Confirm that this account can call the configured EPP URL for each channel you intend to enable.
 2. Open the **exact Key Vault in `resources.keyVault`** in the deployment summary. In
    **Objects > Secrets > Generate/Import**, choose manual entry. Create `telesign-api-key` with
    the raw API key, then `telesign-customer-id` with the matching raw Customer ID.
@@ -153,7 +159,7 @@ application access in Soprano's tenant. A successful Azure deployment is therefo
 that Soprano OAuth is ready.
 
 Send the following **identifiers only** through the provider's approved onboarding channel:
-customer tenant ID; `applicationId` / `EPP_OUTBOUND_CLIENT_ID`; selected channel and full URL;
+customer tenant ID; `applicationId` / `EPP_OUTBOUND_CLIENT_ID`; intended channels and their full provider URLs;
 `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_APP_ID`, and `EPP_PROVIDER_SCOPE`; and the account/sender
 reference requested by the provider. If troubleshooting federation, also supply the outbound
 identity Client ID and Principal ID, and the federated credential's issuer/subject/audience
@@ -183,9 +189,9 @@ unauthenticated host to work around this. Ask the onboarding owner to arrange Mi
 approved EPP caller/test procedure. If unavailable, record **not validated** and do not activate.
 
 Provide that operator the endpoint URL, customer tenant ID, endpoint application client ID,
-identifier URI, encryption key ID, **public** certificate/thumbprint, channel, provider, and
-approved test window from your inventory/summary. Agree on controlled recipients privately
-and obtain explicit permission before any paid/live send.
+identifier URI, encryption key ID, **public** certificate/thumbprint, and provider from your
+inventory/summary, plus the intended channels and approved test window. Agree on controlled
+recipients privately and obtain explicit permission before any paid/live send.
 
 | Order / owner | Check | Evidence to retain without sensitive payloads |
 |---|---|---|
@@ -193,7 +199,7 @@ and obtain explicit permission before any paid/live send.
 | Azure operator | Perform the missing-token negative check below. | HTTP status; a rejection is not a healthy evaluation. |
 | Authorized test operator | Invalid/expired/signature/wrong-issuer/wrong-audience tokens and unauthorized callers fail before handler execution. Pair negative checks with valid evaluations to rule out a general outage. | Expected versus observed status, UTC time, safe request/correlation IDs. |
 | Authorized test operator | Valid encrypted `mode: 2` / `"evaluation"` request returns `200` and the matching nonce. Tampered/invalid envelopes fail. | Nonce match **boolean**, status, latency, and correlated application events; never the nonce/body. |
-| Authorized test operator + provider | Submit one approved `mode: 1` live test after evaluation succeeds. Verify provider acceptance and actual handset receipt/audio. | Acceptance status plus separate recipient/provider delivery confirmation. No phone number, OTP, or raw response. |
+| Authorized test operator + provider | Submit an approved `mode: 1` live test for each intended channel after evaluation succeeds. Verify provider acceptance and actual handset receipt/audio. | Acceptance status plus separate recipient/provider delivery confirmation. No phone number, OTP, or raw response. |
 | Operations owner | Confirm request/log ingestion, correct runtime schema, and notifications. | Saved query/resource scope and tested action-group/alert routing; see [monitoring](MONITORING.md). |
 
 This bounded PowerShell check sends **no token and no OTP data**, and does not follow redirects.
