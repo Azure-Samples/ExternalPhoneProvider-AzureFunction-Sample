@@ -1,112 +1,118 @@
 # Estimate SMS provider costs
 
 Use this guide to create a planning estimate for SMS traffic before onboarding an
-External Phone Provider (EPP). The report groups recent sign-in activity for users
-who have a phone authentication method by the registered phone number's international
-calling code, such as `+1` or `+91`. Apply your provider's destination rates to the
-report to estimate a budget.
+External Phone Provider (EPP). The report finds SMS and voice authentication steps in
+recent sign-in activity and groups them by the phone number's international calling
+code, such as `+1` or `+91`. Apply your provider's destination rates to the report to
+estimate a budget.
 
 **This is an estimate, not a usage or billing report.** A sign-in does not prove that
-an SMS or voice call was sent. This guide uses one message or call per counted sign-in
-as its planning assumption. Actual traffic can differ because a user can use another
-authentication method, reuse an existing session, retry authentication, or fall back
-between methods. Confirm the assumptions, supported destinations, message segmentation,
-taxes, fees, and final pricing with your provider.
+the provider accepted or delivered an SMS or voice call. Authentication details can
+contain multiple SMS or voice steps for one sign-in, so this guide counts each matching
+step as one estimated request. Actual provider billing can differ because of retries,
+fallback, failures, message segmentation, and provider-specific charging rules. Confirm
+the assumptions, supported destinations, taxes, fees, and final pricing with your provider.
+
+The `authenticationDetails` data used by this guide is currently available through the
+[Microsoft Graph beta API](https://learn.microsoft.com/en-us/graph/api/resources/authenticationdetail?view=graph-rest-beta).
+Beta APIs are subject to change and are not supported for production applications. Review
+and test this reporting script before each planning exercise.
 
 ## Prerequisites
 
 Run the script in PowerShell 7 from a secured administrator workstation. The signed-in
 account must be allowed to consent to or use these Microsoft Graph delegated permissions:
 
-- `User.Read.All`
-- `UserAuthenticationMethod.Read.All`
 - `AuditLog.Read.All`
 
 Access to sign-in logs also depends on your Microsoft Entra licensing, directory role,
 and log-retention period. Review the requested permissions before consenting. The script
-processes directory users, registered phone numbers, and sign-in records. It exports only
-aggregated calling codes and counts, not full phone numbers. Store, share, and delete the
-output according to your organization's privacy and retention requirements.
+processes sign-in authentication details that can include phone numbers. It exports only
+aggregated calling codes, methods, and counts, not full phone numbers. Store, share, and
+delete the output according to your organization's privacy and retention requirements.
 
 Create `C:\temp` before running the script, or change the `Export-Csv` path to an
 approved folder.
 
 ## Generate the activity report
 
-The following sample installs any missing Microsoft Graph modules for the current user,
-connects to Microsoft Graph, identifies users with a phone authentication method, and
-groups sign-ins from a selected UTC time range by the registered phone number's calling
-code. Replace `$start` and `$end` with the period you want to analyze.
+The following sample installs the Microsoft Graph beta reports module for the current
+user, connects to Microsoft Graph, identifies SMS and voice authentication steps, and
+groups them by the phone number's calling code. Replace `$start` and `$end` with the
+period you want to analyze.
 
 ```powershell
-# 1. Install missing modules silently
-"Microsoft.Graph.Users", "Microsoft.Graph.Identity.SignIns", "Microsoft.Graph.Reports" |
-    ? { -not (Get-Module -ListAvailable $_) } |
-    % { Install-Module $_ -Scope CurrentUser -Force -AllowClobber | Out-Null }
+# 1. Install the beta reports module if it is missing
+if (-not (Get-Module -ListAvailable "Microsoft.Graph.Beta.Reports")) {
+    Install-Module "Microsoft.Graph.Beta.Reports" `
+        -Scope CurrentUser `
+        -Force `
+        -AllowClobber |
+        Out-Null
+}
 
 # 2. Connect to Graph API
-Connect-MgGraph -Scopes "User.Read.All", "UserAuthenticationMethod.Read.All", "AuditLog.Read.All" | Out-Null
+Connect-MgGraph -Scopes "AuditLog.Read.All" | Out-Null
 
 # 3. Define Start and End Time Range (ISO 8601 UTC)
 $start = "2026-10-01T00:00:00Z"
 $end   = "2026-10-30T23:59:59Z"
 
-# 4. Fetch sign-ins and associate them with the user's preferred registered phone method
-$activity = Get-MgUser -All -Property Id |
-    % {
-        $user = $_
-        $phoneMethod = Get-MgUserAuthenticationPhoneMethod `
-            -UserId $user.Id `
-            -ErrorAction SilentlyContinue |
-            Sort-Object @{ E = {
-                switch ($_.PhoneType) {
-                    "mobile"          { 1 }
-                    "alternateMobile" { 2 }
-                    "office"          { 3 }
-                    default           { 4 }
+# 4. Fetch sign-ins and emit one row for each SMS or voice authentication step
+$activity = Get-MgBetaAuditLogSignIn `
+    -Filter "createdDateTime ge $start and createdDateTime le $end" `
+    -Property "authenticationDetails" `
+    -All `
+    -ErrorAction Stop |
+    ForEach-Object {
+        $_.AuthenticationDetails |
+            Where-Object { $_.AuthenticationMethod -in "SMS", "Voice" } |
+            ForEach-Object {
+                $callingCode = if (
+                    $_.AuthenticationMethodDetail -match '^\s*(\+\d{1,3})(?:\s|$)'
+                ) {
+                    $Matches[1]
                 }
-            }} |
-            Select-Object -First 1
-
-        if ($phoneMethod) {
-            $callingCode = if ($phoneMethod.PhoneNumber -match '^\s*(\+\d{1,3})(?:\s|$)') {
-                $Matches[1]
-            }
-            else {
-                "Unknown"
-            }
-
-            Get-MgAuditLogSignIn `
-                -Filter "userId eq '$($user.Id)' and createdDateTime ge $start and createdDateTime le $end" `
-                -All `
-                -ErrorAction SilentlyContinue |
-                % {
-                    [PSCustomObject]@{
-                        CountryCallingCode = $callingCode
-                    }
+                else {
+                    "Unknown"
                 }
-        }
+
+                [PSCustomObject]@{
+                    CountryCallingCode = $callingCode
+                    AuthenticationMethod = $_.AuthenticationMethod
+                }
+            }
     }
 
-# 5. Group and count by the phone number's international calling code
+# 5. Group and count by calling code and authentication method
 $report = $activity |
-    Group-Object CountryCallingCode |
-    Select-Object @{N="CountryCallingCode"; E={$_.Name}}, @{N="SignInCount"; E={$_.Count}} |
-    Sort-Object SignInCount -Descending
+    Group-Object CountryCallingCode, AuthenticationMethod |
+    ForEach-Object {
+        [PSCustomObject]@{
+            CountryCallingCode   = $_.Group[0].CountryCallingCode
+            AuthenticationMethod = $_.Group[0].AuthenticationMethod
+            EstimatedRequests    = $_.Count
+        }
+    } |
+    Sort-Object CountryCallingCode, AuthenticationMethod
 
-# 6. Output and Export
+# 6. Display and export the aggregated report
 $report | Format-Table -AutoSize
 $report | Export-Csv -Path "C:\temp\SMS_Voice_SignIns_By_Calling_Code.csv" -NoTypeInformation
 ```
 
-The script suppresses per-user read errors so that one inaccessible record does not stop
-the report. It prefers a user's `mobile` method, followed by `alternateMobile`, then
-`office`, so each sign-in is counted once when more than one phone method is registered.
-The calling-code extraction expects the number to start with a plus-prefixed code followed
-by a space, such as `+91 1234567890`; other formats are grouped as `Unknown`. Investigate
-unexpectedly missing users or calling codes before relying on the result. `-All` requests
-all available pages, but large tenants should still account for Microsoft Graph throttling
-and execution time.
+Microsoft documents `SMS` and `Voice` as authentication method values and states that
+`authenticationMethodDetail` can contain the phone number for those methods. The script
+does not match an undocumented `Text` value. It also does not use sign-in geography or a
+user's currently registered default number, because those can differ from the phone method
+recorded for the authentication step.
+
+The calling-code extraction expects the detail to start with a plus-prefixed code followed
+by a space, such as `+91 1234567890`. Masked values or other formats are grouped as
+`Unknown`; review a small, securely handled sample in your tenant before relying on the
+aggregation. `-All` requests all available pages, but large tenants should still account
+for Microsoft Graph throttling and execution time. The script uses `-ErrorAction Stop`
+rather than silently producing a partial report when the sign-in query fails.
 
 The Microsoft Graph
 [list signIns API documentation](https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-1.0&tabs=http)
@@ -117,16 +123,17 @@ Microsoft Entra ID default retention period are available."** Selecting an earli
 
 ## Convert activity into a cost estimate
 
-The exported report contains one aggregated row per registered phone-number calling code.
-Under this guide's one-request-per-sign-in planning assumption, estimate:
+The exported report contains one row per calling code and authentication method. It counts
+each SMS or voice authentication step as one estimated request:
 
 ```text
-Estimated SMS/voice requests = sign-in count
-Estimated cost               = sign-in count x provider price per request
+Estimated SMS/voice requests = matching authentication-step count
+Estimated cost               = estimated requests x provider price per request
 Projected cost               = estimated cost x projected days / observed days
 ```
 
-For example, if the report covers 30 days and contains 10,000 relevant sign-ins:
+For example, if the report covers 30 days and contains 10,000 matching authentication
+steps:
 
 ```text
 Estimated SMS/voice requests = 10,000
