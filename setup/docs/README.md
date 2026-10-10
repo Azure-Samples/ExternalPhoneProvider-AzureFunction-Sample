@@ -263,6 +263,27 @@ The flow is:
 8. **Type `Yes` once to deploy.** `No` or Enter cancels without Azure changes. Invalid answers prompt
    again; individual resources do not request additional approvals.
 
+### Reviewing the plan without deploying
+
+`Setup-Epp.ps1` does not implement `-DryRun`, `-WhatIf`, or PowerShell `ShouldProcess`.
+To review a real plan, run interactively, complete preflight, then answer **No** or press Enter
+at `Deploy this complete plan? Type Yes or No [No]`. Do not supply `-ApproveDeployment`:
+that switch authorizes the deployment phase without asking again.
+
+This is a cancellation at the approval gate, not an offline simulation. The existing application
+registration is still required. Before the plan appears, setup can download tools and packages,
+request prerequisite installation, sign in to Azure and Microsoft Graph, perform permission and
+region checks, verify package checksums, and compile Bicep. Installation and authentication/consent
+prompts are separate decisions. A preflight error is not a successful preview.
+
+The [main guide's terminal captures](../../README.md#3-run-guided-setup) show real input screens,
+with identifying details and provider names hidden. The capture environment needed authenticated
+GitHub metadata access after its shared public-API quota was exhausted; that is not an additional
+prerequisite for ordinary setup. These input captures do not show deployment approval, resource
+creation, or the final completion summary.
+
+### After approving the plan
+
 After approval, setup rechecks the selected subscription and registers only missing
 `Microsoft.Web`, `Microsoft.Storage`, `Microsoft.KeyVault`, `Microsoft.OperationalInsights`,
 `Microsoft.Insights`, and `Microsoft.ManagedIdentity` providers. Already registered providers are

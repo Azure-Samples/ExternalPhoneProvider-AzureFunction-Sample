@@ -92,17 +92,42 @@ Follow the prompts for your tenant, subscription, application, Azure region, pro
 Choose **one** language: JavaScript, C#, or Python. Setup downloads and verifies the package,
 builds it if needed, and deploys it for you; you do not need a separate ZIP upload or local settings file.
 
+![Actual PowerShell setup prompts for tenant, subscription, application, region, and SMS or voice, with identifiers hidden](docs/images/onboarding/setup-identifiers.png)
+
+*Enter your own values from Step 2. These are captures of the real script's terminal output,
+not example deployment results.*
+
 Choose **FC1** for on-demand hosting that can scale to zero, or **EP1** for paid warm capacity.
 FC1 can cold-start, and its free usage grant does not make the whole deployment free.
 See [hosting plan details](setup/docs/README.md#service-plan-selection).
 The **Global/EU** prompt is a provider route label, not your Azure region or a data-residency guarantee.
 For the resource prefix, use 2-8 lowercase letters or digits, starting with a letter.
 
+![Actual setup choices for channel, provider route, provider, language, and hosting plan, with provider names hidden](docs/images/onboarding/setup-choices.png)
+
+*Choose the options approved for your deployment; do not copy the example selection numbers.
+The Global/EU choice is not the Azure region. The hosting-plan warning applies even when a
+plan has a free usage grant.*
+
+Next, setup checks prerequisites, signs in to Azure and Microsoft Graph when needed, verifies
+the selected package, and prepares the deployment plan. Complete sign-in and MFA yourself.
+If a permission or prerequisite check fails, stop and resolve it before continuing.
+
 **Review the complete deployment plan before typing `Yes`.** Check the accounts, region,
 provider route, plan, resource names, permissions, and certificate changes. Setup grants the
 Microsoft phone-provider service principal Microsoft Graph `Application.Read.All`, a tenant-wide
 application-read permission. `No` or Enter cancels deployment; sign-in and prerequisite prompts
 are separate from this approval.
+
+**Want to review without deploying?** Run interactively and choose **No** at that final prompt.
+There is no `-DryRun` or `-WhatIf` switch. This is not an offline dry run: sign-in, prerequisite
+checks, downloads, and template compilation happen first. Do not pass `-ApproveDeployment`
+when you only want to review the plan.
+
+After you approve, leave the script running while it configures the application, creates the
+Azure resources, sets up encryption and authentication, and publishes the code. Wait for
+**Deployment completed** and the saved summary before moving to Step 4. The input screenshots
+above do not show or prove that this deployment stage completed.
 
 On success, setup has created the Function App, storage, Key Vault, identities, and monitoring
 resources, and published the endpoint code. **Do not create these resources manually first.**
