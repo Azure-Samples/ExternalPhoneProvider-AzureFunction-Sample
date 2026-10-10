@@ -36,7 +36,9 @@ policy. Those steps remain part of your onboarding.
 approved tenant onboarding/test procedure. The sample does not establish eligibility, licensing,
 or preview enrollment. It is not production certification: it has no durable queue, automatic
 send retries, deduplication, whole-request deadline, or overlapping key rotation. Review the
-[limitations](docs/CONTRACT.md#production-limitations) with your owners.
+[limitations](docs/CONTRACT.md#production-limitations) with your owners. Use the
+[SMS cost estimation guide](docs/COST-CALCULATOR.md) to create a planning estimate, then confirm
+destination rates, fees, and final costs with your provider.
 
 ## Single-region architecture
 
