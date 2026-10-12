@@ -165,16 +165,14 @@ app.http('SendOtp', {
             emit(logContext, 'provider_selected');
 
             const channel = payload.channelName;
-            if (config.providerChannel && config.providerChannel !== channel) {
-                fail('provider_configuration', 'channel_not_configured', 400);
-                return respond(400, { error: 'provider_delivery_failed', correlationId, requestId });
-            }
+            const endpoint = channel === 'voice'
+                ? config.providerVoiceEndpoint : config.providerSmsEndpoint;
             if (config.providerAuthMode
                 && config.providerAuthMode !== provider.authenticationMode) {
                 fail('provider_configuration', 'authentication_mode_mismatch', 502);
                 return respond(502, { error: 'provider_delivery_failed', correlationId, requestId });
             }
-            if (!isValidProviderUrl(config.providerEndpoint)) {
+            if (!isValidProviderUrl(endpoint)) {
                 fail('provider_configuration', 'invalid_provider_endpoint', 502);
                 return respond(502, { error: 'provider_delivery_failed', correlationId, requestId });
             }
@@ -227,7 +225,7 @@ app.http('SendOtp', {
                 emit(logContext, 'provider_request_build_started');
                 providerRequest = provider.createRequest({
                     channel,
-                    endpoint: config.providerEndpoint,
+                    endpoint,
                     delivery,
                     credential,
                     env: config.env,

@@ -33,7 +33,6 @@ public sealed class SinchProvider : PhoneProviderBase
 
         if (channel == "voice")
         {
-            var voiceBase = env.Get("SINCH_VOICE_ENDPOINT") ?? "https://calling.api.sinch.com";
             body = new VoiceRequest(
                 "ttsCallout",
                 new TtsCallout(
@@ -41,7 +40,7 @@ public sealed class SinchProvider : PhoneProviderBase
                     delivery.Message,
                     delivery.Locale ?? "en-US",
                     reference));
-            url = $"{voiceBase}/calling/v1/callouts";
+            url = $"{endpoint}/calling/v1/callouts";
         }
         else
         {

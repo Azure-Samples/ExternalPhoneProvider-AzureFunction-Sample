@@ -56,13 +56,15 @@ For local development, manual configuration, and deployment checks, see the
 
 Use **[setup](setup/docs/README.md)** for **Step 2: endpoint deployment**. Download only
 `Setup-Epp.ps1`; it downloads its supporting PowerShell, Bicep, package catalog, and provider JSON
-from the same commit. Customers select a language, provider, SMS or voice, Global or EU endpoint,
+from the same commit. Customers select a language, provider, Global or EU endpoint,
 a [service plan](setup/docs/README.md#service-plan-selection), and a resource prefix, then approve
 one complete plan. Manual Step 1 only creates the dedicated app
 registration; PowerShell configures its service principals, `Epp.Invoke`, Microsoft caller access,
 Graph `Application.Read.All`, the provider-tenant allowlist preview, encryption certificate, and
 Easy Auth. The encryption certificate is issued inside Key Vault after infrastructure deployment;
 setup downloads only its public certificate and pins the Function to its PEM secret version.
+Each deployment accepts both SMS and voice. The request's `channel` selects its configured
+provider endpoint; the two URLs can be identical or different.
 Certificate renewal and policy activation remain manual. The home tenant remains allowed by Entra.
 
 ## Download a Function ZIP
@@ -181,7 +183,7 @@ below rather than appearing as required placeholders in the sample. Keep explana
 The local settings file is an environment-variable input for the Functions host, **not a serialized
 `AppConfig` or request model**. For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in
 JavaScript, `config.provider_name` in Python, and `config.ProviderName` in .NET. The refactor changed
-how code accesses configuration, not the environment-variable names.
+how code accesses configuration; request fields remain separate from deployment settings.
 
 | Variable | When needed | Value |
 |---|---|---|
@@ -190,8 +192,8 @@ how code accesses configuration, not the environment-variable names.
 | `EPP_DECRYPTION_KEY_PEM` | Every request | Local test PEM or base64 PEM. In Azure, use a Key Vault reference resolving to the private-key secret. Guided setup pins the PEM backing secret of its Key Vault certificate. |
 | `EPP_ENCRYPTION_KEY_ID` | Optional | Expected encryption key ID; mismatch only produces an advisory warning. |
 | `EPP_PROVIDER_NAME` | Live delivery | Selected adapter's manifest ID. No default provider. |
-| `EPP_PROVIDER_ENDPOINT` | Live delivery | Complete provider-approved HTTPS request URL selected from the provider profile. |
-| `EPP_PROVIDER_CHANNEL` | Guided deployment | Selected `sms` or `voice` route; other live-request channels fail closed. |
+| `EPP_PROVIDER_SMS_ENDPOINT` | Required for SMS delivery | Provider-approved HTTPS SMS endpoint. Guided setup writes the complete send URL from the selected regional profile. |
+| `EPP_PROVIDER_VOICE_ENDPOINT` | Required for voice delivery | Provider-approved HTTPS voice endpoint, which can differ from the SMS endpoint. Guided setup writes the complete send URL. |
 | `EPP_PROVIDER_ENDPOINT_REGION` | Guided deployment metadata | Selected `global` or `eu` route label. |
 | `EPP_PROVIDER_AUTH_MODE` | Live delivery | Must match the adapter: `apiKey` for Telesign or `oauth` for Soprano. |
 | `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE` | Soprano OAuth | Provider tenant and selected API scope. |
@@ -202,6 +204,11 @@ how code accesses configuration, not the environment-variable names.
 | `EPP_PROVIDER_ACCOUNT_NAME` | Adapter-dependent | Sender/account metadata, not an API key or credential identity. |
 | `KEY_VAULT_URL` | Provider credential lookup | URI of the vault containing the manifest-named provider secrets. Separate from the encryption-key reference. |
 | `AZURE_CLIENT_ID` | Optional | User-assigned managed identity's client ID for Key Vault. Leave unset for system-assigned identity. |
+
+The request's channel-specific endpoint is required. A missing, empty, or invalid endpoint fails
+closed; there is no shared or other-channel endpoint fallback. Telesign and Soprano
+use complete URLs unchanged. Infobip and Sinch retain their adapter-specific base-URL behavior;
+see [endpoint selection](docs/CONTRACT.md#default-provider-and-configuration-readers).
 
 1. **Locally:** create private local settings beside the chosen runtime's host file, following its
   [JavaScript](javascript/README.md#environment-configuration), [Python](python/README.md#environment-configuration)
@@ -242,12 +249,13 @@ or update Entra. See [certificate lifecycle](setup/docs/README.md#encryption-cer
 
 Configure inbound issuer/audience/caller trust in **Easy Auth**, not these application variables.
 Incoming `tenantId`, `channel`, `mode` and `ttlSeconds` are request data and never override the
-configured provider route or authentication.
+configured provider or authentication. `channel` selects the configured SMS or voice endpoint;
+there is no deployment-level channel restriction. The legacy `EPP_PROVIDER_CHANNEL` setting is ignored.
 
 ## Telesign EPP
 
-The `telesign` adapter sends its JSON contract to the complete SMS or voice URL selected from the
-provider profile. It does not append or infer a route.
+The `telesign` adapter sends its JSON contract to the complete SMS or voice URL selected by the
+request channel from the configured endpoints. It does not append or infer a route.
 
 Basic authentication uses `base64(customer-id:api-key)`, with the existing Key Vault secrets
 `telesign-customer-id` and `telesign-api-key`. Digest and Phase 2 token authentication are not

@@ -88,10 +88,11 @@ try {
         }
         $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix unit
         $provider = @{
-            DisplayName = 'Telesign'; Channel = 'sms'; EndpointRegion = 'global'; AuthenticationMode = 'apiKey'
+            DisplayName = 'Telesign'; EndpointRegion = 'global'; AuthenticationMode = 'apiKey'
             Settings = @{
                 EPP_PROVIDER_TENANT_ID = '44444444-4444-4444-4444-444444444444'
-                EPP_PROVIDER_ENDPOINT = 'https://provider.contoso.com/send'
+                EPP_PROVIDER_SMS_ENDPOINT = 'https://sms.provider.contoso.com/send'
+                EPP_PROVIDER_VOICE_ENDPOINT = 'https://voice.provider.contoso.com/send'
                 EPP_PROVIDER_TIMEOUT_MS = '1500'; EPP_PROVIDER_RETRY_INTERVAL_MS = '100'
             }
             Manifest = @{ deployment = @{ authentication = @{ keyVaultSecretName = 'key'; identityKeyVaultSecretName = 'id' } } }
@@ -109,6 +110,9 @@ try {
             $plan = $script:Messages -join "`n"
             $enabled = ($id -eq 'EP1').ToString().ToLowerInvariant()
             Assert ($plan.Contains("Service plan: $id")) 'The approval must name the selected plan.'
+            Assert ($plan.Contains('SMS and voice (selected by each request)')) 'The approval must disclose support for both request channels.'
+            Assert ($plan.Contains("SMS endpoint: $($provider.Settings.EPP_PROVIDER_SMS_ENDPOINT)")) 'The approval must disclose the SMS endpoint.'
+            Assert ($plan.Contains("Voice endpoint: $($provider.Settings.EPP_PROVIDER_VOICE_ENDPOINT)")) 'The approval must disclose the voice endpoint.'
             foreach ($setting in @('EPP_KEY_VAULT_CACHE_ENABLED', 'EPP_ACCESS_TOKEN_CACHE_ENABLED')) {
                 Assert ($plan.Contains("$setting=$enabled")) 'The approval must disclose both cache settings.'
             }
@@ -245,6 +249,10 @@ try {
                     -AssetDirectory $Directory -Package $publish.Package -OutputDirectory $Directory -SourceBaseUri 'https://source.contoso.com/setup'
             } 'stop-after-parameters'
             Assert ($script:DeploymentParameters.servicePlan.value -ceq $id) 'The approved plan must be passed to Bicep.'
+            foreach ($setting in @('EPP_PROVIDER_SMS_ENDPOINT', 'EPP_PROVIDER_VOICE_ENDPOINT')) {
+                Assert ($script:DeploymentParameters.providerSettings.value[$setting] -ceq $provider.Settings[$setting]) 'Both approved endpoints must be passed to Bicep.'
+            }
+            Assert (-not $script:DeploymentParameters.providerSettings.value.ContainsKey('EPP_PROVIDER_CHANNEL')) 'Bicep must not receive a channel restriction.'
         }
 
         if ($TemplatePath) {

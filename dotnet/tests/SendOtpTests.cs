@@ -35,14 +35,126 @@ public class SendOtpTests
     {
         rig.Env["EPP_PROVIDER_NAME"] = "soprano";
         rig.Env["EPP_PROVIDER_AUTH_MODE"] = "oauth";
-        rig.Env["EPP_PROVIDER_CHANNEL"] = "sms";
-        rig.Env["EPP_PROVIDER_ENDPOINT"] = "https://provider.example/full/send/";
+        rig.Env["EPP_PROVIDER_SMS_ENDPOINT"] = "https://provider.example/full/send/";
+        rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] = "https://provider.example/full/send/";
         rig.Env["EPP_PROVIDER_TENANT_ID"] = "provider-tenant";
         rig.Env["EPP_PROVIDER_SCOPE"] = "api://provider/.default";
         rig.Env["EPP_OUTBOUND_CLIENT_ID"] = "calling-application";
         rig.Env["EPP_OUTBOUND_MI_CLIENT_ID"] = "outbound-identity";
         rig.Env["AZURE_CLIENT_ID"] = "different-vault-identity";
         rig.Http.Respond = _ => Task.FromResult(Json(201, "{\"status\":\"ENROUTE\"}"));
+    }
+
+    [Theory]
+    [InlineData("telesign", null)]
+    [InlineData("telesign", "sms")]
+    [InlineData("telesign", "voice")]
+    [InlineData("telesign", "invalid")]
+    [InlineData("soprano", null)]
+    [InlineData("soprano", "sms")]
+    [InlineData("soprano", "voice")]
+    [InlineData("soprano", "invalid")]
+    public async Task RequestSelectsEitherChannelRegardlessOfLegacySetting(string provider, string? legacyChannel)
+    {
+        using var rig = new HandlerRig(
+            _ => new TestTokenCredential((_, _) =>
+                ValueTask.FromResult(new AccessToken("assertion", DateTimeOffset.UtcNow.AddHours(1)))),
+            (_, _, _) => new TestTokenCredential((_, _) =>
+                ValueTask.FromResult(new AccessToken("token", DateTimeOffset.UtcNow.AddHours(1)))));
+        if (provider == "soprano")
+        {
+            ConfigureSoprano(rig);
+        }
+        else
+        {
+            rig.Env["EPP_PROVIDER_NAME"] = provider;
+            rig.Env["EPP_PROVIDER_AUTH_MODE"] = "apiKey";
+            rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"status\":{\"code\":3001}}"));
+        }
+        if (legacyChannel is not null) rig.Env["EPP_PROVIDER_CHANNEL"] = legacyChannel;
+
+        foreach (var channel in new[] { "sms", "voice" })
+        {
+            AssertAccepted(await rig.Invoke(channel: channel));
+            using var body = JsonDocument.Parse(rig.Http.Body!);
+            var sentChannel = provider == "telesign"
+                ? body.RootElement.GetProperty("channels")[0].GetProperty("channel").GetString()
+                : body.RootElement.GetProperty("messageTypes")[0].GetString();
+            Assert.Equal(channel, sentChannel);
+        }
+        Assert.Equal(2, rig.Http.Calls);
+    }
+
+    [Theory]
+    [InlineData("telesign", "", "")]
+    [InlineData("soprano", "", "")]
+    [InlineData("infobip", "/sms/3/messages", "/tts/3/advanced")]
+    [InlineData("sinch", "/xms/v1/plan/batches", "/calling/v1/callouts")]
+    public async Task RequestChannelSelectsDistinctConfiguredEndpoints(string provider, string smsPath, string voicePath)
+    {
+        using var rig = new HandlerRig(
+            _ => new TestTokenCredential((_, _) =>
+                ValueTask.FromResult(new AccessToken("assertion", DateTimeOffset.UtcNow.AddHours(1)))),
+            (_, _, _) => new TestTokenCredential((_, _) =>
+                ValueTask.FromResult(new AccessToken("token", DateTimeOffset.UtcNow.AddHours(1)))));
+        if (provider == "soprano") ConfigureSoprano(rig);
+        rig.Env["EPP_PROVIDER_NAME"] = provider;
+        rig.Env["EPP_PROVIDER_AUTH_MODE"] = provider == "soprano" ? "oauth" : "apiKey";
+        rig.Env["EPP_PROVIDER_SMS_ENDPOINT"] = "https://sms.provider.example/send";
+        rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] = "https://voice.provider.example/send";
+        rig.Env["SINCH_SERVICE_PLAN_ID"] = "plan";
+        rig.Env["SINCH_VOICE_ENDPOINT"] = "https://legacy.provider.example";
+        var response = provider switch
+        {
+            "telesign" => "{\"status\":{\"code\":3001}}",
+            "soprano" => "{\"status\":\"ENROUTE\"}",
+            "sinch" => "{\"id\":\"provider-id\"}",
+            _ => "{\"messages\":[{\"status\":{\"groupName\":\"PENDING\"}}]}",
+        };
+        rig.Http.Respond = _ => Task.FromResult(Json(200, response));
+        foreach (var legacyEndpoint in new[] { null, "https://legacy.provider.example" })
+        {
+            if (legacyEndpoint is null) rig.Env.Remove("EPP_PROVIDER_ENDPOINT");
+            else rig.Env["EPP_PROVIDER_ENDPOINT"] = legacyEndpoint;
+            foreach (var (channel, endpoint, path) in new[]
+            {
+                ("sms", rig.Env["EPP_PROVIDER_SMS_ENDPOINT"], smsPath),
+                ("voice", rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"], voicePath),
+            })
+            {
+                AssertAccepted(await rig.Invoke(channel: channel));
+                Assert.Equal(endpoint + path, rig.Http.Url);
+            }
+        }
+        Assert.Equal(4, rig.Http.Calls);
+    }
+
+    [Theory]
+    [InlineData("sms")]
+    [InlineData("voice")]
+    public async Task ChannelRequiresItsEndpointWithoutLegacyOrCrossChannelFallback(string channel)
+    {
+        using var rig = new HandlerRig();
+        rig.Env["EPP_PROVIDER_NAME"] = "telesign";
+        rig.Env["EPP_PROVIDER_ENDPOINT"] = "https://legacy.provider.example/send";
+        rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"status\":{\"code\":3001}}"));
+        var selected = channel == "sms" ? "EPP_PROVIDER_SMS_ENDPOINT" : "EPP_PROVIDER_VOICE_ENDPOINT";
+        var other = channel == "sms" ? "EPP_PROVIDER_VOICE_ENDPOINT" : "EPP_PROVIDER_SMS_ENDPOINT";
+        rig.Env[other] = "https://other.provider.example/send";
+        foreach (var value in new[] { null, "", "   ", "http://invalid.provider.example" })
+        {
+            if (value is null) rig.Env.Remove(selected);
+            else rig.Env[selected] = value;
+            AssertFailure(rig, await rig.Invoke(channel: channel), 502);
+            AssertAccepted(await rig.Invoke("evaluation", channel: channel));
+        }
+        Assert.Equal(0, rig.Http.Calls);
+
+        rig.Env[selected] = "https://selected.provider.example/send";
+        rig.Env[other] = "http://invalid.provider.example";
+        AssertAccepted(await rig.Invoke(channel: channel));
+        Assert.Equal(rig.Env[selected], rig.Http.Url);
+        Assert.Equal(1, rig.Http.Calls);
     }
 
     [Theory]
@@ -139,7 +251,6 @@ public class SendOtpTests
         Assert.Empty(applications);
         foreach (var channel in new[] { "sms", "voice" })
         {
-            rig.Env["EPP_PROVIDER_CHANNEL"] = channel;
             AssertAccepted(await rig.Invoke(channel: channel, deliveryOverrides: JsonSerializer.SerializeToElement(new
             {
                 providerJwt = "FORGED-PAYLOAD", locale = "fr-FR",
@@ -161,7 +272,6 @@ public class SendOtpTests
                 Assert.Equal(2, speech.GetProperty("loop").GetInt32());
             }
         }
-        rig.Env["EPP_PROVIDER_CHANNEL"] = "sms";
         AssertAccepted(await rig.Invoke());
         Assert.Single(applications);
         Assert.Equal(new[] { scope }, scopes);
@@ -338,7 +448,7 @@ public class SendOtpTests
     {
         using var rig = new HandlerRig();
         rig.Env["EPP_PROVIDER_NAME"] = "telesign";
-        rig.Env["EPP_PROVIDER_ENDPOINT"] = "https://verify.telesign.com/epp/sms";
+        rig.Env["EPP_PROVIDER_SMS_ENDPOINT"] = "https://verify.telesign.com/epp/sms";
         rig.Env["EPP_PROVIDER_AUTH_MODE"] = "apiKey";
         rig.Secrets.Identity = "";
         AssertFailure(rig, await rig.Invoke(), 502);
@@ -349,16 +459,15 @@ public class SendOtpTests
     }
 
     [Fact]
-    public async Task BaseAndFinalVoiceUrlsMustBeHttpsBeforeHttp()
+    public async Task ConfiguredVoiceUrlMustBeHttpsBeforeHttp()
     {
         using var rig = new HandlerRig();
         rig.Env["EPP_PROVIDER_NAME"] = "sinch";
-        rig.Env["EPP_PROVIDER_ENDPOINT"] = "http://provider.example";
+        rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] = "http://provider.example";
         AssertFailure(rig, await rig.Invoke(channel: "voice"), 502);
-        rig.Env["EPP_PROVIDER_ENDPOINT"] = "https://provider.example:0";
+        rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] = "https://provider.example:0";
         AssertFailure(rig, await rig.Invoke(channel: "voice"), 502);
-        rig.Env["EPP_PROVIDER_ENDPOINT"] = "https://provider.example";
-        rig.Env["SINCH_VOICE_ENDPOINT"] = "http://voice.example";
+        rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] = "https://provider.example#fragment";
         AssertFailure(rig, await rig.Invoke(channel: "voice"), 502);
         Assert.Equal(0, rig.Http.Calls);
     }
@@ -551,7 +660,6 @@ public class SendOtpTests
     [InlineData("decryption", 400, "decryption", "decryption_failed", false)]
     [InlineData("incomplete_context", 400, "delivery_context_validation", "incomplete delivery context", false)]
     [InlineData("unknown_provider", 400, "provider_selection", "unknown_provider", false)]
-    [InlineData("wrong_channel", 400, "provider_configuration", "channel_not_configured", false)]
     [InlineData("authentication_mismatch", 502, "provider_configuration", "authentication_mode_mismatch", false)]
     [InlineData("invalid_endpoint", 502, "provider_configuration", "invalid_provider_endpoint", false)]
     [InlineData("credentials", 502, "provider_credentials", "credential_unavailable", false)]
@@ -568,9 +676,8 @@ public class SendOtpTests
             case "decryption": rig.Env["EPP_DECRYPTION_KEY_PEM"] = PrivateError; break;
             case "incomplete_context": delivery = JsonSerializer.SerializeToElement(new { nonce = "" }); break;
             case "unknown_provider": rig.Env["EPP_PROVIDER_NAME"] = "PRIVATE-UNKNOWN-PROVIDER"; break;
-            case "wrong_channel": rig.Env["EPP_PROVIDER_CHANNEL"] = "voice"; break;
             case "authentication_mismatch": rig.Env["EPP_PROVIDER_AUTH_MODE"] = "oauth"; break;
-            case "invalid_endpoint": rig.Env["EPP_PROVIDER_ENDPOINT"] = "http://PRIVATE-ENDPOINT"; break;
+            case "invalid_endpoint": rig.Env["EPP_PROVIDER_SMS_ENDPOINT"] = "http://PRIVATE-ENDPOINT"; break;
             case "credentials": rig.Secrets.Error = new InvalidOperationException(PrivateError); break;
             case "request_build":
                 rig.Env["EPP_PROVIDER_NAME"] = "telesign";
@@ -637,7 +744,7 @@ public class SendOtpTests
                 return new AccessToken("PRIVATE-TOKEN", DateTimeOffset.UtcNow.AddHours(1));
             }));
         ConfigureSoprano(rig);
-        rig.Env["EPP_PROVIDER_ENDPOINT"] = "https://provider.example/api/send?key=PRIVATE-QUERY";
+        rig.Env["EPP_PROVIDER_SMS_ENDPOINT"] = "https://provider.example/api/send?key=PRIVATE-QUERY";
         rig.Env["EPP_PROVIDER_TENANT_ID"] = "provider-tenant-id";
         rig.Env["EPP_OUTBOUND_CLIENT_ID"] = "outbound-client-id";
         rig.Env["EPP_OUTBOUND_MI_CLIENT_ID"] = "outbound-mi-client-id";
@@ -696,13 +803,13 @@ public class SendOtpTests
     {
         using var rig = new HandlerRig();
         rig.Env["EPP_PROVIDER_NAME"] = "sinch";
-        rig.Env["SINCH_VOICE_ENDPOINT"] = "https://different-provider.example/api/final";
+        rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] = "https://different-provider.example/api/final";
         rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"callId\":\"sinch-call-id\"}"));
         AssertAccepted(await rig.Invoke(channel: "voice"));
         var summary = Summary(rig);
-        var expected = rig.Env["SINCH_VOICE_ENDPOINT"] + "/calling/v1/callouts";
+        var expected = rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] + "/calling/v1/callouts";
         Assert.Equal(expected, summary.GetProperty("providerEndpoint").GetString());
-        Assert.NotEqual(rig.Env["EPP_PROVIDER_ENDPOINT"]!, summary.GetProperty("providerEndpoint").GetString());
+        Assert.NotEqual(rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"]!, summary.GetProperty("providerEndpoint").GetString());
         Assert.Equal("POST", summary.GetProperty("providerHttpMethod").GetString());
         Assert.DoesNotContain("PRIVATE", string.Join("\n", rig.Log.Messages));
     }
@@ -914,7 +1021,8 @@ public class SendOtpTests
             Env = new TestEnv
             {
                 ["EPP_PROVIDER_NAME"] = "infobip",
-                ["EPP_PROVIDER_ENDPOINT"] = "https://provider.example",
+                ["EPP_PROVIDER_SMS_ENDPOINT"] = "https://provider.example",
+                ["EPP_PROVIDER_VOICE_ENDPOINT"] = "https://provider.example",
                 ["EPP_PROVIDER_TIMEOUT_MS"] = "2500",
                 ["EPP_DECRYPTION_KEY_PEM"] = Keys.Rsa.ExportPkcs8PrivateKeyPem(),
             };
@@ -988,6 +1096,7 @@ public class SendOtpTests
     private sealed class TestHttp : HttpMessageHandler, IHttpClientFactory
     {
         public int Calls { get; private set; }
+        public string? Url { get; private set; }
         public string? Body { get; private set; }
         public Dictionary<string, string> Headers { get; private set; } = new(StringComparer.OrdinalIgnoreCase);
         public Func<CancellationToken, Task<HttpResponseMessage>> Respond { get; set; } =
@@ -996,6 +1105,7 @@ public class SendOtpTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Calls++;
+            Url = request.RequestUri?.AbsoluteUri;
             Body = await request.Content!.ReadAsStringAsync(cancellationToken);
             Headers = request.Headers.ToDictionary(header => header.Key, header => string.Join(",", header.Value), StringComparer.OrdinalIgnoreCase);
             return await Respond(cancellationToken);

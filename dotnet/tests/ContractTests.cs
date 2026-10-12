@@ -210,7 +210,6 @@ public class ContractTests
         {
             ["EPP_PROVIDER_ACCOUNT_NAME"] = "Verify",
             ["SINCH_SERVICE_PLAN_ID"] = "service-plan",
-            ["SINCH_VOICE_ENDPOINT"] = "https://calling.example",
         };
         var credential = new ProviderCredentials("apiKey", "test-key", "test-id");
 
@@ -231,7 +230,7 @@ public class ContractTests
             sms.Body);
 
         var voice = await new SinchProvider().CaptureRequestAsync(
-            "voice", "https://provider.example", Delivery("voice"), credential, env);
+            "voice", "https://calling.example", Delivery("voice"), credential, env);
         AssertJsonRequest(voice, "https://calling.example/calling/v1/callouts", "******");
         Assert.Equal(
             JsonSerializer.Serialize(new

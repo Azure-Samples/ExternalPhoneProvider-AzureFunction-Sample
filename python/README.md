@@ -57,8 +57,10 @@ For local evaluation, start Azurite and replace the test-key placeholder in this
 }
 ```
 
-For live delivery, add `EPP_PROVIDER_NAME`, the complete selected `EPP_PROVIDER_ENDPOINT`, and the
-matching provider authentication settings to `Values`.
+For live delivery, add `EPP_PROVIDER_NAME`, `EPP_PROVIDER_SMS_ENDPOINT`,
+`EPP_PROVIDER_VOICE_ENDPOINT`, and matching provider authentication settings to `Values`.
+Each request's `channel` selects its required endpoint; the URLs may differ.
+A missing, empty, or invalid selected endpoint fails closed without fallback.
 Add `EPP_PROVIDER_ACCOUNT_NAME` and any adapter-specific options only when required. Keep values as
 strings, including optional `EPP_PROVIDER_TIMEOUT_MS: "1500"`. Replace placeholders; provider API
 keys belong in the provider-named Key Vault secrets, not this file. See the

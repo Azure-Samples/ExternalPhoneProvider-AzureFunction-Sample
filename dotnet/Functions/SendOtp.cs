@@ -225,8 +225,6 @@ public sealed class SendOtp
         if (channel is not ("sms" or "voice"))
             return Failure(400, "provider_configuration", "unsupported_channel");
 
-        if (!string.IsNullOrEmpty(config.ProviderChannel) && config.ProviderChannel != channel)
-            return Failure(400, "provider_configuration", "channel_not_configured");
         if (!string.IsNullOrEmpty(config.ProviderAuthMode) && config.ProviderAuthMode != provider.AuthenticationMode)
             return Failure(502, "provider_configuration", "authentication_mode_mismatch");
 
@@ -260,7 +258,7 @@ public sealed class SendOtp
             provider.Name,
             credentialStarted.ElapsedMilliseconds);
 
-        var endpoint = config.ProviderEndpoint;
+        var endpoint = channel == "voice" ? config.ProviderVoiceEndpoint : config.ProviderSmsEndpoint;
         if (!PhoneProviderBase.IsHttpsEndpoint(endpoint))
             return Failure(502, "provider_configuration", "invalid_provider_endpoint");
 

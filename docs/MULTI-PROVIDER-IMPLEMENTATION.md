@@ -63,9 +63,8 @@ each account's settings must match its selected adapter's actual credential requ
     "id": "primary-account",
     "settings": {
       "EPP_PROVIDER_NAME": "<supported-adapter-name>",
-      "EPP_PROVIDER_CHANNEL": "sms",
       "EPP_PROVIDER_AUTH_MODE": "apiKey",
-      "EPP_PROVIDER_ENDPOINT": "<approved-primary-endpoint-or-base-url>",
+      "EPP_PROVIDER_SMS_ENDPOINT": "<approved-primary-sms-endpoint-or-base-url>",
       "KEY_VAULT_URL": "https://<primary-vault>.vault.azure.net",
       "AZURE_CLIENT_ID": "<primary-vault-reader-client-id>"
     }
@@ -74,9 +73,8 @@ each account's settings must match its selected adapter's actual credential requ
     "id": "secondary-account",
     "settings": {
       "EPP_PROVIDER_NAME": "<supported-adapter-name>",
-      "EPP_PROVIDER_CHANNEL": "sms",
       "EPP_PROVIDER_AUTH_MODE": "apiKey",
-      "EPP_PROVIDER_ENDPOINT": "<approved-secondary-endpoint-or-base-url>",
+      "EPP_PROVIDER_SMS_ENDPOINT": "<approved-secondary-sms-endpoint-or-base-url>",
       "EPP_PROVIDER_ACCOUNT_NAME": "<approved-sender>",
       "KEY_VAULT_URL": "https://<secondary-vault>.vault.azure.net",
       "AZURE_CLIENT_ID": "<secondary-vault-reader-client-id>"
@@ -85,9 +83,13 @@ each account's settings must match its selected adapter's actual credential requ
 ]
 ```
 
-Your startup loader must reject duplicate/missing IDs, mismatched channels/authentication modes,
-unapproved endpoints, missing credential references and invalid deadline policy. Validate both
-contexts before enabling the endpoint, not only after the primary fails.
+This SMS-only policy requires `EPP_PROVIDER_SMS_ENDPOINT` for each account. A voice policy requires
+`EPP_PROVIDER_VOICE_ENDPOINT` instead. The validated request channel selects the matching endpoint;
+there is no shared or other-channel endpoint fallback.
+
+Your startup loader must reject duplicate/missing IDs, missing endpoints for the policy's channel,
+mismatched authentication modes, unapproved endpoints, missing credential references and invalid
+deadline policy. Validate both contexts before enabling the endpoint, not only after the primary fails.
 
 For each selected [adapter](../javascript/src/functions/providers), inspect `credentialSpec`
 for the required secret names and any account identifier, and `createRequest` for endpoint and

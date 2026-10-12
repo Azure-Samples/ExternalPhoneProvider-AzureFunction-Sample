@@ -59,8 +59,10 @@ the test-key placeholder in this minimal setup:
 }
 ```
 
-For live delivery, add `EPP_PROVIDER_NAME`, the complete selected `EPP_PROVIDER_ENDPOINT`, and the
-matching provider authentication settings to `Values`.
+For live delivery, add `EPP_PROVIDER_NAME`, `EPP_PROVIDER_SMS_ENDPOINT`,
+`EPP_PROVIDER_VOICE_ENDPOINT`, and matching provider authentication settings to `Values`.
+Each request's `channel` selects its required endpoint; the URLs may differ.
+A missing, empty, or invalid selected endpoint fails closed without fallback.
 Add `EPP_PROVIDER_ACCOUNT_NAME` and any provider-specific options only when required. Optional
 `EPP_PROVIDER_TIMEOUT_MS` is a string such as `"1500"`. Replace placeholders; do not put API keys in
 this file. See the [complete variable table](../TECHNICAL.md#configure-environment-variables).
@@ -73,9 +75,9 @@ does not resolve Key Vault references locally; supply the local test PEM or base
 
 Older private settings may contain `DEFAULT_PROVIDER`, `ENDPOINT_TIMEOUT_MS`, `REQUIRE_AUTH`,
 `EXPECTED_AUDIENCE`, `ISSUER_TENANT_ID`, `EUDB`, or per-provider `*_ENDPOINT` entries. Those do not
-configure the current shared engine. Use `EPP_PROVIDER_NAME`, `EPP_PROVIDER_ENDPOINT` and
+configure the current shared engine. Use `EPP_PROVIDER_NAME`, the endpoint settings above and
 `EPP_PROVIDER_TIMEOUT_MS` instead; configure caller authentication in Easy Auth. Keep provider options
-that are actually read, such as a service-plan ID or voice selection. Private integration helpers may
+that are actually read, such as a service-plan ID. Private integration helpers may
 load settings from another location or use test credential variables, but the Function itself does not.
 
 The Soprano provider uses the configured complete endpoint and an OAuth bearer token. For voice, it

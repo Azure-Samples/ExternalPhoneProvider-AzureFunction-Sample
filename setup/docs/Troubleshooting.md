@@ -39,7 +39,7 @@ can remain even if no success summary was written. Inspect the Azure subscriptio
 deployment operations and the original failure before retrying.
 
 Correct the underlying error, then use the same reviewed tenant, subscription, app, runtime,
-plan, prefix, provider/channel/route, and intended source/package versions for a recovery rerun.
+plan, prefix, provider/route, and intended source/package versions for a recovery rerun.
 Changing identifiers can create new resources or break certificate continuity; changing a route
 can reconfigure the existing endpoint. Setup does not resume from a checkpoint or undo previous
 steps. For an active endpoint, arrange a change window because reruns can disable ingress and
@@ -345,7 +345,10 @@ Keep Easy Auth enabled. Check the trusted tenant, actual token version, audience
 and nonempty Microsoft caller allowlist. Keep `tokenEncryptionKeyId` null on the endpoint app;
 payload JWE encryption is separate from signed bearer-token validation.
 
-For live delivery, confirm the setup-selected complete provider URL and its account authorization.
+For live delivery, confirm the request's channel-specific provider URL
+(`EPP_PROVIDER_SMS_ENDPOINT` or `EPP_PROVIDER_VOICE_ENDPOINT`) and its account authorization.
+The matching setting is required; missing, empty, or invalid URLs fail closed without using a
+shared or other-channel endpoint. Use a package that supports these settings.
 Telesign needs its exact Key Vault secret names; Soprano needs provider-side authorization, not
 API-key secrets. Arrange an authorized evaluation through the
 [test handoff](../../docs/ONBOARDING.md#validate-the-deployed-endpoint) before controlled live

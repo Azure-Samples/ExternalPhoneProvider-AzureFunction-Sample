@@ -10,8 +10,8 @@ class AppConfig:
     decryption_key_pem: str
     expected_key_id: str | None
     provider_name: str
-    provider_endpoint: str | None
-    provider_channel: str
+    provider_sms_endpoint: str | None
+    provider_voice_endpoint: str | None
     provider_auth_mode: str
     provider_tenant_id: str
     provider_scope: str
@@ -29,8 +29,8 @@ def read_config(env: Mapping[str, str] | None = None) -> AppConfig:
         decryption_key_pem=env.get("EPP_DECRYPTION_KEY_PEM") or "",
         expected_key_id=env.get("EPP_ENCRYPTION_KEY_ID"),
         provider_name=(env.get("EPP_PROVIDER_NAME") or "").strip().lower(),
-        provider_endpoint=env.get("EPP_PROVIDER_ENDPOINT"),
-        provider_channel=(env.get("EPP_PROVIDER_CHANNEL") or "").strip().lower(),
+        provider_sms_endpoint=env.get("EPP_PROVIDER_SMS_ENDPOINT"),
+        provider_voice_endpoint=env.get("EPP_PROVIDER_VOICE_ENDPOINT"),
         provider_auth_mode=(env.get("EPP_PROVIDER_AUTH_MODE") or "").strip(),
         provider_tenant_id=(env.get("EPP_PROVIDER_TENANT_ID") or "").strip(),
         provider_scope=(env.get("EPP_PROVIDER_SCOPE") or "").strip(),

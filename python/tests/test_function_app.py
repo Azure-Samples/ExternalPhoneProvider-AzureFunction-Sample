@@ -34,7 +34,9 @@ def _isolate(monkeypatch):
     monkeypatch.setenv("EPP_DECRYPTION_KEY_PEM", _PRIVATE_PEM)
     monkeypatch.delenv("EPP_ENCRYPTION_KEY_ID", raising=False)
     monkeypatch.setenv("EPP_PROVIDER_NAME", "soprano")
-    monkeypatch.setenv("EPP_PROVIDER_ENDPOINT", "https://qa4.example/oauth/messages")
+    monkeypatch.delenv("EPP_PROVIDER_ENDPOINT", raising=False)
+    monkeypatch.setenv("EPP_PROVIDER_SMS_ENDPOINT", "https://qa4.example/oauth/messages")
+    monkeypatch.setenv("EPP_PROVIDER_VOICE_ENDPOINT", "https://qa4.example/oauth/messages")
     monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", "oauth")
     monkeypatch.delenv("EPP_PROVIDER_CHANNEL", raising=False)
     monkeypatch.delenv("EPP_KEY_VAULT_CACHE_ENABLED", raising=False)
@@ -216,6 +218,96 @@ def test_jwe_tampering_fails_before_provider_work():
         assert json.loads(response.get_body())["error"] == "decryption_failed"
     function_app._credentials.get_credentials.assert_not_called()
     provider_module.requests.request.assert_not_called()
+
+
+@pytest.mark.parametrize("provider", ["telesign", "soprano"])
+@pytest.mark.parametrize("legacy_channel", [None, "sms", "voice", "invalid"])
+def test_request_selects_either_channel_regardless_of_legacy_setting(monkeypatch, provider, legacy_channel):
+    mode = "apiKey" if provider == "telesign" else "oauth"
+    monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
+    monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", mode)
+    if legacy_channel is not None:
+        monkeypatch.setenv("EPP_PROVIDER_CHANNEL", legacy_channel)
+    function_app._credentials.get_credentials.return_value = {
+        "mode": mode, "secret": "key", "identity": "customer", "access_token": "token",
+    }
+    provider_module.requests.request.return_value = Mock(
+        status_code=200,
+        json=Mock(return_value={"status": {"code": 3001} if provider == "telesign" else "ENROUTE"}),
+    )
+
+    for channel, channel_name in [(1, "sms"), ("SMS", "sms"), (2, "voice"), ("VOICE", "voice")]:
+        response = _HANDLER(_request(_envelope(channel=channel)))
+        assert response.status_code == 200
+        assert json.loads(response.get_body())["nonce"] == _NONCE
+        call = provider_module.requests.request.call_args
+        endpoint_key = "EPP_PROVIDER_VOICE_ENDPOINT" if channel_name == "voice" else "EPP_PROVIDER_SMS_ENDPOINT"
+        assert call.args[1] == function_app.os.environ[endpoint_key]
+        body = json.loads(call.kwargs["data"])
+        if provider == "telesign":
+            assert body["channels"] == [{"channel": channel_name}]
+        else:
+            assert body["messageTypes"] == [channel_name]
+    assert provider_module.requests.request.call_count == 4
+
+
+@pytest.mark.parametrize("provider,payload,sms_path,voice_path", [
+    ("telesign", {"status": {"code": 3001}}, "", ""),
+    ("soprano", {"status": "ENROUTE"}, "", ""),
+    ("infobip", {"messages": [{"status": {"groupName": "PENDING"}}]}, "/sms/3/messages", "/tts/3/advanced"),
+    ("sinch", {"id": "provider-id"}, "/xms/v1/plan/batches", "/calling/v1/callouts"),
+])
+def test_request_channel_selects_distinct_configured_endpoints(monkeypatch, provider, payload, sms_path, voice_path):
+    mode = "oauth" if provider == "soprano" else "apiKey"
+    monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
+    monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", mode)
+    monkeypatch.setenv("EPP_PROVIDER_SMS_ENDPOINT", "https://sms.provider.example/send")
+    monkeypatch.setenv("EPP_PROVIDER_VOICE_ENDPOINT", "https://voice.provider.example/send")
+    monkeypatch.setenv("SINCH_SERVICE_PLAN_ID", "plan")
+    monkeypatch.setenv("SINCH_VOICE_ENDPOINT", "https://legacy.provider.example")
+    function_app._credentials.get_credentials.return_value = {
+        "mode": mode, "secret": "key", "identity": "customer", "access_token": "token",
+    }
+    provider_module.requests.request.return_value = Mock(status_code=200, json=Mock(return_value=payload))
+    for legacy_endpoint in [None, "https://legacy.provider.example"]:
+        if legacy_endpoint is None:
+            monkeypatch.delenv("EPP_PROVIDER_ENDPOINT", raising=False)
+        else:
+            monkeypatch.setenv("EPP_PROVIDER_ENDPOINT", legacy_endpoint)
+        for channel, endpoint, path in [
+            (1, "https://sms.provider.example/send", sms_path),
+            (2, "https://voice.provider.example/send", voice_path),
+        ]:
+            response = _HANDLER(_request(_envelope(channel=channel)))
+            assert response.status_code == 200
+            assert json.loads(response.get_body())["nonce"] == _NONCE
+            assert provider_module.requests.request.call_args.args[1] == endpoint + path
+    assert provider_module.requests.request.call_count == 4
+
+
+@pytest.mark.parametrize("channel", ["sms", "voice"])
+def test_channel_requires_its_endpoint_without_legacy_or_cross_channel_fallback(monkeypatch, channel):
+    selected = "EPP_PROVIDER_SMS_ENDPOINT" if channel == "sms" else "EPP_PROVIDER_VOICE_ENDPOINT"
+    other = "EPP_PROVIDER_VOICE_ENDPOINT" if channel == "sms" else "EPP_PROVIDER_SMS_ENDPOINT"
+    monkeypatch.setenv("EPP_PROVIDER_ENDPOINT", "https://legacy.provider.example/send")
+    monkeypatch.setenv(other, "https://other.provider.example/send")
+    provider_module.requests.request.return_value = Mock(status_code=200, json=Mock(return_value={"status": "ENROUTE"}))
+    for value in [None, "", "   ", "http://invalid.provider.example"]:
+        if value is None:
+            monkeypatch.delenv(selected, raising=False)
+        else:
+            monkeypatch.setenv(selected, value)
+        response = _HANDLER(_request(_envelope(channel=channel)))
+        assert response.status_code == 502
+        assert "nonce" not in json.loads(response.get_body())
+        assert _HANDLER(_request(_envelope(channel=channel, mode=2))).status_code == 200
+    provider_module.requests.request.assert_not_called()
+
+    monkeypatch.setenv(selected, "https://selected.provider.example/send")
+    monkeypatch.setenv(other, "http://invalid.provider.example")
+    assert _HANDLER(_request(_envelope(channel=channel))).status_code == 200
+    assert provider_module.requests.request.call_args.args[1] == function_app.os.environ[selected]
+    assert provider_module.requests.request.call_count == 1
 
 
 def test_live_acceptance_waits_for_provider_and_preserves_wire_message(monkeypatch, caplog):

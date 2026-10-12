@@ -112,7 +112,8 @@ requests the configured provider scope. Existing platform caller authentication 
 The Function obtains one provider token through the shared OAuth credential resolver using the
 setup-generated `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE`, `EPP_OUTBOUND_CLIENT_ID`, and
 `EPP_OUTBOUND_MI_CLIENT_ID`. `EPP_PROVIDER_AUTH_MODE=oauth` matches the Soprano provider.
-`EPP_PROVIDER_ENDPOINT` is the complete selected send URL and is not modified by the provider.
+The request channel selects the required `EPP_PROVIDER_SMS_ENDPOINT` or `EPP_PROVIDER_VOICE_ENDPOINT`.
+The selected complete send URL is not modified by the provider.
 The calling app registration and outbound user-assigned identity must share a home tenant; the
 calling app must be multitenant and provisioned/authorized in the provider tenant. The app's
 federated credential trusts the identity's principal ID, home-tenant v2 issuer, and
@@ -294,8 +295,8 @@ Set by provisioning. **Identical names across all languages.**
 | Key | Purpose |
 |-----|---------|
 | `EPP_PROVIDER_NAME` | fixed id of the selected provider; `<provider-id>` is a placeholder, not a bundled default |
-| `EPP_PROVIDER_ENDPOINT` | complete absolute HTTPS request URL for the selected channel/region, with a hostname, port 1-65535, and no userinfo or fragment; redirects are not followed |
-| `EPP_PROVIDER_CHANNEL` | optional configured `sms` or `voice` route; when set, other live-request channels fail closed |
+| `EPP_PROVIDER_SMS_ENDPOINT` | required SMS endpoint for the selected provider/region; complete send URL for Telesign/Soprano, base URL for Infobip/Sinch |
+| `EPP_PROVIDER_VOICE_ENDPOINT` | required voice endpoint for the selected provider/region; complete send URL for Telesign/Soprano, base URL for Infobip/Sinch; may differ from SMS |
 | `EPP_PROVIDER_ENDPOINT_REGION` | selected `global` or `eu` route label; informational at runtime |
 | `EPP_PROVIDER_AUTH_MODE` | must match the selected provider (`apiKey` for Telesign, `oauth` for Soprano) |
 | `EPP_PROVIDER_TENANT_ID` | selected provider tenant; added to the Step 1 app's allowed-tenants preview and used as the OAuth authority for Soprano |
@@ -321,10 +322,24 @@ guard or backup token validation. See [platform onboarding](ONBOARDING.md#2-prov
 
 ### Default provider and configuration readers
 
-Provision `EPP_PROVIDER_NAME` with the customer's selected provider, plus the complete selected
-channel/region `EPP_PROVIDER_ENDPOINT` and matching authentication settings. A missing or unknown
+Provision `EPP_PROVIDER_NAME` with the customer's selected provider, plus
+`EPP_PROVIDER_SMS_ENDPOINT`, `EPP_PROVIDER_VOICE_ENDPOINT`, and matching authentication settings.
+The endpoint settings can use different URLs for the same provider. A missing or unknown
 provider fails closed; there is no implicit default or automatic failover. Request-body provider
 fields are not used.
+
+For each live request, the matching channel-specific endpoint is required. A missing, empty, or
+invalid selected endpoint fails with `502`; there is no shared endpoint fallback, and one channel
+never borrows the other channel's URL. The unselected channel's endpoint does not affect the request.
+Endpoints must be absolute HTTPS URLs with a hostname, port 1-65535, and no userinfo or fragment; redirects are
+not followed. Evaluation does not require provider endpoints.
+
+Telesign and Soprano send to the selected URL unchanged. Infobip and Sinch use the selected
+channel-specific base URL and append their API paths. Neither adapter substitutes a default base URL.
+
+Each valid request's `channel` selects SMS or voice, without a deployment-level channel restriction.
+The legacy `EPP_PROVIDER_CHANNEL` setting is not read. Unsupported request channels still fail
+validation; provider account access for each intended channel remains an onboarding requirement.
 
 The shared configuration readers are [JavaScript `readConfig`](../javascript/src/functions/config.js),
 [Python `read_config`](../python/src/config.py), and [.NET `AppConfig.Read`](../dotnet/Src/AppConfig.cs).

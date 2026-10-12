@@ -21,14 +21,13 @@ class SinchProvider(PhoneProviderBase):
         reference = delivery.correlation_id or delivery.message_id
 
         if channel == "voice":
-            voice_base = env.get("SINCH_VOICE_ENDPOINT") or "https://calling.api.sinch.com"
             body = {"method": "ttsCallout", "ttsCallout": {
                 "destination": {"type": "number", "endpoint": delivery.phone_number},
                 "text": delivery.message,
                 "locale": delivery.locale or "en-US",
                 "custom": reference,
             }}
-            return OutboundRequest("POST", f"{voice_base}/calling/v1/callouts", headers, json.dumps(body))
+            return OutboundRequest("POST", f"{endpoint}/calling/v1/callouts", headers, json.dumps(body))
 
         service_plan_id = env.get("SINCH_SERVICE_PLAN_ID") or ""
         body = {

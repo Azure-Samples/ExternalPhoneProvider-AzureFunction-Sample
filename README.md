@@ -7,6 +7,10 @@ You register an application, run a guided setup script, then connect and test yo
 An administrator activates the endpoint only after those checks pass. You do not need to clone
 this repository, build a package yourself, or follow all three language guides.
 
+The same Function endpoint supports both SMS and voice. Each request's `channel` selects its
+configured provider URL, and the SMS and voice URLs can differ. Validate every channel you intend
+to activate.
+
 The screenshots show the Azure portal and the setup script. You can also register the application
 in the Microsoft Entra admin center. Identifying details are hidden; your portal layout may differ.
 
@@ -76,7 +80,7 @@ configuration. See [application registration details](setup/docs/README.md#step-
 Also keep your Azure subscription ID handy. The
 [setup values worksheet](docs/ONBOARDING.md#inputs-you-supply-to-setup) explains where to find
 each value. Use a new dedicated application and resource prefix for another independent endpoint;
-changing the channel or region on a rerun does not create a separate deployment.
+changing the provider or region on a rerun does not create a separate deployment.
 
 ## 3. Run guided setup
 
@@ -98,15 +102,17 @@ Review the downloaded script, then run it:
 On a shared or multi-account workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` to request
 explicit Azure and Microsoft Graph sign-in.
 
-Follow the prompts for your tenant, subscription, application client ID, Azure region, and channel.
+Follow the prompts for your tenant, subscription, application client ID, and Azure region.
 Choose the provider route and provider, then **one** platform: Node.js (JavaScript), .NET (C#), or Python.
-Setup downloads and verifies the package, builds it if needed, and deploys it for you.
+Setup configures both SMS and voice provider URLs without asking you to select a channel.
+It downloads and verifies the package, builds it if needed, and deploys it for you.
 You do not need a separate ZIP upload or local settings file.
 
-![Actual PowerShell setup prompts for tenant, subscription, application, region, and SMS or voice, with identifiers hidden](docs/images/onboarding/setup-identifiers.png)
+![Earlier PowerShell setup prompts for tenant, subscription, application, region, and SMS or voice, with identifiers hidden](docs/images/onboarding/setup-identifiers.png)
 
-*Use the IDs collected in Step 2, then enter your chosen Azure region and channel.
-This is the real script's input screen, not a deployment result.*
+*Use the IDs collected in Step 2, then enter your chosen Azure region. This screenshot is from
+an earlier script version; current setup no longer has the channel prompt. It is an input screen,
+not a deployment result.*
 
 Choose **FC1** for on-demand hosting that can scale to zero, or **EP1** for paid warm capacity.
 FC1 can cold-start, and its free usage grant does not make the whole deployment free.
@@ -127,7 +133,8 @@ Complete sign-in and MFA yourself. If a permission or prerequisite check fails, 
 before continuing.
 
 **Review the complete deployment plan before typing `Yes`.** Check the accounts, region,
-provider route, plan, resource names, permissions, and certificate changes. Setup grants the
+SMS and voice provider URLs, platform, plan, cache settings, resource names, permissions, and
+certificate changes. Setup grants the
 Microsoft phone-provider service principal Microsoft Graph `Application.Read.All`, a tenant-wide
 application-read permission. `No` or Enter cancels deployment; sign-in and prerequisite prompts
 are separate from this approval.
@@ -186,8 +193,8 @@ Ask your onboarding owner to arrange the
 
 1. Confirm that missing or unauthorized caller credentials are rejected.
 2. Run an authorized **evaluation** to check authentication and decryption without a provider send.
-3. Run a separately approved **live test** and confirm both provider acceptance and receipt of
-   the SMS or voice call. Acceptance alone is not proof of delivery.
+3. Run a separately approved **live test for each channel you intend to activate** and confirm
+   both provider acceptance and receipt of the SMS or voice call. Acceptance alone is not proof of delivery.
 4. Check that the request and relevant logs appear in Application Insights.
 
 The [illustrated monitoring steps](docs/MONITORING.md#find-the-linked-resources-in-the-portal)
@@ -205,6 +212,9 @@ Have an **Authentication Policy Administrator** follow the
 They must save the existing policy, apply the approved endpoint URL and application client ID,
 preserve other settings, and read back and validate the change. **Setup does not activate policy.**
 The EPP policy fields require Microsoft's assisted procedure; do not guess a Graph update.
+
+Repeat for each authentication method you intend to enable. SMS and voice can share the same
+Function endpoint URL and application client ID; no additional setup run is needed for the second channel.
 
 Before handing over, confirm:
 

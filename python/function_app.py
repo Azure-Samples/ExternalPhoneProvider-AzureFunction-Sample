@@ -71,8 +71,6 @@ def _send_to_provider(delivery, log):
     channel = (delivery.channel or "sms").lower()
     if channel not in ("sms", "voice"):
         return _failure(log, 400, "provider_configuration", "unsupported_channel"), log
-    if config.provider_channel and config.provider_channel != channel:
-        return _failure(log, 400, "provider_configuration", "channel_not_configured"), log
     if config.provider_auth_mode and config.provider_auth_mode != provider.authentication_mode:
         return _failure(log, 502, "provider_configuration", "authentication_mode_mismatch"), log
 
@@ -90,13 +88,16 @@ def _send_to_provider(delivery, log):
     otp_log.credential_resolved(
         log, provider.name, int((time.monotonic() - credential_started) * 1000))
 
-    if not is_https_endpoint(config.provider_endpoint):
+    endpoint = (
+        config.provider_voice_endpoint if channel == "voice" else config.provider_sms_endpoint
+    )
+    if not is_https_endpoint(endpoint):
         return _failure(log, 502, "provider_configuration", "invalid_provider_endpoint"), log
 
     try:
         result = provider.send_otp(
             channel,
-            config.provider_endpoint,
+            endpoint,
             delivery,
             credential,
             config.env,

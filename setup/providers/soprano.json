@@ -7,37 +7,21 @@
       "mode": "oauth"
     },
     "routes": {
-      "sms": {
-        "global": {
-          "endpoint": "https://na1.smartmessagingsuite.com/cgpapi/messages/omnimsg",
-          "appId": "32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe",
-          "scope": "api://32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe/.default",
-          "timeoutMilliseconds": 1500,
-          "retryIntervalSeconds": 30
-        },
-        "eu": {
-          "endpoint": "https://na1.smartmessagingsuite.com/cgpapi/messages/omnimsg",
-          "appId": "32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe",
-          "scope": "api://32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe/.default",
-          "timeoutMilliseconds": 1500,
-          "retryIntervalSeconds": 30
-        }
+      "global": {
+        "smsEndpoint": "https://na1.smartmessagingsuite.com/cgpapi/messages/omnimsg",
+        "voiceEndpoint": "https://na1.smartmessagingsuite.com/cgpapi/messages/omnimsg",
+        "appId": "32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe",
+        "scope": "api://32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe/.default",
+        "timeoutMilliseconds": 1500,
+        "retryIntervalSeconds": 30
       },
-      "voice": {
-        "global": {
-          "endpoint": "https://na1.smartmessagingsuite.com/cgpapi/messages/omnimsg",
-          "appId": "32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe",
-          "scope": "api://32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe/.default",
-          "timeoutMilliseconds": 1500,
-          "retryIntervalSeconds": 30
-        },
-        "eu": {
-          "endpoint": "https://na1.smartmessagingsuite.com/cgpapi/messages/omnimsg",
-          "appId": "32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe",
-          "scope": "api://32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe/.default",
-          "timeoutMilliseconds": 1500,
-          "retryIntervalSeconds": 30
-        }
+      "eu": {
+        "smsEndpoint": "https://na1.smartmessagingsuite.com/cgpapi/messages/omnimsg",
+        "voiceEndpoint": "https://na1.smartmessagingsuite.com/cgpapi/messages/omnimsg",
+        "appId": "32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe",
+        "scope": "api://32dfc82a-86dd-4515-a0a2-f20ef2f5c7fe/.default",
+        "timeoutMilliseconds": 1500,
+        "retryIntervalSeconds": 30
       }
     }
   }

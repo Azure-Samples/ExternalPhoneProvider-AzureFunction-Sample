@@ -11,8 +11,8 @@ class AppConfig {
         this.decryptionKeyPem = env.EPP_DECRYPTION_KEY_PEM || '';
         this.expectedKeyId = env.EPP_ENCRYPTION_KEY_ID || '';
         this.providerName = (env.EPP_PROVIDER_NAME || '').trim().toLowerCase();
-        this.providerEndpoint = env.EPP_PROVIDER_ENDPOINT || '';
-        this.providerChannel = (env.EPP_PROVIDER_CHANNEL || '').trim().toLowerCase();
+        this.providerSmsEndpoint = env.EPP_PROVIDER_SMS_ENDPOINT || '';
+        this.providerVoiceEndpoint = env.EPP_PROVIDER_VOICE_ENDPOINT || '';
         this.providerAuthMode = (env.EPP_PROVIDER_AUTH_MODE || '').trim();
         this.providerTenantId = (env.EPP_PROVIDER_TENANT_ID || '').trim();
         this.providerScope = (env.EPP_PROVIDER_SCOPE || '').trim();
