@@ -467,14 +467,17 @@ not validate those dependencies' future readiness.
 
 Keep the setup summary's `certificateExpiresUtc`, vault certificate/secret versions, and Entra
 encryption credential expiry in a restricted inventory with a renewal owner and escalation backup.
-Configure the vault-wide certificate contacts and retain the certificate's `EmailContacts`
-lifetime action, following the [renewal runbook](../setup/docs/README.md#encryption-certificate-lifecycle).
+For certificates issued by setup, configure vault-wide certificate contacts and retain the
+`EmailContacts` lifetime action. For a reused certificate, coordinate its existing issuance policy
+and notifications with the source-vault owner. Follow the
+[renewal runbook](../setup/docs/README.md#encryption-certificate-lifecycle).
 Contacts alone are not automatic renewal, and a new vault certificate version does not update
 the Function's version-pinned reference or Entra by itself.
 
 Create an independent reminder before the certificate's 30-day near-expiry window and rehearse
-same-key renewal in nonproduction. If your operations process uses Key Vault near-expiry/new-version
-events, an operator must configure an [Event Grid subscription and handler](https://learn.microsoft.com/azure/key-vault/general/event-grid-overview)
+the approved single-certificate renewal/replacement procedure in nonproduction. If your operations
+process uses Key Vault near-expiry/new-version events, an operator must configure an
+[Event Grid subscription and handler](https://learn.microsoft.com/azure/key-vault/general/event-grid-overview)
 and test its notification path. Diagnostic settings alone do not create these alerts, and those
 events do not automatically become Application Insights traces.
 

@@ -166,6 +166,7 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   properties: {
     serverFarmId: plan.id
     httpsOnly: true
+    keyVaultReferenceIdentity: 'SystemAssigned'
     // The script verifies Easy Auth before opening ingress for publication.
     publicNetworkAccess: 'Disabled'
     siteConfig: union({

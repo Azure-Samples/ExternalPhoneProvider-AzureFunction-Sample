@@ -20,6 +20,15 @@
     Install missing Microsoft Graph modules and the Azure CLI Bicep component after explicit opt-in.
 .PARAMETER ForceAuthentication
     Require fresh tenant-specific device-code sign-in for Azure CLI and Microsoft Graph.
+.PARAMETER CertificateAction
+    Create when no encryption certificate is registered, Reuse a selected certificate, or Replace
+    all registered encryption certificates. Existing certificates require an explicit choice.
+.PARAMETER EncryptionKeyId
+    App-registration key ID to keep when reusing a certificate. Required for unattended reuse.
+.PARAMETER KeyVaultCertificateId
+    Versioned Key Vault certificate URL for reuse, not a public certificate file or secret value.
+.PARAMETER KeyVaultSubscriptionId
+    Subscription containing the reused certificate's vault. Defaults to the deployment subscription.
 .EXAMPLE
     .\Setup-Epp.ps1
 .EXAMPLE
@@ -36,6 +45,11 @@ param(
     [string] $ResourcePrefix,
     [string] $Language,
     [string] $ServicePlan,
+    [ValidateSet('Create', 'Reuse', 'Replace')]
+    [string] $CertificateAction,
+    [string] $EncryptionKeyId,
+    [string] $KeyVaultCertificateId,
+    [string] $KeyVaultSubscriptionId,
     [string] $OutputDirectory = (Join-Path $PSScriptRoot 'epp-output'),
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
     [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample',

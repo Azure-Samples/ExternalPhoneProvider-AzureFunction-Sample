@@ -99,6 +99,11 @@ try {
         }
         $context = @{
             Application = @{ SignInAudience = 'AzureADMultipleOrgs' }
+            CertificatePlan = @{
+                Action = 'Create'; KeyId = '66666666-6666-6666-6666-666666666666'
+                CertificateName = 'phone-provider-encryption'; VaultName = $names.keyVault
+                RemoveKeyIds = @(); ExistingCertificates = @()
+            }
             InvokeRoleExists = $true; ProviderTenantRestricted = $true
             ResourceProviders = @(@{ Namespace = 'Microsoft.Web'; RegistrationState = 'Registered' })
             OperatorId = '55555555-5555-5555-5555-555555555555'; GraphOperatorId = 'operator'; TokenVersion = 2
@@ -270,6 +275,7 @@ try {
             Assert ($site -is [Collections.IDictionary]) 'Function App properties must remain a literal object so serverFarmId is visible during provider preflight.'
             Assert ($site.serverFarmId -ceq "[resourceId('Microsoft.Web/serverfarms', parameters('resourceNames').hostingPlan)]") 'The hosting-plan ID must be explicit without a runtime reference.'
             Assert ($site.httpsOnly -eq $true -and $site.publicNetworkAccess -ceq 'Disabled') 'The Function must retain HTTPS-only access and initially disabled public ingress.'
+            Assert ($site.keyVaultReferenceIdentity -ceq 'SystemAssigned') 'Certificate references must use the Function system identity, not the outbound identity.'
             $functionAppConfig = $site.functionAppConfig
             Assert ($functionAppConfig -is [string] -and $functionAppConfig.StartsWith("[if(variables('isFlexConsumption'), ") -and $functionAppConfig.EndsWith(', null())]')) 'Only functionAppConfig must be conditional on FC1, with no Flex configuration for EP1.'
             Assert ($functionAppConfig.Contains("'deployment', createObject('storage', createObject('type', 'blobContainer'") -and $functionAppConfig.Contains("reference(resourceId('Microsoft.Storage/storageAccounts', parameters('resourceNames').storageAccount), '2023-05-01').primaryEndpoints.blob")) 'Flex must retain its deployment container and storage endpoint lookup.'

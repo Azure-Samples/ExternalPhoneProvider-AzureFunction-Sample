@@ -132,9 +132,17 @@ the selected package, and prepares the deployment plan. For C#, this includes an
 Complete sign-in and MFA yourself. If a permission or prerequisite check fails, resolve it
 before continuing.
 
+Setup also checks the application's existing **encryption certificates** before deployment.
+If one exists, choose to reuse it and supply its **versioned Key Vault certificate URL**, or
+replace it. If several exist, select one to keep and approve removal of the others, or replace
+them all with one new certificate. Reuse preserves the selected key ID rather than adding another
+credential. See [certificate selection](setup/docs/README.md#encryption-certificate-selection)
+for the URL, permissions, and unattended options. Coordinate maintenance before changing an
+active application's encryption credentials; every endpoint sharing that application is affected.
+
 **Review the complete deployment plan before typing `Yes`.** Check the accounts, region,
 SMS and voice provider URLs, platform, plan, cache settings, resource names, permissions, and
-certificate changes. Setup grants the
+the exact certificate key IDs to keep or remove and any access to an existing vault. Setup grants the
 Microsoft phone-provider service principal Microsoft Graph `Application.Read.All`, a tenant-wide
 application-read permission. `No` or Enter cancels deployment; sign-in and prerequisite prompts
 are separate from this approval.
@@ -154,8 +162,10 @@ Keep the public certificate and timestamped summary in `epp-output` beside the s
 Use the [summary field guide](setup/docs/README.md#read-the-deployment-summary) to find your
 resources, endpoint URL, application client ID, and encryption key ID. No private key is downloaded.
 
-Setup verifies **Easy Auth**, the endpoint's caller-authentication protection, before opening
-public access. Never disable it to fix a setup or testing problem. If setup fails, use the
+Setup verifies that the Function can resolve its selected private-key reference before changing
+the registered encryption certificates. It also verifies **Easy Auth**, the endpoint's
+caller-authentication protection, before opening public access. Never disable it to fix a setup
+or testing problem. If setup fails, use the
 [troubleshooting guide](setup/docs/Troubleshooting.md) rather than deleting resources and starting over.
 
 To find the deployed resources, open **Azure portal > Resource groups** and select the group
