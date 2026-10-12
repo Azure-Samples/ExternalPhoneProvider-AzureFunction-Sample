@@ -201,7 +201,7 @@ how code accesses configuration; request fields remain separate from deployment 
 | `EPP_PROVIDER_SMS_ENDPOINT` | Required for SMS delivery | Provider-approved HTTPS SMS endpoint. Guided setup writes the complete send URL from the selected regional profile. |
 | `EPP_PROVIDER_VOICE_ENDPOINT` | Required for voice delivery | Provider-approved HTTPS voice endpoint, which can differ from the SMS endpoint. Guided setup writes the complete send URL. |
 | `EPP_PROVIDER_ENDPOINT_REGION` | Guided deployment metadata | Selected `global` or `eu` route label. |
-| `EPP_PROVIDER_AUTH_MODE` | Live delivery | Must match the adapter: `apiKey` for Telesign or `oauth` for Soprano. |
+| `EPP_PROVIDER_AUTH_MODE` | Live delivery | Must match the adapter: `apiKey` for Infobip, Sinch, or Telesign; `oauth` for Soprano. Bundled adapters do not all have guided setup profiles. |
 | `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE` | Soprano OAuth | Provider tenant and selected API scope. |
 | `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | Soprano OAuth | Existing multitenant application and outbound user-assigned managed identity used for client-assertion exchange. |
 | `EPP_PROVIDER_TIMEOUT_MS` | Optional | Decimal milliseconds. Defaults to `1500`, capped at `2500`; not an end-to-end deadline. |
@@ -258,7 +258,14 @@ Incoming `tenantId`, `channel`, `mode` and `ttlSeconds` are request data and nev
 configured provider or authentication. `channel` selects the configured SMS or voice endpoint;
 there is no deployment-level channel restriction. The legacy `EPP_PROVIDER_CHANNEL` setting is ignored.
 
-## Telesign EPP
+## Provider-specific integration details
+
+Use the [credential and deployment-support table](docs/ONBOARDING.md#provider-credential-names)
+for your selected adapter. The [Soprano OAuth and voice contract](docs/CONTRACT.md#soprano-provider-jwt)
+and [Telesign EPP contract](docs/CONTRACT.md#telesign-epp-integration) describe different API requirements,
+not a provider ranking. The wire example below illustrates Telesign's format only.
+
+### Telesign EPP
 
 The `telesign` adapter sends its JSON contract to the complete SMS or voice URL selected by the
 request channel from the configured endpoints. It does not append or infer a route.

@@ -21,9 +21,11 @@ sample's release package. No Front Door deployment script is supplied.
 1. Follow [customer onboarding](../docs/ONBOARDING.md). Choose a bundled provider and set
    `EPP_PROVIDER_NAME` to its fixed id; `<provider-id>` is a placeholder, not a default.
 2. Consult the selected implementation in [src/functions/providers/](src/functions/providers/)
-   for required credentials and options. Store credential values under the provider's Key Vault
-   secret names, grant the Function's managed identity *Key Vault Secrets User*, and configure the
-   matching endpoint and required options. This guide does not duplicate individual API contracts.
+   for required credentials and options. For API-key authentication, store credential values under
+   the provider's Key Vault secret names and grant the Function's managed identity *Key Vault Secrets User*.
+   For OAuth, complete the [provider-administrator handoff](../docs/ONBOARDING.md#soprano-provider-administrator-handoff)
+   instead of creating API-key secrets. Configure the matching endpoints and required options for either mode.
+   This guide does not duplicate individual API contracts.
 3. Use [../docs/local.settings.sample.json](../docs/local.settings.sample.json) as a starting point,
    replacing placeholders with the selected provider's settings. Keep local settings private at
    the app root beside [host.json](host.json), with `FUNCTIONS_WORKER_RUNTIME=node`.

@@ -299,7 +299,7 @@ Set by provisioning. **Identical names across all languages.**
 | `EPP_PROVIDER_SMS_ENDPOINT` | required SMS endpoint for the selected provider/region; complete send URL for Telesign/Soprano, base URL for Infobip/Sinch |
 | `EPP_PROVIDER_VOICE_ENDPOINT` | required voice endpoint for the selected provider/region; complete send URL for Telesign/Soprano, base URL for Infobip/Sinch; may differ from SMS |
 | `EPP_PROVIDER_ENDPOINT_REGION` | selected `global` or `eu` route label; informational at runtime |
-| `EPP_PROVIDER_AUTH_MODE` | must match the selected provider (`apiKey` for Telesign, `oauth` for Soprano) |
+| `EPP_PROVIDER_AUTH_MODE` | must match the selected adapter (`apiKey` for Infobip, Sinch, or Telesign; `oauth` for Soprano); see [guided versus adapter-only support](ONBOARDING.md#provider-credential-names) |
 | `EPP_PROVIDER_TENANT_ID` | selected provider tenant; added to the Step 1 app's allowed-tenants preview and used as the OAuth authority for Soprano |
 | `EPP_PROVIDER_SCOPE` | Soprano OAuth scope |
 | `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | client application and user-assigned identity used for Soprano client-assertion exchange |

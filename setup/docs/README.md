@@ -372,7 +372,8 @@ propagation errors are retried during capability checks/deployment. Permission f
 unsupported regions remain explicit errors. Registration is subscription-wide and isn't undone
 automatically if a later deployment step fails.
 
-Supply known values to shorten the prompts:
+Supply known values to shorten the prompts. Replace `<provider-id>` with your selected guided
+provider's ID (`soprano` or `telesign`); neither is a default or recommendation:
 
 ```powershell
 .\Setup-Epp.ps1 `
@@ -382,7 +383,7 @@ Supply known values to shorten the prompts:
     -Location westus2 `
     -Language javascript `
     -ServicePlan FC1 `
-    -Provider telesign `
+    -Provider '<provider-id>' `
     -EndpointRegion global `
     -ResourcePrefix contoso
 ```
@@ -442,8 +443,9 @@ implicit replacement.
 
 ### Noninteractive example
 
-This is a fully specified Telesign/Global JavaScript deployment example supporting both SMS and
-voice, not a credential script. Replace the three IDs and choose a permitted region/prefix/plan before running.
+This JavaScript deployment template supports both SMS and voice; it is not a credential script.
+Replace the three application/tenant/subscription IDs and `<provider-id>` (`soprano` or `telesign`),
+and choose the approved provider route, Azure region, prefix, and plan before running.
 The preliminary user sign-ins can require MFA and consent; `-NonInteractive` does not create a
 headless service-principal deployment path. Install the Graph modules/Bicep beforehand using
 interactive setup's prerequisite prompts or your approved installation process.
@@ -463,7 +465,7 @@ Connect-MgGraph -TenantId $tenantId -ContextScope Process `
     -SubscriptionId $subscriptionId `
     -ApplicationId $applicationId `
     -Location westus2 `
-    -Provider telesign `
+    -Provider '<provider-id>' `
     -EndpointRegion global `
     -Language javascript `
     -ServicePlan FC1 `
@@ -514,8 +516,8 @@ configuration metadata, not provider credentials or private-key bytes. Keep it a
 | `source`, `packageUrl`, `sourcePackageSha256`, `packageSha256`, `language`, `servicePlan` | Source/package provenance and runtime/plan. FC1 Python's built hash can be null; source and built hashes describe different artifacts. |
 | `policyChanged` | Expected `false`: deployment has not activated policy. |
 
-For example, a healthy record can contain `"provider": "telesign"`,
-`"endpointRegion": "global"`, `"certificateRenewal": "manual"`, and `"policyChanged": false`.
+The `provider` field must match your selected provider. For example, a record for the Global route
+can contain `"endpointRegion": "global"`, `"certificateRenewal": "manual"`, and `"policyChanged": false`.
 Those fields do not prove credentials, delivery, or monitoring work. Follow
 [provider authentication](../../docs/ONBOARDING.md#complete-provider-authentication) next,
 **even if the script's completion text does not prompt for your provider**.
