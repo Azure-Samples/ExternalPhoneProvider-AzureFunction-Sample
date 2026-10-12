@@ -122,15 +122,16 @@ certificate is separate again. Fix the failing path rather than replacing unrela
 ## Complete provider authentication
 
 <a id="provider-credential-names"></a>
-Guided setup currently supports **Telesign and Soprano only**. The other bundled adapters are
-developer integrations, not additional guided provider offers:
+Guided setup currently supports **Soprano and Telesign only**. The other bundled adapters are
+developer integrations, not additional guided provider offers. The table is alphabetical,
+not a recommendation order:
 
 | Provider | Credential names / mode | Deployment support |
 |---|---|---|
-| `telesign` | `telesign-api-key` and `telesign-customer-id`; Basic authentication | Guided; complete the vault steps below. |
-| `soprano` | No API-key secrets; OAuth client assertion | Guided; complete the provider-admin handoff below. |
 | `infobip` | `infobip-api-key`; `Authorization: App ...` | Adapter only; no guided profile. Validate its account/options separately. |
 | `sinch` | `sinch-api-token`; static token | Adapter only; no guided profile. Validate its account/options separately. |
+| `soprano` | No API-key secrets; OAuth client assertion | Guided; complete the [provider-admin handoff](#soprano-provider-administrator-handoff). |
+| `telesign` | `telesign-api-key` and `telesign-customer-id`; Basic authentication | Guided; complete the [vault steps](#telesign-enter-and-verify-the-two-vault-secrets). |
 
 ### Where to enter API-key credentials in Key Vault
 
