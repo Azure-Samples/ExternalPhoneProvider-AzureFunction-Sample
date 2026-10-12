@@ -1,15 +1,14 @@
 # External Phone Provider: Azure Function Sample
 
 Connect Microsoft Entra ID to your phone provider to send one-time passwords by SMS or voice.
-This guide walks you through **one endpoint in one Azure region**.
+This External Phone Provider (EPP) sample sets up **one endpoint in one Azure region**.
 
 You register an application, run a guided setup script, then connect and test your provider.
 An administrator activates the endpoint only after those checks pass. You do not need to clone
-this repository, build locally, or follow all three language guides.
+this repository, build a package yourself, or follow all three language guides.
 
-The screenshots below show the Azure portal; the same app registration is available in the
-Microsoft Entra admin center. Account details and resource names have been permanently hidden.
-Your portal layout may look slightly different.
+The screenshots show the Azure portal and the setup script. You can also register the application
+in the Microsoft Entra admin center. Identifying details are hidden; your portal layout may differ.
 
 ## 1. Get ready
 
@@ -22,11 +21,9 @@ Buying an offer does not enable the tenant feature or deploy this sample. If acc
 approved procedure is unavailable, **stop here** and follow the
 [access and support guidance](docs/ONBOARDING.md#before-purchasing-or-deploying).
 
-In Security Store, open **Private solutions** and select the subscription approved for your
-deployment. Review the phone-provider offers available to that subscription.
-
-See [sample offers and access guidance](docs/ONBOARDING.md#before-purchasing-or-deploying) in the
-detailed guide. A store listing does not mean the setup script supports that integration.
+In Security Store, open **Private solutions** and select your approved subscription to review
+its available offers. See [sample offers](docs/ONBOARDING.md#before-purchasing-or-deploying) in the
+detailed guide; a listing does not guarantee support in this setup script.
 
 Have these ready:
 
@@ -66,11 +63,11 @@ In the customer tenant's **Microsoft Entra admin center > App registrations > Ne
 *Some portal versions label the account type **Single tenant only**. Choose your own directory.
 The example above is an unsaved form, not an application you can reuse.*
 
-On the registered application's **Overview**, copy these two values privately:
+Use these field labels to find the right IDs:
 
 ![App registration Overview with Application client ID and Directory tenant ID identified for setup and Object ID marked DO NOT USE](docs/images/onboarding/app-registration-overview.png)
 
-*Use **Application (client) ID** for `ApplicationId` and **Directory (tenant) ID** for `TenantId`.
+*Use **Application (client) ID** for `-ApplicationId` and **Directory (tenant) ID** for `-TenantId`.
 The **Object ID** is not either of these setup inputs. All ID values are hidden in this example.*
 
 Do not add a client secret, API permission, or app role yourself; setup handles the remaining
@@ -101,19 +98,21 @@ Review the downloaded script, then run it:
 On a shared or multi-account workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` to request
 explicit Azure and Microsoft Graph sign-in.
 
-Follow the prompts for your tenant, subscription, application, Azure region, provider, and channel.
-Choose **one** language: JavaScript, C#, or Python. Setup downloads and verifies the package,
-builds it if needed, and deploys it for you; you do not need a separate ZIP upload or local settings file.
+Follow the prompts for your tenant, subscription, application client ID, Azure region, and channel.
+Choose the provider route and provider, then **one** platform: Node.js (JavaScript), .NET (C#), or Python.
+Setup downloads and verifies the package, builds it if needed, and deploys it for you.
+You do not need a separate ZIP upload or local settings file.
 
 ![Actual PowerShell setup prompts for tenant, subscription, application, region, and SMS or voice, with identifiers hidden](docs/images/onboarding/setup-identifiers.png)
 
-*Enter your own values from Step 2. These are captures of the real script's terminal output,
-not example deployment results.*
+*Use the IDs collected in Step 2, then enter your chosen Azure region and channel.
+This is the real script's input screen, not a deployment result.*
 
 Choose **FC1** for on-demand hosting that can scale to zero, or **EP1** for paid warm capacity.
 FC1 can cold-start, and its free usage grant does not make the whole deployment free.
 See [hosting plan details](setup/docs/README.md#service-plan-selection).
-The **Global/EU** prompt is a provider route label, not your Azure region or a data-residency guarantee.
+In **Tenant scope**, choose Global or EU for your provider route. This does not choose your
+Azure region or guarantee data residency.
 For the resource prefix, use 2-8 lowercase letters or digits, starting with a letter.
 
 ![Cropped setup choices for provider route, provider, language, and hosting plan, with provider names hidden](docs/images/onboarding/setup-choices.png)
@@ -123,8 +122,9 @@ The Global/EU choice is not the Azure region. The hosting-plan warning applies e
 plan has a free usage grant.*
 
 Next, setup checks prerequisites, signs in to Azure and Microsoft Graph when needed, verifies
-the selected package, and prepares the deployment plan. Complete sign-in and MFA yourself.
-If a permission or prerequisite check fails, stop and resolve it before continuing.
+the selected package, and prepares the deployment plan. For C#, this includes an automatic local build.
+Complete sign-in and MFA yourself. If a permission or prerequisite check fails, resolve it
+before continuing.
 
 **Review the complete deployment plan before typing `Yes`.** Check the accounts, region,
 provider route, plan, resource names, permissions, and certificate changes. Setup grants the
@@ -138,12 +138,11 @@ checks, downloads, and template compilation happen first. Do not pass `-ApproveD
 when you only want to review the plan.
 
 After you approve, leave the script running while it configures the application, creates the
-Azure resources, sets up encryption and authentication, and publishes the code. Wait for
-**Deployment completed** and the saved summary before moving to Step 4. The input screenshots
-above do not show or prove that this deployment stage completed.
+Azure resources, and publishes the code. Wait for **Deployment completed** and the saved summary
+before moving to Step 4. The input screenshots do not show a completed deployment.
 
-On success, setup has created the Function App, storage, Key Vault, identities, and monitoring
-resources, and published the endpoint code. **Do not create these resources manually first.**
+Setup creates the Function App, storage, Key Vault, identities, and monitoring resources.
+**Do not create these resources manually first.**
 Keep the public certificate and timestamped summary in `epp-output` beside the script.
 Use the [summary field guide](setup/docs/README.md#read-the-deployment-summary) to find your
 resources, endpoint URL, application client ID, and encryption key ID. No private key is downloaded.
@@ -168,11 +167,10 @@ for your selected integration. This means either entering credentials in the set
 or having the provider administrator authorize the application. Azure deployment alone does not
 complete that step. Keep credentials out of source code, screenshots, and shared logs.
 
-For an API-key integration, open the Key Vault named in your deployment summary, then select
-**Objects > Secrets > Generate/Import**. Enter each credential under the exact secret name
-required by your provider. The [illustrated Key Vault steps](docs/ONBOARDING.md#where-to-enter-api-key-credentials-in-key-vault)
-show the location and an unsaved example. OAuth integrations use the provider-administrator
-handoff instead; do not create an API-key secret for them.
+For an API-key integration, follow the
+[illustrated Key Vault steps](docs/ONBOARDING.md#where-to-enter-api-key-credentials-in-key-vault)
+using your own vault and the exact secret names required by your provider. OAuth integrations
+use the provider-administrator handoff instead; do not create API-key secrets for them.
 
 In your Function App, open **Settings > Authentication**. Check that authentication is
 **Enabled**, access is set to **Require authentication**, and unauthenticated requests receive
@@ -223,7 +221,7 @@ Deleting Azure resources does not undo an authentication policy change.
 ## Find more detail
 
 | When you need to... | Read |
-|---|---|
+| --- | --- |
 | Check permissions, prompts, hosting plans, or renewal | [Setup reference](setup/docs/README.md) |
 | Find IDs, add provider credentials, or run acceptance checks | [Customer configuration and validation](docs/ONBOARDING.md) |
 | Resolve a setup or delivery problem | [Troubleshooting](setup/docs/Troubleshooting.md) |

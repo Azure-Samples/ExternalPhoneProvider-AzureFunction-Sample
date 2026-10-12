@@ -273,14 +273,13 @@ that switch authorizes the deployment phase without asking again.
 This is a cancellation at the approval gate, not an offline simulation. The existing application
 registration is still required. Before the plan appears, setup can download tools and packages,
 request prerequisite installation, sign in to Azure and Microsoft Graph, perform permission and
-region checks, verify package checksums, and compile Bicep. Installation and authentication/consent
-prompts are separate decisions. A preflight error is not a successful preview.
+region checks, verify package checksums, build the C# package locally when selected, and compile Bicep.
+Installation, sign-in, and consent prompts are separate from deployment approval.
+A preflight error is not a successful preview.
 
 The [main guide's terminal captures](../../README.md#3-run-guided-setup) show real input screens,
-with identifying details and provider names hidden. The capture environment needed authenticated
-GitHub metadata access after its shared public-API quota was exhausted; that is not an additional
-prerequisite for ordinary setup. These input captures do not show deployment approval, resource
-creation, or the final completion summary.
+with identifying details and provider names hidden. They illustrate the prompts, not deployment
+approval, resource creation, or the final completion summary.
 
 ### After approving the plan
 
