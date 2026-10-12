@@ -20,8 +20,10 @@ used JavaScript; validate an equivalent .NET readiness implementation and deploy
 1. Follow [customer onboarding](../docs/ONBOARDING.md). Set `EPP_PROVIDER_NAME` to the selected
 	adapter's `Name` (`<adapter-id>` is only a placeholder).
 2. Consult the selected adapter in [Src/Providers/](Src/Providers/) for required credentials and
-	options. Store credentials in Key Vault under the provider's secret names, grant
-	the Function's managed identity *Key Vault Secrets User*, and configure the matching endpoint/options.
+	options. For API-key authentication, store credentials in Key Vault under the provider's secret names
+	and grant the Function's managed identity *Key Vault Secrets User*. For OAuth, complete the
+	[provider-administrator handoff](../docs/ONBOARDING.md#soprano-provider-administrator-handoff)
+	instead of creating API-key secrets. Configure the matching endpoints/options for either mode.
 3. Base private local settings on [../docs/local.settings.sample.json](../docs/local.settings.sample.json),
 	replacing placeholders and selecting `FUNCTIONS_WORKER_RUNTIME=dotnet-isolated`. Put settings
 	at the app root beside [host.json](host.json). Configure decryption from the
