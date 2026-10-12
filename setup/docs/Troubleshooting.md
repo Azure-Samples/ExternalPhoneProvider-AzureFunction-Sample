@@ -1,8 +1,10 @@
 # Setup and onboarding troubleshooting
 
-Return to the [customer checklist](../../README.md) for the complete path. This guide separates
-setup failures from provider, validation, and telemetry failures; a successful deployment is
-only one onboarding gate.
+Find your symptom in the [triage table](#after-deployment-triage), then follow the matching checks.
+If the setup script stopped, start with [safe recovery](#recover-without-destructive-cleanup)
+before rerunning it. A successful deployment does not yet prove provider access or delivery.
+
+Return to the [main setup guide](../../README.md) when you are ready to continue onboarding.
 
 ## After-deployment triage
 

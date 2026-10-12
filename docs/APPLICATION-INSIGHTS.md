@@ -1,22 +1,20 @@
 # Application Insights for the External Phone Provider
 
-Application Insights is the application-performance feature of Azure Monitor. It helps explain
-which Function invocations ran, how long they took, and what the application reported while
-processing them. It is not a delivery receipt service, an audit ledger, or a replacement for
-Azure resource health and platform metrics.
+Application Insights helps you see which requests ran, how long they took, and what the Function
+reported along the way. It does **not** confirm that an SMS or voice call reached the recipient.
 
-This guide covers telemetry collection and interpretation for the repository's **JavaScript,
-.NET isolated, and Python** implementations, in one region or multiple regions. It does not
-deploy resources, enable additional instrumentation, or configure alert rules, action groups,
-or availability tests. Use the [setup guide](../setup/docs/README.md) for deployment.
-Azure Front Door is optional; the Function telemetry described here also applies without it.
+**Looking for your logs?** Start with the [monitoring guide](MONITORING.md). It shows how to find
+the resources from your deployment summary, run queries, and create alerts.
 
-**First-time operator:** locate `resources.applicationInsights` and `resources.logAnalytics` in
-the [saved deployment summary](../setup/docs/README.md#read-the-deployment-summary). Verify collection
-here, then follow the [runtime-specific queries](MONITORING.md#runtime-specific-log-discovery)
-and [alert setup](MONITORING.md#5-set-up-notifications-and-alert-rules). Authorized evaluation/live
-testing must use the [customer test handoff](ONBOARDING.md#validate-the-deployed-endpoint);
-deployment does not provide a customer token for the Microsoft caller.
+This reference explains how collection works for **JavaScript, .NET isolated, and Python**,
+what each signal means, and why data may be missing. Start with
+[single-region configuration](#single-region-configuration) to check a guided deployment;
+use the remaining sections for runtime differences or a multi-region design.
+You do not need Azure Front Door for Function telemetry.
+
+These instructions do not deploy resources or enable extra instrumentation, alerts, or availability
+tests. Use the [setup guide](../setup/docs/README.md) for deployment and the
+[approved test handoff](ONBOARDING.md#validate-the-deployed-endpoint) to generate test traffic.
 
 ## How telemetry reaches Application Insights
 

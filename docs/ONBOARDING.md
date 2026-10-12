@@ -1,14 +1,16 @@
 # Customer configuration and validation
 
-Start with the [root onboarding checklist](../README.md). This is the detailed customer runbook
-for values, provider access, and acceptance checks; [the setup guide](../setup/docs/README.md)
-covers workstation preparation and the deployment command.
+Start with the [five-step setup guide](../README.md). Come here when you need exact IDs,
+provider credential names, or the checks to complete before activation.
 
-**The normal path is: confirm access, register an app, run setup once, complete provider
-authentication, validate, then activate policy.** Setup already builds/publishes the Function and
-configures its Azure settings. Local settings, Core Tools, and a second manual deployment are
-**not** required. [Optional developer work](#optional-local-development-and-manual-deployment)
-is separate.
+**After successful guided setup, go straight to [provider authentication](#complete-provider-authentication),
+then [validate the endpoint](#validate-the-deployed-endpoint).** The script has already published
+the code and configured Azure. You do not need local settings, Core Tools, or a second deployment.
+
+For earlier steps, use [access requirements](#before-purchasing-or-deploying),
+the [values worksheet](#values-and-ownership), or the [setup reference](../setup/docs/README.md).
+[Local development and manual deployment](#optional-local-development-and-manual-deployment)
+are separate, optional paths.
 
 ## Before purchasing or deploying
 
@@ -17,6 +19,12 @@ the intended provider offer. Confirm account activation, sender registration, su
 channel, pricing, and access to the provider's **EPP integration**, not just its general messaging API.
 An offer purchase does not deploy Azure resources, enable a Microsoft tenant feature, or install
 a missing adapter.
+
+![Cropped examples of phone-provider offer cards in Microsoft Security Store](images/onboarding/security-store-providers.png)
+
+*These are sample cards, not recommendations or a complete provider list. Offers, preview
+labels, pricing, and access can change. A store listing does not mean the setup script supports
+that integration; check [guided provider support](#provider-credential-names).*
 
 Have your tenant administrator confirm the supported EPP onboarding/activation procedure with
 Microsoft and the provider **before incurring deployment costs**. This repository does not define
@@ -118,6 +126,39 @@ developer integrations, not additional guided provider offers:
 | `infobip` | `infobip-api-key`; `Authorization: App ...` | Adapter only; no guided profile. Validate its account/options separately. |
 | `sinch` | `sinch-api-token`; static token | Adapter only; no guided profile. Validate its account/options separately. |
 
+### Where to enter API-key credentials in Key Vault
+
+Use the vault created for **your endpoint**, not a vault chosen from a screenshot:
+
+1. Open the saved deployment summary and find `resources.keyVault`.
+2. In **Azure portal > Key vaults**, open that vault.
+3. Select **Objects > Secrets**. This list shows secret names and status, not their values.
+   Select **Generate/Import** to enter a credential.
+
+![Key Vault Objects menu with Secrets selected and the Generate/Import action visible](images/onboarding/key-vault-secrets.png)
+
+*This existing test vault contains examples for more than one adapter. Create only the secrets
+required by your chosen integration in the table above. The screenshot does not mean guided
+setup configures multiple providers or supports every adapter.*
+
+4. Choose **Manual**. For **Name**, use the exact name in the provider table above.
+   For **Secret value**, paste the credential obtained through your provider's secure process.
+   Leave **Enabled** set to **Yes** and set activation/expiry dates to match your provider agreement.
+5. Select **Create** only after checking the vault, name, and value. Repeat for any additional
+   required credential, such as an account/customer ID.
+
+![Unsaved Create a secret form showing a sample name, masked placeholder value, and Enabled set to Yes](images/onboarding/key-vault-create-secret.png)
+
+*The screenshot uses `example-provider-api-key` and a fake masked value to show the form.
+Neither is a working configuration. The form was cancelled without saving. Use the exact
+provider-specific secret names, not this example name, and never reveal a real key for a screenshot.*
+
+After saving, verify the name, enabled state, and version metadata without selecting
+**Show Secret Value**. Do not edit or replace the setup-created encryption certificate secret.
+If the vault denies access, ask the approved credential administrator for help; do not disable
+vault protection or copy credentials into Function settings. See the permission and runtime
+checks in the provider-specific steps below.
+
 ### Telesign: enter and verify the two vault secrets
 
 1. Obtain the raw API key and matching Customer ID from your Telesign account's approved secure
@@ -137,8 +178,9 @@ developer integrations, not additional guided provider offers:
    the encryption certificate secret, grant broad access, or put credentials into Function
    settings to bypass a vault failure.
 5. Follow the authorized evaluation and controlled live checks below. Evaluation cannot validate
-   these secrets. Workers cache credentials; use the [runtime cache behavior](CONTRACT.md#credential-caching-and-refresh)
-   to plan first-use/rotation checks. Absence of a warning does not prove account authorization.
+   these secrets. Credential caching depends on your settings: setup disables it for FC1 and
+   enables it for EP1. Use the [runtime cache behavior](CONTRACT.md#credential-caching-and-refresh)
+   to plan first-use and rotation checks. Absence of a warning does not prove account authorization.
 
 Use portal secret entry rather than command-line literal values, transcripts, source files,
 screenshots, or chat. During rotation, coordinate the matching pair and provider validity window;
