@@ -16,7 +16,7 @@ not changes made by this guide.
    from the tenant hosting the Function. Note its **Tenant ID** from **Overview**.
 2. Ask your tenant administrator for **Reports Reader**, the minimum role for viewing
    activity logs. See Microsoft's [access requirements](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-access-activity-logs#prerequisites).
-   This role does not grant access to an Azure workspace.
+   This role does not grant access to an Azure workspace (where exported logs are stored).
 3. Check whether you have a **workforce tenant** or an **external tenant** for customer apps.
    If unsure, use the [tenant comparison](https://learn.microsoft.com/en-us/entra/external-id/customers/concept-supported-features-customers)
    with your administrator. Both can use the portal investigation below, but external
@@ -51,7 +51,7 @@ not changes made by this guide.
    [Function monitoring guide](MONITORING.md#runtime-specific-log-discovery) separately.
 
 **Only investigating one problem? You can stop here.** You don't need to export logs, create
-a workspace (where exported logs are stored), or incur additional Azure Monitor collection costs for this portal-only path.
+a workspace, or incur additional Azure Monitor collection costs for this portal-only path.
 Continue if your team wants ongoing alerts or longer-term analysis.
 
 ## 3. Export logs for ongoing monitoring
