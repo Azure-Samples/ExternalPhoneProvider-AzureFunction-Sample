@@ -9,9 +9,6 @@ This guide does not deploy anything or change authentication policy.
 Each section links to Microsoft's existing queries and portal instructions, so you can
 start there and adapt them to your tenant rather than copy another set of examples.
 Choose alert thresholds from your own traffic. Portal labels can vary.
-The two Microsoft screenshots below are unaltered public documentation examples, not your
-tenant or evidence of a configured EPP integration. Used with permission from Microsoft.
-Their [source and license notices](images/sign-in-monitoring/NOTICE.txt) accompany the files.
 
 1. Start with [the right tenant and access](#1-choose-the-tenant-and-permissions).
 2. [Configure export](#2-export-the-required-log-categories) and
@@ -129,7 +126,8 @@ Their [source and license notices](images/sign-in-monitoring/NOTICE.txt) accompa
 
    *Official Microsoft Entra admin center example from
    [Microsoft's diagnostic-settings instructions](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-configure-diagnostic-settings#how-to-access-diagnostic-settings).
-   Used with permission from Microsoft. This is not your tenant; menus and categories vary.
+   [Original screenshot](https://github.com/MicrosoftDocs/entra-docs/blob/927efa819a6f89a40b39b178d702b30f49b63f00/docs/identity/monitoring-health/media/howto-configure-diagnostic-settings/diagnostic-settings-start.png),
+   Copyright (c) Microsoft Corporation. This is not your tenant; menus and categories vary.
    Follow the numbered navigation above, not the example's breadcrumb. Visible risk categories
    do not establish that those features are available or licensed in an external tenant.*
 
@@ -227,7 +225,8 @@ Their [source and license notices](images/sign-in-monitoring/NOTICE.txt) accompa
 
    *Official Microsoft Entra ID example from
    [Microsoft's sign-in activity-details instructions](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-sign-in-log-activity-details#authentication-details).
-   Used with permission from Microsoft. This is not your sign-in or a delivery test.
+   [Original screenshot](https://github.com/MicrosoftDocs/entra-docs/blob/927efa819a6f89a40b39b178d702b30f49b63f00/docs/identity/monitoring-health/media/concept-sign-in-log-activity-details/sign-in-activity-details-authentication.png),
+   Copyright (c) Microsoft Corporation. This is not your sign-in or a delivery test.
    The example's Previously satisfied outcomes do not prove a new phone challenge or
    provider send. Your methods, policy results, timestamps, and portal layout can differ.*
 
