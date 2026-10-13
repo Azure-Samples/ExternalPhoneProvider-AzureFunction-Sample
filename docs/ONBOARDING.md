@@ -12,6 +12,10 @@ the [values worksheet](#values-and-ownership), or the [setup reference](../setup
 [Local development and manual deployment](#optional-local-development-and-manual-deployment)
 are separate, optional paths.
 
+For operational handover, use [Function monitoring](MONITORING.md) and, separately,
+[Microsoft Entra sign-in monitoring](SIGN-IN-MONITORING.md) for authentication outcomes
+and potential abuse investigations. Endpoint setup does not enable tenant log export or alerts.
+
 ## Before purchasing or deploying
 
 Open [Microsoft Security Store](https://securitystore.microsoft.com/private-solutions) and review
