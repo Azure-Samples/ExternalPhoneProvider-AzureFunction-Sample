@@ -106,9 +106,9 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 
 ## Source
 
-For step-by-step customer-owned SMS/voice adapter extension instructions, see the
-[Twilio walkthrough](../docs/BRING-YOUR-OWN-PROVIDER.md#python).
-It links the code to change and official provider references, not built-in Twilio or guided setup support.
+To add a customer-owned provider, follow the
+[repository checklist](../docs/BRING-YOUR-OWN-PROVIDER.md#python).
+It shows the files to create or update, not built-in provider or guided setup support.
 
 For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
 [runtime-specific log discovery](../docs/MONITORING.md#runtime-specific-log-discovery).
