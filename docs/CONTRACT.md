@@ -49,14 +49,17 @@ the incoming `Authorization` header to the provider. Configure Easy Auth as desc
 | `correlationId` | no | sign-in tracing metadata |
 | `channel` | yes | request delivery channel: `1`/`sms` or `2`/`voice`; not deployment configuration |
 | `mode` | yes | request delivery mode: `1`/`live` or `2`/`evaluation`; evaluation does not deliver |
-| `ttlSeconds` | no | positive JSON integer, at most `2147483647`; null, booleans, strings, fractions and nonpositive values are rejected. Use canonical integer notation (`60`, not `60.0` or `6e1`) across runtimes |
+| `ttlSeconds` | no | positive JSON integer, at most `2147483647`; omit when absent. Null is not portable; booleans, strings, fractions and nonpositive values are invalid. Use canonical integer notation (`60`, not `60.0` or `6e1`) across runtimes |
 | `encryptedDeliveryContext` | yes | JWE compact serialization (see below) |
 
 Canonical integer notation is a caller requirement, not a portable raw-JSON-token check: JavaScript's
 JSON parser normalizes `60.0` and `6e1` to `60`, while Python/.NET reject those representations here.
 Always send `60` to obtain the same result across runtimes; no custom JSON tokenizer is used.
 
-Unknown `type`, invalid `ttlSeconds`, unsupported `channel` or `mode`, or missing/empty `encryptedDeliveryContext` → `400`. Arrays, objects and booleans are not channel/mode values.
+Handler validation failures for unknown `type`, invalid `ttlSeconds`, unsupported `channel` or
+`mode`, or missing/empty `encryptedDeliveryContext` return `400`. Arrays, objects and booleans
+are not channel/mode values. Some invalid inputs fail .NET host binding before the handler;
+see [runtime binding differences](#runtime-binding-differences).
 
 These are request data, not settings to provision. The TTL check validates the supplied value; it
 does not verify passcode expiry or implement a delivery deadline. Deployment trust comes only from
@@ -185,13 +188,43 @@ Handler failures omit the nonce and accepted status and return a sanitized error
 and, after envelope processing, a correlation ID. Platform rejections happen before the handler and
 do not use this application response contract.
 
-Validation failures return `error: "bad_request"` and a fixed `reason` in every language. Envelope
-checks run in this order: object shape, version, encrypted-context presence, channel, mode, TTL.
-Reasons are `invalid JSON body`, `invalid envelope`, `unsupported envelope type`,
+Handler validation failures return `error: "bad_request"` and a fixed `reason`. JavaScript/Python
+envelope checks run in this order: object shape, version, encrypted-context presence, channel, mode, TTL.
+Their reasons are `invalid JSON body`, `invalid envelope`, `unsupported envelope type`,
 `encryptedDeliveryContext is required`, `unsupported channel`, `unsupported mode`, `invalid ttlSeconds`
 or `ttlSeconds expired`. A decrypted context missing a required nonblank string returns
 `incomplete delivery context`. Reasons never include supplied values or exception text. JWE failures
 return `error: "decryption_failed"` without a cryptographic reason or nonce.
+
+### Runtime binding differences
+
+The portable request forms above are not a claim that all parsers accept the same inputs or
+produce identical errors. JavaScript/Python parse JSON inside the handler; .NET binds a typed
+`EntraSendOtpPayload` through the Functions host before calling it.
+
+- .NET permits explicit null `ttlSeconds` as omitted, and its enum converter accepts numeric
+  strings such as `"1"`. JavaScript/Python reject those forms. Send an integer TTL or omit it,
+  and use integer channel/mode codes or named strings for portability.
+- Malformed JSON and incompatible property types can fail .NET host binding before the
+  handler's sanitized error response. For payloads reaching its validation, .NET uses
+  `unsupported payload type` rather than `unsupported envelope type`; a null bound payload
+  produces `invalid payload`. Do not assume a host-binding error has handler JSON fields.
+- Required decrypted fields must be nonblank strings. .NET deserializes them as strings, so
+  incompatible types can produce `decryption_failed` before the completeness check.
+  JavaScript/Python instead check their raw values for completeness. Optional fields are not
+  uniformly modeled: only `locale` accompanies the required fields in .NET's delivery context;
+  JavaScript/Python also retain `extension` and `riskContext`, but shared dispatch omits both.
+- For normal nonempty string IDs, response correlation precedence is body `correlationId`,
+  then `x-ms-correlation-id`, then generated `requestId`. JavaScript uses raw header fallback;
+  Python/.NET sanitize that header. .NET preserves an empty body string, while JavaScript/Python
+  fall back. Early validation errors omit correlation; later handled errors include it.
+  Python's unexpected-error path can return null correlation when a parsed payload lacks it.
+  `x-ms-client-request-id` supplies internal `messageId` with generated fallback; JavaScript
+  uses the raw header, whereas Python/.NET sanitize it. These IDs do not provide deduplication.
+
+See the handlers for exact binding and response paths:
+[JavaScript](../javascript/src/functions/SendOtp.js),
+[Python](../python/function_app.py), and [.NET](../dotnet/Functions/SendOtp.cs).
 
 ### Evaluation (generic shutter)
 
@@ -218,13 +251,14 @@ wire fields, where required by an API, remain internal and cannot enable a separ
 The provider interprets its parsed status as an **outcome** and endpoint HTTP status.
 **Fail-closed:** an unknown/unmapped or incomplete response is treated as `Fail`.
 An unsuccessful provider HTTP response cannot become `Continue` because its body contains a
-success-looking status. Explicit `Block`/`StepUp` outcomes remain non-success responses.
+success-looking status. Explicit `Block` outcomes remain non-success responses.
+The current runtime outcome enums contain only `Continue`, `Block`, and `Fail`; there is no
+implemented `StepUp`/`409` mapping.
 
 | Outcome | HTTP | When |
 |---------|------|------|
 | `Continue` | `200` | recognized success status |
 | `Block` | `403` | provider says blocked |
-| `StepUp` | `409` | provider signals step-up / fraud escalation |
 | `Fail` | `429` | provider returned 429 |
 | `Fail` | `401` | provider returned 401/403 (auth) |
 | `Fail` | `400` | other provider 4xx |

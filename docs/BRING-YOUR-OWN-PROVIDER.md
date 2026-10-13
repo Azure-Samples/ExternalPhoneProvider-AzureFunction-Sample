@@ -1,149 +1,197 @@
-# Bring your own phone provider: repository checklist
+# BYOT integration: the SAS request and response
 
-To connect your own provider, such as Twilio, add an adapter to **one** language
-implementation. Your team owns the provider integration and maintains that code.
-This checklist covers the repository changes, not the provider's implementation.
-Twilio isn't included in the sample or guided setup.
+This guide describes the interface between **SAS (Strong Authentication Service)** and your
+**External Phone Provider (EPP)** endpoint. In a BYOT integration, your team implements and
+operates the connection to its chosen phone service. SAS supplies the destination and rendered
+one-time passcode message; your endpoint authenticates the caller, decrypts the delivery context,
+and acknowledges the request according to its mode.
 
-## 1. Choose one language
+The steps below cover that inbound interface, not a phone-service adapter or a guided setup
+extension. The [full contract](CONTRACT.md) contains detailed validation, outcome, configuration,
+and runtime behavior.
 
-1. Start with the [JavaScript](../javascript/README.md), [C#](../dotnet/README.md)
-   or [Python](../python/README.md) guide and use your own source checkout.
-2. Read the [shared contract](CONTRACT.md). Keep Entra's message and code intact,
-   preserve caller authentication and decryption, and leave evaluation mode
-   ahead of provider work so it never sends a message.
-3. Before purchasing or deploying, confirm eligibility and the testing/activation
-   process with your tenant administrator and Microsoft using the
-   [access guidance](ONBOARDING.md#before-purchasing-or-deploying).
-   Until then, work offline with fake credentials and HTTP responses.
+## 1. Establish caller authentication
 
-## 2. Create and register your provider
+Before deploying, have your tenant administrator confirm eligibility, the authorized testing
+route, and activation with Microsoft through the
+[supported onboarding process](ONBOARDING.md#before-purchasing-or-deploying).
+Deploying an endpoint does not enable tenant policy, and this repository supplies neither a
+self-service token-acquisition tool for the Microsoft caller nor a public policy-activation API.
 
-Follow only the section for your language. Add a new file rather than changing an
-existing provider. Use the existing implementation for the repository's structure;
-your team supplies the new provider's send and response handling.
+SAS calls **`POST /api/SendOtp` over HTTPS**, with a signed Entra bearer access token in
+`Authorization`. In this sample, Azure App Service Authentication (**Easy Auth**) validates and
+authorizes that token **before** the Function runs. The Functions trigger is anonymous; the
+handler has no backup token validator, function-key gate, or application-role check.
 
-### JavaScript
+Configure Easy Auth to require authentication and HTTPS, return `401` for unauthenticated
+requests, and permit no authentication bypass for the endpoint. Pin the trusted tenant issuer,
+the endpoint application's audience, and a nonempty `allowedApplications` allowlist containing
+the authorized SAS caller application ID. A valid token for another audience or caller is not
+sufficient. See the exact settings in the
+[manual deployment trust checklist](ONBOARDING.md#manual-deployment-trust-checklist).
 
-1. Add a module in [src/functions/providers](../javascript/src/functions/providers/),
-   using [telesign.js](../javascript/src/functions/providers/telesign.js) as a reference.
-   Implement `name`, `authenticationMode`, `credentialSpec`, `createRequest` and
-   `interpretResponse`. Return the existing
-   [ProviderResult](../javascript/src/functions/providerResult.js) and use
-   [providerTransport.js](../javascript/src/functions/providerTransport.js) for sending.
-2. Import it in [providers/index.js](../javascript/src/functions/providers/index.js),
-   add its fixed ID to `selectProvider`, and include it in the exports.
-3. Use [credentials.js](../javascript/src/functions/credentials.js) for credential
-   lookup. [config.js](../javascript/src/functions/config.js) preserves `env`, which
-   [SendOtp.js](../javascript/src/functions/SendOtp.js) passes to your adapter.
+Use the dedicated endpoint app registration and your approved deployment configuration for the
+exact values. The [setup trust configuration](../setup/support/Epp.Setup.psm1) supplies the
+Microsoft caller application ID and verifies the deployed Easy Auth settings; it is **not** your
+endpoint app's client ID. Setup follows the app's requested access-token version: v1 uses the
+Application ID URI audience and tenant-specific v1 issuer; v2 uses the endpoint app client-ID
+audience and tenant-specific v2 issuer. Read back **Function App > Authentication** with your
+Azure operator rather than guessing values or trusting `EPP_EXPECTED_*` app-setting metadata.
+Keep `tokenEncryptionKeyId` unset: the bearer token is signed, not encrypted.
 
-<a id="c-net"></a>
+Keep these three mechanisms separate:
 
-### C# (.NET)
+| Mechanism | Purpose |
+| --- | --- |
+| Inbound bearer authentication | Establishes that the authorized SAS caller may invoke this endpoint. |
+| JSON Web Encryption (JWE) | Protects the delivery context in transit to the endpoint; the endpoint decrypts it with its private key. |
+| Outbound service authentication | Authorizes your customer-owned integration to send through your chosen service. Never forward SAS's bearer token. |
 
-1. Add a class in [Src/Providers](../dotnet/Src/Providers/), deriving from
-   [PhoneProviderBase](../dotnet/Src/PhoneProviderBase.cs). Use
-   [TelesignProvider.cs](../dotnet/Src/Providers/TelesignProvider.cs) as a reference
-   for `Name`, `AuthenticationMode`, `FetchCredentialsAsync` and `SendOtpAsync`.
-   Keep the shared transport and [ProviderResult](../dotnet/Src/Models.cs).
-2. Register the class as another singleton `PhoneProviderBase` in
-   [Program.cs](../dotnet/Program.cs).
-   [SendOtp.cs](../dotnet/Functions/SendOtp.cs) already selects registered providers by name.
-3. Use the injected [ISecretResolver](../dotnet/Src/ISecretResolver.cs) and
-   [CredentialTokenService](../dotnet/Src/CredentialTokenService.cs) for credentials.
-   Read adapter settings through the supplied `IEnv`.
+Neither envelope `tenantId`, a nonce, tracing headers, nor forwarded `x-ms-client-principal`
+headers authenticate SAS. Anyone possessing the public encryption key can create a JWE.
+Local Functions Core Tools has no Easy Auth: keep local tests loopback-only, without tunnels,
+and use test keys and fake service responses.
 
-### Python
+## 2. Read the SAS envelope
 
-1. Add a module in [src/providers](../python/src/providers/), deriving from
-   [PhoneProviderBase](../python/src/provider.py). Use
-   [telesign.py](../python/src/providers/telesign.py) as a reference for `name`,
-   `authentication_mode`, `credential_spec`, `build_request` and `map_response`.
-   Keep the shared transport and [ProviderResult](../python/src/models.py).
-2. Import the class in [function_app.py](../python/function_app.py) and add an
-   instance to the tuple that builds `_providers`.
-   [providers/__init__.py](../python/src/providers/__init__.py) needs no registration.
-3. Use [credentials.py](../python/src/credentials.py) and
-   [secrets.py](../python/src/secrets.py) for credential lookup.
-   [config.py](../python/src/config.py) preserves the `env` passed to your adapter.
+The request body is a JSON object. Use the following field names and portable value forms:
 
-## 3. Set up credentials and app settings
+| Field | Required | Type and meaning |
+| --- | --- | --- |
+| `type` | Yes | String, exactly `microsoft.mfa.otpDeliver.v1`. Other versions are unsupported. |
+| `tenantId` | No | String containing opaque routing metadata. It does not select the issuer, keys, or outbound service. |
+| `correlationId` | No | String for sign-in tracing. Supply a nonempty value when present. |
+| `channel` | Yes | Integer `1` or string `"sms"`; integer `2` or string `"voice"`. Names are case-insensitive. |
+| `mode` | Yes | Integer `1` or string `"live"`; integer `2` or string `"evaluation"`. Names are case-insensitive. |
+| `ttlSeconds` | No | Positive JSON integer up to `2147483647`. Omit if absent; do not send null, a string, boolean, fraction, or nonpositive value. Use integer notation such as `60`, not `60.0` or `6e1`. |
+| `encryptedDeliveryContext` | Yes | Nonblank string containing the compact JWE described below. |
 
-1. Choose the adapter's credential mode and secret names in its code, and keep
-   them consistent with your deployment settings. Store provider secrets in
-   Key Vault; use the sample's managed-identity lookup and grant the Function's
-   reader identity access. Keep the existing
-   [credential cache behavior](CONTRACT.md#credential-caching-and-refresh).
-2. Start local settings from
-   [docs/local.settings.sample.json](local.settings.sample.json). Copy it to an
-   untracked `local.settings.json` beside your runtime's `host.json`, set the
-   runtime named in its language guide, and keep all `Values` entries as strings.
-   Use a local test decryption key and fake credentials for offline development.
-3. Set `EPP_PROVIDER_NAME` to the ID you registered, match
-   `EPP_PROVIDER_AUTH_MODE` to the adapter, and add the channel settings and any
-   extra settings your code actually reads. See the
-   [configuration reference](CONTRACT.md#4-configuration-app-settings--env).
-   For local evaluation-only runs, omit provider settings to avoid credential warmup.
+The handler validates the envelope before decryption. **TTL validation is only a value check**:
+it does not check passcode age, expire a queued message, or establish a delivery deadline.
+Use these portable forms rather than relying on a parser's extra accepted values; see
+[runtime binding differences](CONTRACT.md#runtime-binding-differences).
 
-The local JSON supplies environment variables to the Functions host. It doesn't
-register an adapter, configure Azure, or load itself into unit tests. Apply cloud
-settings separately when deploying. Provider profile JSON has a different purpose,
-described in the optional setup section below.
+`x-ms-correlation-id` is the fallback tracing header when the body has no correlation ID;
+if neither is available, the handler uses a generated request ID. `x-ms-client-request-id` identifies the attempt
+and supplies the internal delivery `messageId`, with a generated fallback. Neither header is an
+idempotency key in this sample. Header sanitization and empty-value handling differ by runtime;
+see the [correlation details](CONTRACT.md#runtime-binding-differences).
+
+## 3. Decrypt and validate the delivery context
+
+Accept only **`alg: RSA-OAEP-256`** for key wrapping and **`enc: A256GCM`** for content encryption.
+The compact JWE must contain exactly five nonempty segments and be no longer than **16,384
+characters**. Use a JOSE library to authenticate and decrypt the original compact value, including
+its original protected-header bytes; never use plaintext before the AES-GCM authentication tag
+has been verified. Parse the decrypted UTF-8 JSON as a delivery-context object.
+
+The sample uses one configured RSA private key in `EPP_DECRYPTION_KEY_PEM`, accepting a PEM
+private key or certificate bundle containing it, either as text or base64-encoded PEM. In Azure,
+use a managed-identity-resolved Key Vault secret reference, not private-key text in shared
+settings. The corresponding public encryption credential belongs to the endpoint app registration.
+The sample decrypts in-process, not through a vault cryptographic operation.
+
+The protected header's `kid` identifies the encryption credential. In this sample,
+`EPP_ENCRYPTION_KEY_ID` is only an optional advisory comparison after successful decryption:
+a mismatch produces a warning, not rejection or selection of a different key. Guided setup pins
+one certificate's backing-secret version and keeps one approved encryption credential on the app.
+Assign a renewal owner: Key Vault renewal alone updates neither the registration nor the pinned
+reference, and overlapping decryption keys are not implemented. Follow the
+[certificate lifecycle](../setup/docs/README.md#encryption-certificate-lifecycle).
+
+| Decrypted field | Required | Type and handling |
+| --- | --- | --- |
+| `nonce` | Yes | Nonblank string. Preserve it exactly for the response rules in step 5; it is not a credential or replay protection. |
+| `phoneNumber` | Yes | Nonblank string, expected in E.164 form. The sample does not fully validate E.164 numbers. |
+| `message` | Yes | Nonblank string: the fully rendered, localized message containing the passcode. Preserve the supplied message and code; do not generate a replacement code. |
+| `locale` | No | String when supplied, for voice selection where supported. The sample has no shared locale catalog or validation. |
+| `extension` | No | Office-voice field; no shared type validation or forwarding to the outbound delivery model is implemented. |
+| `riskContext` | No | Contextual JSON data with no shared schema validation or risk-policy evaluation. Not forwarded by the shared delivery model. |
+| `textToVoice` | No | Legacy structured speech data. The current shared delivery models do not carry it; no portable schema is defined here. |
+
+Only `nonce`, `phoneNumber`, and `message` are required for a complete delivery context.
+Do not infer support for optional fields just because they can appear in the decrypted JSON.
+Runtime binding can reject wrong types before the completeness check; the
+[full contract](CONTRACT.md#runtime-binding-differences) describes those differences.
+
+## 4. Complete the customer-owned service integration
+
+**This is the customer-owned boundary.** Your team must implement and maintain the outbound
+integration; this guide intentionally supplies no adapter recipe or vendor API instructions.
+For a valid **live** request:
+
+1. Map the requested SMS or voice delivery to your service, preserving the supplied destination,
+   message, and passcode. Decide and validate any required voice rendering and locale handling.
+2. Authenticate outbound using your chosen integration and securely managed credentials,
+   independently of inbound SAS authentication and the JWE key.
+3. Determine recognized acceptance or failure from the service response. Unknown, incomplete,
+   or unmapped responses must fail closed; a success-looking body on a failed HTTP response is
+   not acceptance.
+4. Return that result through the shared endpoint response behavior below. Do not expose raw
+   service responses or reply with the nonce before acceptance.
+
+The sample selects one configured service per deployment; request metadata does not choose one.
+Adding a custom integration does not add guided setup support. Use the
+[JavaScript](../javascript/README.md#source-and-extension-points),
+[C#](../dotnet/README.md#source), or [Python](../python/README.md#source) source guide only when
+you are ready to build and package your implementation.
+
+## 5. Respond to SAS
+
+**Evaluation:** after caller authentication, envelope validation, decryption, and required-field
+checks, return `200` without delivering anything. Skip service selection, credential lookup, and
+outbound HTTP on this request path. No service configuration is required. Independently, a worker
+with a configured service and caching enabled may prepare credentials at startup or refresh them;
+that is not message delivery.
+
+**Live:** wait for recognized service acceptance, then return `200`. Do not acknowledge early
+and deliver in the background. A queued or pending status counts only when your integration
+recognizes it as acceptance; acceptance does **not** prove handset receipt.
+
+For either successful path, the JSON response has exactly these fields:
+
+| Field | Wire value |
+| --- | --- |
+| `nonce` | The decrypted request's original nonce string. |
+| `correlationId` | The selected correlation string: body value, header fallback, or generated request ID, subject to the runtime differences linked above. |
+| `providerStatus` | The literal string `"accepted"`, including for evaluation. |
+
+SAS treats a `2xx` response **with a matching nonce** as handled; this sample returns `200`.
+A mismatched nonce, non-`2xx` response, or timeout causes SAS to fall back to native delivery.
+Never echo the nonce on a failure or include an accepted status.
+
+Handler errors use JSON fields `error` and generated `requestId`, with a fixed `reason` for
+validation errors and `correlationId` where available after envelope processing. The public
+error values are `bad_request`, `decryption_failed`, `provider_delivery_failed`, or
+`delivery_failed`; do not include raw exceptions, cryptographic details, or service responses.
+Platform authentication failures and .NET host-binding failures occur before this handler
+response path and need not use its JSON shape. See the
+[full error and binding reference](CONTRACT.md#epp-response-json).
+
+The shared outcome mapping is `Continue` to `200`, `Block` to `403`, and `Fail` to `429`
+for service throttling, `401` for service authentication rejection, `400` for other service
+4xx responses, or `502` otherwise. Detected outbound timeouts return `504`; non-timeout
+network failures return `502`. Handler validation/decryption failures return `400`, and unexpected handler
+failures generally return `500`. These are endpoint statuses, not a verbatim relay of service
+HTTP status. Use the [complete mapping](CONTRACT.md#2-outcome--http-status-mapping) for details.
 
 <a id="step-7-check-endpoints-timeouts-and-privacy"></a>
 
-## 4. Test the adapter
+## 6. Validate before activation
 
-1. Add tests beside the existing [JavaScript tests](../javascript/test/),
-   [C# tests](../dotnet/tests/) or [Python tests](../python/tests/).
-   Check registration, credential failures, settings, both supported channels,
-   successful and failed responses, timeouts, and evaluation without a send.
-2. Keep sends on the shared bounded transport, restrict destinations, and fail
-   closed on unknown responses. Don't add blind retries: a timed-out send may
-   already have been accepted. Never log codes, secrets, message bodies or full
-   phone numbers. Use the [contract](CONTRACT.md#production-limitations) for the
-   existing safety limits.
-3. Run your language's test runner and build before packaging. Keep the handler
-   response contract unchanged: live acceptance echoes the nonce; failure omits it.
+Arrange [authorized endpoint checks](ONBOARDING.md#validate-the-deployed-endpoint) for caller
+rejection, evaluation without a send, invalid/tampered payloads, and controlled live requests
+on each intended channel. Verify acceptance and actual handset receipt or voice audio separately.
+Only then use the administrator/Microsoft-approved activation procedure.
 
-## 5. Package and deploy your changed source
+Plan for failures without assuming guarantees the sample does not provide. Its outbound HTTP
+timeout defaults to 1500 ms and is capped at 2500 ms; this is **not** a whole-request deadline,
+and Python uses connect/read inactivity timeouts. TTL does not enforce expiry. There is no
+durable queue, automatic send retry, or deduplication. A timed-out request may already have
+been accepted, so blind retries or caller fallback can duplicate delivery.
 
-1. Build your package using the
-   [custom packaging instructions](../TECHNICAL.md#build-zips-locally).
-   Public release packages won't contain your new adapter. C# source needs publish;
-   Python source needs the documented Linux remote build.
-2. Have your Azure operator deploy that package through your team's deployment
-   process and apply the settings and vault permissions from step 3.
-   Follow the [manual trust checklist](ONBOARDING.md#manual-deployment-trust-checklist)
-   before opening public access. Easy Auth must remain enabled; the handler has
-   no backup caller-authentication check.
-3. Arrange the [deployed-endpoint checks](ONBOARDING.md#validate-the-deployed-endpoint)
-   with your tenant administrator, including evaluation and receipt on each channel
-   you intend to use. Tenant activation is a separate supported administrator/Microsoft
-   process, not something adding a provider file or deploying a package enables.
-
-## 6. Optional: extend the guided setup
-
-Skip this for the custom-package route above. If your team also wants to maintain
-its own setup integration, review these files together:
-
-1. [setup/providers/telesign.json](../setup/providers/telesign.json) shows an existing
-   deployment profile; [setup/providers/catalog.json](../setup/providers/catalog.json)
-   lists the profiles offered by setup. These files describe setup choices and
-   deployment values. **The Function doesn't read them to create or register providers.**
-2. [Epp.Setup.psm1](../setup/support/Epp.Setup.psm1) validates profiles and maps their
-   values into settings; [resources.bicep](../setup/infra/resources.bicep) applies
-   them. Review the required provider-tenant, authentication and route fields,
-   trust configuration, extra adapter settings and provider-specific setup behavior.
-   Don't reuse another provider's tenant or assume a new JSON file is sufficient.
-3. [setup/packages/catalog.json](../setup/packages/catalog.json) and
-   [Epp.Packages.ps1](../setup/support/Epp.Packages.ps1) select and verify release
-   assets. Those assets must include your adapter.
-   [Setup-Epp.ps1](../setup/Setup-Epp.ps1) downloads supporting files from a selected,
-   commit-pinned source; editing local JSON doesn't change what it downloads.
-   Test your customized setup with [Providers.Tests.ps1](../setup/tests/Providers.Tests.ps1)
-   and the other [setup tests](../setup/tests/), alongside the modified package,
-   before offering it to customers.
-
-The current guided catalog has no Twilio profile. This optional work is a customer
-setup extension, not built-in provider support.
+Never log passcodes, nonce values, messages, full phone numbers, tokens, keys, JWE contents, or
+raw service responses. Disable body tracing at the platform and proxy as well as in application
+code. Your team must address the remaining
+[production limitations](CONTRACT.md#production-limitations), including input validation,
+timing, key renewal, and operational monitoring, before relying on this sample in production.
