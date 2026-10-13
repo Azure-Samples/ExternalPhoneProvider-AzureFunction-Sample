@@ -29,6 +29,9 @@ In Security Store, open **Private solutions** and select your approved subscript
 its available offers. See [sample offers](docs/ONBOARDING.md#before-purchasing-or-deploying) in the
 detailed guide; a listing does not guarantee support in this setup script.
 
+Use the [SMS cost estimation guide](docs/COST-CALCULATOR.md) to create a planning estimate,
+then confirm destination rates, fees, and final costs with your provider.
+
 Have these ready:
 
 - **Provider account:** complete the provider's account and sender registration for your chosen
