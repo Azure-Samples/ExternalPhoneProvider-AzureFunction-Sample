@@ -9,6 +9,9 @@ This guide does not deploy anything or change authentication policy.
 Use the linked Microsoft queries and illustrated portal instructions at the step where you
 need them; no query snippets or fixed sample thresholds are duplicated here. Portal labels
 can vary. The official screenshots show the controls, not resources or IDs to copy.
+The two Microsoft screenshots below are unaltered public documentation examples, not your
+tenant or evidence of a configured EPP integration. Used with permission from Microsoft.
+Their [source and license notices](images/sign-in-monitoring/NOTICE.txt) accompany the files.
 
 1. Complete [tenant and access checks](#1-choose-the-tenant-and-permissions).
 2. [Configure export](#2-export-the-required-log-categories) and
@@ -122,6 +125,15 @@ can vary. The official screenshots show the controls, not resources or IDs to co
    Diagnostic settings**. For the matching illustrated screen, use
    [access diagnostic settings](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-configure-diagnostic-settings#how-to-access-diagnostic-settings).
    Review existing settings and their owners before adding or editing an integration.
+
+   ![Microsoft Entra admin center showing Monitoring and health, Diagnostic settings, and Add diagnostic setting highlighted](images/sign-in-monitoring/diagnostic-settings-start.png)
+
+   *Official Microsoft Entra admin center example from
+   [Microsoft's diagnostic-settings instructions](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-configure-diagnostic-settings#how-to-access-diagnostic-settings).
+   Used with permission from Microsoft. This is not your tenant; menus and categories vary.
+   Follow the numbered navigation above, not the example's breadcrumb. Visible risk categories
+   do not establish that those features are available or licensed in an external tenant.*
+
 2. Select **Add diagnostic setting**, or deliberately edit the owner-approved setting.
    Enter a recognizable name for a new setting. Select **SignInLogs** for interactive
    user authentication. Add **AuditLogs** only if directory-change investigation is also
@@ -211,6 +223,15 @@ can vary. The official screenshots show the controls, not resources or IDs to co
    selected record > Authentication Details**. Use the official
    [Authentication Details screenshot and explanation](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-sign-in-log-activity-details#authentication-details)
    to read the step sequence, method, outcome, and policy context.
+
+   ![Microsoft Entra ID sign-in Activity Details with Authentication Details selected and two Previously satisfied steps marked true](images/sign-in-monitoring/sign-in-activity-details-authentication.png)
+
+   *Official Microsoft Entra ID example from
+   [Microsoft's sign-in activity-details instructions](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-sign-in-log-activity-details#authentication-details).
+   Used with permission from Microsoft. This is not your sign-in or a delivery test.
+   The example's Previously satisfied outcomes do not prove a new phone challenge or
+   provider send. Your methods, policy results, timestamps, and portal layout can differ.*
+
 2. Check whether the step was satisfied by an existing token claim or a previous
    authentication. A method named SMS/Voice is not a provider ID or delivery receipt.
    Keep the sign-in's overall outcome separate from an individual step's outcome.
