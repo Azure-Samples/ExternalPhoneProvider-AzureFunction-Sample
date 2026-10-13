@@ -6,6 +6,10 @@ reported along the way. It does **not** confirm that an SMS or voice call reache
 **Looking for your logs?** Start with the [monitoring guide](MONITORING.md). It shows how to find
 the resources from your deployment summary, run queries, and create alerts.
 
+For user authentication outcomes, see [Microsoft Entra sign-in monitoring](SIGN-IN-MONITORING.md).
+It uses a separate tenant log-export pipeline, not Function telemetry; neither source alone
+proves phone delivery.
+
 This reference explains how collection works for **JavaScript, .NET isolated, and Python**,
 what each signal means, and why data may be missing. Start with
 [single-region configuration](#single-region-configuration) to check a guided deployment;
