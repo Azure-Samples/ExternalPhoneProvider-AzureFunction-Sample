@@ -3,6 +3,11 @@
 Use this guide to find your endpoint's logs and set up alerts. Guided setup creates Application
 Insights and a Log Analytics workspace, but **you still need to configure and test notifications**.
 
+For **tenant authentication outcomes and potential abuse signals**, use the separate
+[Microsoft Entra sign-in monitoring guide](SIGN-IN-MONITORING.md). Entra log export and
+sign-in alerts are not configured by endpoint setup; sign-in failures are not automatically
+provider failures or evidence of OTP delivery.
+
 For your first single-region deployment:
 
 1. [Find the monitoring resources and confirm data is arriving](#1-record-the-deployment-and-confirm-telemetry)

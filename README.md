@@ -249,7 +249,9 @@ Deleting Azure resources does not undo an authentication policy change.
 | Find IDs, add provider credentials, or run acceptance checks | [Customer configuration and validation](docs/ONBOARDING.md) |
 | Resolve a setup or delivery problem | [Troubleshooting](setup/docs/Troubleshooting.md) |
 | Find logs and set up alerts | [Monitoring](docs/MONITORING.md) and [Application Insights](docs/APPLICATION-INSIGHTS.md) |
+| Monitor authentication outcomes and potential abuse | [Microsoft Entra sign-in monitoring](docs/SIGN-IN-MONITORING.md); configured separately from endpoint telemetry |
 | Understand the architecture, settings, or packages | [Technical reference](TECHNICAL.md) and [HTTP contract](docs/CONTRACT.md) |
 | Explore multiple Azure regions | [Manual Front Door guide](docs/FRONTDOOR.md); not included in guided setup |
 | Build a custom implementation | [JavaScript](javascript/README.md), [C#](dotnet/README.md), or [Python](python/README.md) |
+| Extend the code for a customer-owned phone provider | [Bring your own provider guide](docs/BRING-YOUR-OWN-PROVIDER.md); customer-owned code extension, not guided setup support |
 | Design primary-to-secondary provider fallback | [Developer walkthrough](docs/MULTI-PROVIDER-IMPLEMENTATION.md); not a built-in feature |
