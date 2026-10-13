@@ -101,7 +101,8 @@ and a success-looking body on a failed HTTP response is not acceptance. Return t
 the shared response behavior below, not as raw service JSON.
 
 The sample uses one configured service per deployment. A custom integration does not add
-guided setup support; use the [runtime source guides](../TECHNICAL.md) when building your package.
+guided setup support. Follow [Where to add your integration](#where-to-add-your-integration)
+for the files to create, registration, settings, and packaging.
 
 <a id="5-respond-to-sas"></a>
 
@@ -130,6 +131,71 @@ available. Do not return raw exceptions or service responses. Authentication and
 errors can occur before the handler and need not use this JSON shape. Use the
 [error reference](CONTRACT.md#epp-response-json) and
 [HTTP status mapping](CONTRACT.md#2-outcome--http-status-mapping) for the exact failure response.
+
+## Where to add your integration
+
+Choose **one runtime** and work in its source directory. Keep Easy Auth and the shared handler's
+envelope validation, JWE decryption, evaluation branch, and nonce responses. Your provider code
+builds the outbound request and interprets the service result; it does not authenticate SAS or
+write the HTTP response to SAS.
+
+### Add and register the provider
+
+Choose a fixed lowercase provider ID, then follow the row for your runtime.
+
+| Runtime | Create your module or class here | Register it here | Add tests here |
+| --- | --- | --- | --- |
+| JavaScript | [javascript/src/functions/providers/](../javascript/src/functions/providers/) | [providers/index.js](../javascript/src/functions/providers/index.js): import the module, add its fixed ID to `selectProvider`, and export it. | [javascript/test/](../javascript/test/) |
+| C# | [dotnet/Src/Providers/](../dotnet/Src/Providers/) | [Program.cs](../dotnet/Program.cs): register the class as a singleton `PhoneProviderBase`. The handler selects it by `Name`. | [dotnet/tests/](../dotnet/tests/) |
+| Python | [python/src/providers/](../python/src/providers/) | [function_app.py](../python/function_app.py): import the class and add an instance to the tuple that builds `_providers`. | [python/tests/](../python/tests/) |
+
+Implement the hooks for your chosen runtime:
+
+- **JavaScript:** export `name`, `authenticationMode`, `credentialSpec`, `createRequest`, and
+  `interpretResponse`. Return the shared [ProviderResult](../javascript/src/functions/providerResult.js).
+  [SendOtp.js](../javascript/src/functions/SendOtp.js) passes delivery data, credentials, and `env`
+  to `createRequest`; leave sending to its shared [transport](../javascript/src/functions/providerTransport.js).
+- **C#:** derive from [PhoneProviderBase](../dotnet/Src/PhoneProviderBase.cs). Implement `Name`,
+  `AuthenticationMode`, `FetchCredentialsAsync`, and `SendOtpAsync`. Use the base `SendJsonAsync`
+  transport and return [ProviderResult](../dotnet/Src/Models.cs). Read extra send settings through
+  the supplied `IEnv`; use injected [ISecretResolver](../dotnet/Src/ISecretResolver.cs) for vault secrets.
+  Return credentials with a valid `ExpiresOn` and honor the acquisition cancellation token.
+- **Python:** derive from [PhoneProviderBase](../python/src/provider.py). Supply `name`,
+  `authentication_mode`, and `credential_spec`; implement `build_request` and `map_response`.
+  Return the base module's `OutboundRequest` and the shared [ProviderResult](../python/src/models.py).
+  Use the supplied `env` for extra settings and keep the base `send_otp` transport.
+
+Your hooks own service-specific mapping, outbound authentication, and recognition of acceptance
+or failure. Keep credential caching in the existing services:
+[JavaScript credentials.js](../javascript/src/functions/credentials.js),
+[C# CredentialTokenService](../dotnet/Src/CredentialTokenService.cs), and
+[Python credentials.py](../python/src/credentials.py). JavaScript/Python resolve the provider's
+credential specification; C# calls `FetchCredentialsAsync`. Do not add a separate credential cache
+or send-retry loop. Keep service secrets in Key Vault, not in settings or source.
+
+### Configure, test, and package
+
+1. Start from [local.settings.sample.json](local.settings.sample.json). Copy it to an untracked
+   `local.settings.json` beside your runtime's `host.json`, keep all `Values` entries as strings,
+   and select `node`, `dotnet-isolated`, or `python` as `FUNCTIONS_WORKER_RUNTIME`.
+   Use a local test decryption key, never a production key.
+2. Set `EPP_PROVIDER_NAME` to your registered ID and `EPP_PROVIDER_AUTH_MODE` to its matching
+   `apiKey` or `oauth` mode. Supply `EPP_PROVIDER_SMS_ENDPOINT` and `EPP_PROVIDER_VOICE_ENDPOINT`
+   for the channels you support, plus the credential and extra settings your code reads.
+   Keep these aligned with [JavaScript config.js](../javascript/src/functions/config.js),
+   [C# AppConfig](../dotnet/Src/AppConfig.cs), or [Python config.py](../python/src/config.py) and the
+   [configuration reference](CONTRACT.md#4-configuration-app-settings--env).
+   **Settings select registered code; they do not create or register an adapter.**
+3. Add tests in the directory above for registration, request mapping, missing credentials,
+   recognized acceptance, rejection, unknown responses, and timeouts on each supported channel.
+   Check that evaluation sends nothing, live success waits for acceptance, and failures omit the
+   nonce. Use fake credentials and service responses; run your runtime's tests and build.
+4. [Package your changed source](../TECHNICAL.md#build-zips-locally), not an unchanged public
+   release. C# needs publish output; Python needs the documented Linux remote build.
+   Follow [manual deployment](ONBOARDING.md#optional-local-development-and-manual-deployment)
+   to deploy the custom package and apply cloud settings and vault permissions separately.
+   Retain the [Easy Auth trust checks](ONBOARDING.md#manual-deployment-trust-checklist), then
+   complete the validation below.
 
 <a id="step-7-check-endpoints-timeouts-and-privacy"></a>
 <a id="6-validate-before-activation"></a>
