@@ -160,19 +160,19 @@ states, with official references for the selected API rather than another provid
 1. Read [shared configuration](CONTRACT.md#4-configuration-app-settings--env) and
    [credential caching](CONTRACT.md#credential-caching-and-refresh). Use one
    provider/account per deployment; the existing caches are not per-request account routers.
-2. Define adapter-owned names for the new account/sender settings and two vault
-   secrets. The names below are a **proposed naming contract for customer code**,
-   not existing Twilio support. If you choose different names, use them consistently
-   in adapter code, customer deployment configuration and tests.
+2. Choose and document customer-owned names for the account/sender settings and
+   two vault secrets. Use them consistently in adapter code, deployment configuration
+   and tests. The table distinguishes those inputs from settings that already exist;
+   it does not introduce recognized Twilio options.
 
-| Existing or proposed name | Customer wiring required |
+| Existing setting or customer-owned input | Customer wiring required |
 | --- | --- |
 | Existing `EPP_PROVIDER_NAME` | Register a fixed Twilio adapter ID before selecting it here; settings alone cannot add it |
 | Existing `EPP_PROVIDER_AUTH_MODE` | Match the adapter's `apiKey` mode; that mode retrieves secrets, while the adapter builds Basic auth |
-| Proposed `EPP_TWILIO_ACCOUNT_SID` | Read and validate the account used in both operation URLs |
-| Proposed `EPP_TWILIO_SMS_FROM`, `EPP_TWILIO_VOICE_FROM` | Read and validate each channel's approved sender/caller ID |
+| Adapter-owned account SID setting | Choose its name, then read and validate the account used in both operation URLs |
+| Adapter-owned per-channel sender settings | Choose their names, then read and validate each channel's approved sender/caller ID |
 | Existing `EPP_PROVIDER_SMS_ENDPOINT`, `EPP_PROVIDER_VOICE_ENDPOINT` | Complete Messages and Calls URLs from step 4, respectively |
-| Proposed vault secrets `twilio-api-key-sid`, `twilio-api-key-secret` | Resolve the SID into credential `identity`, and the secret into credential `secret` |
+| Customer-defined API key SID/secret vault names | Resolve the SID into credential `identity`, and the secret into credential `secret` |
 | Existing `KEY_VAULT_URL`, optional `AZURE_CLIENT_ID` | Use the provider-secret vault and its user-assigned reader identity; without a client ID, use system-assigned identity |
 | Existing `EPP_KEY_VAULT_CACHE_ENABLED` | Select API-key caching; omission defaults to true, false acquires per live request |
 | Existing `EPP_PROVIDER_TIMEOUT_MS` | Set a positive millisecond budget within the existing 2,500 ms cap; default is 1,500 ms |
