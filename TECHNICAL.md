@@ -61,11 +61,17 @@ a [service plan](setup/docs/README.md#service-plan-selection), and a resource pr
 one complete plan. Manual Step 1 only creates the dedicated app
 registration; PowerShell configures its service principals, `Epp.Invoke`, Microsoft caller access,
 Graph `Application.Read.All`, the provider-tenant allowlist preview, encryption certificate, and
-Easy Auth. The encryption certificate is issued inside Key Vault after infrastructure deployment;
-setup downloads only its public certificate and pins the Function to its PEM secret version.
+Easy Auth. Read-only preflight discovers existing `AsymmetricX509Cert` / `Encrypt` credentials.
+Customers choose a matching Key Vault certificate version to reuse, with explicit cleanup of any
+other encryption credentials, or replacement with a new certificate. The approved deployment
+stages the private-key reference, verifies its resolution by the Function system identity, and
+registers exactly one public encryption certificate while preserving non-encryption credentials.
+Setup downloads only the public certificate and pins the Function to its PEM secret version.
+Reuse can reference another vault in the same tenant; provider credentials remain in the
+setup-created vault. Replacement is coordinated maintenance, not zero-downtime rotation.
 Each deployment accepts both SMS and voice. The request's `channel` selects its configured
 provider endpoint; the two URLs can be identical or different.
-Certificate renewal and policy activation remain manual. The home tenant remains allowed by Entra.
+Certificate synchronization and policy activation remain manual. The home tenant remains allowed by Entra.
 
 ## Download a Function ZIP
 

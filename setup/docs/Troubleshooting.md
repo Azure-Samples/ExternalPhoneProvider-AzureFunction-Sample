@@ -19,7 +19,7 @@ encrypted request bodies, or raw provider responses. Do not enable body tracing 
 | Setup reports success, but no OTP delivery | Finish [Telesign vault entry or Soprano provider consent](../../docs/ONBOARDING.md#complete-provider-authentication); confirm authorized testing and policy activation are separately complete. | Do not redeploy all runtimes or paste credentials into local settings. |
 | Endpoint returns 401/403 with no invocation | Azure operator checks Easy Auth, issuer/audience/caller restrictions, network access, and available platform/auth logs. An ordinary customer CLI token is not the allowlisted Microsoft caller. | Do not disable Easy Auth, add a test caller, or interpret rejection as readiness. |
 | App failure after invocation, including 401 | Inspect correlated `request_failed` and provider-response events. A provider's 401/403 is mapped to a handler 401; this differs from Easy Auth rejection. | Do not change inbound trust to fix outbound provider authorization. |
-| `decryption_failed` or unresolved key reference | Compare summary certificate/thumbprint/key ID and versioned reference; verify Function identity vault access and reference resolution, then use an authorized evaluation. | Do not export the private key, delete registered certificates, or assume new vault versions automatically update Entra. |
+| `decryption_failed` or unresolved key reference | Compare summary certificate/thumbprint/key ID and versioned reference; verify Function identity vault access and reference resolution, then use an authorized evaluation. | Do not export the private key, remove certificates outside approved cleanup, or assume new vault versions automatically update Entra. |
 | Provider credentials unavailable | Check secret names/enabled versions/vault access for Telesign; customer federation plus provider-side authorization/tenant/scope for Soprano. Allow RBAC propagation. | Do not assume evaluation validates outbound credentials. |
 | Timeout, 502/504, or provider acceptance without handset receipt | Separate credential, outbound HTTP, host, and caller timings; ask the provider for supported delivery evidence. Confirm locale/digit clarity for voice. | Do not blindly resend: the first request may already have been accepted. |
 | No requests/traces in Application Insights | Check the exact component/workspace, UTC window, actual authorized traffic, host/worker startup, ingestion identity/network, filters/sampling/caps, and effective exporter. Use [collection guidance](../../docs/APPLICATION-INSIGHTS.md). | Do not treat an empty table/Failures view as healthy or search every runtime for a JSON request summary. |
@@ -49,6 +49,33 @@ Do not delete a resource group, purge/recreate the vault, remove encryption cred
 shared Microsoft service-principal grants as a generic retry strategy. Use the separate
 [rollback and decommissioning procedure](README.md#rollback-and-decommissioning) if retirement
 is actually intended.
+
+## Certificate selection, reuse, or cleanup fails
+
+Setup checks the application's encryption credentials before approval. With existing credentials,
+choose **Reuse** and a certificate key ID/location, or **Replace**; it never silently adds another
+encryption certificate on a rerun. See [certificate selection](README.md#encryption-certificate-selection).
+
+| Failure | Safe recovery |
+|---|---|
+| Missing `CertificateAction`, `EncryptionKeyId`, or `KeyVaultCertificateId` in unattended mode | Supply an explicit action. Reuse requires the exact key ID and versioned `/certificates/` URL even when only one credential exists. `-ApproveDeployment` is not a certificate choice. |
+| Key Vault certificate does not match the selected app credential | Compare the displayed key ID and public thumbprint with the exact Key Vault certificate version. A same-name or renewed certificate is not necessarily the registered certificate. Correct the location or explicitly choose replacement. |
+| Expired, not-yet-valid, disabled, or incompatible certificate/secret | Select a valid certificate with more than 30 days remaining and an exportable RSA key of at least 2048 bits in a certificate-managed PEM secret. A public `.cer` file or standalone PEM secret is not a reuse location. |
+| Certificate not found or metadata read denied | Check the vault, name, exact version, and operator certificate/secret-metadata read permissions. Use `-KeyVaultSubscriptionId` for a vault in a different subscription in the same tenant. Reuse does not fall back to creation on errors. |
+| Function reference is denied or cannot resolve | Check the Function's **system-assigned** identity, its secret-read permission, and network access to the source vault. Operator access is not proof of Function access. Setup waits a bounded time for propagation and does not open external-vault networking. |
+| Credentials or the source vault's permission model changed after approval | Stop competing changes and rerun selection/approval against the current state. Do not force an outdated cleanup plan. |
+| An encryption credential has an unsupported type, or a non-encryption credential cannot be read | Have the application owner review the credential and read permissions. Setup cannot safely preserve or interpret it and will not blindly reset the credential collection. |
+
+New certificates are prepared before old application entries are removed. A failed reference or
+source-vault access check leaves the registered encryption credentials intact, although Azure
+resources/app settings may already have changed. If registration succeeded and a later publication
+step failed, inspect the current app and choose **Reuse** with the certificate ID printed by setup;
+repeating **Replace** would request another rotation. Keep the same resource prefix for recovery.
+
+An approved cleanup removes only the listed `AsymmetricX509Cert` / `Encrypt` entries from the
+application. It never deletes vault certificates, keys, secrets, or unrelated application
+credentials. Coordinate maintenance and authorized evaluation for every active endpoint sharing
+the application; cached or in-flight requests can still use a retired key.
 
 ## Optional Front Door deployments
 
@@ -103,8 +130,9 @@ supporting services and usage beyond the grant can still incur charges.
 
 Setup refuses to switch an existing prefix between FC1 and EP1. Use a different prefix and validate
 the new endpoint before manually changing policy. For an active endpoint, also onboard a new
-dedicated application or coordinate key continuity; a new prefix creates a different encryption key
-and cannot bypass the existing application's certificate checks.
+dedicated application or coordinate key continuity. A new prefix still requires the existing
+application's certificate reuse/replacement decision; choose the existing Key Vault certificate
+to retain its key rather than inadvertently rotating every endpoint sharing that application.
 For older deployments without a service-plan tag,
 preflight checks the actual hosting-plan SKU. Use `-ServicePlan EP1` when rerunning an existing EP1
 deployment; do not delete tags to bypass the migration guard.

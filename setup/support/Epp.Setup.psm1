@@ -8,6 +8,7 @@ $script:EppInvokeAppRoleId = 'ddf32018-9212-41c7-b73c-f5dfe73a2f24'
 $script:EppInvokeAppRoleValue = 'Epp.Invoke'
 $script:EppCertificateName = 'phone-provider-encryption'
 $script:EppCertificateSubject = 'CN=ExternalPhoneProvider'
+$script:KeyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 $script:GraphRequiredScopes = @('User.Read', 'Application.ReadWrite.All', 'Application.Read.All', 'AppRoleAssignment.ReadWrite.All')
 . (Join-Path $PSScriptRoot 'Epp.Packages.ps1')
 
@@ -45,7 +46,7 @@ function Assert-EppHttpsUrl {
 function Select-EppOption {
     param(
         [object[]] $Entries, [string] $Name, [string] $Value,
-        [string] $PromptName, [switch] $NonInteractive
+        [string] $PromptName, [switch] $NonInteractive, [switch] $AllowCancel
     )
 
     $ids = @($Entries | ForEach-Object { $_['id'] })
@@ -58,8 +59,10 @@ function Select-EppOption {
     if ($NonInteractive) { throw "-$Name is required. Choose: $($ids -join ', ')." }
     Write-Host "`nChoose your $($displayName.ToLowerInvariant()):" -ForegroundColor Cyan
     for ($index = 0; $index -lt $Entries.Count; $index++) { Write-Host "  [$($index + 1)] $($Entries[$index]['displayName'])" }
+    if ($AllowCancel) { Write-Host '  [0] Cancel (also Enter)' }
     while ($true) {
         $answer = ([string](Read-Host "$displayName number or name")).Trim()
+        if ($AllowCancel -and (-not $answer -or $answer -in @('0', 'Cancel'))) { return $null }
         $number = 0
         if ([int]::TryParse($answer, [ref] $number) -and $number -ge 1 -and $number -le $Entries.Count) { return $Entries[$number - 1] }
         $selected = $Entries | Where-Object { $_['id'] -ieq $answer -or $_['displayName'] -ieq $answer } | Select-Object -First 1
@@ -84,7 +87,7 @@ function Read-EppInput {
         [string] $Name, [string] $Value, [string] $Hint,
         [ValidateSet('Text', 'Guid', 'Location', 'Prefix', 'PackageUrl', 'Hash')]
         [string] $Kind = 'Text',
-        [switch] $NonInteractive,
+        [switch] $NonInteractive, [switch] $AllowCancel,
         [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
         [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample'
     )
@@ -97,6 +100,7 @@ function Read-EppInput {
             $Value = [string](Read-Host $prompt)
         }
         $Value = $Value.Trim()
+        if (-not $supplied -and $AllowCancel -and (-not $Value -or $Value -ieq 'Cancel')) { return $null }
         try {
             if (-not $Value -or $Value -match '[\x00-\x1f<>]') { throw 'A nonempty value without placeholders is required.' }
             switch ($Kind) {
@@ -849,7 +853,7 @@ function Connect-EppContext {
     }
     return [pscustomobject]@{
         OperatorId = $operatorId; GraphOperatorId = $graphOperator.Id; GraphAccount = $graphOperator.Account
-        Application = $application; TokenVersion = $version
+        Application = $application; TokenVersion = $version; CertificatePlan = $null
         EndpointPrincipal = $endpointPrincipals | Select-Object -First 1
         CallerPrincipal = $callerPrincipals | Select-Object -First 1
         GraphPrincipal = $graphPrincipals[0]
@@ -873,7 +877,7 @@ function Get-EppResourceRows {
         [pscustomobject]@{ Resource = 'Hosting plan'; Name = $Names.hostingPlan; Description = $planDescription }
         [pscustomobject]@{ Resource = 'Storage account'; Name = $Names.storageAccount; Description = 'Provides Function host storage and private package storage.' }
         [pscustomobject]@{ Resource = 'Blob container'; Name = 'packages'; Description = 'Stores the verified deployment package privately.' }
-        [pscustomobject]@{ Resource = 'Key Vault'; Name = $Names.keyVault; Description = 'Stores the encryption private key and provider credentials.' }
+        [pscustomobject]@{ Resource = 'Key Vault'; Name = $Names.keyVault; Description = 'Stores provider credentials and newly issued encryption certificates.' }
         [pscustomobject]@{ Resource = 'Function App identity'; Name = 'System-assigned'; Description = 'Accesses package storage, host storage, Key Vault, and monitoring.' }
         [pscustomobject]@{ Resource = 'Outbound identity'; Name = $Names.outboundIdentity; Description = 'Supports outbound provider authentication when required.' }
         [pscustomobject]@{ Resource = 'Log Analytics'; Name = $Names.logAnalytics; Description = 'Stores platform and application diagnostic logs.' }
@@ -948,10 +952,7 @@ function Show-EppPlan {
         Write-Host '  - Restrict the multi-tenant endpoint application to the customer tenant and selected provider tenant.'
     }
     Write-Host '  - Configure Easy Auth to require HTTPS authentication and allow only the Microsoft phone-provider enterprise application.'
-    Write-Host '  - Issue or reuse an RSA-2048 encryption certificate inside Key Vault; no private key is downloaded.'
-    Write-Host '  - Use a 12-month certificate with manual renewal and key reuse; automatic renewal is disabled.'
-    Write-Host '  - Pin the Function to the certificate secret version and register only the public certificate in Entra.'
-    Write-Host '  - Renewal and Entra certificate synchronization remain administrator-owned operations.' -ForegroundColor Yellow
+    Show-EppCertificatePlan -Plan $Context.CertificatePlan -Names $Names
     if ($Inputs.ProviderAuthentication -eq 'oauth') {
         Write-Host '  - Soprano OAuth: add a federated credential so the outbound managed identity can authenticate without a client secret.'
     }
@@ -987,6 +988,45 @@ function Confirm-EppDeployment {
         if (-not $answer -or $answer -ieq 'No') { return $false }
         Write-Warning 'Type Yes to deploy, or No/Enter to cancel.'
     }
+}
+
+function Show-EppCertificatePlan {
+    param([Collections.IDictionary] $Plan, [Collections.IDictionary] $Names)
+
+    if (-not $Plan) { throw 'Select an encryption certificate action before reviewing the deployment plan.' }
+    Write-Host "`nEncryption certificate: $($Plan.Action)" -ForegroundColor Cyan
+    Write-Host "  App-registration key ID to keep/register: $($Plan.KeyId)"
+    if ($Plan.Action -eq 'Reuse') {
+        Write-Host "  Keep certificate: $($Plan.CertificateId)"
+        Write-Host "  Thumbprint: $($Plan.Thumbprint); expires: $($Plan.ExpiresUtc)"
+        Write-Host "  Pin decryption to: $($Plan.SecretId)"
+        if ($Plan.VaultName -ine $Names.keyVault) {
+            if ($Plan.VaultRbac) {
+                Write-Host "  Grant the Function system identity Key Vault Secrets User at: $($Plan.VaultResourceId)/secrets/$($Plan.CertificateName)"
+            }
+            else {
+                Write-Host "  Add Secrets/Get for the Function system identity at: $($Plan.VaultResourceId)"
+                Write-Host '  WARNING: access-policy vaults grant secret read access vault-wide, not just to this certificate.' -ForegroundColor Yellow
+            }
+        }
+        Write-Host '  Reuse does not change external-vault network rules; the Function must be able to reach the certificate vault.'
+        Write-Host '  Existing certificate issuance policies are not changed; endpoint certificate synchronization remains manual.'
+    }
+    else {
+        Write-Host "  Issue or reuse the staged certificate '$($Plan.CertificateName)' in '$($Plan.VaultName)'."
+        Write-Host '  New certificates use RSA-2048, 12-month validity, key reuse, and manual renewal (no AutoRenew).'
+    }
+    if ($Plan.RemoveKeyIds.Count) {
+        Write-Host '  Remove ONLY these app-registration encryption credentials after the replacement secret reference resolves:' -ForegroundColor Yellow
+        foreach ($entry in $Plan.ExistingCertificates | Where-Object { $_.id -in $Plan.RemoveKeyIds }) {
+            Write-Host "    $($entry.displayName)" -ForegroundColor Yellow
+        }
+        Write-Host '  WARNING: coordinate maintenance for every endpoint sharing this application. Cached/in-flight requests can fail; this is not zero-downtime rotation.' -ForegroundColor Yellow
+    }
+    else { Write-Host '  No existing app-registration encryption credentials will be removed.' }
+    Write-Host '  Preserve non-encryption credentials and all Key Vault certificates, keys, and secrets.'
+    Write-Host '  Keep private keys in Key Vault; verify the Function reference before registering exactly one public encryption certificate.'
+    Write-Host '  Renewal and the authorized decryption evaluation remain administrator-owned operations.' -ForegroundColor Yellow
 }
 
 function Show-EppDeploymentResult {
@@ -1084,6 +1124,7 @@ function Initialize-EppGraphAccess {
         $application.TokenEncryptionKeyId) {
         throw 'The dedicated endpoint application changed after preflight or has unsupported token encryption enabled.'
     }
+    Assert-EppCertificatePlanUnchanged -Application $application -Plan $Context.CertificatePlan
     $roles = @($application.AppRoles | Where-Object { $null -ne $_ })
     $invokeRoles = @($roles | Where-Object { $_.Id -eq $script:EppInvokeAppRoleId -or $_.Value -eq $script:EppInvokeAppRoleValue })
     if ($invokeRoles.Count -gt 1 -or
@@ -1149,11 +1190,279 @@ function Initialize-EppGraphAccess {
     }
 }
 
+function ConvertTo-EppKeyVaultObjectId {
+    param([string] $Value, [ValidateSet('certificates', 'secrets')][string] $Kind)
+
+    $pattern = '^https://(?<vault>[a-z][a-z0-9-]{1,22}[a-z0-9])\.vault\.azure\.net/' +
+        $Kind + '/(?<name>[a-z0-9-]{1,127})/(?<version>[0-9a-f]{32})$'
+    if ($Value -notmatch $pattern) {
+        throw "Use a versioned Key Vault URL: https://<vault>.vault.azure.net/$Kind/<name>/<32-character-version>."
+    }
+    return @{
+        Id = $Value; VaultName = $Matches.vault.ToLowerInvariant()
+        Name = $Matches.name; Version = $Matches.version
+    }
+}
+
+function Get-EppKeyCredentialSnapshot {
+    param([object[]] $Credentials)
+
+    $values = @(foreach ($key in @($Credentials | Where-Object { $null -ne $_ } | Sort-Object KeyId)) {
+        [ordered]@{
+            KeyId = [string]$key.KeyId; Type = $key.Type; Usage = $key.Usage; DisplayName = $key.DisplayName
+            Key = if ($key.Key) { [Convert]::ToBase64String([byte[]]$key.Key) } else { $null }
+            CustomKeyIdentifier = if ($key.CustomKeyIdentifier) { [Convert]::ToBase64String([byte[]]$key.CustomKeyIdentifier) } else { $null }
+            StartDateTime = if ($key.StartDateTime) { ([DateTimeOffset]$key.StartDateTime).ToUniversalTime().ToString('o') } else { $null }
+            EndDateTime = if ($key.EndDateTime) { ([DateTimeOffset]$key.EndDateTime).ToUniversalTime().ToString('o') } else { $null }
+        }
+    })
+    return ConvertTo-Json -InputObject $values -Depth 5 -Compress
+}
+
+function Assert-EppCertificatePlanUnchanged {
+    param($Application, [Collections.IDictionary] $Plan)
+
+    if (-not $Plan -or (Get-EppKeyCredentialSnapshot $Application.KeyCredentials) -cne $Plan.Snapshot) {
+        throw 'The application credentials changed after certificate selection. No encryption credentials will be removed. Rerun setup and review a new plan.'
+    }
+}
+
+function ConvertFrom-EppCertificateBundle {
+    param([Collections.IDictionary] $Bundle, [switch] $RequireSetupPolicy)
+
+    if (-not $Bundle -or -not $Bundle['cer'] -or -not $Bundle['sid'] -or -not $Bundle['id']) {
+        throw 'Key Vault returned incomplete certificate metadata.'
+    }
+    $certificateId = ConvertTo-EppKeyVaultObjectId $Bundle['id'] certificates
+    $secretId = ConvertTo-EppKeyVaultObjectId $Bundle['sid'] secrets
+    if ($secretId.VaultName -ine $certificateId.VaultName -or $secretId.Name -ine $certificateId.Name) {
+        throw 'The certificate backing secret must belong to the same vault and certificate name.'
+    }
+    $policy = $Bundle['policy']
+    if ($Bundle['attributes'] -isnot [Collections.IDictionary] -or $Bundle['attributes']['enabled'] -ne $true -or
+        $policy -isnot [Collections.IDictionary] -or
+        $policy['keyProperties'] -isnot [Collections.IDictionary] -or
+        $policy['secretProperties'] -isnot [Collections.IDictionary] -or
+        $policy['keyProperties']['keyType'] -cne 'RSA' -or $policy['keyProperties']['exportable'] -ne $true -or
+        $policy['secretProperties']['contentType'] -cne 'application/x-pem-file') {
+        throw 'Use an enabled certificate with exportable RSA and a PEM backing secret. Setup will not overwrite an incompatible certificate.'
+    }
+    $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new([Convert]::FromBase64String($Bundle['cer']))
+    try {
+        $rsa = [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($certificate)
+        try {
+            # RSAOpenSsl overrides only the setter; call the inherited getter to avoid PowerShell's write-only property view.
+            if (-not $rsa -or $rsa.get_KeySize() -lt 2048 -or $certificate.HasPrivateKey -or
+                $certificate.NotBefore.ToUniversalTime() -gt [DateTime]::UtcNow -or
+                $certificate.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow.AddDays(30)) {
+                throw 'The certificate must contain an RSA public key of at least 2048 bits, be valid now, and have more than 30 days remaining.'
+            }
+        }
+        finally { if ($rsa) { $rsa.Dispose() } }
+        if ($RequireSetupPolicy) {
+            $actions = @($policy['lifetimeActions'])
+            if ($certificate.Subject -cne $script:EppCertificateSubject -or
+                $policy['keyProperties']['reuseKey'] -ne $true -or
+                $actions.Count -ne 1 -or $actions[0]['action']['actionType'] -cne 'EmailContacts') {
+                throw "Setup will not overwrite an incompatible certificate. Its subject must be '$script:EppCertificateSubject', with key reuse and manual renewal."
+            }
+        }
+        return [pscustomobject]@{ Certificate = $certificate; CertificateId = $Bundle['id']; SecretId = $Bundle['sid'] }
+    }
+    catch { $certificate.Dispose(); throw }
+}
+
+function Assert-EppCertificateSecret {
+    param([string] $SecretId, [string] $SubscriptionId)
+
+    $secret = ConvertTo-EppKeyVaultObjectId $SecretId secrets
+    # Listing version metadata never retrieves the private-key value.
+    $versions = Invoke-EppDataOperation {
+        Invoke-EppAz keyvault secret list-versions --vault-name $secret.VaultName --name $secret.Name `
+            --subscription $SubscriptionId --output json
+    } | ConvertFrom-Json -AsHashtable -NoEnumerate
+    if ($versions -isnot [array]) { throw 'Key Vault returned an invalid secret-version list.' }
+    $matching = @($versions | Where-Object { $_['id'] -ieq $SecretId })
+    if ($matching.Count -ne 1 -or $matching[0]['managed'] -ne $true -or
+        $matching[0]['contentType'] -cne 'application/x-pem-file' -or
+        $matching[0]['attributes'] -isnot [Collections.IDictionary] -or
+        $matching[0]['attributes']['enabled'] -ne $true) {
+        throw 'The selected certificate must have an enabled, certificate-managed PEM secret version.'
+    }
+    $attributes = $matching[0]['attributes']
+    if (($attributes['notBefore'] -and [DateTimeOffset]$attributes['notBefore'] -gt [DateTimeOffset]::UtcNow) -or
+        ($attributes['expires'] -and [DateTimeOffset]$attributes['expires'] -le [DateTimeOffset]::UtcNow.AddDays(30))) {
+        throw 'The certificate backing secret must be valid now and have more than 30 days remaining.'
+    }
+}
+
+function Get-EppExistingEncryptionCertificate {
+    param([string] $CertificateId, [string] $SubscriptionId)
+
+    $null = ConvertTo-EppKeyVaultObjectId $CertificateId certificates
+    $bundle = Invoke-EppAz keyvault certificate show --id $CertificateId --subscription $SubscriptionId --output json |
+        ConvertFrom-Json -AsHashtable
+    if ($bundle -isnot [Collections.IDictionary] -or $bundle['id'] -ine $CertificateId) {
+        throw 'Key Vault returned a different or incomplete certificate version than requested.'
+    }
+    $issued = ConvertFrom-EppCertificateBundle -Bundle $bundle
+    try {
+        Assert-EppCertificateSecret -SecretId $issued.SecretId -SubscriptionId $SubscriptionId
+        return $issued
+    }
+    catch { $issued.Certificate.Dispose(); throw }
+}
+
+function Get-EppCertificateVault {
+    param([hashtable] $Inputs, [string] $VaultName, [string] $SubscriptionId)
+
+    $vault = Invoke-EppAz keyvault show --name $VaultName --subscription $SubscriptionId --output json |
+        ConvertFrom-Json -AsHashtable
+    $idPattern = '^/subscriptions/' + [regex]::Escape($SubscriptionId) +
+        '/resourceGroups/[^/]+/providers/Microsoft.KeyVault/vaults/' + [regex]::Escape($VaultName) + '$'
+    if ($vault -isnot [Collections.IDictionary] -or $vault['id'] -notmatch $idPattern -or
+        $vault['properties'] -isnot [Collections.IDictionary] -or
+        $vault['properties']['tenantId'] -ine $Inputs.TenantId -or
+        $vault['properties']['vaultUri'] -ine "https://$VaultName.vault.azure.net/") {
+        throw 'The certificate vault must be in the specified subscription and the Function application tenant.'
+    }
+    return $vault
+}
+
+function Get-EppCertificatePlan {
+    param(
+        [hashtable] $Inputs, [Collections.IDictionary] $Names, $Application,
+        [string] $CertificateAction, [string] $EncryptionKeyId, [string] $KeyVaultCertificateId,
+        [string] $KeyVaultSubscriptionId, [switch] $NonInteractive
+    )
+
+    $keys = @($Application.KeyCredentials | Where-Object { $null -ne $_ })
+    $encryptionKeys = @($keys | Where-Object Usage -eq 'Encrypt')
+    if (@($encryptionKeys | Where-Object Type -ne 'AsymmetricX509Cert').Count) {
+        throw 'The application has an unsupported Encrypt credential type. Have its owner review it; setup only manages AsymmetricX509Cert encryption credentials.'
+    }
+    if (@($keys | Where-Object { $_.Usage -ne 'Encrypt' -and -not $_.Key }).Count) {
+        throw 'A non-encryption credential is unreadable and cannot be safely preserved. Resolve its read access before setup.'
+    }
+    $ids = @($keys | ForEach-Object { ConvertTo-EppGuid ([string]$_.KeyId) })
+    if (@($ids | Select-Object -Unique).Count -ne $ids.Count) { throw 'The application contains duplicate key IDs. Resolve these invalid credentials before setup.' }
+    $snapshot = Get-EppKeyCredentialSnapshot $keys
+    $choices = @(foreach ($key in $encryptionKeys) {
+        $thumbprint = 'unreadable'
+        if ($key.Key) {
+            try {
+                $public = [Security.Cryptography.X509Certificates.X509Certificate2]::new([byte[]]$key.Key)
+                try { $thumbprint = $public.Thumbprint }
+                finally { $public.Dispose() }
+            }
+            catch [Security.Cryptography.CryptographicException] {
+                Write-Warning "Encryption credential '$($key.KeyId)' has an unreadable certificate and cannot be reused."
+            }
+        }
+        $expires = if ($key.EndDateTime) { ([DateTimeOffset]$key.EndDateTime).ToUniversalTime().ToString('o') } else { 'unknown' }
+        $status = if (-not $key.StartDateTime -or -not $key.EndDateTime) { 'unknown validity' }
+            elseif ([DateTimeOffset]$key.StartDateTime -gt [DateTimeOffset]::UtcNow) { 'not yet valid' }
+            elseif ([DateTimeOffset]$key.EndDateTime -le [DateTimeOffset]::UtcNow) { 'expired' }
+            elseif ([DateTimeOffset]$key.EndDateTime -le [DateTimeOffset]::UtcNow.AddDays(30)) { 'near expiry' }
+            else { 'valid' }
+        $name = ([string]$key.DisplayName) -replace '[\x00-\x1f\x7f]', ' '
+        @{ id = [string]$key.KeyId; displayName = "$name | keyId=$($key.KeyId) | thumbprint=$thumbprint | expires=$expires | $status" }
+    })
+    Write-Host "`nRegistered encryption certificates: $($encryptionKeys.Count)" -ForegroundColor Cyan
+    foreach ($choice in $choices) { Write-Host "  $($choice.displayName)" }
+
+    while ($true) {
+        $action = $CertificateAction
+        if (-not $encryptionKeys.Count) {
+            if ($action -and $action -ine 'Create') { throw 'No encryption certificate is registered. Omit -CertificateAction or use Create.' }
+            $action = 'Create'
+        }
+        else {
+            $option = Select-EppOption -Entries @(
+                @{ id = 'Reuse'; displayName = 'Keep one existing certificate and remove any other encryption credentials' }
+                @{ id = 'Replace'; displayName = 'Create a new certificate and remove all existing encryption credentials' }
+            ) -Name CertificateAction -PromptName 'Encryption certificate action' -Value $action -AllowCancel -NonInteractive:$NonInteractive
+            if (-not $option) { return $null }
+            $action = $option.id
+        }
+        $plan = @{
+            Action = $action; Snapshot = $snapshot; ExistingCertificates = $choices
+            NonEncryptionSnapshot = Get-EppKeyCredentialSnapshot @($keys | Where-Object Usage -ne 'Encrypt')
+            KeyId = [Guid]::NewGuid().ToString(); RemoveKeyIds = @($encryptionKeys | ForEach-Object { [string]$_.KeyId })
+            CertificateName = $script:EppCertificateName; CertificateId = $null; SecretId = $null
+            Thumbprint = $null; ExpiresUtc = $null
+            VaultName = $Names.keyVault; VaultSubscriptionId = $Inputs.SubscriptionId
+            VaultResourceId = "/subscriptions/$($Inputs.SubscriptionId)/resourceGroups/$($Names.resourceGroup)/providers/Microsoft.KeyVault/vaults/$($Names.keyVault)"
+            VaultRbac = $true
+        }
+        if ($action -ne 'Reuse') {
+            if ($EncryptionKeyId -or $KeyVaultCertificateId -or $KeyVaultSubscriptionId) {
+                throw '-EncryptionKeyId, -KeyVaultCertificateId, and -KeyVaultSubscriptionId are only valid with -CertificateAction Reuse.'
+            }
+            if ($action -eq 'Replace') {
+                # A retry before registration reuses the same staged certificate, without overwriting an active version.
+                $sha = [Security.Cryptography.SHA256]::Create()
+                try {
+                    $seed = Get-EppKeyCredentialSnapshot $encryptionKeys
+                    $suffix = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($seed))) -replace '-', '').Substring(0, 16).ToLowerInvariant()
+                }
+                finally { $sha.Dispose() }
+                $plan.CertificateName += "-$suffix"
+            }
+            return $plan
+        }
+        $selectedId = $EncryptionKeyId
+        if (-not $selectedId -and -not $NonInteractive -and $encryptionKeys.Count -eq 1) { $selectedId = [string]$encryptionKeys[0].KeyId }
+        $selected = Select-EppOption -Entries $choices -Name EncryptionKeyId -PromptName 'Certificate to keep' `
+            -Value $selectedId -AllowCancel -NonInteractive:$NonInteractive
+        if (-not $selected) { return $null }
+        $selectedKey = $encryptionKeys | Where-Object { [string]$_.KeyId -eq $selected.id }
+        $location = Read-EppInput -Name KeyVaultCertificateId -Value $KeyVaultCertificateId `
+            -Hint 'Versioned certificate URL; Enter cancels' -AllowCancel -NonInteractive:$NonInteractive
+        if (-not $location) { return $null }
+        $issued = $null
+        try {
+            $certificateLocation = ConvertTo-EppKeyVaultObjectId $location certificates
+            $subscription = if ($KeyVaultSubscriptionId) { ConvertTo-EppGuid $KeyVaultSubscriptionId } else { $Inputs.SubscriptionId }
+            $vault = Get-EppCertificateVault -Inputs $Inputs -VaultName $certificateLocation.VaultName -SubscriptionId $subscription
+            $issued = Get-EppExistingEncryptionCertificate -CertificateId $location -SubscriptionId $subscription
+            if (-not $selectedKey.Key -or
+                [Convert]::ToBase64String([byte[]]$selectedKey.Key) -cne [Convert]::ToBase64String($issued.Certificate.RawData)) {
+                throw 'The Key Vault certificate does not match the selected app-registration certificate. Supply its exact certificate version or choose Replace.'
+            }
+            if (-not $selectedKey.StartDateTime -or -not $selectedKey.EndDateTime -or
+                [DateTimeOffset]$selectedKey.StartDateTime -gt [DateTimeOffset]::UtcNow -or
+                [DateTimeOffset]$selectedKey.EndDateTime -le [DateTimeOffset]::UtcNow.AddDays(30)) {
+                throw 'The selected app-registration credential must be valid now and have more than 30 days remaining. Choose another certificate or Replace.'
+            }
+            $plan.KeyId = $selected.id
+            $plan.RemoveKeyIds = @($plan.RemoveKeyIds | Where-Object { $_ -ne $selected.id })
+            $plan.CertificateName = $certificateLocation.Name
+            $plan.CertificateId = $issued.CertificateId; $plan.SecretId = $issued.SecretId
+            $plan.Thumbprint = $issued.Certificate.Thumbprint
+            $plan.ExpiresUtc = $issued.Certificate.NotAfter.ToUniversalTime().ToString('o')
+            $plan.VaultName = $certificateLocation.VaultName; $plan.VaultSubscriptionId = $subscription
+            $plan.VaultResourceId = $vault['id']; $plan.VaultRbac = $vault['properties']['enableRbacAuthorization'] -eq $true
+            return $plan
+        }
+        catch {
+            if ($NonInteractive -or $KeyVaultCertificateId) { throw }
+            Write-Warning "Cannot reuse this certificate: $($_.Exception.Message)"
+            Write-Host 'Choose a certificate action again, correct the Key Vault location, or cancel. No resources were changed.'
+            $CertificateAction = ''; $EncryptionKeyId = ''
+        }
+        finally { if ($issued) { $issued.Certificate.Dispose() } }
+    }
+}
+
 function Get-EppEncryptionCertificate {
-    param([hashtable] $Inputs, [string] $VaultName, [string] $OutputDirectory, [string] $Directory)
+    param(
+        [hashtable] $Inputs, [string] $VaultName, [string] $OutputDirectory, [string] $Directory,
+        [string] $CertificateName = $script:EppCertificateName
+    )
 
     $readCertificate = {
-        Invoke-EppAz keyvault certificate show --vault-name $VaultName --name $script:EppCertificateName `
+        Invoke-EppAz keyvault certificate show --vault-name $VaultName --name $CertificateName `
             --subscription $Inputs.SubscriptionId --output json | ConvertFrom-Json -AsHashtable
     }
     try { $bundle = Invoke-EppDataOperation $readCertificate }
@@ -1175,38 +1484,46 @@ function Get-EppEncryptionCertificate {
             $policy | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $policyPath -Encoding utf8NoBOM
             # Azure CLI waits for self-signed issuance; no separate polling loop is needed.
             Invoke-EppDataOperation {
-                Invoke-EppAz keyvault certificate create --vault-name $VaultName --name $script:EppCertificateName `
+                Invoke-EppAz keyvault certificate create --vault-name $VaultName --name $CertificateName `
                     --policy "@$policyPath" --subscription $Inputs.SubscriptionId --output none
             } | Out-Null
         }
         finally { if (Test-Path -LiteralPath $policyPath) { Remove-Item -LiteralPath $policyPath -Force } }
         $bundle = Invoke-EppDataOperation $readCertificate
     }
-    if (-not $bundle -or -not $bundle['cer'] -or -not $bundle['sid']) {
-        throw 'Key Vault returned incomplete certificate metadata.'
+    $issued = ConvertFrom-EppCertificateBundle -Bundle $bundle -RequireSetupPolicy
+    try {
+        $location = ConvertTo-EppKeyVaultObjectId $issued.CertificateId certificates
+        if ($location.VaultName -ine $VaultName -or $location.Name -ine $CertificateName) {
+            throw 'Key Vault returned a certificate outside the approved vault and name.'
+        }
+        Assert-EppCertificateSecret -SecretId $issued.SecretId -SubscriptionId $Inputs.SubscriptionId
+        [IO.File]::WriteAllBytes((Join-Path $OutputDirectory "$($issued.Certificate.Thumbprint).cer"), $issued.Certificate.RawData)
+        return $issued
     }
-    $policy = $bundle['policy']
-    $actions = @($policy['lifetimeActions'])
-    if ($bundle['attributes']['enabled'] -ne $true -or
-        $policy['keyProperties']['keyType'] -cne 'RSA' -or
-        $policy['keyProperties']['exportable'] -ne $true -or $policy['keyProperties']['reuseKey'] -ne $true -or
-        $policy['secretProperties']['contentType'] -cne 'application/x-pem-file' -or
-        $actions.Count -ne 1 -or $actions[0]['action']['actionType'] -cne 'EmailContacts') {
-        throw 'Use an enabled certificate with exportable RSA, PEM, key reuse, and manual renewal. Setup will not overwrite an incompatible certificate.'
+    catch { $issued.Certificate.Dispose(); throw }
+}
+
+function Assert-EppApplicationEncryption {
+    param($Application, $Certificate, [string] $KeyId, [Collections.IDictionary] $Plan)
+
+    $keys = @($Application.KeyCredentials | Where-Object { $_ -and $_.Usage -eq 'Encrypt' })
+    if ($keys.Count -ne 1 -or $keys[0].Type -ne 'AsymmetricX509Cert' -or
+        [string]$keys[0].KeyId -ne $KeyId -or -not $keys[0].Key -or
+        [Convert]::ToBase64String([byte[]]$keys[0].Key) -cne [Convert]::ToBase64String($Certificate.RawData)) {
+        throw 'Application readback must contain exactly one matching AsymmetricX509Cert/Encrypt credential with the selected key ID.'
     }
-    $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new([Convert]::FromBase64String($bundle['cer']))
-    if ($certificate.Subject -cne $script:EppCertificateSubject -or $certificate.HasPrivateKey -or
-        $certificate.NotBefore.ToUniversalTime() -gt [DateTime]::UtcNow -or
-        $certificate.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow.AddDays(30)) {
-        $certificate.Dispose()
-        throw "The certificate must have subject '$script:EppCertificateSubject', be valid now, and have more than 30 days remaining. Renew manually before rerunning setup."
+    $otherKeys = @($Application.KeyCredentials | Where-Object { $_ -and $_.Usage -ne 'Encrypt' })
+    if ((Get-EppKeyCredentialSnapshot $otherKeys) -cne $Plan.NonEncryptionSnapshot) {
+        throw 'Application readback did not preserve the non-encryption credentials. Inspect the application before proceeding.'
     }
-    [IO.File]::WriteAllBytes((Join-Path $OutputDirectory "$($certificate.Thumbprint).cer"), $certificate.RawData)
-    return [pscustomobject]@{ Certificate = $certificate; CertificateId = $bundle['id']; SecretId = $bundle['sid'] }
 }
 
 function Assert-EppGraphAccess {
-    param([hashtable] $Inputs, $Certificate, [string] $KeyId, [string] $IdentifierUri)
+    param(
+        [hashtable] $Inputs, $Certificate, [string] $KeyId, [string] $IdentifierUri,
+        [Collections.IDictionary] $CertificatePlan
+    )
 
     $applications = @(Get-MgApplication -Filter "appId eq '$($Inputs.ApplicationId)'" -All -ErrorAction Stop)
     if ($applications.Count -ne 1) { throw 'The endpoint application was not uniquely readable after configuration.' }
@@ -1217,13 +1534,9 @@ function Assert-EppGraphAccess {
         $_.Id -eq $script:EppInvokeAppRoleId -and $_.Value -eq $script:EppInvokeAppRoleValue -and
         $_.IsEnabled -and $_.AllowedMemberTypes -contains 'Application'
     })
-    $keys = @($application.KeyCredentials | Where-Object {
-        $_.KeyId -eq $KeyId -and $_.Usage -eq 'Encrypt' -and $_.CustomKeyIdentifier -and
-        $_.DisplayName -ceq $Certificate.Subject -and
-        -not (Compare-Object $_.CustomKeyIdentifier $Certificate.GetCertHash())
-    })
+    Assert-EppApplicationEncryption -Application $application -Certificate $Certificate -KeyId $KeyId -Plan $CertificatePlan
     if ($application.SignInAudience -ne 'AzureADMultipleOrgs' -or $application.TokenEncryptionKeyId -or
-        $application.IdentifierUris -notcontains $IdentifierUri -or $invokeRoles.Count -ne 1 -or $keys.Count -ne 1) {
+        $application.IdentifierUris -notcontains $IdentifierUri -or $invokeRoles.Count -ne 1) {
         throw 'Endpoint application readback is missing its multi-tenant setting, identifier URI, Epp.Invoke role, or encryption certificate.'
     }
     if (-not (Test-EppProviderTenantRestriction -Restriction $tenantRestriction -ProviderTenantId $Inputs.ProviderTenantId)) {
@@ -1254,6 +1567,56 @@ function Assert-EppGraphAccess {
     }
 }
 
+function Initialize-EppCertificateAccess {
+    param([hashtable] $Inputs, [Collections.IDictionary] $Names, [Collections.IDictionary] $Plan, [string] $Directory)
+
+    if ($Plan.Action -ne 'Reuse' -or $Plan.VaultName -ieq $Names.keyVault) { return }
+    $vault = Get-EppCertificateVault -Inputs $Inputs -VaultName $Plan.VaultName -SubscriptionId $Plan.VaultSubscriptionId
+    if ($vault['id'] -ine $Plan.VaultResourceId -or
+        ($vault['properties']['enableRbacAuthorization'] -eq $true) -ne $Plan.VaultRbac) {
+        throw 'The reused vault or its permission model changed after approval. Rerun setup and review a new plan.'
+    }
+    $principalId = ConvertTo-EppGuid (Invoke-EppAz functionapp identity show --resource-group $Names.resourceGroup `
+        --name $Names.functionApp --subscription $Inputs.SubscriptionId --query principalId --output tsv)
+    if ($Plan.VaultRbac) {
+        $scope = "$($Plan.VaultResourceId)/secrets/$($Plan.CertificateName)"
+        $assignments = Invoke-EppAz role assignment list --scope $scope --include-inherited `
+            --subscription $Plan.VaultSubscriptionId --output json | ConvertFrom-Json -AsHashtable -NoEnumerate
+        if ($assignments -isnot [array]) { throw 'Azure returned an invalid certificate-secret role-assignment list.' }
+        if (@($assignments | Where-Object {
+            $_['principalId'] -ieq $principalId -and $_['roleDefinitionId'] -like "*/$script:KeyVaultSecretsUserRoleId"
+        }).Count) { return }
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try {
+            $hash = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes("$scope|$principalId|$script:KeyVaultSecretsUserRoleId".ToLowerInvariant()))
+            $assignmentId = [Guid]::new([byte[]]($hash[0..15])).ToString()
+        }
+        finally { $sha.Dispose() }
+        Invoke-EppAz role assignment create --name $assignmentId --scope $scope --role $script:KeyVaultSecretsUserRoleId `
+            --assignee-object-id $principalId --assignee-principal-type ServicePrincipal `
+            --subscription $Plan.VaultSubscriptionId --output none | Out-Null
+        return
+    }
+    $existing = @($vault['properties']['accessPolicies'] | Where-Object { $_ -and $_['objectId'] -ieq $principalId })
+    if ($existing.Count -gt 1 -or ($existing.Count -and
+        ($existing[0]['tenantId'] -ine $Inputs.TenantId -or $existing[0]['applicationId'] -or
+            $existing[0]['permissions'] -isnot [Collections.IDictionary]))) {
+        throw 'The Function identity has an ambiguous or application-restricted vault access policy. Have the vault administrator review it.'
+    }
+    $permissions = if ($existing.Count) { @{} + $existing[0]['permissions'] } else { @{} }
+    if (@($permissions['secrets']) -contains 'get' -or @($permissions['secrets']) -contains 'all') { return }
+    $permissions['secrets'] = @($permissions['secrets'] | Where-Object { $_ }) + @('get')
+    $entry = @{ tenantId = $Inputs.TenantId; objectId = $principalId; permissions = $permissions }
+    $path = Join-Path $Directory 'certificate-access-policy.json'
+    try {
+        @{ properties = @{ accessPolicies = @($entry) } } | ConvertTo-Json -Depth 8 |
+            Set-Content -LiteralPath $path -Encoding utf8NoBOM
+        Invoke-EppAz rest --method put --url "https://management.azure.com$($Plan.VaultResourceId)/accessPolicies/add?api-version=2024-11-01" `
+            --body "@$path" --subscription $Plan.VaultSubscriptionId --output none | Out-Null
+    }
+    finally { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
+}
+
 function Set-EppEncryptionSettings {
     param([hashtable] $Inputs, [Collections.IDictionary] $Names, [string] $SecretId, [string] $KeyId, [string] $Directory)
 
@@ -1268,6 +1631,46 @@ function Set-EppEncryptionSettings {
     finally { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
 }
 
+function Assert-EppEncryptionReference {
+    param([hashtable] $Inputs, [Collections.IDictionary] $Names, [string] $SecretId, [string] $KeyId)
+
+    $secret = ConvertTo-EppKeyVaultObjectId $SecretId secrets
+    $configuredIds = @(Invoke-EppAz functionapp config appsettings list --resource-group $Names.resourceGroup `
+        --name $Names.functionApp --subscription $Inputs.SubscriptionId `
+        --query "[?name=='EPP_ENCRYPTION_KEY_ID'].value" --output json | ConvertFrom-Json)
+    if ($configuredIds.Count -ne 1 -or $configuredIds[0] -ne $KeyId) {
+        throw 'The Function encryption key ID does not match the approved certificate plan.'
+    }
+    $url = "https://management.azure.com/subscriptions/$($Inputs.SubscriptionId)/resourceGroups/$($Names.resourceGroup)/providers/Microsoft.Web/sites/$($Names.functionApp)/config/configreferences/appsettings"
+    for ($attempt = 1; $attempt -le 12; $attempt++) {
+        Invoke-EppAz rest --method post --url "$url/refresh?api-version=2024-04-01" `
+            --subscription $Inputs.SubscriptionId --output none | Out-Null
+        $reference = Invoke-EppAz rest --method get --url "$url/EPP_DECRYPTION_KEY_PEM`?api-version=2024-04-01" `
+            --subscription $Inputs.SubscriptionId --output json | ConvertFrom-Json -AsHashtable
+        if ($reference -isnot [Collections.IDictionary]) {
+            throw 'Azure returned invalid decryption-key reference metadata. Encryption credentials will not be changed.'
+        }
+        $properties = $reference['properties']
+        if ($properties -isnot [Collections.IDictionary] -or -not $properties['status']) {
+            throw 'Azure returned incomplete decryption-key reference status. Encryption credentials will not be changed.'
+        }
+        if ($properties['status'] -eq 'Resolved') {
+            if ($properties['reference'] -ine "@Microsoft.KeyVault(SecretUri=$SecretId)" -or
+                $properties['vaultName'] -ine $secret.VaultName -or $properties['secretName'] -ine $secret.Name -or
+                $properties['secretVersion'] -ine $secret.Version -or
+                ($properties['activeVersion'] -and $properties['activeVersion'] -ine $secret.Version)) {
+                throw 'The Function resolved a different secret reference or version than approved. Encryption credentials will not be changed.'
+            }
+            return
+        }
+        if ($attempt -eq 12 -or $properties['status'] -notin @('Initialized', 'AccessToKeyVaultDenied', 'UnauthorizedClient', 'FetchTimedOut')) {
+            throw "The Function cannot resolve its certificate secret (status: $($properties['status'])). Check its system-assigned identity permissions and vault networking; encryption credentials were not changed."
+        }
+        Write-Warning "Waiting for the Function certificate-secret reference ($attempt/12, $($properties['status']))."
+        Start-Sleep -Seconds 10
+    }
+}
+
 function Set-EppApplicationEndpoint {
     param([hashtable] $Inputs, $Context, $Outputs, $Certificate, [string] $KeyId, [bool] $ConfigureFederation = $true)
 
@@ -1276,35 +1679,45 @@ function Set-EppApplicationEndpoint {
     if ($application.AppId -ne $Inputs.ApplicationId -or $application.SignInAudience -ne 'AzureADMultipleOrgs' -or $application.TokenEncryptionKeyId) {
         throw 'The application changed after preflight. Its identity, audience, and signed-token configuration must still match.'
     }
-    foreach ($existingKey in @($application.KeyCredentials | Where-Object { $_ -and $_.Usage -eq 'Encrypt' })) {
-        if (-not $existingKey.Key) { throw 'The existing encryption certificate is not readable. Setup cannot verify key continuity.' }
-        $existingCertificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new([byte[]]$existingKey.Key)
-        try {
-            if ($existingCertificate.GetKeyAlgorithm() -cne $Certificate.GetKeyAlgorithm() -or
-                $existingCertificate.GetPublicKeyString() -cne $Certificate.GetPublicKeyString()) {
-                throw 'The app registration has a different encryption key. Coordinate migration with the EPP owner; setup will not replace it.'
-            }
+    $plan = $Context.CertificatePlan
+    Assert-EppCertificatePlanUnchanged -Application $application -Plan $plan
+    if ($KeyId -ne $plan.KeyId) { throw 'The encryption key ID does not match the approved certificate plan.' }
+    $encryptionKeys = @($application.KeyCredentials | Where-Object { $_ -and $_.Usage -eq 'Encrypt' })
+    if ($plan.Action -eq 'Reuse') {
+        $selected = @($encryptionKeys | Where-Object { [string]$_.KeyId -eq $KeyId })
+        if ($selected.Count -ne 1 -or -not $selected[0].Key -or
+            [Convert]::ToBase64String([byte[]]$selected[0].Key) -cne [Convert]::ToBase64String($Certificate.RawData)) {
+            throw 'The certificate no longer matches the selected encryption credential. No credentials were removed.'
         }
-        finally { $existingCertificate.Dispose() }
+        $key = $selected[0]
     }
-    $key = @{
-        CustomKeyIdentifier = $Certificate.GetCertHash()
-        DisplayName = $Certificate.Subject
-        Key = $Certificate.GetRawCertData()
-        KeyId = $KeyId
-        Type = 'AsymmetricX509Cert'
-        Usage = 'Encrypt'
-        StartDateTime = $Certificate.NotBefore.ToUniversalTime()
-        EndDateTime = $Certificate.NotAfter.ToUniversalTime()
+    elseif ($plan.Action -in @('Create', 'Replace')) {
+        if (@($application.KeyCredentials | Where-Object { $_ -and [string]$_.KeyId -eq $KeyId }).Count) {
+            throw 'The new encryption key ID is already registered. Rerun setup and review a new plan.'
+        }
+        $key = @{
+            CustomKeyIdentifier = $Certificate.GetCertHash()
+            DisplayName = $Certificate.Subject
+            Key = $Certificate.GetRawCertData()
+            KeyId = $KeyId
+            Type = 'AsymmetricX509Cert'
+            Usage = 'Encrypt'
+            StartDateTime = $Certificate.NotBefore.ToUniversalTime()
+            EndDateTime = $Certificate.NotAfter.ToUniversalTime()
+        }
+    }
+    else { throw 'An approved Create, Reuse, or Replace certificate action is required.' }
+    $removedIds = @($encryptionKeys | Where-Object { [string]$_.KeyId -ne $KeyId } | ForEach-Object { [string]$_.KeyId } | Sort-Object)
+    if (($removedIds -join ',') -cne (@($plan.RemoveKeyIds | Sort-Object) -join ',')) {
+        throw 'The encryption credentials to remove do not match the approved plan. No credentials were removed.'
     }
     $uris = @($application.IdentifierUris | Where-Object { $_ })
     if ($uris -notcontains $Outputs.identifierUri.value) { $uris += $Outputs.identifierUri.value }
-    $keys = @($application.KeyCredentials | Where-Object { $null -ne $_ })
-    $existingKeys = @($keys | Where-Object { $_.KeyId -eq $KeyId })
-    if ($existingKeys.Count) {
-        foreach ($existingKey in $existingKeys) { $existingKey.DisplayName = $Certificate.Subject }
+    $keys = @($application.KeyCredentials | Where-Object { $_ -and $_.Usage -ne 'Encrypt' })
+    if (@($keys | Where-Object { -not $_.Key }).Count) {
+        throw 'A non-encryption credential is unreadable and cannot be safely preserved. No credentials were removed.'
     }
-    else { $keys += $key }
+    $keys += $key
     # Do not set tokenEncryptionKeyId: JWE payload encryption is separate from bearer-token encryption.
     Update-MgApplication -ApplicationId $application.Id -IdentifierUris $uris -KeyCredentials $keys -ErrorAction Stop
     if (-not $ConfigureFederation) { return }
@@ -1493,54 +1906,70 @@ function Invoke-EppDeployment {
     $null = ConvertTo-EppGuid $outputs.outboundPrincipalId.value
     Assert-EppHttpsUrl $outputs.endpointUrl.value
     if ([Text.Encoding]::UTF8.GetByteCount($outputs.endpointUrl.value) -gt 100) { throw 'The deployed endpoint URL exceeds the EPP 100-byte limit.' }
-    $issued = Get-EppEncryptionCertificate -Inputs $Inputs -VaultName $Names.keyVault `
-        -OutputDirectory $OutputDirectory -Directory $AssetDirectory
-    $certificate = $issued.Certificate
-    $application = Get-MgApplication -ApplicationId $Context.Application.Id -Property Id,KeyCredentials -ErrorAction Stop
-    $existingKeys = @($application.KeyCredentials | Where-Object {
-        $_ -and $_.Usage -eq 'Encrypt' -and $_.CustomKeyIdentifier -and
-        -not (Compare-Object $_.CustomKeyIdentifier $certificate.GetCertHash())
-    })
-    if ($existingKeys.Count -gt 1) { throw 'Multiple encryption credentials match this certificate. Resolve the duplicate credentials manually.' }
-    $keyId = if ($existingKeys.Count) { [string]$existingKeys[0].KeyId } else { [Guid]::NewGuid().ToString() }
-    Set-EppApplicationEndpoint -Inputs $Inputs -Context $Context -Outputs $outputs -Certificate $certificate -KeyId $keyId `
-        -ConfigureFederation:($Inputs.ProviderAuthentication -eq 'oauth')
-    Set-EppEncryptionSettings -Inputs $Inputs -Names $Names -SecretId $issued.SecretId -KeyId $keyId -Directory $AssetDirectory
-    $graphAccess = Assert-EppGraphAccess -Inputs $Inputs -Certificate $certificate -KeyId $keyId `
-        -IdentifierUri $outputs.identifierUri.value
-    $siteId = "/subscriptions/$($Inputs.SubscriptionId)/resourceGroups/$($Names.resourceGroup)/providers/Microsoft.Web/sites/$($Names.functionApp)"
-    $Inputs.PackageSha256 = Publish-EppFunction -Inputs $Inputs -Names $Names -Context $Context -Outputs $outputs `
-        -SiteId $siteId -Package $Package -Directory $AssetDirectory
-    $result = [ordered]@{
-        tenantId = $Inputs.TenantId; subscriptionId = $Inputs.SubscriptionId; applicationId = $Inputs.ApplicationId
-        provider = $ProviderConfiguration.Id
-        endpointRegion = $ProviderConfiguration.EndpointRegion; providerAuthentication = $Inputs.ProviderAuthentication
-        providerTenantId = $Inputs.ProviderTenantId
-        providerSmsEndpoint = $ProviderConfiguration.Settings.EPP_PROVIDER_SMS_ENDPOINT
-        providerVoiceEndpoint = $ProviderConfiguration.Settings.EPP_PROVIDER_VOICE_ENDPOINT
-        resourcePrefix = $Inputs.ResourcePrefix; resources = $Names
-        language = $Inputs.Language; servicePlan = $Inputs.ServicePlan
-        keyVaultCacheEnabled = $Inputs.ServicePlan -eq 'EP1'
-        accessTokenCacheEnabled = $Inputs.ServicePlan -eq 'EP1'
-        endpointUrl = $outputs.endpointUrl.value; identifierUri = $outputs.identifierUri.value
-        encryptionKeyId = $keyId; certificateThumbprint = $certificate.Thumbprint
-        certificateId = $issued.CertificateId; certificateSecretId = $issued.SecretId
-        certificateExpiresUtc = $certificate.NotAfter.ToUniversalTime().ToString('o')
-        certificateRenewal = 'manual'
-        endpointServicePrincipalId = $graphAccess.EndpointPrincipalId
-        microsoftPhoneProviderServicePrincipalId = $graphAccess.CallerPrincipalId
-        eppInvokeAppRoleId = $script:EppInvokeAppRoleId
-        microsoftGraphApplicationReadAll = $true
-        packageUrl = $Inputs.PackageUrl; sourcePackageSha256 = $Inputs.SourcePackageSha256
-        packageSha256 = $Inputs.PackageSha256; source = $SourceBaseUri
-        policyChanged = $false
-    }
-    $resultPath = Join-Path $OutputDirectory "deployment-$([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))-$([Guid]::NewGuid().ToString('N').Substring(0, 8)).json"
-    $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resultPath -Encoding utf8NoBOM
+    $issued = $null
+    try {
+        $certificatePlan = $Context.CertificatePlan
+        if ($certificatePlan.Action -eq 'Reuse') {
+            $issued = Get-EppExistingEncryptionCertificate -CertificateId $certificatePlan.CertificateId `
+                -SubscriptionId $certificatePlan.VaultSubscriptionId
+            if ($issued.SecretId -ine $certificatePlan.SecretId -or $issued.Certificate.Thumbprint -ine $certificatePlan.Thumbprint) {
+                throw 'The selected certificate or backing secret changed after approval. Rerun setup and review a new plan.'
+            }
+            [IO.File]::WriteAllBytes((Join-Path $OutputDirectory "$($issued.Certificate.Thumbprint).cer"), $issued.Certificate.RawData)
+        }
+        else {
+            $issued = Get-EppEncryptionCertificate -Inputs $Inputs -VaultName $Names.keyVault `
+                -CertificateName $certificatePlan.CertificateName -OutputDirectory $OutputDirectory -Directory $AssetDirectory
+        }
+        $certificate = $issued.Certificate
+        $keyId = $certificatePlan.KeyId
+        Write-Host "Selected encryption key ID: $keyId"
+        Write-Host "Key Vault certificate: $($issued.CertificateId)"
+        Initialize-EppCertificateAccess -Inputs $Inputs -Names $Names -Plan $certificatePlan -Directory $AssetDirectory
+        Set-EppEncryptionSettings -Inputs $Inputs -Names $Names -SecretId $issued.SecretId -KeyId $keyId -Directory $AssetDirectory
+        Assert-EppEncryptionReference -Inputs $Inputs -Names $Names -SecretId $issued.SecretId -KeyId $keyId
+        Set-EppApplicationEndpoint -Inputs $Inputs -Context $Context -Outputs $outputs -Certificate $certificate -KeyId $keyId `
+            -ConfigureFederation:($Inputs.ProviderAuthentication -eq 'oauth')
+        $graphAccess = Assert-EppGraphAccess -Inputs $Inputs -Certificate $certificate -KeyId $keyId `
+            -IdentifierUri $outputs.identifierUri.value -CertificatePlan $certificatePlan
+        $siteId = "/subscriptions/$($Inputs.SubscriptionId)/resourceGroups/$($Names.resourceGroup)/providers/Microsoft.Web/sites/$($Names.functionApp)"
+        $Inputs.PackageSha256 = Publish-EppFunction -Inputs $Inputs -Names $Names -Context $Context -Outputs $outputs `
+            -SiteId $siteId -Package $Package -Directory $AssetDirectory
+        $result = [ordered]@{
+            tenantId = $Inputs.TenantId; subscriptionId = $Inputs.SubscriptionId; applicationId = $Inputs.ApplicationId
+            provider = $ProviderConfiguration.Id
+            endpointRegion = $ProviderConfiguration.EndpointRegion; providerAuthentication = $Inputs.ProviderAuthentication
+            providerTenantId = $Inputs.ProviderTenantId
+            providerSmsEndpoint = $ProviderConfiguration.Settings.EPP_PROVIDER_SMS_ENDPOINT
+            providerVoiceEndpoint = $ProviderConfiguration.Settings.EPP_PROVIDER_VOICE_ENDPOINT
+            resourcePrefix = $Inputs.ResourcePrefix; resources = $Names
+            language = $Inputs.Language; servicePlan = $Inputs.ServicePlan
+            keyVaultCacheEnabled = $Inputs.ServicePlan -eq 'EP1'
+            accessTokenCacheEnabled = $Inputs.ServicePlan -eq 'EP1'
+            endpointUrl = $outputs.endpointUrl.value; identifierUri = $outputs.identifierUri.value
+            encryptionKeyId = $keyId; certificateThumbprint = $certificate.Thumbprint
+            certificateId = $issued.CertificateId; certificateSecretId = $issued.SecretId
+            certificateExpiresUtc = $certificate.NotAfter.ToUniversalTime().ToString('o')
+            certificateRenewal = 'manual'; certificateAction = $certificatePlan.Action
+            certificateVaultSubscriptionId = $certificatePlan.VaultSubscriptionId
+            removedEncryptionKeyIds = @($certificatePlan.RemoveKeyIds)
+            certificateReferenceResolved = $true
+            endpointServicePrincipalId = $graphAccess.EndpointPrincipalId
+            microsoftPhoneProviderServicePrincipalId = $graphAccess.CallerPrincipalId
+            eppInvokeAppRoleId = $script:EppInvokeAppRoleId
+            microsoftGraphApplicationReadAll = $true
+            packageUrl = $Inputs.PackageUrl; sourcePackageSha256 = $Inputs.SourcePackageSha256
+            packageSha256 = $Inputs.PackageSha256; source = $SourceBaseUri
+            policyChanged = $false
+        }
+        $resultPath = Join-Path $OutputDirectory "deployment-$([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))-$([Guid]::NewGuid().ToString('N').Substring(0, 8)).json"
+        $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resultPath -Encoding utf8NoBOM
 
-    Show-EppDeploymentResult -Inputs $Inputs -Names $Names -ProviderConfiguration $ProviderConfiguration `
-        -EndpointUrl $outputs.endpointUrl.value -ResultPath $resultPath
-    return [pscustomobject]$result
+        Show-EppDeploymentResult -Inputs $Inputs -Names $Names -ProviderConfiguration $ProviderConfiguration `
+            -EndpointUrl $outputs.endpointUrl.value -ResultPath $resultPath
+        return [pscustomobject]$result
+    }
+    finally { if ($issued) { $issued.Certificate.Dispose() } }
 }
 
 function Publish-EppFunction {
@@ -1615,6 +2044,9 @@ function Invoke-EppSetup {
         [string] $ResourcePrefix,
         [string] $Language,
         [string] $ServicePlan,
+        [ValidateSet('Create', 'Reuse', 'Replace')]
+        [string] $CertificateAction,
+        [string] $EncryptionKeyId, [string] $KeyVaultCertificateId, [string] $KeyVaultSubscriptionId,
         [string] $OutputDirectory, [string] $AssetDirectory, [string] $SourceBaseUri,
         [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
         [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample',
@@ -1655,6 +2087,13 @@ function Invoke-EppSetup {
     Write-Host "`nChecking prerequisites and the selected Azure context (no resource changes)..." -ForegroundColor Cyan
     $context = Connect-EppContext -Inputs $inputs -Names $names -NonInteractive:$NonInteractive `
         -InstallPrerequisites:$InstallPrerequisites -ForceAuthentication:$ForceAuthentication
+    $context.CertificatePlan = Get-EppCertificatePlan -Inputs $inputs -Names $names -Application $context.Application `
+        -CertificateAction $CertificateAction -EncryptionKeyId $EncryptionKeyId -KeyVaultCertificateId $KeyVaultCertificateId `
+        -KeyVaultSubscriptionId $KeyVaultSubscriptionId -NonInteractive:$NonInteractive
+    if (-not $context.CertificatePlan) {
+        Write-Host 'Cancelled. No Azure resources or application credentials were changed.' -ForegroundColor Yellow
+        return
+    }
     $package = Get-EppPackage -Selection $selection -Directory $AssetDirectory
     $inputs.PackageSha256 = $package.Sha256
     $inputs.SourcePackageSha256 = $package.SourceSha256

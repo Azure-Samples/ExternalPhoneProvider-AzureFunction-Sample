@@ -62,6 +62,8 @@ same parameters. No parameter accepts a provider API key or private key.
 | Provider route label | Provider-confirmed Global/EU selection; see the caveat below. | `-EndpointRegion global` or `eu`; all deployments. The prompt calls this **Tenant scope**. |
 | Language / hosting | One of `javascript`, `dotnet`, `python`; FC1 or EP1 after reviewing billing and cold starts. | `-Language`, `-ServicePlan`; all deployments. |
 | Resource prefix | A unique deployment label, 2-8 lowercase letters/digits, starting with a letter. | `-ResourcePrefix`; all deployments. Keep it with your inventory for reruns. |
+| Encryption certificate choice | Setup lists the application's encryption key IDs, thumbprints, and validity. Use the saved `encryptionKeyId` or the app manifest's `keyCredentials` to identify the credential to keep. | `-CertificateAction Reuse` or `Replace` when certificates already exist. Unattended reuse also requires `-EncryptionKeyId` and `-KeyVaultCertificateId`. See [certificate selection](../setup/docs/README.md#encryption-certificate-selection). |
+| Existing certificate location | Azure portal > Key Vault > Certificates > certificate > exact version > Certificate Identifier. Use the `/certificates/` URL, not Show Secret Value. | `-KeyVaultCertificateId`; reuse only. Add `-KeyVaultSubscriptionId` when that vault is in a different subscription in the same customer tenant. |
 | Output directory / versions | A private local folder; optionally a reviewed source commit and published release tag. | `-OutputDirectory`, `-SourceRef`, `-PackageReleaseTag`; optional. Keep launcher and support source aligned. |
 
 **Global/EU is provider-routing metadata, not Azure placement or a data-residency guarantee.**
@@ -77,7 +79,8 @@ The resource-name suffix uses the subscription ID, app client ID, and prefix, no
 Azure region. Changing provider/region with the same identifiers can reconfigure the existing
 endpoint rather than add another one. For an independent provider/region deployment, use a distinct
 prefix and a new dedicated app, then validate it before changing policy. Reusing an existing
-app across new vaults can fail its encryption-key continuity checks after resources have changed.
+app requires an explicit certificate reuse/replacement decision before deployment. A different
+prefix does not authorize key rotation or isolate other endpoints sharing the same app registration.
 The [manual Front Door design](FRONTDOOR.md) requires coordinated same-key regional origins,
 not independent setup runs.
 
@@ -105,7 +108,7 @@ can restore setup-managed values.
 | `EPP_OUTBOUND_CLIENT_ID` | Dedicated endpoint application's **client ID**, reused as the Soprano calling app. | Do not create a second client secret or substitute the Soprano API app ID. |
 | `EPP_OUTBOUND_MI_CLIENT_ID` | Setup-created outbound user-assigned managed identity > Overview > Client ID. | Soprano token exchange uses this ID. Its Principal/Object ID is different and is used by the federated credential's subject. |
 | `KEY_VAULT_URL` | Summary's `resources.keyVault`; vault Overview > Vault URI. | Put Telesign credentials in this vault. Setup grants its Function system identity Key Vault Secrets User. |
-| `EPP_DECRYPTION_KEY_PEM`, `EPP_ENCRYPTION_KEY_ID` | Versioned Key Vault reference and registered encryption credential ID. Summary includes certificate/secret identifiers and expiry, **not** private-key bytes. | Do not view/copy the private key. Assign a [renewal owner](../setup/docs/README.md#encryption-certificate-lifecycle). |
+| `EPP_DECRYPTION_KEY_PEM`, `EPP_ENCRYPTION_KEY_ID` | Versioned Key Vault reference and the single registered encryption credential ID. The certificate can be in a reused vault distinct from `KEY_VAULT_URL`. Summary includes certificate/secret identifiers and expiry, **not** private-key bytes. | Do not view/copy the private key. Assign a [renewal owner](../setup/docs/README.md#encryption-certificate-lifecycle). |
 | `EPP_PROVIDER_TIMEOUT_MS`, `EPP_PROVIDER_RETRY_INTERVAL_MS` | Profile timing values. Runtime provider HTTP timeout is capped at 2500 ms. | Neither is a whole-request deadline; retry interval metadata does **not** enable send retries. |
 | `EPP_KEY_VAULT_CACHE_ENABLED`, `EPP_ACCESS_TOKEN_CACHE_ENABLED` | Setup writes `false` for FC1, `true` for EP1. | Independently control API-key/OAuth caching and startup preparation. Unset defaults to `true`; deploy a supporting package and restart after changes. See [plan guidance](../setup/docs/README.md#service-plan-selection). |
 | Application Insights, storage, runtime/package settings and identities | Created/configured for the selected plan; system identity handles vault/storage/telemetry, outbound identity handles Soprano exchange. | Verify telemetry ingestion. Do not copy local emulator settings or EP1-only settings into FC1. |

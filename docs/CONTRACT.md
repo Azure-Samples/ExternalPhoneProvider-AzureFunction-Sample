@@ -74,9 +74,10 @@ The original compact JWE is passed unchanged to the JOSE library. Parsing header
 advisory key-ID check must not replace the original protected-header bytes used for authentication.
 
 `EPP_DECRYPTION_KEY_PEM` accepts a private-key PEM alone or a PEM certificate bundle containing the
-private key, in plain text or base64 form. Guided setup issues the certificate inside Key Vault and
-pins a reference to its PEM backing secret version. Certificate renewal is manual and does not
-automatically update Entra or select another decryption key; see the
+private key, in plain text or base64 form. Guided setup issues a certificate inside Key Vault or
+reuses an explicitly selected certificate version, pins its PEM backing-secret reference, and
+keeps exactly one approved encryption credential on the application. Certificate synchronization
+is manual; Key Vault renewal does not automatically update Entra or select another decryption key. See the
 [certificate lifecycle](../setup/docs/README.md#encryption-certificate-lifecycle).
 
 All three HTTP-handler suites use [shared policy cases](../tests/fixtures/contract.json): the allowed

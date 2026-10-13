@@ -82,9 +82,10 @@ Preflight rejects a mismatch with the existing resource-group tag or actual host
 including older EP1 deployments without the new tag. Existing EP1 deployments can be rerun with
 `-ServicePlan EP1`.
 For an active endpoint, onboard a new dedicated Step 1 application as well, or coordinate an
-encryption-key continuity migration with its owner. A new prefix creates a new vault and encryption
-key; it does not bypass the existing application's certificate-continuity checks. Setup does not
-automatically migrate keys or activate the replacement endpoint.
+encryption-key continuity migration with its owner. A new prefix creates a new vault, but reuse of
+the application still requires an explicit certificate decision. Select the existing certificate
+and its Key Vault location to retain key continuity; replacement affects all endpoints sharing the
+application. Setup does not automatically migrate keys or activate the replacement endpoint.
 
 ## Step 1 - manually create the application
 
@@ -130,6 +131,12 @@ disclosed outbound managed-identity federated credential.
   and create the scoped Azure role assignments. Bicep grants the operator **Key Vault Certificates
   Officer** for issuance and **Key Vault Secrets Officer** for provider credentials,
   scoped to this deployment's vault.
+- **Certificate reuse:** the operator needs ARM read access to the source vault, certificate-read
+  access, and secret-version metadata-read access before approval. For a different vault, the
+  approved plan also requires permission to grant the Function identity secret-read access:
+  role-assignment write for RBAC vaults, or access-policy write for access-policy vaults.
+  The source vault must be in the customer tenant; `-KeyVaultSubscriptionId` identifies a
+  different source subscription. Setup never fetches its private-key value locally.
 - A Microsoft Entra **Privileged Role Administrator** for granting the Microsoft first-party service
   principal Graph `Application.Read.All`, plus delegated Graph scopes `User.Read`,
   `Application.ReadWrite.All`, `Application.Read.All`, and `AppRoleAssignment.ReadWrite.All`.
@@ -262,14 +269,75 @@ The flow is:
 6. **Check prerequisites and sign in.** Missing Graph modules or Bicep can be installed after a
    separate confirmation. Azure and Graph interactive sign-in starts only when the supplied tenant
    and subscription do not already have suitable user contexts.
-7. **Review the complete plan**, including resource names, tenant/subscription, language, service plan,
+7. **Choose encryption certificate handling.** With no registered encryption certificate, use the
+   normal creation flow. Otherwise choose reuse of one certificate and supply its versioned Key
+   Vault location, or replace all encryption credentials with one new certificate. Reuse of one
+   among several also removes the others after approval. Enter cancels the certificate decision.
+8. **Review the complete plan**, including resource names, tenant/subscription, language, service plan,
    both cache settings, automatic package verification/build, provider
-   settings, scoped roles, certificate creation, and application configuration. Bicep receives these
+   settings, scoped roles, the exact encryption key IDs to keep/remove, certificate location or
+   staging name, and application configuration. Bicep receives these
    exact names; it does not independently calculate a different naming scheme.
    The plan also lists the six required **Azure resource providers** and their registration states.
    These Azure service registrations are separate from your phone-provider selection.
-8. **Type `Yes` once to deploy.** `No` or Enter cancels without Azure changes. Invalid answers prompt
+9. **Type `Yes` once to deploy.** `No` or Enter cancels without Azure changes. Invalid answers prompt
    again; individual resources do not request additional approvals.
+
+### Encryption certificate selection
+
+Setup reads `keyCredentials` before deployment and identifies **`type=AsymmetricX509Cert`,
+`usage=Encrypt`** entries, including expired entries. `Encrypt` is the usage, not the type.
+It displays each key ID, certificate thumbprint, name, and validity. Signing/verification
+certificates are not encryption candidates, and unsupported encryption credential types stop setup.
+
+| Existing encryption credentials | Choice | Result after successful deployment |
+|---|---|---|
+| None | Creation is automatic; optional `-CertificateAction Create`. | Register one certificate from the setup vault. |
+| One | `Reuse` and provide its Key Vault certificate version, or `Replace`. | Keep the existing key ID, or replace it with one new credential. |
+| Several | `Reuse`, select the key ID to keep, and provide its certificate version; or `Replace`. | Remove only the other encryption entries, or replace all encryption entries with one new credential. |
+
+Interactive selection never defaults to the newest certificate or to cleanup. Enter/Cancel
+stops before deployment; invalid locations can be corrected or followed by another choice.
+Selecting an action does not apply it: the complete deployment approval lists the exact removals.
+
+For reuse, open **Azure portal > Key Vault > Certificates > certificate > version** and copy
+**Certificate Identifier**, of the form
+`https://<vault>.vault.azure.net/certificates/<name>/<version>`. A version is required.
+Do not supply a vault-only URL, `/keys/` URL, public `.cer` file, secret value, or a versionless
+reference. Setup reads the public certificate and resolves the corresponding **versioned backing
+secret**; the certificate and secret version identifiers need not be identical.
+
+The certificate must exactly match the selected registered certificate, not just its display
+name or RSA key. It must use exportable RSA of at least 2048 bits with an enabled,
+certificate-managed PEM backing secret. Both the certificate and registered credential must be
+valid now with more than 30 days remaining; any secret validity restrictions must also pass.
+Existing compatible subjects and display names are preserved. A renewed certificate is not
+silently appended, even if it reuses the same RSA key.
+
+The Function uses its **system-assigned identity** for the private-key reference, not the setup
+operator or the outbound provider identity. For a different vault, the plan grants **Key Vault
+Secrets User at the certificate secret's scope** in RBAC mode. An access-policy vault instead
+receives additive **Secrets/Get** permission while retaining existing permissions; this older
+model grants secret read **vault-wide**, which is disclosed in the plan. External vault network
+rules and certificate issuance policies are not modified. Provide a working network path from
+the Function; operator access alone does not establish Function access.
+
+All vaults must be in the customer tenant. The source vault defaults to the deployment
+subscription; supply `-KeyVaultSubscriptionId` if it is elsewhere. Provider credentials remain
+in the setup-created vault selected by `KEY_VAULT_URL`, even when the encryption certificate is
+reused from another vault.
+
+**Cleanup only removes the approved application encryption credentials.** It preserves other
+application credentials and does not delete Key Vault certificates, keys, or secrets.
+Replacement prepares a separate `phone-provider-encryption-<suffix>` certificate first.
+If a run fails before registration, retrying the same approved replacement state reuses that
+staged certificate. Setup verifies the Function's secret reference before changing the
+registration, then reads back exactly one matching encryption credential.
+
+**Coordinate maintenance for active applications.** Every endpoint sharing the registration is
+affected, and cached/in-flight requests can still use retired keys. This is not zero-downtime
+rotation and does not implement overlapping decryption keys. Complete the authorized evaluation
+before activation or returning the endpoint to service.
 
 ### Reviewing the plan without deploying
 
@@ -334,11 +402,13 @@ access uses managed identity, not account keys or SAS. Telemetry uses the system
 outbound identity is selected explicitly, not through a global `AZURE_CLIENT_ID`.
 
 The Function starts with public ingress disabled. After Bicep creates the vault and permissions,
-setup asks Key Vault to issue or reuse `phone-provider-encryption`, a self-signed, exportable RSA-2048
-certificate. Its subject and Entra certificate display name are both **`CN=ExternalPhoneProvider`**,
-without an application ID, resource prefix, or thumbprint in the name. Setup registers the public
-certificate in Entra with `Usage=Encrypt` and pins `EPP_DECRYPTION_KEY_PEM` to its **versioned PEM
-backing secret**. It **reads back and verifies Easy Auth before enabling ingress**.
+setup applies the approved certificate action. New certificates are self-signed, exportable
+RSA-2048 with subject and Entra display name **`CN=ExternalPhoneProvider`**. Initial creation uses
+`phone-provider-encryption`; replacement uses a separate suffixed staging name. Reuse selects the
+approved existing certificate version and preserves its registered key ID and display name.
+Setup pins `EPP_DECRYPTION_KEY_PEM` to the **versioned PEM backing secret**, verifies resolution,
+then writes exactly one `AsymmetricX509Cert` / `Encrypt` entry while preserving other credentials.
+It **reads back and verifies Easy Auth before enabling ingress**.
 SCM basic authentication stays disabled for both plans. FC1 uses Entra-authenticated **One Deploy**
 for every language, with remote build for Python. Its `functionAppConfig` defines runtime, scaling,
 and managed-identity deployment storage; setup does not write Premium-only runtime/build or
@@ -349,8 +419,10 @@ It never mounts the unbuilt Python source ZIP. EP1 then restarts and synchronize
 Both plans verify that `SendOtp` is registered before reporting success.
 On publication/startup failure it disables public ingress again; failure to close ingress is reported
 explicitly rather than hidden.
-App-setting changes refresh Key Vault references through App Service. Setup does not separately poll
-secret-resolution status; the required deployed evaluation request verifies decryption before policy activation.
+Setup refreshes and checks the exact decryption-key reference through App Service with bounded
+retries for identity/role propagation. Failure to resolve it stops before changing registered
+encryption credentials; infrastructure and app settings may already have changed. This metadata
+check does not replace the required authorized evaluation of decryption before policy activation.
 
 The public certificate and a timestamped identifier
 summary are saved to `epp-output` beside the downloaded script, or to `-OutputDirectory`.
@@ -364,6 +436,10 @@ For unattended runs, supply every input including `-ServicePlan FC1` or `-Servic
 authenticate both clients first, and explicitly authorize
 the whole displayed plan with **both** `-NonInteractive -ApproveDeployment`. `-NonInteractive`
 alone never approves changes. There is no `-Stage`, `-Resume`, `-ConfigPath`, or policy-approval switch.
+Existing encryption credentials also require explicit `-CertificateAction Reuse` or `Replace`.
+Unattended reuse requires both `-EncryptionKeyId` and `-KeyVaultCertificateId`, even if only one
+credential exists. `-ApproveDeployment` alone never selects a certificate or authorizes an
+implicit replacement.
 
 ### Noninteractive example
 
@@ -404,6 +480,23 @@ Use the [source/version options](#source-versioning) to pin repeatable deploymen
 Review the corresponding interactive plan first; `-ApproveDeployment` authorizes the complete
 mutation set, not just package upload. Do not use it as a dry run.
 
+The example above assumes the app has **no encryption credentials**. For a rerun, add
+`@reuseCertificate` to the complete setup command using this reviewed parameter set:
+
+```powershell
+$reuseCertificate = @{
+    CertificateAction = 'Reuse'
+    EncryptionKeyId = '<key-id-to-keep-from-setup-or-the-app-manifest>'
+    KeyVaultCertificateId = 'https://<vault>.vault.azure.net/certificates/<name>/<version>'
+}
+```
+
+If necessary, also add `KeyVaultSubscriptionId` to that hashtable. For deliberate replacement,
+use **`-CertificateAction Replace` instead of the reuse parameters**. This replaces all registered
+encryption credentials, not just an expired one. Do not blindly rerun a replacement command after
+a partial failure: inspect the current registration, and choose reuse if the new credential was
+already registered.
+
 ### Read the deployment summary
 
 Open the timestamped JSON under `epp-output` in a private editor. It contains identifiers and
@@ -417,6 +510,8 @@ configuration metadata, not provider credentials or private-key bytes. Keep it a
 | `providerSmsEndpoint`, `providerVoiceEndpoint` | Confirm the distinct or identical provider URLs for SMS and voice. These are outbound provider URLs, not the Function's `endpointUrl`. |
 | `endpointUrl`, `identifierUri` | Exact SendOtp URL and registered app audience information for the authorized test/policy operator. |
 | `encryptionKeyId`, `certificateThumbprint`, `certificateId`, `certificateSecretId`, `certificateExpiresUtc` | Public-key identification and version/renewal inventory. A secret **ID** is not its value; do not fetch its private-key contents. |
+| `certificateAction`, `removedEncryptionKeyIds`, `certificateVaultSubscriptionId` | Review whether creation, reuse, or replacement occurred, the exact retired application key IDs, and the source certificate's subscription. |
+| `certificateReferenceResolved` | `true` means the Function's exact secret reference resolved before registration. It is not proof of successful authorized decryption or provider delivery. |
 | `endpointServicePrincipalId`, `microsoftPhoneProviderServicePrincipalId` | Tenant-local enterprise-application Object IDs; neither is the endpoint app client ID. |
 | `source`, `packageUrl`, `sourcePackageSha256`, `packageSha256`, `language`, `servicePlan` | Source/package provenance and runtime/plan. FC1 Python's built hash can be null; source and built hashes describe different artifacts. |
 | `policyChanged` | Expected `false`: deployment has not activated policy. |
@@ -429,7 +524,7 @@ Those fields do not prove credentials, delivery, or monitoring work. Follow
 
 ### Encryption certificate lifecycle
 
-The issuance policy uses **12-month validity, key reuse, and manual renewal**. It specifies
+The policy for certificates **issued by setup** uses **12-month validity, key reuse, and manual renewal**. It specifies
 `EmailContacts` 30 days before expiry, **not `AutoRenew`**. Email is sent only if the customer
 separately configures Key Vault certificate contacts; setup does not create contacts or guarantee
 notifications. Track the saved expiry and arrange renewal before the certificate expires.
@@ -442,31 +537,38 @@ before the 30-day window, with an escalation owner. EmailContacts is not an Azur
 rule, and setup does not test email delivery. Monitor both the vault certificate's and Entra
 credential's expiration; renewing one does not renew the other automatically.
 
-Reruns reuse a valid matching cloud certificate. Only a certificate-not-found response triggers
-`az keyvault certificate create`; Azure CLI waits for self-signed issuance. Other errors, including
-pending-operation conflicts, stop setup rather than starting a custom recovery workflow. Disabled,
-incompatible, or near-expiry certificates also stop setup. Keep more than 30 days of validity remaining.
-Certificates issued with an earlier per-application subject require a coordinated manual reissuance
-with `CN=ExternalPhoneProvider`, retaining the same RSA key. Renaming the Entra display name alone
-does not change the signed certificate's subject.
+Use **Reuse** for a rerun with the exact registered certificate and its versioned Key Vault
+location. Reuse never issues a certificate or adds a new credential. If there are older or duplicate
+encryption entries, approve which key ID to keep and which entries to retire.
 
-For a planned renewal, coordinate with the EPP owner, create a new version in Key Vault using the same
-policy with **reuse key enabled**, then rerun setup before the old certificate expires. Setup verifies
-that the RSA public key still matches every registered encryption credential, pins the Function to the
-new secret version, and adds the renewed public certificate to Entra while preserving existing
-credentials. It does not automatically remove old versions or Entra credentials. Validate evaluation
-requests before an administrator retires old credentials through the supported EPP procedure.
+For the Create/Replace paths, only a certificate-not-found response triggers issuance. Azure CLI
+waits for self-signed issuance. Other errors, including pending-operation conflicts, stop setup
+rather than overwriting a disabled, incompatible, or near-expiry staged certificate. Keep more than
+30 days of validity remaining. No Key Vault version is deleted as part of application cleanup.
 
-Key Vault renewal alone does **not** update the uploaded Entra certificate or its expiration.
-Version-pinning deliberately prevents an unattended secret switch. Do not enable `AutoRenew` or
-generate a different RSA key without implementing coordinated Entra updates and overlapping
-decryption-key support. The Function still decrypts in-process with a single private key.
+For renewal, coordinate with the EPP owner before expiry. **Replace** stages a new certificate
+and switches the single-key endpoint under the approved maintenance plan. Alternatively, use the
+supported administrator procedure to synchronize a renewed certificate in Entra and Key Vault,
+then select that exact registered version with **Reuse**. Rerunning setup no longer appends a
+renewed certificate alongside older credentials, even when it has the same RSA key.
 
-**Existing local-certificate deployments are not automatically migrated.** Coordinate migration with
-the EPP owner before running this setup on an active endpoint. After infrastructure deployment,
-setup refuses to update Entra or the Function's encryption settings if the public key differs from
-an existing encryption credential. This is not a pre-deployment migration check: resources may already
-be updated and ingress disabled when it stops. Do not delete encryption credentials to bypass it.
+Key Vault renewal alone does **not** update Entra or the Function's pinned reference.
+Reuse does not change an external certificate's issuance/renewal policy. Even if that vault
+automatically issues a new version, endpoint synchronization remains manual; this is what the
+summary's `certificateRenewal: manual` records. The Function still decrypts in-process with a
+single private key, so any rotation must account for other endpoints and cached/in-flight requests.
+
+**Legacy deployments require an explicit decision.** A compatible matching Key Vault certificate
+can be reused even if it has an older/custom subject. A standalone PEM secret without a Key Vault
+certificate is not a reuse input: arrange an approved secure certificate import with a PEM backing
+secret, or choose replacement. Setup never exports the private key locally. Do not manually delete
+registered credentials merely to bypass the selection or matching checks.
+
+Setup rechecks the application credentials against the reviewed plan before changing them.
+Detected credential changes stop the run and require a new review; this is not an atomic lock.
+Do not run setup concurrently against the same application. A failure after approval may
+leave provisioned resources or changed app settings even when no encryption credentials were removed;
+follow [safe recovery](Troubleshooting.md#recover-without-destructive-cleanup).
 
 ### Source versioning
 
@@ -500,8 +602,10 @@ az bicep build --file .\setup\infra\main.bicep --outfile "$env:TEMP\epp-main.jso
 pwsh -NoProfile -File .\setup\tests\ServicePlans.Tests.ps1 -TemplatePath "$env:TEMP\epp-main.json"
 ```
 
-The focused tests replace certificate/Graph calls and verify creation, reuse, errors, naming, key
-mismatch, and versioned settings. The provider suite checks separate regional SMS/voice URLs,
+The focused tests replace certificate/Graph calls and verify zero/one/multiple-certificate decisions,
+cancellation and unattended inputs, repeatable staging, explicit cleanup, preservation of other
+credentials, exact version matching, validity limits, source-vault permissions, stale-plan rejection,
+and reference resolution before registration. The provider suite checks separate regional SMS/voice URLs,
 channel-independent interactive/unattended setup, and both policy handoff targets.
 The service-plan suite checks selections, approval details, regional checks, CLI requirements,
 migration guards, parameter forwarding, and plan-specific publication
