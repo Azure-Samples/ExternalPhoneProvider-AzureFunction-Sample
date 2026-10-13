@@ -52,6 +52,11 @@ by default. Deploy each language separately, not all three to the same Function 
 For local development, manual configuration, and deployment checks, see the
 [detailed configuration and validation guide](docs/ONBOARDING.md).
 
+To extend these implementations for a customer-owned provider, follow the
+[bring your own provider guide](docs/BRING-YOUR-OWN-PROVIDER.md). It uses Twilio as an
+illustrative SMS/voice adapter in each language, not a bundled adapter, guided setup
+option, or statement of tenant activation eligibility.
+
 ## Guided EPP setup
 
 Use **[setup](setup/docs/README.md)** for **Step 2: endpoint deployment**. Download only

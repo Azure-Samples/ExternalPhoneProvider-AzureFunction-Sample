@@ -112,6 +112,10 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 
 ## Source
 
+For a concrete customer-owned SMS/voice adapter example, see the
+[Twilio walkthrough](../docs/BRING-YOUR-OWN-PROVIDER.md#c-net).
+It describes code you must add and test, not built-in Twilio or guided setup support.
+
 For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
 [runtime-specific log discovery](../docs/MONITORING.md#runtime-specific-log-discovery).
 The host's OpenTelemetry setting does not by itself initialize a direct worker exporter;
