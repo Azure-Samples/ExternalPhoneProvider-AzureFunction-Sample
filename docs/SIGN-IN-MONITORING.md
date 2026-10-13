@@ -1,126 +1,75 @@
 # Monitor Microsoft Entra sign-ins
 
-Use this guide to find out why sign-ins fail, spot changes in traffic, and notify your team
-when something needs attention. It covers **tenant identity monitoring**, separate
-from [Function monitoring](MONITORING.md) and [Application Insights](APPLICATION-INSIGHTS.md).
-EPP setup does **not** configure tenant log export, Workbooks, action groups, or sign-in alerts.
-This guide does not deploy anything or change authentication policy.
+Start here to look up a failed sign-in. If you also want ongoing notifications, continue
+through the six steps to create your first alert. The [optional reference](#optional-reference)
+covers more advanced setup and investigation.
 
-Each section links to Microsoft's existing queries and portal instructions, so you can
-start there and adapt them to your tenant rather than copy another set of examples.
-Choose alert thresholds from your own traffic. Portal labels can vary.
+**Sign-in logs show authentication outcomes, not OTP delivery.** A failed sign-in does not
+automatically mean a phone-provider failure. Keep identity details private. EPP setup does
+not export these logs or create alerts; the steps below are actions for your administrators,
+not changes made by this guide.
 
-1. Start with [the right tenant and access](#1-choose-the-tenant-and-permissions).
-2. [Configure export](#2-export-the-required-log-categories) and
-   [confirm actual records](#3-confirm-arrival-and-schema).
-3. [Choose a query and measure your baseline](#4-establish-the-baseline) before
-   [configuring notifications](#5-create-actionable-log-search-alerts).
-4. [Build a Workbook for your team](#6-build-a-sign-in-workbook), then
-   [plan investigation and handover](#7-triage-privacy-retention-and-costs).
+## 1. Choose your tenant and access
 
-## What these logs can and cannot tell you
+1. Open the [Microsoft Entra admin center](https://entra.microsoft.com). In **Settings >
+   Directories + subscriptions**, select the tenant where your users sign in. It may differ
+   from the tenant hosting the Function. Note its **Tenant ID** from **Overview**.
+2. Ask your tenant administrator for **Reports Reader**, the minimum role for viewing
+   activity logs. See Microsoft's [access requirements](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-access-activity-logs#prerequisites).
+   This role does not grant access to an Azure workspace.
+3. Check whether you have a **workforce tenant** or an **external tenant** for customer apps.
+   If unsure, use the [tenant comparison](https://learn.microsoft.com/en-us/entra/external-id/customers/concept-supported-features-customers)
+   with your administrator. Both can use the portal investigation below, but external
+   tenants need a different export setup in Step 3.
 
-1. Use sign-in logs to investigate authentication to an application: result codes,
-   authentication steps, available policy outcomes, and identity/network context.
-   Treat counts as **stored sign-in records**, not unique customers, completed sessions,
-   provider sends, or delivery receipts. Several records can describe one authentication
-   sequence, including successive MFA outcomes.
-2. Do not attribute every failed sign-in to a phone provider. Invalid passwords,
-   interrupted challenges, user cancellation, and policy rejection can all produce
-   non-success results. A successful sign-in can use an existing token claim without a new
-   phone challenge. Neither an SMS/Voice method label nor an MFA requirement proves EPP use.
-3. Use the [Function monitoring queries](MONITORING.md#2-single-region-function-queries)
-   for endpoint execution and the
-   [runtime-specific log discovery](MONITORING.md#runtime-specific-log-discovery) for
-   available request context and provider acceptance. Use the provider's approved delivery
-   and billing reports for recipient delivery, send volumes, and charges.
-4. Keep evaluation and live evidence separate. Both EPP request modes can return HTTP 200.
-   `SigninLogs` has no guaranteed EPP delivery-mode, provider-attribution, phone-delivery,
-   or provider-cost field. An endpoint evaluation is not guaranteed to create a user
-   sign-in record. Do not interpret a sign-in chart as a delivery test.
+## 2. Find one sign-in
 
-## 1. Choose the tenant and permissions
+1. Open **Entra ID > Monitoring & health > Sign-in logs**. Choose a date range and filter
+   to the application you're investigating. Open a record you're authorized to inspect.
+2. In **Basic info**, check the **Application**, **Application ID**, **Resource**, outcome,
+   and time. Keep the application's **client ID**, not its Object ID, for later query filters.
+   This may not be the endpoint `applicationId` in your EPP deployment summary.
+   The [activity-details guide](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-sign-in-log-activity-details#basic-info)
+   explains these fields. Note the displayed time zone; use UTC when comparing other logs.
+3. Open **Authentication Details** to see the methods, step outcomes, and policy context.
+   Look for an interrupted challenge, policy rejection, or a step satisfied by a previous
+   authentication. Microsoft's [Authentication Details explanation](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-sign-in-log-activity-details#authentication-details)
+   helps interpret the result.
 
-1. Identify the tenant where **user authentication** takes place. In the
-   [Microsoft Entra admin center](https://entra.microsoft.com), use **Settings >
-   Directories + subscriptions** to select it, then open its **Overview** and record the
-   **Tenant ID** privately. Do not assume this is the Function-hosting tenant.
-2. Confirm whether this is a **workforce tenant**, including B2B guests, or an **external
-   tenant** for consumer/business-customer apps. Use the
-   [tenant feature comparison](https://learn.microsoft.com/en-us/entra/external-id/customers/concept-supported-features-customers)
-   with your tenant administrator. The export setup and feature availability differ.
-3. Open **Entra ID > Monitoring & health > Sign-in logs** and select an existing sign-in
-   you're authorized to inspect for the application you want to monitor. In **Basic info**, check
-   **Application**, **Application ID**, **Resource**, the outcome, and time. The
-   [illustrated activity-details guide](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-sign-in-log-activity-details#basic-info)
-   explains these fields. Record the application's **client ID**, not its Object ID.
-   It is not necessarily the endpoint `applicationId` in the EPP deployment summary.
-   Note the displayed time zone; use UTC when comparing it with other logs.
-4. Choose the destination **subscription, resource group, workspace, and region** with
-   your Azure administrator and the people responsible for privacy and costs. An existing
-   workspace may be suitable; check before creating another one. You can choose to keep
-   Entra and Function logs together, but EPP setup does not make that connection for you.
-5. For a **workforce tenant**, check the
-   [integration prerequisites](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-integrate-activity-logs-with-azure-monitor-logs#prerequisites).
-   General diagnostic settings require at least **Security Administrator** in the Entra
-   tenant, an Azure subscription, a prepared Log Analytics workspace, and appropriate
-   Azure access to the destination. If you still need a workspace, ask your Azure administrator
-   to follow the [workspace creation instructions](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/quick-create-workspace).
-6. For an **external tenant**, open the
-   [illustrated external-tenant setup guide](https://learn.microsoft.com/en-us/entra/external-id/customers/how-to-azure-monitor#prerequisites).
-   An external tenant cannot have an associated Azure subscription. The documented setup
-   uses the subscription in a **workforce tenant** and an Azure Lighthouse access path.
-   Arrange Azure RBAC **Owner** on that subscription and **Security Administrator or
-   Application Administrator** in the external tenant for the wizard. Users who configure
-   diagnostic settings still need at least **Security Administrator**. Do not move the
-   EPP subscription or change policy to imitate workforce setup.
-7. Arrange read access separately. **Reports Reader** is the least privileged Entra role
-   for activity-log access in the admin center; see
-   [access requirements](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-access-activity-logs#prerequisites).
-   It does not grant Azure log access. Ask your Azure administrator to review
-   [workspace/table permissions](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/manage-access)
-   and grant appropriately scoped query access, such as **Log Analytics Reader**.
-   Try opening the workspace's **Logs** with the account you'll use to investigate sign-ins.
-8. Verify licensing before selecting premium reports. Current
-   [monitoring licensing guidance](https://learn.microsoft.com/en-us/entra/fundamentals/licensing#microsoft-entra-monitoring-and-health)
-   lists sign-in and audit logs for Entra ID Free as well as P1/P2. That does not imply
-   entitlement to every Graph API, risk report, or Workbook feature. Azure collection,
-   retention, queries, alert evaluation, and notifications can incur separate charges.
-9. Confirm whether risk reporting is actually available. The current
-   [external-tenant comparison](https://learn.microsoft.com/en-us/entra/external-id/customers/concept-supported-features-customers#general-feature-comparison)
-   lists **Microsoft Entra ID Protection as unavailable in external tenants**. In supported
-   workforce tenants, full [ID Protection capabilities](https://learn.microsoft.com/en-us/entra/id-protection/overview-identity-protection#license-requirements)
-   require P2 or an applicable entitlement. Do not purchase workforce P2 expecting it to
-   enable external-tenant risk detections, or read empty/hidden risk values as fraud clearance.
-10. Before continuing, keep a private note of the **tenant and type, app client ID, and
-    workspace resource ID**. Agree who will maintain queries, configure alerts, and respond
-    to security concerns. Resolve any missing access or workspace approval before exporting logs.
+   ![Microsoft Entra ID sign-in Activity Details with Authentication Details selected and two Previously satisfied steps marked true](images/sign-in-monitoring/sign-in-activity-details-authentication.png)
 
-## 2. Export the required log categories
+   *Official Microsoft Entra ID example from
+   [Microsoft's activity-details instructions](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-sign-in-log-activity-details#authentication-details).
+   [Original screenshot](https://github.com/MicrosoftDocs/entra-docs/blob/927efa819a6f89a40b39b178d702b30f49b63f00/docs/identity/monitoring-health/media/concept-sign-in-log-activity-details/sign-in-activity-details-authentication.png),
+   Copyright (c) Microsoft Corporation. This is not your sign-in or a delivery test.
+   Previously satisfied does not prove a new phone challenge or provider send.
+   Your methods, policy results, timestamps, and portal layout can differ.*
 
-### Prepare the external-tenant access path
+4. Use the error code and reason with Microsoft's
+   [sign-in troubleshooting guidance](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-troubleshoot-sign-in-errors).
+   If the issue points to the endpoint or provider, follow the
+   [Function monitoring guide](MONITORING.md#runtime-specific-log-discovery) separately.
 
-1. If monitoring a **workforce tenant**, skip this subsection. If an external tenant is
-   already integrated, check its destination and access with the administrator rather than
-   rerunning setup. Otherwise, open **Entra ID > Monitoring & health > Diagnostic settings**
-   in the external tenant and select **Start set up**.
-2. Follow the official
-   [wizard screenshots and instructions](https://learn.microsoft.com/en-us/entra/external-id/customers/how-to-azure-monitor#set-up-the-azure-lighthouse-configuration-in-the-wizard).
-   Sign in to the **workforce tenant** for the approved subscription. Select the subscription
-   and resource group, specify the workspace name and region, and select **Next**.
-3. In **Select user access**, choose the external-tenant users/groups who need access and
-   the documented Azure roles agreed with your administrator. Review the delegation carefully.
-   The wizard's roles are not a grant of all alert-management or role-assignment permissions.
-4. At **Review and create**, confirm destination, region, users/groups, roles, and charges.
-   Select **Create** only after approval. Wait for confirmation, select **Done**, and
-   continue to diagnostic settings. Keep the destination identifiers with your setup notes.
+**Only investigating one problem? You can stop here.** You don't need to export logs, create
+a workspace, or incur additional Azure Monitor collection costs for this portal-only path.
+Continue if your team wants ongoing alerts or longer-term analysis.
 
-### Select and save the export
+## 3. Export logs for ongoing monitoring
 
-1. In the **source tenant's** Entra admin center, open **Entra ID > Monitoring & health >
-   Diagnostic settings**. If you need help finding the screen, see
-   [access diagnostic settings](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-configure-diagnostic-settings#how-to-access-diagnostic-settings).
-   Check existing settings first, and speak to whoever maintains them before making changes.
+1. Agree on a workspace, region, budget, and person responsible for the alerts.
+   For a **workforce tenant**, follow the
+   [integration prerequisites](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-integrate-activity-logs-with-azure-monitor-logs#prerequisites):
+   at least **Security Administrator** in Entra, an Azure subscription, a prepared workspace,
+   and suitable Azure access. If needed, your Azure administrator can
+   [create a workspace](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/quick-create-workspace).
+2. For an **external tenant**, first follow the
+   [external-tenant setup instructions](https://learn.microsoft.com/en-us/entra/external-id/customers/how-to-azure-monitor#prerequisites),
+   not the workforce setup above. They establish access to a workspace in a workforce
+   subscription. Return here once that access is ready; [extra setup detail](#prepare-the-external-tenant-access-path)
+   is available below.
+3. In the **source tenant**, open **Entra ID > Monitoring & health > Diagnostic settings**.
+   Check existing settings before changing them. Select **Add diagnostic setting**, or
+   edit an existing setting with its maintainer's agreement.
 
    ![Microsoft Entra admin center showing Monitoring and health, Diagnostic settings, and Add diagnostic setting highlighted](images/sign-in-monitoring/diagnostic-settings-start.png)
 
@@ -128,435 +77,389 @@ Choose alert thresholds from your own traffic. Portal labels can vary.
    [Microsoft's diagnostic-settings instructions](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-configure-diagnostic-settings#how-to-access-diagnostic-settings).
    [Original screenshot](https://github.com/MicrosoftDocs/entra-docs/blob/927efa819a6f89a40b39b178d702b30f49b63f00/docs/identity/monitoring-health/media/howto-configure-diagnostic-settings/diagnostic-settings-start.png),
    Copyright (c) Microsoft Corporation. This is not your tenant; menus and categories vary.
-   Follow the numbered navigation above, not the example's breadcrumb. Visible risk categories
-   do not establish that those features are available or licensed in an external tenant.*
+   Follow the navigation above, not the example's breadcrumb. Visible risk categories do
+   not establish availability or licensing in an external tenant.*
 
-2. Select **Add diagnostic setting**, or edit an existing setting if its maintainer has agreed.
-   Enter a recognizable name for a new setting. Select **SignInLogs** for interactive
-   user authentication. Add **AuditLogs** only if directory-change investigation is also
-   required; audit events are not sign-in outcomes.
-3. Use the [category descriptions](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-diagnostic-settings-logs-options)
-   to choose any further sources. Non-interactive user, service-principal, and managed-identity
-   sign-ins are separate categories and populations. They use `AADNonInteractiveUserSignInLogs`,
-   `AADServicePrincipalSignInLogs`, and `AADManagedIdentitySignInLogs`, respectively.
-   Keep their baselines separate from interactive `SigninLogs`. Do not select every category
-   just to make a chart populate.
-4. Check the category picker in **your tenant**. A category description or workforce feature
-   is not a promise of data in an external tenant. Selecting **SignInLogs** does not enable
-   the separate **RiskyUsers** or **UserRiskEvents** categories. Provider-side OAuth evidence
-   can reside in the provider's tenant and require its administrator's assistance.
-5. Under **Destination details**, select **Send to Log Analytics workspace**, then choose
-   the approved **Subscription** and **Log Analytics workspace**. For an external tenant,
-   use the access set up above. Check the destination against your setup notes.
+4. Name the setting and select **SignInLogs** for interactive user sign-ins. Under
+   **Destination details**, select **Send to Log Analytics workspace** and choose your
+   subscription and workspace. Select **Save**, reopen the setting, and check the destination.
    The [illustrated export instructions](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-integrate-activity-logs-with-azure-monitor-logs#send-logs-to-azure-monitor)
-   show the category and destination controls.
-6. Select **Save**, reopen the setting, and confirm its **selected categories and destination**.
-   Note when you enabled export and who maintains it. This setting belongs to Entra,
-   not the Function App; Function diagnostic settings/Application Insights do not perform
-   this export. Do not expect a backfill of all historical portal sign-ins.
-7. Check that the setting still points to the right workspace and includes the sign-in
-   category you selected, without changing another integration. Next, check for records:
-   saving the setting alone doesn't tell you whether logs have arrived.
+   show these controls.
+5. Allow time for records to arrive. Initial export is not immediate and does not backfill
+   all portal history. Microsoft describes about 45 minutes in its
+   [External ID monitoring repository](https://github.com/microsoft/external-id-azure-monitor)
+   and allows up to three days in the
+   [general setup guidance](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-configure-diagnostic-settings#basic-process).
+   These are initial setup allowances, not an ongoing latency SLA.
 
-## 3. Confirm arrival and schema
+## 4. Check your data and choose a query
 
-1. Open **Azure portal > Log Analytics workspaces > your destination workspace > Logs**.
-   For an external tenant's workforce-hosted workspace, switch to the subscription-owning
-   directory as necessary. Check the workspace name/query scope before running anything.
-   Use the [illustrated Logs scope tutorial](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#open-log-analytics).
-   Its demo environment is for learning controls, **not** verification of your tenant's data.
-2. Select **Tables** in the left pane and find **SigninLogs**. Expand the table to inspect
-   its columns and types, following
-   [View table information](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#view-table-information).
-   That tutorial illustrates `AppRequests`; select **SigninLogs** in your workspace instead.
-   Compare the actual columns with the official
-   [SigninLogs schema](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/signinlogs#columns).
-3. In the table's controls, use **Run** to preview records, or select it through
-   [Simple mode > Select a table](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-simple-mode#get-started-in-simple-mode).
-   Choose a **Time range** that covers activity after export was saved. Limit the displayed
-   records and use only an account authorized to read them; a preview can contain
-   personal data. Do not use the Application Insights `requests`/`traces` context for Entra logs.
-4. Allow for initial export delay. The
-   [Microsoft External ID monitoring repository](https://github.com/microsoft/external-id-azure-monitor)
-   describes about 45 minutes after setup, while the
-   [general diagnostic-setting guidance](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-configure-diagnostic-settings#basic-process)
-   allows up to three days for initial arrival. These are setup allowances, not a steady-state
-   latency SLA. If no table/records appear, compare export start time, source tenant, destination,
-   category, access, and expected portal sign-ins before escalating.
-5. Expand a returned row using its **chevron**, as shown in
-   [Expand and sort records](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#expand-and-sort-records).
-   Check `AADTenantId` and `AppId` against the source tenant and application's client ID.
-   Do not substitute the app's Object ID, provider API ID, or workspace ID.
-   The standard `TenantId` column is the **workspace ID**, not the source Entra tenant ID.
-6. To narrow exploration without writing a new query, use **Simple mode > Add > column filter**
-   for `AADTenantId` and `AppId`, then enter/select the IDs you checked above. See the illustrated
-   [column-filter instructions](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-simple-mode#filter-by-column).
-   Apply source/app filters **before aggregation**. Switch to **KQL mode** and confirm the
-   generated query contains them; a Results-grid search or column-header filter is not an
-   enduring query/alert filter.
-7. Check `ResultType`, `ResultDescription`, `CreatedDateTime`, and `TimeGenerated`.
-   The schema defines `ResultType` as a **string**: zero indicates success, populated nonzero
-   values are sign-in error/result codes, and missing/empty values need investigation.
-   These are not provider/Function HTTP statuses. Review the corresponding portal record's
-   **Basic info** with the
-   [sign-in error troubleshooting instructions](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-troubleshoot-sign-in-errors).
-8. Check which timestamps you're comparing before choosing alert windows. `CreatedDateTime`
-   is sign-in initiation time in UTC; `TimeGenerated` is the timestamp used for workspace time filters.
-   Work with whoever maintains your queries to use the
-   [ingestion-latency reference](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-ingestion-time)
+1. Open **Azure portal > Log Analytics workspaces > your workspace > Logs** with an account
+   that has workspace query access, such as **Log Analytics Reader**. In **Tables**, find
+   **SigninLogs**, expand its columns, and preview recent records. The
+   [Logs tutorial](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#view-table-information)
+   shows the controls using `AppRequests`; choose **SigninLogs** in your own workspace.
+2. Check `AADTenantId` and `AppId` against your source tenant and app client ID.
+   Compare the columns with the [SigninLogs schema](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/signinlogs#columns).
+   No matching records is **not** a healthy result: check the destination, time range,
+   category, access, and portal sign-ins before continuing.
+3. Open Microsoft's [Failed Signin reasons query](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/queries/signinlogs#failed-signin-reasons).
+   In **KQL mode**, copy it from that source and filter to your `AADTenantId` and `AppId`
+   **before summarizing**. Ask someone familiar with KQL to review the edits. Check the
+   string type of `ResultType` and handle empty codes separately; these are authentication
+   codes, not provider HTTP statuses. [Query adaptation details](#4-establish-the-baseline)
+   explain the filters and other official query choices.
+4. Choose an observation window with the receiving team, then **Run** that same calculation
+   across normal, peak, and quiet periods in a representative business cycle. Read `Count`
+   and the result codes, not the number of summary rows. Allow for measured ingestion delay;
+   choose a failure-count threshold for that window, not a whole week's total. There is no
+   universal threshold; the source query is not a turnkey EPP or fraud detector.
+5. Select **Save > Save as query** and choose the agreed query pack. Saving needs
+   **Log Analytics Contributor**; ask an authorized teammate if you only have read access.
+   See [saving queries](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/save-query).
+   Keep the filters, count units, baseline, and chosen threshold with your team's setup notes.
+
+You now have one scoped query to reuse for the first alert. Leave rate, volume, and
+IP-based detection for [later](#more-alert-types), once you understand this baseline.
+
+## 5. Create your first alert
+
+1. Check [alert permissions](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-create-log-alert-rule#prerequisites):
+   read access to the workspace, write access to the rule's resource group, and read access
+   to its action group. Creating groups or assigning roles requires additional permissions.
+   In **Azure portal > Monitor > Alerts > Create > Alert rule**, select your **Log Analytics
+   workspace** as **Scope**, not the Function or app registration.
+2. On **Condition**, choose **Custom log search**, paste the saved query, and select **Run**.
+   Check **Preview**, then **Continue Editing Alert**. Follow the
+   [illustrated condition instructions](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-create-log-alert-rule#configure-alert-rule-conditions).
+   This is a scheduled log search alert, not an Azure Activity Log alert; check that your
+   table plan supports the query and rule.
+3. For **Failed Signin reasons**, set **Measure** to **Calculation of a numeric column**,
+   choose `Count`, and use **Total** if you want the total across the result-code groups.
+   Leave **Split by dimensions** unset for this first combined alert. Don't count summary
+   rows as failures. Set **Static**, the **Operator**, and **Threshold value** from Step 4.
+4. Set **Aggregation granularity (window size)** and **Frequency of evaluation** to match
+   the team's observation window, ingestion delay, response needs, and budget. Review
+   **Override query time range** with the query's time filter; alert scans are limited to
+   **48 hours**. Start with a single violating evaluation; if you need several, review the
+   [required query output and evaluation settings](#query-identity-and-rule-options) first.
+   Review healthy and qualifying periods in Preview. Keep missing-data expectations separate from failure counts;
+   [collection-health guidance](#monitor-ingestion-separately) explains why.
+5. On **Actions**, select or create an **action group** for the receiving team. Use the
+   [action-group instructions](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/action-groups#create-in-the-azure-portal)
+   to configure email/push or incident routing and complete recipient verification.
+   On **Details**, set the rule's name, description, severity, region, and resource group.
+6. Choose the query **Identity**. For a **system-assigned managed identity**, clear
+   **Enable upon creation**, create the rule disabled, and have your Azure administrator
+   grant it reader/query access to the workspace. Wait for role propagation before enabling.
+   An interactive query working under your account doesn't prove the rule can read logs.
+   Review **Automatically resolve alerts** and [identity options](#query-identity-and-rule-options)
+   before **Review + create**. Keep the rule disabled until ready for the test below.
+
+## 6. Test, then hand over
+
+1. Save the action group, open it, and select **Test**. Choose the notification receivers
+   and wait for the result; also check that the team receives the message. Microsoft's
+   [testing instructions](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/action-groups#test-an-action-group-in-the-azure-portal)
+   cover failures and test permissions. This checks routing, not the sign-in query.
+2. Test the query and a **temporary nonproduction rule** against existing records you're
+   allowed to inspect. Use a restricted test group and a temporary condition those records
+   satisfy. Check the query's window and portal override together. Verify the scheduled
+   alert and its later resolution, then remove the temporary rule/settings. See the
+   [full safe-test procedure](#validate-without-generating-provider-sends).
+3. Don't generate live OTPs, repeated wrong codes, or production policy changes to populate
+   a chart. If records are insufficient, use an approved **non-phone test sign-in** in a
+   test tenant/app. An EPP evaluation does not guarantee a sign-in record or prove delivery.
+4. Before enabling ongoing notifications, check that logs arrive, the rule identity has
+   access, the measurement matches your baseline, and the right people receive alerts.
+   Leave a teammate the query, rule, workspace, action group, settings, and support contacts.
+   Arrange a check for [missing logs](#monitor-ingestion-separately), not just sign-in failures.
+
+That's the first-alert path. These checks happen in your environment; this guide hasn't
+run Azure/Kusto queries or configured your monitoring.
+
+## Optional reference
+
+Use these sections when you need more than the first alert: [tenant setup and access](#1-choose-the-tenant-and-permissions),
+[query details](#4-establish-the-baseline), [other alert types](#more-alert-types),
+[collection gaps](#monitor-ingestion-separately), [Workbooks](#6-build-a-sign-in-workbook),
+and [triage, retention, and costs](#7-triage-privacy-retention-and-costs).
+
+<a id="what-these-logs-can-and-cannot-tell-you"></a>
+
+### Understand the evidence
+
+1. Counts represent **stored sign-in records**, not unique customers, completed sessions,
+   or sends. Several records can describe one authentication sequence. A successful sign-in
+   can use an existing token claim without a phone challenge.
+2. Invalid passwords, interrupted challenges, cancellation, and policy rejection can all
+   cause non-success results. Neither an SMS/Voice label nor an MFA requirement identifies
+   the provider. `SigninLogs` has no guaranteed EPP delivery-mode, provider-attribution,
+   phone-delivery, or provider-cost field.
+3. Use [Function request queries](MONITORING.md#2-single-region-function-queries) and
+   [Application Insights](APPLICATION-INSIGHTS.md) for endpoint execution. Use the provider's
+   delivery and billing reports for recipient delivery and charges. Evaluation and live
+   Function requests can both return HTTP 200; neither proves handset receipt.
+
+<a id="1-choose-the-tenant-and-permissions"></a>
+
+### Tenant setup, access, and licensing
+
+1. Entra roles and Azure RBAC are separate. **Reports Reader** lets you view portal activity;
+   **Security Administrator** is needed for general diagnostic settings. Review
+   [workspace/table access](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/manage-access)
+   separately for queries. An external-tenant delegation does not grant every alert-management
+   or role-assignment operation in the subscription-owning workforce tenant.
+2. Check current [monitoring licensing](https://learn.microsoft.com/en-us/entra/fundamentals/licensing#microsoft-entra-monitoring-and-health):
+   sign-in/audit logs are listed for Entra ID Free and P1/P2, but Graph APIs, premium reports,
+   risk features, and Workbook features can have other requirements.
+3. The [external-tenant feature comparison](https://learn.microsoft.com/en-us/entra/external-id/customers/concept-supported-features-customers#general-feature-comparison)
+   currently lists **ID Protection as unavailable in external tenants**. Full supported
+   workforce [ID Protection capabilities](https://learn.microsoft.com/en-us/entra/id-protection/overview-identity-protection#license-requirements)
+   require P2 or an applicable entitlement. Don't buy workforce P2 expecting it to enable
+   external-tenant risk detections.
+
+### Prepare the external-tenant access path
+
+1. An external tenant cannot have an associated Azure subscription. Follow the
+   [illustrated wizard](https://learn.microsoft.com/en-us/entra/external-id/customers/how-to-azure-monitor#set-up-the-azure-lighthouse-configuration-in-the-wizard)
+   for a workspace in a **workforce tenant** and Azure Lighthouse access. The prerequisites
+   include Azure RBAC **Owner** on the subscription and **Security Administrator or
+   Application Administrator** in the external tenant. Users configuring diagnostic settings
+   still need **Security Administrator**.
+2. If already integrated, review the destination and access rather than repeating setup.
+   Otherwise select **Start set up** from external-tenant **Diagnostic settings**.
+   Sign in to the workforce tenant, select subscription/resource group, and specify workspace
+   name and region. In **Select user access**, choose the agreed users/groups and Azure roles.
+3. Review the delegation, destination, region, permissions, and costs before **Create**.
+   Wait for confirmation, select **Done**, then configure export as in Step 3.
+   Don't move the EPP subscription or alter authentication policy to imitate workforce setup.
+
+<a id="2-export-the-required-log-categories"></a>
+<a id="select-and-save-the-export"></a>
+
+### Choose additional export categories
+
+1. Follow the [diagnostic-settings navigation](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-configure-diagnostic-settings#how-to-access-diagnostic-settings)
+   and [category descriptions](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-diagnostic-settings-logs-options)
+   when expanding the first export. **AuditLogs** describes directory changes, not sign-in
+   outcomes. Add it only if required.
+2. Non-interactive user, service-principal, and managed-identity sign-ins use
+   `AADNonInteractiveUserSignInLogs`, `AADServicePrincipalSignInLogs`, and
+   `AADManagedIdentitySignInLogs`. Keep their populations/baselines separate from interactive
+   `SigninLogs`. Check categories actually available in your tenant.
+3. **SignInLogs** does not enable **RiskyUsers** or **UserRiskEvents**. Provider OAuth logs
+   may be in the provider's tenant and need its administrator's help. Function diagnostic
+   settings and Application Insights are separate pipelines, not Entra export configuration.
+
+<a id="3-confirm-arrival-and-schema"></a>
+
+### Inspect schema and arrival delays
+
+1. Check your workspace [query scope](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#open-log-analytics),
+   not the tutorial's demo environment or Application Insights `requests`/`traces` context.
+   Use [Simple mode's table selector](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-simple-mode#get-started-in-simple-mode)
+   if you prefer a point-and-click preview.
+2. Expand a row using its [chevron](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#expand-and-sort-records).
+   `AADTenantId` is the source directory; standard `TenantId` is the **workspace ID**.
+   `AppId` is the app client ID, not an Object ID or provider API ID.
+3. `ResultType` is a **string**: zero indicates success; populated nonzero values are
+   authentication codes. Keep empty values as unknown. `CreatedDateTime` is sign-in initiation
+   in UTC; `TimeGenerated` is the workspace log timestamp. They are not ingestion time.
+4. Adapt the [ingestion-latency reference](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-ingestion-time)
    and [standard-column timing guidance](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-standard-columns#_timereceived-column)
-   to measure arrival delay against **SigninLogs**, with your tenant/app scope. Those references
-   are generic, not a ready-made Entra latency monitor. Note the measured delay and any
-   missing timestamps; do not confuse ingestion time with authentication or delivery latency.
-9. You should now be able to find records for the right tenant and app, understand their
-   fields, and allow for arrival delay. If the table can't be found, investigate collection
-   and access rather than treating that as a healthy result. If the table exists but your
-   app has no records, compare with **Entra > Sign-in logs** and ask the workspace administrator
-   to check transformations and ingestion limits before you build alerts.
+   to your `SigninLogs` scope to measure delay, including missing timestamps.
+   These generic examples are not a ready-made Entra monitor or delivery-latency measure.
 
 ### Inspect authentication steps safely
 
-1. For an existing relevant sign-in, open **Entra ID > Monitoring & health > Sign-in logs >
-   selected record > Authentication Details**. Use the official
-   [Authentication Details screenshot and explanation](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-sign-in-log-activity-details#authentication-details)
-   to read the step sequence, method, outcome, and policy context.
+1. Compare report entries with **Authentication Details** in the portal. Token claims or
+   previous authentication can satisfy a step; distinguish the step outcome from the whole sign-in.
+2. Microsoft's [MFA Workbook template](https://github.com/microsoft/external-id-azure-monitor/blob/main/templates/mfaWorkbookDeployment.json)
+   currently queries **AuditLogs**, not `SigninLogs` authentication-step arrays. It needs
+   corresponding audit export/activity. Don't substitute tables or read it as a full step sequence.
+3. A `SigninLogs` step report must handle `AuthenticationDetails` as the documented string
+   containing parsed array data, with empty/invalid/missing data and nullable outcomes.
+   Array expansion counts **steps**, not sign-ins. Missing steps aren't success or failure.
+   Keep `authenticationMethodDetail` and raw payloads out of shared views; they can contain
+   phone identifiers and other personal data.
 
-   ![Microsoft Entra ID sign-in Activity Details with Authentication Details selected and two Previously satisfied steps marked true](images/sign-in-monitoring/sign-in-activity-details-authentication.png)
+<a id="4-establish-the-baseline"></a>
 
-   *Official Microsoft Entra ID example from
-   [Microsoft's sign-in activity-details instructions](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-sign-in-log-activity-details#authentication-details).
-   [Original screenshot](https://github.com/MicrosoftDocs/entra-docs/blob/927efa819a6f89a40b39b178d702b30f49b63f00/docs/identity/monitoring-health/media/concept-sign-in-log-activity-details/sign-in-activity-details-authentication.png),
-   Copyright (c) Microsoft Corporation. This is not your sign-in or a delivery test.
-   The example's Previously satisfied outcomes do not prove a new phone challenge or
-   provider send. Your methods, policy results, timestamps, and portal layout can differ.*
+### Adapt official queries
 
-2. Check whether the step was satisfied by an existing token claim or a previous
-   authentication. A method named SMS/Voice is not a provider ID or delivery receipt.
-   Keep the sign-in's overall outcome separate from an individual step's outcome.
-3. For an existing shared method report, review the official
-   [MFA Workbook template](https://github.com/microsoft/external-id-azure-monitor/blob/main/templates/mfaWorkbookDeployment.json)
-   with whoever maintains your queries. Its current queries use **AuditLogs**, not `SigninLogs`
-   authentication-step arrays. They need the corresponding export and recorded audit activity;
-   do not replace the table name or treat that report as the full sign-in step sequence.
-   For a `SigninLogs` step report, have the operator review the actual `AuthenticationDetails`
-   column separately: it is documented as a string containing step data, not a top-level
-   dynamic object. An adapted query must handle the parsed array shape, empty/invalid/missing
-   data, and nullable step outcomes explicitly.
-4. Check the adapted report for coverage gaps and labels. Expanding an array counts
-   **authentication steps**, not sign-ins. Missing steps do not establish success or failure.
-   Keep `authenticationMethodDetail` and full raw payloads out of shared reports; they can
-   include phone identifiers or other personal data.
-5. Compare a few report entries with the corresponding portal records. The methods and
-   outcomes should agree; use the report to understand authentication, not to prove delivery.
+1. In the [SigninLogs query collection](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/queries/signinlogs),
+   **Failed Signin reasons** groups by code/reason; **Failed login Count** counts failures by
+   resource; **Signin Locations** groups success/failure by location. Pick the measure you need.
+   Some examples contain personal fields or limit MFA failures to one code; none is a
+   complete CYOT/provider-failure detector.
+2. Add your source tenant/app filters **before aggregation**. Use the
+   [filtering tutorial](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#apply-multiple-query-filters)
+   or [Simple mode column filters](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-simple-mode#filter-by-column),
+   then switch to KQL to check them. Results-grid searches/header filters don't persist
+   as alert-query filters. Review numeric-looking code comparisons against the string schema.
+3. Use the [time-range controls](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#set-the-query-time-range)
+   with any query time filter and verify the effective range. Preview **Show** limits and
+   browser-side grouping can hide data; don't mistake them for the full baseline.
+4. Save the reviewed query and share its location with a teammate who has log access.
+   Check that they get the same filters and columns. Distinct-user, record-count, and step
+   measures differ; note unknown-code handling and any exclusions alongside the query.
 
-## 4. Establish the baseline
+<a id="5-create-actionable-log-search-alerts"></a>
+<a id="configure-the-rule-in-the-portal"></a>
 
-1. Open the official [SigninLogs query collection](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/queries/signinlogs).
-   Choose the relevant named query rather than copying an unrelated tutorial's table:
-   **Failed Signin reasons** for result-code distribution, **Failed login Count** for
-   failure counts by resource, or **Signin Locations** for successful/failed counts by location.
-   You'll need to set your app, tenant, time window, and alert thresholds in these examples.
-2. In your workspace's **Logs**, switch to **KQL mode**. Copy the selected query from its
-   official source into the editor. Alternatively, use the **Queries** pane if that query
-   is available there. Filter to your `AADTenantId` and `AppId` **before summarizing**,
-   following the [filtering tutorial](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#apply-multiple-query-filters).
-   If you're new to KQL, ask someone familiar with it to review the edits. Don't read tenant-wide
-   results as if they describe one customer app.
-3. Compare the query with the **actual string type of `ResultType`**. The official collection
-   includes examples with numeric-looking comparisons; the operator must ensure the chosen
-   comparison matches the documented type and separately handles empty/missing codes.
-   Read nonzero result codes in their authentication context, not as incorrect OTPs by default.
-   The catalog also includes user names/identifiers in some outputs and a **Failed MFA challenge**
-   query limited to one code. Review purpose and privacy: it is not a complete MFA/CYOT failure
-   detector. Remove unnecessary personal fields before sharing a saved report.
-4. Choose a representative business cycle using **Time range** and any query time filter.
-   Include peak/quiet hours, releases, and approved tests. Use the illustrated
-   [time-range controls](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#set-the-query-time-range).
-   Confirm the effective range on rerun, not just the picker label.
-5. Select **Run**. Inspect **Results** and, where helpful, **Chart**. Identify the output's
-   numeric count column and grouping; do not confuse the number of summary rows displayed
-   with the number of sign-in records counted. The **Show** limit can cap displayed results.
-   Avoid treating a truncated preview or browser-side grouping as a complete baseline.
-6. Keep the query and your findings together: what it counts, how it groups results,
-   normal and peak traffic, common non-success codes, missing data, and arrival delay.
-   Distinct users, sign-in records, and authentication steps are different measures;
-   several records can belong to one authentication sequence.
-7. With the team receiving alerts, decide what change is worth a notification and what
-   they would investigate. Base thresholds on this traffic, including a minimum volume
-   for rate rules and allowances for quiet hours and maintenance. There isn't one useful
-   threshold for every app. The official count queries don't automatically calculate a
-   failure rate, detect source-IP abuse, or check collection freshness.
-8. Select **Save > Save as query**, following
-   [saving Azure Monitor queries](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/save-query).
-   Enter the name and select the approved subscription/query pack; review the proposed default
-   pack before creating a new resource. Saving requires **Log Analytics Contributor**;
-   if you only have read access, ask someone with that permission to save it.
-   Share its location with a teammate who has log access and check that they can reopen
-   it with the same filters and result columns before you use it in a rule.
+### Query identity and rule options
 
-## 5. Create actionable log search alerts
+1. Use the [scope screen](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-create-log-alert-rule#configure-the-scope-of-the-alert-rule)
+   and [Details/Identity instructions](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-create-log-alert-rule#configure-alert-rule-details)
+   for the workspace rule. A **user-assigned identity** needs access before selection.
+   With **None**, query permissions follow the last editor. Review linked-storage policy
+   and identity restrictions before choosing.
+2. Measurement depends on output: **Table rows / Total** suits unsummarized matching records;
+   a summarized query needs its numeric column. Sum and maximum of groups mean different things.
+   A greater-than-zero row condition is only suitable when the query returns **qualifying
+   incidents**, not an unconditional summary.
+3. Review window, frequency, query time filter, and **Override query time range** together.
+   Overlapping windows can observe records repeatedly; late arrivals can be missed.
+   One-minute evaluation has query restrictions, including `ingestion_time()`.
+   Multiple violations require the documented datetime output/evaluation period.
+4. **Split by dimensions** creates separate series/incidents and can raise costs/expose data.
+   Avoid high-cardinality IP/user/request/correlation identifiers without a specific need.
+   An unsplit workspace alert is a workspace incident; put app/scope in its description/runbook.
+5. In a new action group, complete **Basics**, **Notifications**, and any **Actions**, then
+   **Review + create > Create**. Return to the rule and select the saved group.
+   Check processing region, recipients, required verification, and **Common alert schema**
+   where applicable. Keep security results restricted; don't attach automatic policy changes
+   to a heuristic.
+6. **Automatically resolve alerts** makes the rule stateful; resolution timing depends on
+   frequency. Review **Mute actions** with the receiving team. Edit an existing rule through
+   **Monitor > Alerts > Alert rules > selected rule > Edit**.
+
+### More alert types
+
+These are optional additions after the first count alert is working. Each needs its own
+reviewed query, baseline, and response plan.
 
 ### A. Elevated non-success rate
 
-1. Begin with [Failed Signin reasons](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/queries/signinlogs#failed-signin-reasons)
-   to review **which result codes changed**. Use a reviewed failure-count rule first if that
-   meets the requirement; this official query is not a complete failure-rate alert.
-2. If you need a **rate** rule, work with your query maintainer to return
-   failures and the corresponding total for the **same tenant, app, population, and window**,
-   with agreed handling of unknown codes and minimum traffic. Review healthy/empty windows
-   and denominator coverage before choosing the alert's numeric percentage column.
-3. Note any excluded codes and monitor them separately. Route these alerts to the team
-   troubleshooting authentication; a change in non-success rate alone doesn't identify
-   a phone-provider outage.
+1. Use failure counts first if they answer the question. A rate requires failures and
+   total traffic for the **same tenant, app, population, and window**, with unknown-code
+   handling and a minimum traffic level. The official count query does not calculate this rate.
+2. Check denominator coverage in healthy and empty windows before choosing a numeric rate
+   column/threshold. Document exclusions and monitor them separately. Route to authentication
+   support, not automatic provider-outage classification.
 
 ### B. Unusual sign-in volume
 
 1. Review the [authentication Workbook template](https://github.com/microsoft/external-id-azure-monitor/blob/main/templates/authenticationsWorkbookDeployment.json)
-   for existing sign-in traffic visualizations and query definitions. Treat it as source to
-   review, **not** an instruction to deploy the entire template.
-2. Choose a traffic query with your query maintainer and check that it returns
-   a record count for the intended `SigninLogs` tenant/app/time window. The official
-   **User count per Application** query counts distinct users, not total sign-in records;
-   do not substitute that measure without changing the monitoring objective.
-3. Set a volume limit from the agreed baseline and routing capacity. Investigate campaigns,
-   releases, clients, retries, and collection changes as possible causes. Sign-in volume is
-   **not OTP-send volume, SMS-pumping evidence, or provider spend**.
+   for traffic queries, then adapt one to your scope. **User count per Application** measures
+   distinct users, not sign-in record volume.
+2. Choose the limit from normal traffic and response capacity. Campaigns, releases, retries,
+   clients, and collection changes can explain spikes. This is not OTP-send volume,
+   SMS-pumping evidence, or provider spend.
 
 ### C. Potential abuse from a source IP
 
 1. Use [Signin Locations](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/queries/signinlogs#signin-locations)
-   and the [user-behavior Workbook template](https://github.com/microsoft/external-id-azure-monitor/blob/main/templates/userBehaviourWorkbookDeployment.json)
-   as investigation starting points. Neither is a ready-made source-IP fraud alert for EPP.
-2. If an IP-based rule would help, ask your security team to review which `IPAddress`,
-   `UserId`, and `ResultType` values are actually present and choose the grouping and
-   threshold for your tenant/app. Check unknown users, absent IPs, approximate distinct counts,
-   distributed attempts, and expected shared-network activity before publishing it.
-3. Restrict IP-bearing results and notifications to the security team. NAT, VPNs, mobile
-   networks, and proxies can cause false positives; IP geolocation does not prove a person's
-   location. Do not automate blocking, disable a provider/account, or change authentication
-   policy solely on a volume/IP heuristic.
-4. Where licensed workforce ID Protection is supported, use its
-   [risk investigation instructions](https://learn.microsoft.com/en-us/entra/id-protection/howto-identity-protection-investigate-risk)
-   with the security owner. Check actual `RiskLevelDuringSignIn`, `RiskLevelAggregated`,
-   `RiskState`, and `RiskDetail` where available. Findings can arrive asynchronously;
-   empty, none, or hidden values do not clear fraud. Do not promise these detections
-   in an external tenant because a template is named "risk detection."
-
-### Configure the rule in the portal
-
-1. The person creating the rule needs **read access to the workspace**, **write access to
-   the rule's resource group**, and **read access to the action group**. Check the
-   [official alert prerequisites](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-create-log-alert-rule#prerequisites).
-   Creating an action group or assigning roles needs separate permissions.
-   External-tenant operators must use approved Azure RBAC in the subscription-owning
-   workforce tenant; Entra roles or Lighthouse delegation alone do not grant every operation.
-2. Open **Azure portal > Monitor > Alerts > Create > Alert rule**. On **Scope**, choose
-   your destination **Log Analytics workspace** and select **Apply**, not the Function App or
-   app registration. Compare with the
-   [illustrated scope screen](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-create-log-alert-rule#configure-the-scope-of-the-alert-rule).
-3. On **Condition**, select **Custom log search**. Paste the **saved, app-scoped query**
-   selected above. Select **Run**, inspect **Preview**, then **Continue Editing Alert**.
-   Use the [illustrated condition/measurement instructions](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-create-log-alert-rule#configure-alert-rule-conditions).
-   Use a scheduled **log search alert**, not an Azure Activity Log alert. Check the workspace's
-   **Tables** settings for the table plan; confirm the selected plan supports the query/rule.
-4. Set **Measurement** to match what the query returns. For unsummarized matching event rows,
-   use **Table rows** with **Total** to count those rows. For an official summarized query
-   such as **Failed Signin reasons**, use **Calculation of a numeric column**, select its
-   count column (`Count` in that source query), and choose the aggregation/grouping
-   that matches your objective.
-   Summing count groups is different from taking the maximum group; agree which is intended.
-   A rate query requires the reviewed numeric rate column. Do not count summary rows
-   as failures or assume the wizard's automatically detected measurement is correct.
-5. On **Alert logic**, start with **Static** and the threshold you chose from your baseline.
-   Set the **Operator** and **Threshold value**, checking the units against the query output.
-   Only use a returned-row/greater-than-zero condition when the query itself
-   deliberately returns **qualifying incidents**, not an unconditional summary. Do not
-   apply that setting blindly to Microsoft's count examples.
-6. Set **Aggregation granularity (window size)** and **Frequency of evaluation** from the
-   observation window, normal ingestion delay, response needs, and budget.
-   Keep these settings in your team's rule notes. A frequent evaluation is not proof of
-   fresh data; overlapping windows can observe the same records repeatedly.
-7. In **Advanced options**, review **Override query time range** and any query time filter
-   together. Ensure the rule scans the data required by its approved calculation, including
-   any deliberately delayed observation window. Alert queries scan at most **48 hours**;
-   a longer baseline query is not automatically a valid scheduled rule. One-minute evaluation
-   has extra query restrictions, including `ingestion_time()`; consult the official reference
-   before selecting it. A time picker used during exploration is not a stored rule setting.
-8. With your response team, set **Number of violations to trigger the alert**. If using
-   several violating evaluations, check the query's required datetime output and evaluation period
-   against the official instructions. Inspect the **Preview** for healthy and qualifying
-   periods. Do not assume missing data is a healthy evaluation.
-9. Leave **Split by dimensions** unset unless separate incidents are required and reviewed.
-   Adding app/IP/user dimensions changes grouping, incident count, cost, and exposed data.
-   Avoid volatile/high-cardinality request, correlation, and user identifiers. A workspace-scoped
-   alert without dimensions is a workspace incident; document the app/scope in its runbook.
-10. On **Actions**, select an approved action group or select **Create action group**.
-    Follow the [illustrated action-group creation instructions](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/action-groups#create-in-the-azure-portal).
-    Confirm subscription/resource group, name, processing region, and notification recipients.
-    For a new group, complete **Basics**, then **Notifications** with the approved type,
-    recipient, and applicable **Common alert schema** setting. Review any **Actions**, then
-    select **Review + create > Create** and return to the rule to select the saved group.
-    Use approved email/push or incident routing, complete required recipient verification,
-    and keep security results on a restricted route. Do not attach an automated policy-change
-    action to an unvalidated heuristic.
-11. On **Details**, select the **Subscription**, **Resource group**, **Region**, and agreed
-    **Severity**. Enter an **Alert rule name** and **Description** identifying source tenant,
-    app, measure/units, threshold rationale, window, owner, and runbook. Use
-    [the illustrated Details and Identity screen](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-create-log-alert-rule#configure-alert-rule-details).
-12. Choose the **Identity** that will run the query. A **system-assigned managed
-    identity** has no permissions initially: create the rule with **Enable upon creation**
-    cleared, then ask your Azure administrator to grant that identity reader/query access to the
-    workspace through **Workspace > Access control (IAM)**. Allow role propagation before
-    enabling it. If using a **user-assigned identity**, authorize it before selection.
-    For **None**, record that query permissions follow the last editor. Check linked-storage
-    policy requirements and identity restrictions in the official reference before choosing.
-13. Review **Automatically resolve alerts** for stateful behavior and **Mute actions**
-    where appropriate. Resolution timing depends on evaluation frequency; it is not immediate.
-    Make sure the receiving team knows when repeated notifications will be suppressed.
-14. Select **Review + create** only after checking scope, query, measured units, time settings,
-    permissions, actions, and costs. Keep the initial rule disabled until its identity and
-    [validation checks](#validate-without-generating-provider-sends) are ready. To change it,
-    use **Monitor > Alerts > Alert rules > selected rule > Edit**.
+   and the [user-behavior template](https://github.com/microsoft/external-id-azure-monitor/blob/main/templates/userBehaviourWorkbookDeployment.json)
+   for investigation. Neither supplies a turnkey EPP fraud alert.
+2. Have security review actual `IPAddress`, `UserId`, and `ResultType` population before
+   choosing a grouped rule. Account for unknown users, absent IPs, approximate distinct
+   counts, distributed attempts, NAT, VPNs, mobile networks, and shared proxies.
+   IP geolocation does not prove physical location.
+3. Restrict personal-data results/notifications. Don't automatically block, disable an
+   account/provider, or change policy solely on these heuristics.
+4. In supported, licensed workforce tenants, follow
+   [risk investigation instructions](https://learn.microsoft.com/en-us/entra/id-protection/howto-identity-protection-investigate-risk).
+   Check populated `RiskLevelDuringSignIn`, `RiskLevelAggregated`, `RiskState`, and `RiskDetail`.
+   Detections can arrive asynchronously; empty, none, or hidden isn't fraud clearance.
+   A template named "risk detection" doesn't enable ID Protection in external tenants.
 
 ### Monitor ingestion separately
 
-1. Decide who will check log collection as well as who responds to sign-in alerts.
-   Quiet alerts can mean broken export, not healthy authentication. Review the
-   [log-alert guidance on missing data](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-types#log-alerts)
-   before designing a freshness rule.
-2. Work out when the app normally has traffic, including quiet hours and
-   maintenance. Compare **Entra > Sign-in logs** with the workspace after the measured delay.
-   No user activity and stopped collection can look identical; do not enable staleness paging
-   for an idle app without a documented expectation.
-3. Work with your query maintainer to adapt the
-   [ingestion-time/latency guidance](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-ingestion-time)
-   into a separate app-scoped freshness check. Test what happens with **no matching rows,
-   missing ingestion time, and stale latest arrival**. The linked
-   reference is not a preconfigured Entra no-data alert. Do not hide an unresolved table or
-   query error behind an empty-success fallback.
-4. Create a separate rule using the same portal workflow, with its own freshness measure,
-   threshold, lookback, frequency, action group, and owner. Match its **Override query time
-   range** to the freshness calculation, not blindly to the aggregation window. Confirm
-   frequency supports the query; ingestion-time functions are restricted at one-minute frequency.
-5. Check **Monitor > Alerts > Alert rules**, the selected rule's health/errors and associated
-   alerts, and the workspace's collection settings. Permission/query failures must be resolved
-   separately from a stale-data incident. Inspect transformations, ingestion limits, and service
-   health with your workspace administrator; missing evidence doesn't mean less abuse.
+1. Assign someone to check collection as well as failures. See
+   [missing-data guidance](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-types#log-alerts):
+   quiet alerts can mean stopped export. An idle app and broken collection can look alike;
+   agree on normal traffic, quiet hours, and maintenance before enabling freshness paging.
+2. Compare portal sign-ins with the workspace after the measured delay. Adapt the linked
+   ingestion guidance into a scoped check for **no rows, missing ingestion time, and stale
+   arrival**; test each case. It is not a preconfigured no-data alert. An unresolved table
+   or query error must remain visible, not become an empty-success fallback.
+3. Create a separate rule with its own measure, threshold, lookback, frequency, recipient,
+   and maintainer. Match the query-time override to that calculation; don't blindly use
+   the aggregation window. Check the query's frequency restrictions.
+4. Inspect rule health/query errors, export settings, workspace access, transformations,
+   ingestion limits, and service health. Fix evaluation failures separately from stale-data
+   incidents. Missing evidence doesn't mean less abuse.
 
 ### Validate without generating provider sends
 
-1. Open the selected action group and use **Test**, following the official
-   [action-group testing instructions](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/action-groups#test-an-action-group-in-the-azure-portal).
-   Save the group first. Choose the test's alert type and approved notification/action
-   receivers, then select **Test** and keep the test page open until **Success** or **Failed**
-   appears. On failure, use **View details**, resolve the error, save, and retest.
-   Confirm the intended recipients actually receive it, including verification and
-   spam-filter checks; access to read a group alone does not grant test permission.
-   This tests notification routing, not log export or query evaluation.
-2. Run the saved, app-scoped query against existing records you're authorized to inspect.
-   Compare it with the associated Entra sign-ins. Check a healthy window, a qualifying window, an empty scope,
-   and known ingestion delay. Confirm output shape/units agree with the rule's Measurement.
-3. For an end-to-end check, create a **temporary nonproduction rule** with a restricted
-   test action group. Use existing records within its lookback and an approved temporary
-   condition that they satisfy. If changing the query time filter, update the rule's
-   **Override query time range** consistently and stay within the alert scan limit.
-   Do not lower a production threshold or route a test to production incident automation.
-4. Authorize the test rule's evaluation identity and enable it. Observe a scheduled
-   evaluation and notification in **Monitor > Alerts**. Keep the rule name, UTC time,
-   measured value, and recipients so your team can check the result. A successful query
-   under your own identity does not prove the rule identity can read the workspace.
-5. Verify resolution when the test condition clears, allowing for stateful resolution timing.
-   Disable/delete the temporary rule and remove temporary overrides. Reopen the intended
-   rule to confirm its approved query, threshold, time settings, recipients, and enablement.
-6. If records are insufficient, use only an approved **non-phone test sign-in flow** in a
-   test tenant/app. Do not induce repeated wrong OTPs, alter production policy, bypass Easy Auth,
-   or send live OTPs just to populate a report. An EPP evaluation does not validate delivery
-   and is not guaranteed to create `SigninLogs` records.
-7. Before enabling production notifications, check that logs arrive, the saved query works,
-   the rule can read the workspace, and the right people receive the alert. Remove any
-   leftover test settings. These checks need to happen in your environment; this guide
-   hasn't run Azure/Kusto queries or created or tested your rules.
+1. Save the action group before **Test**. Keep the test page open until **Success** or
+   **Failed**; on failure use **View details**, fix, save, and retest. Check recipient
+   verification and spam filtering. Group read access alone doesn't grant test permission.
+2. Compare the saved query with existing portal records in healthy, qualifying, empty,
+   and delayed windows. Check output units against Measurement. For a temporary
+   nonproduction rule, use records inside its lookback and a restricted test action group.
+   Change the query time filter and portal override together, within the alert scan limit.
+3. Authorize the test rule identity, enable it, and observe a scheduled alert and notification
+   in **Monitor > Alerts**. Check resolution after the condition clears, allowing for stateful
+   timing. Remove the test rule/overrides and restore the intended production settings.
+4. Don't lower production thresholds for testing or route tests to production automation.
+   If needed, use an approved non-phone test sign-in flow. Don't bypass Easy Auth, send live
+   OTPs, induce repeated wrong codes, or alter production authentication policy.
 
-## 6. Build a sign-in Workbook
+<a id="6-build-a-sign-in-workbook"></a>
 
-1. Open the [Microsoft External ID monitoring repository](https://github.com/microsoft/external-id-azure-monitor)
-   and review its setup instructions. Inspect the relevant
-   [authentication](https://github.com/microsoft/external-id-azure-monitor/blob/main/templates/authenticationsWorkbookDeployment.json),
-   [MFA](https://github.com/microsoft/external-id-azure-monitor/blob/main/templates/mfaWorkbookDeployment.json),
-   or [user-behavior](https://github.com/microsoft/external-id-azure-monitor/blob/main/templates/userBehaviourWorkbookDeployment.json)
-   template for existing queries and visualizations. Do not select **Deploy to Azure**
-   just to view a query; templates can create resources/delegation and require separate approval.
-   In the GitHub file view, inspect the workbook's **serializedData** and its query definitions
-   with your query maintainer. These files are ARM deployment templates, not text to paste in full
-   into Logs; extract/review only the needed query or use an already-approved deployed Workbook.
-2. Check each chosen query's tables, tenant features, workspace/app filters, time settings,
-   personal-data fields, and units against your actual records. A template named
-   [risk detection](https://github.com/microsoft/external-id-azure-monitor/blob/main/templates/riskDetectionWorkbookDeployment.json)
-   does not make ID Protection available in an external tenant.
-3. In **Azure portal > Monitor > Workbooks**, select **New** or an empty template and enter
-   **Edit** mode. Follow the
-   [illustrated Workbook authoring guide](https://learn.microsoft.com/en-us/azure/azure-monitor/visualize/workbooks-create-workbook).
-   Select **Add > Add query**, choose **Logs (Analytics)** and the verified workspace,
-   then use the query you reviewed and saved.
-4. Select a **Visualization** matching the output, then **Run Query**. Use counts/result-code
-   grids for breakdowns and a time chart only for a query with the appropriate time-series
-   output. Check actual scope/time/units before selecting **Done editing**; the
-   [Add queries instructions](https://learn.microsoft.com/en-us/azure/azure-monitor/visualize/workbooks-create-workbook#add-queries)
-   show the relevant controls.
-5. Add a short explanation of which tenant/app the view covers, what it counts, how long
-   logs take to arrive, what missing data means, and who to contact. Label sign-in records
-   and authentication steps distinctly; an empty chart is not a healthy result.
-   Include the separately reviewed freshness view.
-6. If adding app/workspace/time parameters, bind them into **every relevant query** and
-   verify that changing them changes the data as intended. A Workbook selector does not
-   override a hard-coded filter automatically. Keep detailed IP/user-level views restricted.
-7. Select **Save** and choose the approved subscription, resource group, location, and name.
-   Ask a teammate with log access to open it and check the filters. Sharing a Workbook
-   does not grant access to the underlying logs. Workbooks visualize data; they do **not**
-   create the scheduled alerts above or prove those alerts are enabled.
+### Build a Workbook when you need a shared view
 
-## 7. Triage, privacy, retention, and costs
+1. Review the [Microsoft monitoring repository](https://github.com/microsoft/external-id-azure-monitor)
+   and its authentication, MFA, and user-behavior templates linked above. Inspect
+   **serializedData** query definitions with your query maintainer. These are ARM templates,
+   not text to paste wholesale into Logs. **Deploy to Azure** can create resources/delegation;
+   don't select it just to inspect a query.
+2. Check tables, tenant features, personal fields, units, filters, and time settings.
+   The [risk template](https://github.com/microsoft/external-id-azure-monitor/blob/main/templates/riskDetectionWorkbookDeployment.json)
+   doesn't make risk features available in your tenant.
+3. Open **Azure portal > Monitor > Workbooks > New**, enter **Edit**, then **Add > Add query**.
+   Select **Logs (Analytics)** and your workspace. Use the reviewed query and follow
+   [Workbook authoring](https://learn.microsoft.com/en-us/azure/azure-monitor/visualize/workbooks-create-workbook)
+   and [Add queries](https://learn.microsoft.com/en-us/azure/azure-monitor/visualize/workbooks-create-workbook#add-queries).
+   Choose a suitable **Visualization**, **Run Query**, then **Done editing**.
+4. Label record/step counts clearly, explain missing data and arrival delay, and include
+   freshness. Bind app/workspace/time parameters into every relevant query and test changes;
+   selectors don't automatically replace hard-coded filters. Restrict detailed user/IP views.
+5. **Save** to the agreed subscription/resource group/location and have a teammate check
+   access. Workbook sharing doesn't grant underlying log access, create alerts, or prove
+   they are enabled.
 
-1. When notified, open **Monitor > Alerts > selected alert** and confirm rule name,
-   workspace, tenant/app scope, UTC window, measured value, and rule/collection health.
-   Open the approved saved query for that period, then inspect the related Entra sign-in's
-   **Basic info**, **Authentication Details**, and applicable policy results.
-2. Review changed result codes with your identity-support team. Separate user
-   mistakes/interruptions, application releases, and policy changes from infrastructure
-   failures or potential abuse. Escalate suspected compromise through the organization's
-   security response process; a heuristic notification is not a confirmed fraud verdict.
-3. If phone delivery is implicated, follow the existing
-   [runtime-specific Function queries](MONITORING.md#runtime-specific-log-discovery).
-   Compare UTC time, verified request context, failure stage, and provider outcome with
-   restricted provider records. `SigninLogs.CorrelationId`, Function `OperationId`,
-   request IDs, and provider references are **not guaranteed equal**. Prove any association
-   in an approved trace before using a join. An absent match does not prove no Function call;
-   fallback can also complete authentication through another path.
-4. Keep personal data in approved systems. User IDs/names, IP/location/device details,
-   sign-in identifiers, and authentication details can be sensitive. Review workspace/table
-   access, Workbook sharing, and action-group recipients. Do not export raw records to public
-   issues or put OTPs, message bodies, tokens, or credentials in alerts. Query filters are
-   **not an access-control boundary**.
-5. In **Log Analytics workspace > Tables**, select the relevant table and review its
-   table plan, **analytics retention**, and **total retention** with the privacy/retention
-   owner. Follow [retention configuration](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-retention-configure).
-   Confirm the setting actually saved and allows the required investigation period.
-   Entra portal retention and workspace retention are different.
-6. Review **workspace Usage and estimated costs** and **Azure Cost Management > Cost analysis**
-   for the approved subscription/resource scope, using the
-   [log-cost guidance](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/cost-logs).
-   Diagnostic export selects categories, not an app-specific stream: app query filters
-   do not remove tenant-wide ingestion charges. Include retention, queries, alert frequency,
-   dimension count, notifications, and any separately enabled services in budget review.
-7. Inspect caps and transformations with the collection owner. They can remove evidence
-   needed by a rule. Verify changes do not silently remove required fields/populations and
-   update collection-health checks. Provider sending/billing remains a separate cost source.
-8. Put the setup notes somewhere your team can find them without exposing them publicly.
-   Include the tenant/app, workspace and export setting, saved queries, normal traffic and
-   arrival delay, Workbook, alert identity/settings, action group, and test results.
-   Name the contacts for collection, identity support, security, privacy, retention, and costs,
-   along with escalation and maintenance arrangements.
-9. Walk a teammate through opening the queries and Workbook, checking rule health,
-   receiving a test notification, and investigating an alert. They shouldn't need to send
-   an OTP or change authentication policy to do this. Remove any remaining temporary test
-   settings before handing over.
+<a id="7-triage-privacy-retention-and-costs"></a>
+
+### Investigate alerts and manage the data
+
+1. In **Monitor > Alerts > selected alert**, check the rule, workspace, app/tenant scope,
+   UTC window, measured value, and rule/collection health. Open the saved query for that
+   period, then the relevant Entra **Basic info**, **Authentication Details**, and policy results.
+2. Separate user mistakes/interruptions, releases, and policy changes from outages or abuse.
+   Escalate suspected compromise through your security response process; a heuristic isn't
+   a confirmed fraud verdict.
+3. For phone concerns, compare [runtime-specific Function logs](MONITORING.md#runtime-specific-log-discovery)
+   and restricted provider records. `SigninLogs.CorrelationId`, Function `OperationId`,
+   request IDs, and provider references are **not guaranteed equal**. Prove an association
+   before joining them. No match doesn't prove no Function call; fallback can complete
+   authentication through another path. Provider acceptance isn't handset receipt.
+4. Keep raw identity/device/IP/phone data in approved systems. Check workspace/table access,
+   Workbook sharing, and recipients. Don't put tokens, credentials, OTPs, or messages in
+   alerts/public issues. Query filters are **not an access-control boundary**.
+5. Review **Workspace > Tables** plan, analytics retention, and total retention using
+   [retention instructions](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-retention-configure).
+   Confirm saved settings cover your investigation period; Entra portal and workspace
+   retention are separate.
+6. Check **Usage and estimated costs** and **Cost Management > Cost analysis** with the
+   [cost guidance](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/cost-logs).
+   Export selects categories, not an app-only stream: query filters don't remove tenant-wide
+   ingestion charges. Include retention, queries, alert frequency/dimensions, notifications,
+   and separately enabled services. Provider billing is separate again.
+7. Review caps/transformations with the collection maintainer; they can remove evidence
+   the rules need. Keep setup notes, test results, contacts for support/security/privacy/
+   retention/costs, and escalation/maintenance arrangements together. Walk a teammate through
+   the query, Workbook, rule health, and test notification without sending OTPs or changing policy.
