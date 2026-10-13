@@ -53,9 +53,9 @@ For local development, manual configuration, and deployment checks, see the
 [detailed configuration and validation guide](docs/ONBOARDING.md).
 
 To extend these implementations for a customer-owned provider, follow the
-[bring your own provider guide](docs/BRING-YOUR-OWN-PROVIDER.md). It uses Twilio as an
-illustrative SMS/voice adapter in each language, not a bundled adapter, guided setup
-option, or statement of tenant activation eligibility.
+[bring your own provider guide](docs/BRING-YOUR-OWN-PROVIDER.md). Its step-by-step Twilio
+walkthrough points to the code to change in each language and official provider references.
+It is not a bundled adapter, guided setup option, or statement of tenant activation eligibility.
 
 ## Guided EPP setup
 

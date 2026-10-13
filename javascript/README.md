@@ -116,9 +116,9 @@ retries. The shared contract defines validation, HTTP outcomes and privacy-safe 
 
 ## Source and extension points
 
-For a concrete customer-owned SMS/voice adapter example, see the
+For step-by-step customer-owned SMS/voice adapter extension instructions, see the
 [Twilio walkthrough](../docs/BRING-YOUR-OWN-PROVIDER.md#javascript).
-It describes code you must add and test, not built-in Twilio or guided setup support.
+It links the code to change and official provider references, not built-in Twilio or guided setup support.
 
 For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and the
 [JavaScript service-event queries](../docs/MONITORING.md#4-javascript-service-event-queries).
