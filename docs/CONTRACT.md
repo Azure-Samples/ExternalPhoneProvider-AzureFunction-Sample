@@ -198,11 +198,11 @@ return `error: "decryption_failed"` without a cryptographic reason or nonce.
 
 ### Runtime binding differences
 
-The portable request forms above are not a claim that all parsers accept the same inputs or
-produce identical errors. JavaScript/Python parse JSON inside the handler; .NET binds a typed
-`EntraSendOtpPayload` through the Functions host before calling it.
+Use the request forms above across runtimes, but expect differences in parsing and errors.
+JavaScript/Python parse JSON inside the handler. The .NET Functions host first binds the JSON
+to a typed `EntraSendOtpPayload`, then calls the handler.
 
-- .NET permits explicit null `ttlSeconds` as omitted, and its enum converter accepts numeric
+- .NET treats null `ttlSeconds` as omitted, and its enum converter accepts numeric
   strings such as `"1"`. JavaScript/Python reject those forms. Send an integer TTL or omit it,
   and use integer channel/mode codes or named strings for portability.
 - Malformed JSON and incompatible property types can fail .NET host binding before the
@@ -214,13 +214,14 @@ produce identical errors. JavaScript/Python parse JSON inside the handler; .NET 
   JavaScript/Python instead check their raw values for completeness. Optional fields are not
   uniformly modeled: only `locale` accompanies the required fields in .NET's delivery context;
   JavaScript/Python also retain `extension` and `riskContext`, but shared dispatch omits both.
-- For normal nonempty string IDs, response correlation precedence is body `correlationId`,
-  then `x-ms-correlation-id`, then generated `requestId`. JavaScript uses raw header fallback;
-  Python/.NET sanitize that header. .NET preserves an empty body string, while JavaScript/Python
-  fall back. Early validation errors omit correlation; later handled errors include it.
+- For normal nonempty string IDs, the response uses body `correlationId` first, then
+  `x-ms-correlation-id`, then a generated `requestId`. JavaScript uses the raw header;
+  Python/.NET sanitize it. .NET preserves an empty body string; JavaScript/Python fall back.
+  Early validation errors omit correlation; later handled errors include it.
   Python's unexpected-error path can return null correlation when a parsed payload lacks it.
-  `x-ms-client-request-id` supplies internal `messageId` with generated fallback; JavaScript
-  uses the raw header, whereas Python/.NET sanitize it. These IDs do not provide deduplication.
+- `x-ms-client-request-id` supplies the internal `messageId`, with a generated fallback.
+  JavaScript uses the raw header; Python/.NET sanitize it. Neither request ID nor correlation
+  ID provides deduplication.
 
 See the handlers for exact binding and response paths:
 [JavaScript](../javascript/src/functions/SendOtp.js),
