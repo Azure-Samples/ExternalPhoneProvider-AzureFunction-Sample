@@ -236,16 +236,27 @@ try {
                 }
                 finally { $short.Dispose() }
             }
-            $weakRsa = [Security.Cryptography.RSA]::Create(1024)
-            $weakRequest = [Security.Cryptography.X509Certificates.CertificateRequest]::new(
-                'CN=ExternalPhoneProvider', $weakRsa, [Security.Cryptography.HashAlgorithmName]::SHA256,
-                [Security.Cryptography.RSASignaturePadding]::Pkcs1)
-            $weak = $weakRequest.CreateSelfSigned([DateTimeOffset]::UtcNow.AddMinutes(-1), [DateTimeOffset]::UtcNow.AddYears(1))
-            try {
-                Set-TestBundle $weak
-                Assert-Throws { ConvertFrom-EppCertificateBundle -Bundle $script:Bundle } '2048 bits'
+            foreach ($keySize in @(1024, 2048, 3072)) {
+                $sizedRsa = [Security.Cryptography.RSA]::Create($keySize)
+                $sizedRequest = [Security.Cryptography.X509Certificates.CertificateRequest]::new(
+                    'CN=ExternalPhoneProvider', $sizedRsa, [Security.Cryptography.HashAlgorithmName]::SHA256,
+                    [Security.Cryptography.RSASignaturePadding]::Pkcs1)
+                $sizedCertificate = $sizedRequest.CreateSelfSigned([DateTimeOffset]::UtcNow.AddMinutes(-1), [DateTimeOffset]::UtcNow.AddYears(1))
+                try {
+                    Set-TestBundle $sizedCertificate
+                    if ($keySize -lt 2048) {
+                        Assert-Throws { ConvertFrom-EppCertificateBundle -Bundle $script:Bundle } '2048 bits'
+                    }
+                    else {
+                        $validated = ConvertFrom-EppCertificateBundle -Bundle $script:Bundle
+                        try {
+                            Assert ($validated.Certificate.Thumbprint -ceq $sizedCertificate.Thumbprint) "RSA-$keySize must be accepted on every supported test platform."
+                        }
+                        finally { $validated.Certificate.Dispose() }
+                    }
+                }
+                finally { $sizedCertificate.Dispose(); $sizedRsa.Dispose() }
             }
-            finally { $weak.Dispose(); $weakRsa.Dispose() }
             Set-TestBundle $certificate
             foreach ($invalid in @(
                 'https://epptestvault.vault.azure.net/certificates/phone-provider-encryption',

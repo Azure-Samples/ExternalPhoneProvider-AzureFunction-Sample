@@ -1251,7 +1251,8 @@ function ConvertFrom-EppCertificateBundle {
     try {
         $rsa = [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($certificate)
         try {
-            if (-not $rsa -or $rsa.KeySize -lt 2048 -or $certificate.HasPrivateKey -or
+            # RSAOpenSsl overrides only the setter; call the inherited getter to avoid PowerShell's write-only property view.
+            if (-not $rsa -or $rsa.get_KeySize() -lt 2048 -or $certificate.HasPrivateKey -or
                 $certificate.NotBefore.ToUniversalTime() -gt [DateTime]::UtcNow -or
                 $certificate.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow.AddDays(30)) {
                 throw 'The certificate must contain an RSA public key of at least 2048 bits, be valid now, and have more than 30 days remaining.'
