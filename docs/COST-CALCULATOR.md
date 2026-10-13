@@ -16,7 +16,9 @@ the assumptions, supported destinations, taxes, fees, and final pricing with you
 The `authenticationDetails` data used by this guide is currently available through the
 [Microsoft Graph beta API](https://learn.microsoft.com/en-us/graph/api/resources/authenticationdetail?view=graph-rest-beta).
 Beta APIs are subject to change and are not supported for production applications. Review
-and test this reporting script before each planning exercise.
+and test this reporting script before each planning exercise. Because sign-in details mask
+phone numbers, the script matches their visible trailing digits to the user's registered
+phone authentication methods and derives the calling code from the matched registration.
 
 ## Prerequisites
 
@@ -24,6 +26,7 @@ Run the script in PowerShell 7 from a secured administrator workstation. The sig
 account must be allowed to consent to or use these Microsoft Graph delegated permissions:
 
 - `AuditLog.Read.All`
+- `UserAuthenticationMethod.Read.All`
 
 Access to sign-in logs also depends on your Microsoft Entra licensing, directory role,
 and log-retention period. Review the requested permissions before consenting. The script
@@ -36,40 +39,83 @@ approved folder.
 
 ## Generate the activity report
 
-The following sample installs the Microsoft Graph beta reports module for the current
-user, connects to Microsoft Graph, identifies SMS and voice authentication steps, and
-groups them by the phone number's calling code. Replace `$start` and `$end` with the
-period you want to analyze.
+The following sample installs the required Microsoft Graph modules for the current user,
+connects to Microsoft Graph, identifies SMS and voice authentication steps, and matches
+each masked phone detail to a registered phone method. It caches phone-method lookups so
+each user is queried only once. Replace `$start` and `$end` with the period you want to
+analyze.
 
 ```powershell
-# 1. Install the beta reports module if it is missing
-if (-not (Get-Module -ListAvailable "Microsoft.Graph.Beta.Reports")) {
-    Install-Module "Microsoft.Graph.Beta.Reports" `
-        -Scope CurrentUser `
-        -Force `
-        -AllowClobber |
-        Out-Null
-}
+# 1. Install required modules if they are missing
+"Microsoft.Graph.Beta.Reports", "Microsoft.Graph.Identity.SignIns" |
+    Where-Object { -not (Get-Module -ListAvailable $_) } |
+    ForEach-Object {
+        Install-Module $_ -Scope CurrentUser -Force -AllowClobber | Out-Null
+    }
 
 # 2. Connect to Graph API
-Connect-MgGraph -Scopes "AuditLog.Read.All" | Out-Null
+Connect-MgGraph `
+    -Scopes "AuditLog.Read.All", "UserAuthenticationMethod.Read.All" |
+    Out-Null
 
 # 3. Define Start and End Time Range (ISO 8601 UTC)
 $start = "2026-10-01T00:00:00Z"
 $end   = "2026-10-30T23:59:59Z"
 
-# 4. Fetch sign-ins and emit one row for each SMS or voice authentication step
+# 4. Cache registered phone methods and resolve masked sign-in details
+$phoneMethodsByUser = @{}
+
 $activity = Get-MgBetaAuditLogSignIn `
     -Filter "createdDateTime ge $start and createdDateTime le $end" `
-    -Property "authenticationDetails" `
+    -Property "userId", "authenticationDetails" `
     -All `
     -ErrorAction Stop |
     ForEach-Object {
-        $_.AuthenticationDetails |
-            Where-Object { $_.AuthenticationMethod -in "SMS", "Voice" } |
+        $signIn = $_
+        $phoneDetails = @(
+            $signIn.AuthenticationDetails |
+                Where-Object { $_.AuthenticationMethod -in "SMS", "Voice" }
+        )
+
+        if ($phoneDetails.Count -gt 0) {
+            if ([string]::IsNullOrWhiteSpace($signIn.UserId)) {
+                $registeredMethods = @()
+            }
+            else {
+                if (-not $phoneMethodsByUser.ContainsKey($signIn.UserId)) {
+                    $phoneMethodsByUser[$signIn.UserId] = @(
+                        Get-MgUserAuthenticationPhoneMethod `
+                            -UserId $signIn.UserId `
+                            -ErrorAction Stop
+                    )
+                }
+
+                $registeredMethods = $phoneMethodsByUser[$signIn.UserId]
+            }
+
+            $phoneDetails |
             ForEach-Object {
+                $authenticationDetail = $_
+                $visibleDigits = $authenticationDetail.AuthenticationMethodDetail -replace '\D', ''
+
+                $matchingMethods = @(
+                    $registeredMethods |
+                        Where-Object {
+                            $registeredDigits = $_.PhoneNumber -replace '\D', ''
+                            $supportsMethod = (
+                                $authenticationDetail.AuthenticationMethod -eq "Voice" -or
+                                $_.PhoneType -in "mobile", "alternateMobile"
+                            )
+
+                            $supportsMethod -and
+                            $visibleDigits.Length -ge 2 -and
+                            $registeredDigits.EndsWith($visibleDigits)
+                        }
+                )
+
                 $callingCode = if (
-                    $_.AuthenticationMethodDetail -match '^\s*(\+\d{1,3})(?:\s|$)'
+                    $matchingMethods.Count -eq 1 -and
+                    $matchingMethods[0].PhoneNumber -match '^\s*(\+\d{1,3})(?:\s|$)'
                 ) {
                     $Matches[1]
                 }
@@ -79,9 +125,10 @@ $activity = Get-MgBetaAuditLogSignIn `
 
                 [PSCustomObject]@{
                     CountryCallingCode = $callingCode
-                    AuthenticationMethod = $_.AuthenticationMethod
+                    AuthenticationMethod = $authenticationDetail.AuthenticationMethod
                 }
             }
+        }
     }
 
 # 5. Group and count by calling code and authentication method
@@ -102,17 +149,22 @@ $report | Export-Csv -Path "C:\temp\SMS_Voice_SignIns_By_Calling_Code.csv" -NoTy
 ```
 
 Microsoft documents `SMS` and `Voice` as authentication method values and states that
-`authenticationMethodDetail` can contain the phone number for those methods. The script
-does not match an undocumented `Text` value. It also does not use sign-in geography or a
-user's currently registered default number, because those can differ from the phone method
-recorded for the authentication step.
+`authenticationMethodDetail` can contain the phone number for those methods. In sign-in
+results, that value can be masked, for example `+x XXXXXXXX90`. The script removes
+non-digits from that detail and matches the visible suffix (`90`) against the user's
+registered methods. It then extracts the calling code from the uniquely matched registered
+number, whose Graph format includes a space after the code, such as `+91 1234567890`.
 
-The calling-code extraction expects the detail to start with a plus-prefixed code followed
-by a space, such as `+91 1234567890`. Masked values or other formats are grouped as
-`Unknown`; review a small, securely handled sample in your tenant before relying on the
-aggregation. `-All` requests all available pages, but large tenants should still account
-for Microsoft Graph throttling and execution time. The script uses `-ErrorAction Stop`
-rather than silently producing a partial report when the sign-in query fails.
+For SMS, only `mobile` and `alternateMobile` registrations are considered; voice can use
+any registered phone type. A row is grouped as `Unknown` when the masked detail exposes
+fewer than two digits, no registered number matches, more than one registered number has
+the same visible suffix, or the matched number has an unexpected format. This avoids
+guessing a destination. Review the `Unknown` total before relying on the estimate.
+
+The script does not match an undocumented `Text` method or use sign-in geography. `-All`
+requests all available pages, but large tenants should still account for Microsoft Graph
+throttling and execution time. The script uses `-ErrorAction Stop` rather than silently
+producing a partial report when either sign-in or phone-method retrieval fails.
 
 The Microsoft Graph
 [list signIns API documentation](https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-1.0&tabs=http)
