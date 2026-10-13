@@ -51,7 +51,7 @@ not changes made by this guide.
    [Function monitoring guide](MONITORING.md#runtime-specific-log-discovery) separately.
 
 **Only investigating one problem? You can stop here.** You don't need to export logs, create
-a workspace, or incur additional Azure Monitor collection costs for this portal-only path.
+a workspace (where exported logs are stored), or incur additional Azure Monitor collection costs for this portal-only path.
 Continue if your team wants ongoing alerts or longer-term analysis.
 
 ## 3. Export logs for ongoing monitoring
@@ -104,7 +104,8 @@ Continue if your team wants ongoing alerts or longer-term analysis.
    No matching records is **not** a healthy result: check the destination, time range,
    category, access, and portal sign-ins before continuing.
 3. Open Microsoft's [Failed Signin reasons query](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/queries/signinlogs#failed-signin-reasons).
-   In **KQL mode**, copy it from that source and filter to your `AADTenantId` and `AppId`
+   In **KQL mode** (Kusto Query Language, used to search logs), copy it from that source
+   and filter to your `AADTenantId` and `AppId`
    **before summarizing**. Ask someone familiar with KQL to review the edits. Check the
    string type of `ResultType` and handle empty codes separately; these are authentication
    codes, not provider HTTP statuses. [Query adaptation details](#4-establish-the-baseline)
@@ -112,7 +113,8 @@ Continue if your team wants ongoing alerts or longer-term analysis.
 4. Choose an observation window with the receiving team, then **Run** that same calculation
    across normal, peak, and quiet periods in a representative business cycle. Read `Count`
    and the result codes, not the number of summary rows. Allow for measured ingestion delay;
-   choose a failure-count threshold for that window, not a whole week's total. There is no
+   use your baseline (the usual failure count over the chosen period) to choose a threshold
+   for that window, not a whole week's total. There is no
    universal threshold; the source query is not a turnkey EPP or fraud detector.
 5. Select **Save > Save as query** and choose the agreed query pack. Saving needs
    **Log Analytics Contributor**; ask an authorized teammate if you only have read access.
@@ -126,7 +128,7 @@ IP-based detection for [later](#more-alert-types), once you understand this base
 
 1. Check [alert permissions](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/alerts-create-log-alert-rule#prerequisites):
    read access to the workspace, write access to the rule's resource group, and read access
-   to its action group. Creating groups or assigning roles requires additional permissions.
+   to its action group (who gets notified). Creating groups or assigning roles requires additional permissions.
    In **Azure portal > Monitor > Alerts > Create > Alert rule**, select your **Log Analytics
    workspace** as **Scope**, not the Function or app registration.
 2. On **Condition**, choose **Custom log search**, paste the saved query, and select **Run**.
@@ -135,13 +137,14 @@ IP-based detection for [later](#more-alert-types), once you understand this base
    This is a scheduled log search alert, not an Azure Activity Log alert; check that your
    table plan supports the query and rule.
 3. For **Failed Signin reasons**, set **Measure** to **Calculation of a numeric column**,
-   choose `Count`, and use **Total** if you want the total across the result-code groups.
+   choose `Count`, and use **Total** across the result-code groups.
    Leave **Split by dimensions** unset for this first combined alert. Don't count summary
-   rows as failures. Set **Static**, the **Operator**, and **Threshold value** from Step 4.
+   rows as failures. Set **Static**, **Greater than**, and a **Threshold value** based on
+   the normal counts for the same observation window in Step 4.
 4. Set **Aggregation granularity (window size)** and **Frequency of evaluation** to match
    the team's observation window, ingestion delay, response needs, and budget. Review
    **Override query time range** with the query's time filter; alert scans are limited to
-   **48 hours**. Start with a single violating evaluation; if you need several, review the
+   **48 hours**. Start with one evaluation above the threshold; if you need several, review the
    [required query output and evaluation settings](#query-identity-and-rule-options) first.
    Review healthy and qualifying periods in Preview. Keep missing-data expectations separate from failure counts;
    [collection-health guidance](#monitor-ingestion-separately) explains why.
@@ -175,8 +178,8 @@ IP-based detection for [later](#more-alert-types), once you understand this base
    Leave a teammate the query, rule, workspace, action group, settings, and support contacts.
    Arrange a check for [missing logs](#monitor-ingestion-separately), not just sign-in failures.
 
-That's the first-alert path. These checks happen in your environment; this guide hasn't
-run Azure/Kusto queries or configured your monitoring.
+Your first alert is ready once these checks pass. Use the optional reference below when
+you need more advanced monitoring.
 
 ## Optional reference
 
