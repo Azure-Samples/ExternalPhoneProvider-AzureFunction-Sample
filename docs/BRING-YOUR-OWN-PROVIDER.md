@@ -5,15 +5,26 @@ integration. This guide tells you **where to change the code and what to impleme
 it links existing repository implementations and official Twilio examples rather than
 providing another implementation to copy.
 
-**There is no Twilio adapter in this repository or its release packages.** You must
-write, register, test, and maintain one in your own source. Twilio is the requested
+**This path requires a developer. There is no Twilio adapter in this repository or
+its release packages.** Your team must write, register, test, and maintain one in
+customer-owned source; this is not a production-ready integration. Twilio is the requested
 illustrative provider, not a preferred provider, endorsement, or statement of Microsoft
 Entra External Phone Provider (EPP) eligibility.
 
 Complete steps 1-5, follow **one** language path in step 6, then finish steps 7-9.
 These are developer instructions, not an alternative guided setup or an activation procedure.
 
+| Phase | Who leads | What you finish |
+| --- | --- | --- |
+| Steps 1-2: agree scope and collect inputs | Tenant administrator and provider-account owner, with developer/operator | Approved scope or an offline-only decision; account/sender/credential requirements |
+| Steps 3-7: design and implement | Developer, with operator review | One registered adapter and documented configuration/security rules |
+| Step 8: verify offline | Developer | Passing tests/build and a reviewable handoff |
+| Step 9: release and validate | Operator, provider-account owner and tenant administrator | Customer package/deployment and separately approved channel checks |
+
 ## Step 1: Confirm access and assign owners
+
+**Lead:** tenant administrator. **Location:** the linked access guidance and your team's
+approval process; no setup command or Azure change is needed at this stage.
 
 1. Read [access and support guidance](ONBOARDING.md#before-purchasing-or-deploying).
    Before purchasing or deploying, confirm provider eligibility and the approved
@@ -32,10 +43,14 @@ These are developer instructions, not an alternative guided setup or an activati
    Keep offline tests on fake credentials/transports; local Function execution has no
    Easy Auth and must remain loopback-only, without tunnels.
 
-**Checkpoint:** owners understand that this is a custom code extension, not bundled
-Twilio support or permission to deploy/activate an unapproved integration.
+**Checkpoint:** record the owners, chosen runtime, and approved scope (or offline-only
+decision). Then continue to step 2.
 
 ## Step 2: Collect account, sender, and credential inputs
+
+**Lead:** provider-account owner, with the operator. **Location:** Twilio account records
+and the customer's deployment plan. Collect requirements now; provision credentials
+and Azure resources only during the approved release in step 9.
 
 1. Identify the Twilio account or subaccount that will own the messages/calls.
    Record its Account SID privately: it starts with `AC` followed by 32 hexadecimal
@@ -48,16 +63,18 @@ Twilio support or permission to deploy/activate an unapproved integration.
 3. Read [Create API keys in Twilio Console](https://www.twilio.com/docs/iam/api-keys/keys-in-console).
    Its current and legacy Console sections provide the navigation for the appropriate UI:
    current **Settings > Account settings > API keys & auth tokens**.
-   When authorized to provision credentials, select the correct region and a key type
-   with the narrowest permissions compatible with Messages and Calls. Do not require
+   Plan the correct region and a key type with the narrowest permissions compatible
+   with Messages and Calls. Do not require
    a broad Main key just because the send URLs contain the Accounts path.
-4. Keep the API key SID (`SK` followed by 32 hexadecimal characters) separate from
-   its secret. Twilio displays the secret only once; arrange secure capture into
-   the approved vault, not a screenshot, ticket, source file, or shared log.
+4. Plan how to keep the API key SID (`SK` followed by 32 hexadecimal characters)
+   separate from its secret. For a new key, Twilio displays the secret only once:
+   arrange secure capture into the vault at step 9, not a screenshot, ticket,
+   source file, or shared log. Do not retrieve a live secret for offline development.
    Follow [regional credential guidance](https://www.twilio.com/docs/global-infrastructure/manage-regional-api-credentials):
    keys are valid only in their own Twilio region.
-5. Record the approved vault URL, its reader managed identity, and the nonproduction
-   environment used for eventual authorized testing. Do not execute purchases,
+5. Record the intended vault, reader managed identity, and nonproduction environment
+   with the operator. If these do not exist yet, mark them as deployment tasks;
+   you do not need a live vault URL or identity to start offline coding. Do not execute purchases,
    deployments, or sends merely to complete this worksheet.
 
 Use the following as an **input checklist**, not a settings file:
@@ -66,15 +83,18 @@ Use the following as an **input checklist**, not a settings file:
 | --- | --- |
 | Account SID and region | The account owning both operations; credentials and API host use the same Twilio region |
 | SMS sender and voice caller ID | E.164 numbers approved for each channel; do not assume one number supports both |
-| API key SID and secret | Correct pair and operation permissions; a rotation/revocation owner |
+| API key requirements | Correct credential type/region and operation permissions; secure provisioning and rotation owners, not a copied secret |
 | Supported voice locales | Approved voice/language pairs and a defined policy for absent or unsupported locales |
-| Vault and reader identity | Identity attached to the Function when needed, with scoped secret-read permission |
+| Vault and reader identity | Planned resources and scoped read permission; actual URL/identity supplied during deployment |
 | Test destinations and budget | Explicitly approved nonproduction recipients and channel-specific acceptance checks |
 
-**Checkpoint:** account, API key SID, and API key secret are distinct inputs; sender,
-region, locale, and recipient requirements are known before implementation.
+**Checkpoint:** share a non-secret input checklist with the developer. Record unresolved
+account/sender/locale requirements and deployment tasks. Then continue to step 3.
 
 ## Step 3: Preserve the request and authentication contract
+
+**Lead:** developer. **Location:** the existing HTTP contract and your chosen runtime's
+handler, linked in step 6.
 
 1. Read the [HTTP contract](CONTRACT.md). Keep the existing envelope validation,
    pinned JWE algorithms, decryption, and caller allowlist. Easy Auth authenticates
@@ -97,10 +117,13 @@ region, locale, and recipient requirements are known before implementation.
    permits HTTP `200` with the original nonce. Failures omit it. A Twilio SID is
    provider metadata, not the nonce, and tracing IDs are not idempotency keys.
 
-**Checkpoint:** the customer extension changes provider behavior, not the Entra
-authentication, encryption, evaluation, or response protocol.
+**Checkpoint:** identify the handler branches that must remain unchanged and the
+provider-only extension boundary. Then define the wire behavior in step 4.
 
 ## Step 4: Define SMS, voice, and response behavior
+
+**Lead:** developer, with provider-account owner input for senders/locales.
+**Location:** the official API references below and the customer's adapter design.
 
 1. Open [Twilio API requests](https://www.twilio.com/docs/usage/requests-to-twilio).
    Use HTTP Basic authentication over HTTPS: **API key SID as username, API key
@@ -143,19 +166,25 @@ authentication, encryption, evaluation, or response protocol.
 | SMS | `SM` plus 32 hexadecimal characters | `queued`, `sending`, `sent`, `delivered` | `failed`, `undelivered`, `canceled` |
 | Voice | `CA` plus 32 hexadecimal characters | `queued`, `ringing`, `in-progress`, `completed` | `busy`, `failed`, `no-answer`, `canceled` |
 
-7. Treat SMS `accepted` as a Messaging Service-specific state, not generic success
+Continue the response design:
+
+1. Treat SMS `accepted` as a Messaging Service-specific state, not generic success
    for the From-number policy; do not accept `scheduled` for immediate OTP delivery.
    Return the runtime's `ProviderResult` with fixed safe failure classifications
    and let its existing HTTP mapping handle provider errors. Do not invent `Block`
    from a generic error or expose Twilio's raw error text.
-8. Stop at provider acceptance rather than waiting/polling for handset delivery.
+2. Stop at provider acceptance rather than waiting/polling for handset delivery.
    Queued does not mean received; completed voice may have reached voicemail or
    an IVR. Use the later channel-specific checks to confirm recipient receipt.
 
-**Checkpoint:** the developer has explicit field mappings, voice rules and response
-states, with official references for the selected API rather than another provider's schema.
+**Checkpoint:** record the two operation URLs, field mappings, supported voice rules and
+allowed states. Use these same decisions in implementation/tests. Continue to step 5.
 
 ## Step 5: Plan settings and Key Vault wiring
+
+**Lead:** developer and operator. **Location:** the existing configuration/credential files,
+linked in step 6, and customer deployment documentation. This is a naming/access plan,
+not an instruction to populate app settings or Key Vault yet.
 
 1. Read [shared configuration](CONTRACT.md#4-configuration-app-settings--env) and
    [credential caching](CONTRACT.md#credential-caching-and-refresh). Use one
@@ -177,27 +206,32 @@ states, with official references for the selected API rather than another provid
 | Existing `EPP_KEY_VAULT_CACHE_ENABLED` | Select API-key caching; omission defaults to true, false acquires per live request |
 | Existing `EPP_PROVIDER_TIMEOUT_MS` | Set a positive millisecond budget within the existing 2,500 ms cap; default is 1,500 ms |
 
-3. Keep credential values in Key Vault, not app settings/local files. Have the operator
-   attach the chosen user-assigned identity when applicable and grant scoped read
-   access, such as Key Vault Secrets User. A client-ID setting alone does neither.
+Complete the wiring plan:
+
+1. Keep credential values in Key Vault, not app settings/local files. Have the operator
+   plan attachment of the chosen user-assigned identity when applicable and scoped read
+   access, such as Key Vault Secrets User, for step 9. A client-ID setting alone does neither.
    The sample's resolvers use managed identity, not local Azure CLI sign-in.
    Keep provider credentials separate from the existing decryption-key reference
    and caller-authentication settings.
-4. Read adapter-owned settings through the existing JavaScript/Python `config.env`
+2. Read adapter-owned settings through the existing JavaScript/Python `config.env`
    or C# `IEnv`; the current shared configuration need not gain Twilio properties
-   for that approach. Validate server-owned configuration and restart workers when
-   it changes. Configure credentials only after implementing the language path below.
-5. Preserve acquisition bounds, sanitized failures and shutdown behavior.
+   for that approach. Design validation for server-owned configuration; after deployment,
+   workers must restart when it changes.
+3. Preserve acquisition bounds, sanitized failures and shutdown behavior.
    JavaScript/Python can refresh API-key caches in the background; C# warms at
    startup and fetches on cache miss, without a poller. Coordinate SID/secret rotation
    and cache invalidation. JavaScript checks vault secret metadata; Python/.NET's
    current string resolvers do not expose it. Do not promise identical secret-expiry
    enforcement across runtimes or treat cache lifetime as Twilio-issued expiry.
 
-**Checkpoint:** the new adapter owns its setting/secret names and Basic header; the
-shared secret service remains the managed-identity retrieval/cache abstraction.
+**Checkpoint:** developer and operator agree on setting/secret names, credential positions,
+identity permissions and rotation behavior. Implement only one language in step 6.
 
 ## Step 6: Implement and register one language path
+
+**Lead:** developer. **Location:** your customer-owned checkout of the selected language
+folder. The links below are existing files to inspect, not a Twilio adapter to download.
 
 Follow only your chosen language section, then continue at
 [step 7](#step-7-check-endpoints-timeouts-and-privacy).
@@ -238,11 +272,13 @@ to bypass the sample's bounded transport, logging and result contracts.
 7. Add cases to [provider-flow.test.js](../javascript/test/provider-flow.test.js),
    [credential-cache.test.js](../javascript/test/credential-cache.test.js) and
    [sendotp.test.js](../javascript/test/sendotp.test.js), using the checks in step 8.
-   Run the offline test script defined in [package.json](../javascript/package.json)
-   from the JavaScript app folder, following the [JavaScript guide](../javascript/README.md).
+   The offline runner is defined in [package.json](../javascript/package.json).
+   Run the complete checks in step 8 from this app folder using the [JavaScript guide](../javascript/README.md).
 
-**Checkpoint:** the factory selects the new adapter, both channels use the shared
-transport, and mocked evaluation never invokes provider delivery.
+**Checkpoint:** code and factory registration are in place, with test coverage added.
+Continue to step 7; step 8 will verify both channels and evaluation.
+
+<a id="c-net"></a>
 
 ### C# (.NET)
 
@@ -279,8 +315,8 @@ transport, and mocked evaluation never invokes provider delivery.
    the test project [Epp.Otp.Tests.csproj](../dotnet/tests/Epp.Otp.Tests.csproj)
    using the [C# guide](../dotnet/README.md).
 
-**Checkpoint:** dependency injection selects the new class and supplies its resolver;
-the form request and typed JSON response use the existing transport.
+**Checkpoint:** the class, dependency-injection registration and tests are in place.
+Continue to step 7; step 8 will verify resolver/transport behavior.
 
 ### Python
 
@@ -313,10 +349,13 @@ the form request and typed JSON response use the existing transport.
    [test_function_app.py](../python/tests/test_function_app.py). Follow step 8
    and the test instructions in the [Python guide](../python/README.md).
 
-**Checkpoint:** the provider dictionary selects the new subclass; form bodies,
-credential refresh and evaluation use the existing shared paths.
+**Checkpoint:** the subclass, provider dictionary entry and tests are in place.
+Continue to step 7; step 8 will verify shared credential/transport/evaluation behavior.
 
 ## Step 7: Check endpoints, timeouts, and privacy
+
+**Lead:** developer, with operator review. **Location:** the new adapter, shared transport
+files linked in step 6, and the customer's network/logging configuration plan.
 
 1. Require HTTPS and the correct host, account and operation path before any send.
    The shared validators reject URL credentials/fragments and transports disable
@@ -345,10 +384,13 @@ credential refresh and evaluation use the existing shared paths.
    raw provider bodies or exception strings. Disable body/header tracing in proxies
    and SDKs; restrict Twilio-side records and retention as well.
 
-**Checkpoint:** only approved endpoints receive credentials, each operation has one
-bounded submission, and troubleshooting does not expose OTPs or secrets.
+**Checkpoint:** review confirms endpoint restrictions, one-attempt behavior and safe
+logging in code/configuration. Verify those properties with offline tests in step 8.
 
 ## Step 8: Test the customer changes offline
+
+**Lead:** developer. **Location:** the selected runtime's test files and runner linked
+in step 6. Use fake secret resolvers and HTTP responses; no provider calls are needed.
 
 1. Test selection/configuration first: the new ID resolves only after registration,
    existing IDs still work, missing/wrong account, sender, endpoint and auth mode
@@ -372,34 +414,50 @@ bounded submission, and troubleshooting does not expose OTPs or secrets.
    bodies and headers are absent. Run the chosen runtime's existing test runner
    and build checks; offline success does not prove handset receipt.
 
-**Checkpoint:** tests cover the actual integration shape and failure boundaries,
-not just a successful standalone Twilio API request.
+**Checkpoint:** retain passing test/build results and reviewed configuration requirements,
+then hand modified source and that evidence to the operator for step 9.
 
 ## Step 9: Package and arrange approved acceptance checks
+
+**Lead:** operator for deployment; provider-account owner for credentials; tenant
+administrator for authorized checks/activation. **Location:** customer deployment tooling,
+the approved vault/Twilio account, and the linked validation procedure.
 
 1. Build from **your modified source** using
    [custom packaging instructions](../TECHNICAL.md#build-zips-locally).
    The public ZIPs do not contain your adapter. .NET's source ZIP requires publish;
    Python's source ZIP requires Linux remote dependency build. Packaging neither
    deploys infrastructure nor configures provider authorization.
-2. Have the operator review customer-managed deployment/IaC, package provenance
-   and identity permissions. In the approved environment, apply the adapter's agreed
-   settings from step 5 as string values and its secrets through the approved vault
-   procedure, then restart and validate the configuration. Preserve the existing
-   decryption-key reference, encryption certificate lifecycle, Easy Auth and caller
-   allowlist; this walkthrough does not make guided setup accept a custom provider.
-3. Only after eligibility and an approved procedure are established, arrange the
+2. Have the operator review and execute the **customer-managed deployment** for the
+   chosen runtime, using its [language guide](../TECHNICAL.md#implementations) and
+   [manual trust checklist](ONBOARDING.md#manual-deployment-trust-checklist).
+   Provision the approved nonproduction resources and deploy the modified package
+   with the required publish/remote-build process. Review package provenance and
+   attach/grant the reader identity planned in step 5. Verify the decryption-key
+   reference and required Easy Auth/caller allowlist **before opening public ingress**.
+   The sample does not supply
+   an end-to-end Twilio deployment workflow.
+3. When the approved vault and reader are ready, have the provider-account owner
+   provision the regional API key through the official Console procedure from step 2
+   (or use the approved existing pair). Store SID and secret under the agreed vault
+   names; do not pass the secret through the developer's checklist. Have the operator
+   apply the settings from step 5 as strings, restart the worker, and check
+   credential resolution without logging secret values. Keep the encryption
+   certificate lifecycle and platform protection intact; this walkthrough does not
+   make guided setup accept a custom provider.
+4. With the tenant administrator, arrange the
    [authorized nonproduction checks](ONBOARDING.md#validate-the-deployed-endpoint):
    caller rejection, evaluation, live SMS receipt and voice receipt/audio for each
    supported locale. Also verify credential rotation, ambiguous outcomes and
    [monitoring](MONITORING.md). Keep Easy Auth enabled throughout.
-4. Review [production limitations](CONTRACT.md#production-limitations) with the
+5. Review [production limitations](CONTRACT.md#production-limitations) with the
    owners before handoff. Record restricted acceptance evidence and rollback/support
    ownership. Do not treat offline tests, HTTP 201, Twilio test credentials or a
    nonce echo as tenant activation permission or a completed live integration.
 
-**Checkpoint:** customer code is packaged and reviewed, while live integration and
-activation remain separate approved processes with explicit evidence.
+**Checkpoint:** record deployment identity/package provenance, both channels' acceptance
+evidence and support/rollback owners in restricted storage. Only then hand off to the
+tenant administrator's approved activation process; this guide does not activate policy.
 
 ## Official references and visual help
 
