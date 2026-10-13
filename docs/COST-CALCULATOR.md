@@ -67,14 +67,15 @@ $phoneMethodsByUser = @{}
 
 $activity = Get-MgBetaAuditLogSignIn `
     -Filter "createdDateTime ge $start and createdDateTime le $end" `
-    -Property "userId", "authenticationDetails" `
     -All `
     -ErrorAction Stop |
     ForEach-Object {
         $signIn = $_
         $phoneDetails = @(
             $signIn.AuthenticationDetails |
-                Where-Object { $_.AuthenticationMethod -in "SMS", "Voice" }
+                Where-Object {
+                    $_.AuthenticationMethod -in "SMS", "Text message", "Voice"
+                }
         )
 
         if ($phoneDetails.Count -gt 0) {
@@ -96,6 +97,15 @@ $activity = Get-MgBetaAuditLogSignIn `
             $phoneDetails |
             ForEach-Object {
                 $authenticationDetail = $_
+                $authenticationMethod = if (
+                    $authenticationDetail.AuthenticationMethod -in "SMS", "Text message"
+                ) {
+                    "SMS"
+                }
+                else {
+                    "Voice"
+                }
+
                 $visibleDigits = $authenticationDetail.AuthenticationMethodDetail -replace '\D', ''
 
                 $matchingMethods = @(
@@ -103,7 +113,7 @@ $activity = Get-MgBetaAuditLogSignIn `
                         Where-Object {
                             $registeredDigits = $_.PhoneNumber -replace '\D', ''
                             $supportsMethod = (
-                                $authenticationDetail.AuthenticationMethod -eq "Voice" -or
+                                $authenticationMethod -eq "Voice" -or
                                 $_.PhoneType -in "mobile", "alternateMobile"
                             )
 
@@ -125,7 +135,7 @@ $activity = Get-MgBetaAuditLogSignIn `
 
                 [PSCustomObject]@{
                     CountryCallingCode = $callingCode
-                    AuthenticationMethod = $authenticationDetail.AuthenticationMethod
+                    AuthenticationMethod = $authenticationMethod
                 }
             }
         }
@@ -149,11 +159,16 @@ $report | Export-Csv -Path "C:\temp\SMS_Voice_SignIns_By_Calling_Code.csv" -NoTy
 ```
 
 Microsoft documents `SMS` and `Voice` as authentication method values and states that
-`authenticationMethodDetail` can contain the phone number for those methods. In sign-in
-results, that value can be masked, for example `+x XXXXXXXX90`. The script removes
-non-digits from that detail and matches the visible suffix (`90`) against the user's
-registered methods. It then extracts the calling code from the uniquely matched registered
-number, whose Graph format includes a space after the code, such as `+91 1234567890`.
+`authenticationMethodDetail` can contain the phone number for those methods. Some tenant
+sign-in results report SMS as `Text message`; the script accepts both values and normalizes
+them to `SMS` in the exported report. It does not use the cmdlet's `-Property` parameter,
+because `authenticationDetails` is returned on the beta sign-in objects without that
+selection and the parameter has not behaved consistently across module versions.
+
+The phone detail can be masked, for example `+x XXXXXXXX90`. The script removes non-digits
+from that detail and matches the visible suffix (`90`) against the user's registered
+methods. It then extracts the calling code from the uniquely matched registered number,
+whose Graph format includes a space after the code, such as `+91 1234567890`.
 
 For SMS, only `mobile` and `alternateMobile` registrations are considered; voice can use
 any registered phone type. A row is grouped as `Unknown` when the masked detail exposes
@@ -161,10 +176,10 @@ fewer than two digits, no registered number matches, more than one registered nu
 the same visible suffix, or the matched number has an unexpected format. This avoids
 guessing a destination. Review the `Unknown` total before relying on the estimate.
 
-The script does not match an undocumented `Text` method or use sign-in geography. `-All`
-requests all available pages, but large tenants should still account for Microsoft Graph
-throttling and execution time. The script uses `-ErrorAction Stop` rather than silently
-producing a partial report when either sign-in or phone-method retrieval fails.
+The script does not use sign-in geography. `-All` requests all available pages, but large
+tenants should still account for Microsoft Graph throttling and execution time. The script
+uses `-ErrorAction Stop` rather than silently producing a partial report when either
+sign-in or phone-method retrieval fails.
 
 The Microsoft Graph
 [list signIns API documentation](https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-1.0&tabs=http)
