@@ -107,6 +107,8 @@ exit $ExitCode
             $script:LoginExitCode = 3
             Assert-Throws { Invoke-EppAz login --use-device-code --output none } 'login.*failed.*exit 3'
             Assert (Test-Path -LiteralPath $script:LoginAcknowledgement) 'Display the prompt even when sign-in later fails.'
+            # The verified native failure must not become the Actions PowerShell step's exit status.
+            $global:LASTEXITCODE = 0
         }
         finally {
             $script:LoginAcknowledgement = $null
