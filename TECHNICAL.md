@@ -52,10 +52,10 @@ by default. Deploy each language separately, not all three to the same Function 
 For local development, manual configuration, and deployment checks, see the
 [detailed configuration and validation guide](docs/ONBOARDING.md).
 
-To extend these implementations for a customer-owned provider, follow the
-[bring your own provider guide](docs/BRING-YOUR-OWN-PROVIDER.md). Its repository checklist
-uses Twilio as the context and points to the adapter, registration, settings and packaging files.
-It is not a bundled adapter, guided setup option, or statement of tenant activation eligibility.
+For the provider-neutral inbound interface, read the
+[BYOT request and response guide](docs/BRING-YOUR-OWN-PROVIDER.md). It covers the SAS envelope,
+caller authentication, encrypted delivery context, and endpoint responses. The outbound service
+integration remains customer-owned; the guide does not add an adapter or guided setup support.
 
 ## Guided EPP setup
 
