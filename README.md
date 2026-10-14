@@ -36,9 +36,10 @@ Have these ready:
 
 - **Provider account:** complete the provider's account and sender registration for your chosen
   SMS or voice service. Check [guided provider support](docs/ONBOARDING.md#provider-credential-names).
-- **Workstation:** Windows, PowerShell 7+, and Azure CLI 2.60.0+ for Flex Consumption (FC1),
-  or 2.48.1+ for Premium (EP1). Allow access to GitHub, Azure, Microsoft Graph, Key Vault, and
-  the deployment endpoints. C# also needs the .NET 8 SDK and NuGet access.
+- **Shell:** Azure Cloud Shell in PowerShell mode, or PowerShell 7+ with an Azure CLI user login.
+  Azure CLI 2.60.0+ is required for Flex Consumption (FC1), or 2.48.1+ for Premium (EP1).
+  Allow access to GitHub, Azure, Microsoft Graph, Key Vault, and the deployment endpoints.
+  C# also needs the .NET 8 SDK and NuGet access.
 - **Administrators:** an Azure operator with subscription deployment, resource-provider registration,
   and role-assignment permissions; an Entra Privileged Role Administrator for setup; and an
   Authentication Policy Administrator for later activation. These are separate permissions.
@@ -46,8 +47,9 @@ Have these ready:
   plan. Azure resources and provider services can incur charges.
 
 Review the [full prerequisites](setup/docs/README.md#prerequisites-for-step-2), including the
-required Entra allowed-tenants preview, before running setup. The script can install missing
-Graph modules and Bicep after confirmation; Azure CLI must already be installed.
+required Entra allowed-tenants preview, before running setup. Microsoft Graph operations reuse
+the Azure CLI login; no Graph PowerShell SDK or separate Graph sign-in is required. The script
+can install Bicep after confirmation; Azure CLI must already be installed.
 
 Choose an **onboarding owner** in your organization to coordinate the administrators, provider,
 and Microsoft support. This is a sample, not production certification: it does not provide
@@ -103,19 +105,25 @@ Review the downloaded script, then run it:
 ```
 
 On a shared or multi-account workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` to request
-explicit Azure and Microsoft Graph sign-in.
+an explicit Azure CLI device-code sign-in. Microsoft Graph reuses that CLI session.
 
-Follow the prompts for your tenant, subscription, application client ID, and Azure region.
+Setup first lists cached Azure CLI user subscriptions. Select the customer tenant and subscription,
+then select or enter the dedicated application client ID and choose an Azure region. Refresh or
+sign in when the expected account is missing.
+
 Choose the provider route and provider, then **one** platform: Node.js (JavaScript), .NET (C#), or Python.
+When `-Provider` is omitted, setup reads the application's allowed-tenant configuration: no
+supported provider means enter a provider name, one means confirm it, and several means choose
+one by name. Provider choices are never numbered, and existing allowed provider tenants are preserved.
 Setup configures both SMS and voice provider URLs without asking you to select a channel.
 It downloads and verifies the package, builds it if needed, and deploys it for you.
 You do not need a separate ZIP upload or local settings file.
 
 ![Earlier PowerShell setup prompts for tenant, subscription, application, region, and SMS or voice, with identifiers hidden](docs/images/onboarding/setup-identifiers.png)
 
-*Use the IDs collected in Step 2, then enter your chosen Azure region. This screenshot is from
-an earlier script version; current setup no longer has the channel prompt. It is an input screen,
-not a deployment result.*
+*Use the dedicated application created in Step 2 and your intended Azure region. This screenshot
+is from an earlier script version; current setup uses selection lists for the tenant, subscription,
+application, and region, and no longer has the channel prompt. It is an input screen, not a deployment result.*
 
 Choose **FC1** for on-demand hosting that can scale to zero, or **EP1** for paid warm capacity.
 FC1 can cold-start, and its free usage grant does not make the whole deployment free.
@@ -130,9 +138,9 @@ For the resource prefix, use 2-8 lowercase letters or digits, starting with a le
 The Global/EU choice is not the Azure region. The hosting-plan warning applies even when a
 plan has a free usage grant.*
 
-Next, setup checks prerequisites, signs in to Azure and Microsoft Graph when needed, verifies
+Next, setup checks prerequisites, revalidates the Azure CLI and Microsoft Graph context, verifies
 the selected package, and prepares the deployment plan. For C#, this includes an automatic local build.
-Complete sign-in and MFA yourself. If a permission or prerequisite check fails, resolve it
+Complete any required CLI sign-in, MFA, or administrator consent yourself. If a permission or prerequisite check fails, resolve it
 before continuing.
 
 Setup also checks the application's existing **encryption certificates** before deployment.
@@ -158,6 +166,10 @@ when you only want to review the plan.
 After you approve, leave the script running while it configures the application, creates the
 Azure resources, and publishes the code. Wait for **Deployment completed** and the saved summary
 before moving to Step 4. The input screenshots do not show a completed deployment.
+
+Normal console output ends with **Next steps** after resource generation. Use
+`.\Setup-Epp.ps1 -PassThru` when you also need the structured deployment result in a variable
+or pipeline; the summary JSON is always saved.
 
 Setup creates the Function App, storage, Key Vault, identities, and monitoring resources.
 **Do not create these resources manually first.**

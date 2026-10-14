@@ -9,8 +9,8 @@ $script:EppInvokeAppRoleValue = 'Epp.Invoke'
 $script:EppCertificateName = 'phone-provider-encryption'
 $script:EppCertificateSubject = 'CN=ExternalPhoneProvider'
 $script:KeyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
-$script:GraphRequiredScopes = @('User.Read', 'Application.ReadWrite.All', 'Application.Read.All', 'AppRoleAssignment.ReadWrite.All')
 . (Join-Path $PSScriptRoot 'Epp.Packages.ps1')
+. (Join-Path $PSScriptRoot 'Epp.Graph.ps1')
 
 function Read-EppJson {
     param([string] $Path)
@@ -18,6 +18,16 @@ function Read-EppJson {
     $value = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop
     if ($value -isnot [Collections.IDictionary]) { throw "Expected a JSON object in '$Path'." }
     return $value
+}
+
+function Test-EppJsonEqual {
+    param($Left, $Right)
+
+    $leftJson = ConvertTo-Json -InputObject $Left -Depth 30 -Compress
+    $rightJson = ConvertTo-Json -InputObject $Right -Depth 30 -Compress
+    return [Newtonsoft.Json.Linq.JToken]::DeepEquals(
+        [Newtonsoft.Json.Linq.JToken]::Parse($leftJson),
+        [Newtonsoft.Json.Linq.JToken]::Parse($rightJson))
 }
 
 function ConvertTo-EppGuid {
@@ -85,7 +95,7 @@ function Get-EppServicePlan {
 function Read-EppInput {
     param(
         [string] $Name, [string] $Value, [string] $Hint,
-        [ValidateSet('Text', 'Guid', 'Location', 'Prefix', 'PackageUrl', 'Hash')]
+        [ValidateSet('Text', 'Guid', 'Location', 'Prefix', 'PackageUrl')]
         [string] $Kind = 'Text',
         [switch] $NonInteractive, [switch] $AllowCancel,
         [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
@@ -123,10 +133,6 @@ function Read-EppInput {
                         throw 'Use a versioned ZIP release URL from the selected source repository or Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample.'
                     }
                 }
-                'Hash' {
-                    if ($Value -notmatch '^[0-9a-fA-F]{64}$') { throw 'Use the package SHA-256 from its release checksums.' }
-                    $Value = $Value.ToLowerInvariant()
-                }
             }
             return $Value
         }
@@ -137,18 +143,9 @@ function Read-EppInput {
     }
 }
 
-function Get-EppProvider {
-    param(
-        [string] $AssetDirectory, [string] $SourceBaseUri, [string] $Provider,
-        [string] $EndpointRegion, [switch] $NonInteractive,
-        [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
-        [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample'
-    )
+function Get-EppProviderCatalog {
+    param([string] $AssetDirectory)
 
-    $sourcePattern = '^https://raw\.githubusercontent\.com/' + [regex]::Escape($SourceRepository) + '/[0-9a-fA-F]{40}/setup$'
-    if ($SourceBaseUri -cnotmatch $sourcePattern) {
-        throw 'Provider files must come from the same commit-pinned selected repository as the deployment tools.'
-    }
     $catalog = Read-EppJson (Join-Path $AssetDirectory 'providers/catalog.json')
     if ($catalog['schemaVersion'] -ne 1 -or -not $catalog['providers']) { throw 'Unsupported or empty provider catalog.' }
     $entries = @($catalog['providers'])
@@ -161,12 +158,93 @@ function Get-EppProvider {
         }
         $ids[$entry['id']] = $true
     }
-    $selected = Select-EppOption -Entries $entries -Name Provider -Value $Provider -NonInteractive:$NonInteractive
+    return $entries
+}
 
-    $path = Join-Path $AssetDirectory "providers/$($selected['file'])"
-    Invoke-WebRequest -Uri "$SourceBaseUri/providers/$($selected['file'])" -OutFile $path -TimeoutSec 60 -MaximumRedirection 0
-    $profile = Read-EppJson $path
-    return ConvertTo-EppProviderSettings -Profile $profile -Id $selected['id'] -DisplayName $selected['displayName'] `
+function Read-EppProviderName {
+    param([object[]] $Entries, [string] $Provider, [switch] $NonInteractive)
+
+    $supplied = -not [string]::IsNullOrWhiteSpace($Provider)
+    if (-not $supplied -and $NonInteractive) { throw '-Provider is required in noninteractive mode.' }
+    while ($true) {
+        if (-not $supplied) {
+            Write-Host "Provider names: $(($Entries | ForEach-Object { $_['displayName'] } | Sort-Object) -join ', ')"
+            $Provider = [string](Read-Host 'Provider name (Enter cancels)')
+        }
+        $Provider = $Provider.Trim()
+        if (-not $Provider -and -not $supplied) { return $null }
+        $selected = @($Entries | Where-Object { $_['id'] -ieq $Provider -or $_['displayName'] -ieq $Provider })
+        if ($selected.Count -eq 1) { return [string]$selected[0]['id'] }
+        $message = "Unknown provider '$Provider'. Supply a provider name, not a selection number."
+        if ($supplied) { throw $message }
+        Write-Warning $message
+    }
+}
+
+function Get-EppProviderDefinition {
+    param([string] $AssetDirectory, [string] $Provider)
+
+    $entries = @(Get-EppProviderCatalog -AssetDirectory $AssetDirectory)
+    $id = Read-EppProviderName -Entries $entries -Provider $Provider -NonInteractive
+    $entry = $entries | Where-Object { $_['id'] -ceq $id } | Select-Object -First 1
+    $profile = Read-EppJson (Join-Path $AssetDirectory "providers/$($entry['file'])")
+    $deployment = $profile['deployment']
+    if ($deployment -isnot [Collections.IDictionary] -or $deployment['enabled'] -isnot [bool] -or -not $deployment['enabled'] -or
+        $deployment['providerName'] -ine $id) {
+        throw "Provider '$id' is not enabled or has inconsistent deployment metadata."
+    }
+    return [pscustomobject]@{
+        Id = $id; DisplayName = $entry['displayName']
+        TenantId = ConvertTo-EppGuid ([string]$deployment['tenantId'])
+        Profile = $profile
+    }
+}
+
+function Resolve-EppApplicationProvider {
+    param([hashtable] $Inputs, [string] $AssetDirectory, [string] $Provider, [switch] $NonInteractive)
+
+    $entries = @(Get-EppProviderCatalog -AssetDirectory $AssetDirectory)
+    if (-not [string]::IsNullOrWhiteSpace($Provider) -or $NonInteractive) {
+        return Read-EppProviderName -Entries $entries -Provider $Provider -NonInteractive:$NonInteractive
+    }
+    $application = Get-EppApplication -Inputs $Inputs -ClientId $Inputs.ApplicationId
+    $restriction = Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
+    $state = Get-EppProviderRestrictionState -Restriction $restriction
+    $configured = @()
+    if ($application.SignInAudience -eq 'AzureADMultipleOrgs' -and $state -and $state.isHomeTenantAllowed) {
+        foreach ($entry in $entries) {
+            $definition = Get-EppProviderDefinition -AssetDirectory $AssetDirectory -Provider $entry['id']
+            if ($state.allowedTenantIds -contains $definition.TenantId) { $configured += $entry }
+        }
+    }
+    if (-not $configured.Count) {
+        Write-Host 'No supported provider is configured on this application. Enter a provider name; configuration is included in the deployment approval.'
+        return Read-EppProviderName -Entries $entries
+    }
+    if ($configured.Count -eq 1) {
+        $entry = $configured[0]
+        while ($true) {
+            $answer = ([string](Read-Host "Application is configured for $($entry['displayName']). Use this provider? Type Yes or No [No]")).Trim()
+            if ($answer -ieq 'Yes') { return [string]$entry['id'] }
+            if (-not $answer -or $answer -ieq 'No') { return $null }
+            Write-Warning 'Type Yes to use the configured provider, or No/Enter to cancel.'
+        }
+    }
+    Write-Host 'Multiple providers are configured on this application. Enter the provider name to use for this deployment.'
+    return Read-EppProviderName -Entries $configured
+}
+
+function Get-EppProvider {
+    param(
+        [string] $AssetDirectory, [string] $Provider,
+        [string] $EndpointRegion, [switch] $NonInteractive
+    )
+
+    $entries = @(Get-EppProviderCatalog -AssetDirectory $AssetDirectory)
+    $id = Read-EppProviderName -Entries $entries -Provider $Provider -NonInteractive:$NonInteractive
+    if (-not $id) { return $null }
+    $definition = Get-EppProviderDefinition -AssetDirectory $AssetDirectory -Provider $id
+    return ConvertTo-EppProviderSettings -Profile $definition.Profile -Id $definition.Id -DisplayName $definition.DisplayName `
         -EndpointRegion $EndpointRegion -NonInteractive:$NonInteractive
 }
 
@@ -292,6 +370,14 @@ function Invoke-EppAz {
     param([Parameter(ValueFromRemainingArguments)][string[]] $Arguments)
 
     $PSNativeCommandUseErrorActionPreference = $false
+    if ($Arguments[0] -eq 'login') {
+        # Device-code instructions must be visible while Azure CLI waits for sign-in.
+        & az @Arguments --only-show-errors 2>&1 | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) {
+            throw "Azure CLI operation 'login' failed (exit $LASTEXITCODE). Review the sign-in error above."
+        }
+        return
+    }
     $errorPath = Join-Path ([IO.Path]::GetTempPath()) "epp-az-$([Guid]::NewGuid().ToString('N')).stderr"
     try {
         $output = & az @Arguments --only-show-errors 2> $errorPath
@@ -320,57 +406,6 @@ function Invoke-EppDataOperation {
             if ($attempt -eq 12 -or $_.Exception.Message -notmatch 'ForbiddenByRbac|AuthorizationPermissionMismatch|Caller is not authorized to perform action on resource') { throw }
             Write-Warning "Waiting for the new data-plane role assignment ($attempt/12)."
             Start-Sleep -Seconds 10
-        }
-    }
-}
-
-function Import-EppGraphModules {
-    param([switch] $NonInteractive, [switch] $InstallPrerequisites)
-
-    $requiredModules = @('Microsoft.Graph.Authentication', 'Microsoft.Graph.Applications')
-    $missing = @($requiredModules | Where-Object {
-        $available = @(Get-Module -ListAvailable -Name $_)
-        -not @($available | Where-Object Version -ge ([Version]'2.0.0')).Count
-    })
-    if ($missing.Count) {
-        if (-not $InstallPrerequisites) {
-            if ($NonInteractive) {
-                throw "Missing Microsoft Graph modules: $($missing -join ', '). Rerun with -InstallPrerequisites or install them for CurrentUser."
-            }
-            while ($true) {
-                $answer = ([string](Read-Host "Install missing Microsoft Graph modules from PSGallery for CurrentUser ($($missing -join ', '))? Type Yes or No [No]")).Trim()
-                if ($answer -ieq 'Yes') { break }
-                if (-not $answer -or $answer -ieq 'No') {
-                    throw "Install the missing Microsoft Graph modules and rerun setup. No Azure or tenant resources were changed."
-                }
-                Write-Warning 'Type Yes to install the listed modules, or No/Enter to stop.'
-            }
-        }
-        if (-not (Get-Command Install-Module -ErrorAction SilentlyContinue)) {
-            throw 'Install-Module is unavailable. Install PowerShellGet, then install the required Microsoft Graph modules.'
-        }
-        foreach ($name in $missing) {
-            Write-Host "Installing $name from PSGallery for CurrentUser..." -ForegroundColor Cyan
-            Install-Module -Name $name -Scope CurrentUser -Repository PSGallery -MinimumVersion 2.0.0 `
-                -Force -AllowClobber -ErrorAction Stop
-        }
-    }
-
-    # The SDK and its sign-in context belong to the session, not this temporary helper module.
-    foreach ($name in $requiredModules) {
-        $module = @(Get-Module -ListAvailable -Name $name) | Where-Object Version -ge ([Version]'2.0.0') |
-            Sort-Object Version -Descending | Select-Object -First 1
-        if (-not $module) { throw "Microsoft Graph module '$name' was not available after prerequisite setup." }
-        $loaded = Get-Module -Name $name | Select-Object -First 1
-        Import-Module $module.Path -Global -Force:($loaded -and $loaded.Version -ne $module.Version) -ErrorAction Stop
-    }
-    foreach ($command in @(
-        'Connect-MgGraph', 'Invoke-MgGraphRequest', 'Get-MgApplication', 'Update-MgApplication',
-        'Get-MgServicePrincipal', 'New-MgServicePrincipal', 'Update-MgServicePrincipal',
-        'Get-MgServicePrincipalAppRoleAssignment', 'New-MgServicePrincipalAppRoleAssignment'
-    )) {
-        if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
-            throw "The installed Microsoft Graph modules do not provide required command '$command'. Update both Graph modules and rerun."
         }
     }
 }
@@ -405,6 +440,133 @@ function Initialize-EppBicep {
     Invoke-EppAz bicep version --output none | Out-Null
 }
 
+function Get-EppAzureSubscriptions {
+    param([switch] $Refresh)
+
+    if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
+        throw 'Azure CLI is not installed or not on PATH. Install Azure CLI, open a new PowerShell 7 window, and rerun setup.'
+    }
+    $arguments = @('account', 'list', '--all', '--output', 'json')
+    if ($Refresh) { $arguments += '--refresh' }
+    $accounts = Invoke-EppAz @arguments | ConvertFrom-Json -AsHashtable -NoEnumerate
+    if ($accounts -isnot [Array]) { throw 'Azure CLI returned an invalid subscription list.' }
+    $seen = @{}
+    foreach ($account in $accounts) {
+        if ($account -isnot [Collections.IDictionary] -or $account['user'] -isnot [Collections.IDictionary]) {
+            throw 'Azure CLI returned invalid subscription metadata.'
+        }
+        # account list uses cloudName; account show exposes environmentName instead.
+        foreach ($value in @($account['state'], $account['cloudName'], $account.user['type'])) {
+            if ($value -isnot [string] -or [string]::IsNullOrWhiteSpace($value)) {
+                throw 'Azure CLI returned invalid subscription eligibility metadata: state, cloudName, and user.type must be nonempty strings.'
+            }
+        }
+        if ($account['state'] -ne 'Enabled' -or $account['cloudName'] -ne 'AzureCloud' -or
+            $account.user['type'] -ne 'user' -or $account['name'] -eq 'N/A(tenant level account)') { continue }
+        $id = ConvertTo-EppGuid $account['id']
+        $tenantId = ConvertTo-EppGuid $account['tenantId']
+        foreach ($label in @($account['name'], $account.user['name'])) {
+            if ($label -isnot [string] -or [string]::IsNullOrWhiteSpace($label) -or $label -match '[\x00-\x1f\x7f-\x9f]') {
+                throw 'Azure CLI returned an invalid subscription or user display name.'
+            }
+        }
+        $tenantName = $account['tenantDisplayName']
+        if (($null -ne $tenantName -and $tenantName -isnot [string]) -or
+            $tenantName -match '[\x00-\x1f\x7f-\x9f]' -or $account['isDefault'] -isnot [bool]) {
+            throw 'Azure CLI returned invalid tenant or default-subscription metadata.'
+        }
+        if ($seen.ContainsKey($id)) { throw "Azure CLI returned duplicate entries for subscription '$id'. Refresh the CLI account cache before retrying." }
+        $seen[$id] = $true
+        [pscustomobject]@{
+            Id = $id; TenantId = $tenantId; Name = $account['name']
+            TenantDisplayName = [string]$tenantName; UserName = $account.user['name']
+            IsDefault = $account['isDefault']
+        }
+    }
+}
+
+function Select-EppAzureContext {
+    param([string] $TenantId, [string] $SubscriptionId, [switch] $NonInteractive)
+
+    $TenantId = ([string]$TenantId).Trim()
+    $SubscriptionId = ([string]$SubscriptionId).Trim()
+    if ($TenantId -or $NonInteractive) {
+        $TenantId = Read-EppInput -Name TenantId -Value $TenantId -Kind Guid -NonInteractive
+    }
+    if ($SubscriptionId -or $NonInteractive) {
+        $SubscriptionId = Read-EppInput -Name SubscriptionId -Value $SubscriptionId -Kind Guid -NonInteractive
+    }
+    if ($TenantId -and $SubscriptionId) {
+        return @{ TenantId = $TenantId; SubscriptionId = $SubscriptionId }
+    }
+
+    $actions = @(
+        @{ id = 'refresh'; displayName = 'Refresh subscriptions from Azure' }
+        @{ id = 'signin'; displayName = 'Sign in to Azure (device code)' }
+    )
+    $refresh = $false
+    while ($true) {
+        $subscriptions = @(Get-EppAzureSubscriptions -Refresh:$refresh)
+        $refresh = $false
+        $tenant = $TenantId
+        $selection = $null
+        if ($subscriptions.Count) {
+            $users = @($subscriptions.UserName | Sort-Object -Unique)
+            Write-Host "`nAzure CLI cached user accounts: $($users -join ', ')" -ForegroundColor Cyan
+            Write-Host 'Choose from enabled public-Azure subscriptions. Refresh or sign in if the expected account is missing.'
+        }
+        else {
+            Write-Warning 'No enabled public-Azure subscriptions for a user account are cached. Choose Sign in, Refresh, or Cancel.'
+        }
+        if ($SubscriptionId) {
+            $subscription = $subscriptions | Where-Object Id -eq $SubscriptionId | Select-Object -First 1
+            if ($subscription) {
+                Write-Host "Using supplied subscription: $($subscription.Name) [$($subscription.Id)], tenant $($subscription.TenantId), user $($subscription.UserName)"
+                return @{ TenantId = $subscription.TenantId; SubscriptionId = $SubscriptionId }
+            }
+            Write-Warning "The supplied subscription '$SubscriptionId' is not in the eligible cached accounts. It will not be replaced with another subscription."
+            $selection = Select-EppOption -Entries $actions -Name AzureAccount -PromptName 'Azure account action' -AllowCancel
+        }
+        else {
+            if (-not $tenant) {
+                $tenants = @($subscriptions | Group-Object TenantId | ForEach-Object {
+                    $name = $_.Group | Where-Object TenantDisplayName | Select-Object -First 1 -ExpandProperty TenantDisplayName
+                    $label = if ($name) { "$name [$($_.Name)]" } else { "$($_.Name) (tenant name unavailable)" }
+                    @{ id = $_.Name; displayName = $label }
+                } | Sort-Object { $_.displayName })
+                $selection = Select-EppOption -Entries ($tenants + $actions) -Name TenantId -PromptName 'Azure tenant' -AllowCancel
+                if (-not $selection) { return $null }
+                if ($selection.id -notin @('refresh', 'signin')) { $tenant = $selection.id }
+            }
+            if ($tenant) {
+                Write-Host "`nAzure tenant: $tenant" -ForegroundColor Cyan
+                $options = @($subscriptions | Where-Object TenantId -eq $tenant | Sort-Object Name, Id | ForEach-Object {
+                    $default = if ($_.IsDefault) { ' (current CLI default)' } else { '' }
+                    @{ id = $_.Id; displayName = "$($_.Name) [$($_.Id)] - $($_.UserName)$default" }
+                })
+                if (-not $options.Count) {
+                    Write-Warning "No eligible subscriptions are cached for tenant '$tenant'. Refresh or sign in to this tenant."
+                }
+                $selection = Select-EppOption -Entries ($options + $actions) -Name SubscriptionId -PromptName 'Azure subscription' -AllowCancel
+                if (-not $selection) { return $null }
+                if ($selection.id -notin @('refresh', 'signin')) {
+                    return @{ TenantId = $tenant; SubscriptionId = $selection.id }
+                }
+            }
+        }
+        if (-not $selection) { return $null }
+        switch ($selection.id) {
+            'refresh' { $refresh = $true }
+            'signin' {
+                $arguments = @('login', '--use-device-code', '--output', 'none')
+                if ($tenant) { $arguments += @('--tenant', $tenant) }
+                Invoke-EppAz @arguments | Out-Null
+            }
+            default { throw 'Unexpected Azure account selection action.' }
+        }
+    }
+}
+
 function Connect-EppAzureAccount {
     param([hashtable] $Inputs, [switch] $NonInteractive, [switch] $ForceAuthentication)
 
@@ -416,17 +578,7 @@ function Connect-EppAzureAccount {
         $account = Invoke-EppAz account show --subscription $Inputs.SubscriptionId --output json | ConvertFrom-Json
     }
     else {
-        try {
-            $account = Invoke-EppAz account show --subscription $Inputs.SubscriptionId --output json | ConvertFrom-Json
-        }
-        catch {
-            if ($NonInteractive) {
-                throw "Azure CLI is not signed in to subscription '$($Inputs.SubscriptionId)' in tenant '$($Inputs.TenantId)'. Run az login first."
-            }
-            Write-Host "Signing in to Azure tenant $($Inputs.TenantId)..." -ForegroundColor Cyan
-            Invoke-EppAz login --tenant $Inputs.TenantId --output none | Out-Null
-            $account = Invoke-EppAz account show --subscription $Inputs.SubscriptionId --output json | ConvertFrom-Json
-        }
+        $account = Invoke-EppAz account show --subscription $Inputs.SubscriptionId --output json | ConvertFrom-Json
     }
     if ($account.id -ne $Inputs.SubscriptionId -or $account.tenantId -ne $Inputs.TenantId -or
         $account.state -ne 'Enabled' -or $account.environmentName -ne 'AzureCloud' -or $account.user.type -ne 'user') {
@@ -475,9 +627,10 @@ function Get-EppArmOperatorObjectId {
 }
 
 function Get-EppGraphOperator {
-    $operator = Invoke-MgGraphRequest -Method GET `
-        -Uri 'https://graph.microsoft.com/v1.0/me?$select=id,userPrincipalName' `
-        -OutputType PSObject -ErrorAction Stop
+    param([hashtable] $Inputs)
+
+    $operator = Invoke-EppDirectoryCommand -Inputs $Inputs -Arguments @('ad', 'signed-in-user', 'show')
+    if ($operator -isnot [Collections.IDictionary]) { throw 'Azure CLI did not return the signed-in Graph user.' }
     $id = ConvertTo-EppGuid ([string]$operator.id)
     $account = if ([string]::IsNullOrWhiteSpace([string]$operator.userPrincipalName)) { $id } else { [string]$operator.userPrincipalName }
     return [pscustomobject]@{ Id = $id; Account = $account }
@@ -486,92 +639,227 @@ function Get-EppGraphOperator {
 function Connect-EppGraphAccount {
     param([hashtable] $Inputs, [switch] $NonInteractive, [switch] $ForceAuthentication)
 
-    if ($NonInteractive -and $ForceAuthentication) {
-        throw '-ForceAuthentication requires interactive Graph device-code sign-in and cannot be combined with -NonInteractive.'
+    $null = Connect-EppAzureAccount -Inputs $Inputs -NonInteractive:$NonInteractive `
+        -ForceAuthentication:($ForceAuthentication -and -not $Inputs['AzureSelectionAuthenticated'])
+    $Inputs.AzureSelectionAuthenticated = $true
+    $operator = Get-EppGraphOperator -Inputs $Inputs
+    return [pscustomobject]@{
+        Context = @{ TenantId = $Inputs.TenantId; Authentication = 'AzureCli'; OperatorId = $operator.Id }
+        Operator = $operator
     }
-    $graph = if ($ForceAuthentication) { $null } else { Get-EppInitialGraphContext }
-    if ($ForceAuthentication -or -not (Test-EppGraphContext -Context $graph -TenantId $Inputs.TenantId)) {
-        $scopeList = $script:GraphRequiredScopes -join ', '
-        if ($NonInteractive) { throw "Connect-MgGraph to the customer tenant with $scopeList before noninteractive setup." }
-        $connectArguments = @{
-            TenantId = $Inputs.TenantId
-            Scopes = $script:GraphRequiredScopes
-            ContextScope = 'Process'
-            NoWelcome = $true
-            ErrorAction = 'Stop'
+}
+
+function Get-EppApplicationOptions {
+    param([hashtable] $Inputs, [string] $SearchPrefix)
+
+    $query = @{
+        '$top' = '50'
+        '$select' = 'appId,displayName,signInAudience'
+    }
+    if ($SearchPrefix) {
+        $query['$filter'] = "startswith(displayName,'$($SearchPrefix.Replace("'", "''"))')"
+    }
+    $response = Invoke-EppGraphRequest -Inputs $Inputs -Path '/v1.0/applications' -Query $query
+    if ($response -isnot [Collections.IDictionary] -or $response['value'] -isnot [Array]) {
+        throw 'Microsoft Graph returned an invalid application selection response.'
+    }
+    $applications = @($response.value | ForEach-Object { [pscustomobject]$_ })
+    if ($applications.Count -gt 50) { throw 'Graph returned more applications than the requested selection limit.' }
+    $seen = @{}
+    foreach ($application in ($applications | Sort-Object DisplayName, AppId)) {
+        if (-not $application) { throw 'Graph returned an invalid application entry.' }
+        # The applications endpoint can also return agent identity blueprints.
+        $type = $application.PSObject.Properties['OdataType']
+        $typeName = if ($type) { [string]$type.Value } else { '' }
+        if (-not $typeName -and $application.PSObject.Properties['@odata.type']) { $typeName = [string]$application.'@odata.type' }
+        $additional = $application.PSObject.Properties['AdditionalProperties']
+        if (-not $typeName -and $additional -and $additional.Value -is [Collections.IDictionary]) {
+            $typeName = [string]$additional.Value['@odata.type']
         }
-        if ($ForceAuthentication) { $connectArguments.UseDeviceAuthentication = $true }
-        Connect-MgGraph @connectArguments
-        $graph = Get-MgContext -ErrorAction Stop
-    }
-    if (-not (Test-EppGraphContext -Context $graph -TenantId $Inputs.TenantId)) {
-        throw "Microsoft Graph is not connected to the required customer tenant with delegated scopes: $($script:GraphRequiredScopes -join ', ')."
-    }
-    return [pscustomobject]@{ Context = $graph; Operator = Get-EppGraphOperator }
-}
-
-function Get-EppInitialGraphContext {
-    try { return Get-MgContext -ErrorAction Stop }
-    catch {
-        if ($_.Exception.GetBaseException().Message -cne 'SessionNotInitialized') { throw }
-    }
-
-    # Graph's failed OnRemove hook can reset its static session while leaving the module loaded.
-    $authentication = @(Get-Module -Name Microsoft.Graph.Authentication)
-    if ($authentication.Count -ne 1) {
-        throw 'The Graph SDK session is uninitialized and its loaded Authentication version is ambiguous. Run setup in a fresh PowerShell process with pwsh -NoProfile.'
-    }
-    Write-Warning 'An earlier module removal reset the Graph SDK session. Reloading its existing Authentication version once; sign-in may be required.'
-    Import-Module Microsoft.Graph.Authentication -RequiredVersion $authentication[0].Version -Global -Force -ErrorAction Stop
-    try { return Get-MgContext -ErrorAction Stop }
-    catch {
-        if ($_.Exception.GetBaseException().Message -cne 'SessionNotInitialized') { throw }
-        throw 'The Graph SDK session could not be reinitialized. Run setup in a fresh PowerShell process with pwsh -NoProfile; no Azure resources were changed.'
+        if ($typeName -and $typeName.TrimStart('#') -cne 'microsoft.graph.application') { continue }
+        if ($application.SignInAudience -notin @('AzureADMyOrg', 'AzureADMultipleOrgs')) { continue }
+        $id = ConvertTo-EppGuid ([string]$application.AppId)
+        $name = [string]$application.DisplayName
+        if ($name -match '[\x00-\x1f\x7f-\x9f]') { throw 'Graph returned an invalid application display name.' }
+        if ([string]::IsNullOrWhiteSpace($name)) { $name = '(unnamed application)' }
+        if ($seen.ContainsKey($id)) { throw 'Graph returned duplicate application client IDs. Refresh or specify the reviewed client ID.' }
+        $seen[$id] = $true
+        @{ id = $id; displayName = "$name [$id]" }
     }
 }
 
-function Test-EppGraphContext {
-    param($Context, [string] $TenantId)
+function Select-EppApplication {
+    param(
+        [hashtable] $Inputs, [string] $ApplicationId,
+        [switch] $NonInteractive, [switch] $InstallPrerequisites, [switch] $ForceAuthentication
+    )
 
-    if (-not $Context -or $Context.TenantId -ne $TenantId -or $Context.Environment -ne 'Global' -or
-        $Context.AuthType -ne 'Delegated') {
-        return $false
+    if (-not [string]::IsNullOrWhiteSpace($ApplicationId) -or $NonInteractive) {
+        return Read-EppInput -Name ApplicationId -Value $ApplicationId -Kind Guid -NonInteractive
     }
-    return @($script:GraphRequiredScopes | Where-Object { $Context.Scopes -notcontains $_ }).Count -eq 0
+    $null = Connect-EppGraphAccount -Inputs $Inputs -ForceAuthentication:$ForceAuthentication
+    Write-Host "`nSelect the dedicated EPP app registration created in Step 1, not a shared application." -ForegroundColor Yellow
+    Write-Host 'Application (client) IDs are shown below, not application object IDs. No app is created by this picker.'
+    $search = ''
+    while ($true) {
+        $entries = @(Get-EppApplicationOptions -Inputs $Inputs -SearchPrefix $search)
+        Write-Host "Selected tenant: $($Inputs.TenantId). Showing organizational apps from up to 50 registrations."
+        Write-Host 'Use Search by name if your application is not shown; newly registered apps may take time to appear.'
+        if (-not $entries.Count) { Write-Warning 'No matching organizational app registrations were returned.' }
+        $entries += @(
+            @{ id = 'search'; displayName = 'Search by application name prefix' }
+            @{ id = 'refresh'; displayName = 'Refresh application list' }
+            @{ id = 'manual'; displayName = 'Enter an application (client) ID manually' }
+        )
+        $selection = Select-EppOption -Entries $entries -Name ApplicationId -PromptName 'Application' -AllowCancel
+        if (-not $selection) { return $null }
+        switch ($selection.id) {
+            'search' {
+                $search = Read-EppInput -Name ApplicationSearch -Kind Text -Hint 'Beginning of the display name; Enter cancels setup' -AllowCancel
+                if ($null -eq $search) { return $null }
+            }
+            'refresh' { continue }
+            'manual' {
+                return Read-EppInput -Name ApplicationId -Kind Guid `
+                    -Hint 'Application (client) ID from App registrations, not Object ID; Enter cancels' -AllowCancel
+            }
+            default { return $selection.id }
+        }
+    }
+}
+
+function Get-EppRegionOptions {
+    param([hashtable] $Inputs)
+
+    $subscriptionId = ConvertTo-EppGuid $Inputs.SubscriptionId
+    # account list-locations cannot target a subscription without changing the CLI default.
+    $url = "https://management.azure.com/subscriptions/$subscriptionId/locations?api-version=2022-12-01"
+    $response = Invoke-EppAz rest --method get --url $url --subscription $subscriptionId --output json |
+        ConvertFrom-Json -AsHashtable
+    if ($response -isnot [Collections.IDictionary] -or $response['value'] -isnot [Array]) {
+        throw 'Azure returned an invalid subscription location response.'
+    }
+    $seen = @{}
+    foreach ($region in $response.value) {
+        if ($region -isnot [Collections.IDictionary] -or $region['metadata'] -isnot [Collections.IDictionary]) {
+            throw 'Azure returned invalid region metadata.'
+        }
+        if ($region.metadata['regionType'] -isnot [string] -or [string]::IsNullOrWhiteSpace($region.metadata['regionType']) -or
+            ($null -ne $region.metadata['regionCategory'] -and $region.metadata['regionCategory'] -isnot [string])) {
+            throw 'Azure returned invalid region classification metadata.'
+        }
+        if ($region.metadata['regionType'] -ne 'Physical') { continue }
+        $id = [string]$region['name']
+        $name = [string]$region['displayName']
+        if ($id -cnotmatch '^[a-z][a-z0-9]+$' -or [string]::IsNullOrWhiteSpace($name) -or
+            $name -match '[\x00-\x1f\x7f-\x9f]' -or $seen.ContainsKey($id)) {
+            throw 'Azure returned an invalid or duplicate region.'
+        }
+        $seen[$id] = $true
+        $recommended = $region.metadata['regionCategory'] -eq 'Recommended'
+        $label = if ($recommended) { "$name ($id) - Azure recommended" } else { "$name ($id)" }
+        @{ id = $id; displayName = $label; recommended = $recommended }
+    }
+}
+
+function Select-EppLocation {
+    param([hashtable] $Inputs, [string] $Location, [switch] $NonInteractive, [switch] $ForceAuthentication)
+
+    if (-not [string]::IsNullOrWhiteSpace($Location) -or $NonInteractive) {
+        return Read-EppInput -Name Location -Value $Location -Kind Location -NonInteractive
+    }
+    if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
+        throw 'Azure CLI is not installed or not on PATH. Install Azure CLI, open a new PowerShell 7 window, and rerun setup.'
+    }
+    $null = Connect-EppAzureAccount -Inputs $Inputs `
+        -ForceAuthentication:($ForceAuthentication -and -not $Inputs['AzureSelectionAuthenticated'])
+    $Inputs.AzureSelectionAuthenticated = $true
+    $regions = @(Get-EppRegionOptions -Inputs $Inputs)
+    $preferred = @('eastus', 'westus2', 'centralus', 'westeurope', 'northeurope', 'southeastasia', 'australiaeast', 'japaneast')
+    $recommended = @($regions | Where-Object { $_.recommended })
+    $ordered = @(
+        foreach ($id in $preferred) { $recommended | Where-Object { $_.id -ceq $id } }
+        $recommended | Where-Object { $_.id -notin $preferred } | Sort-Object { $_.displayName }
+    )
+    $shortlist = @($ordered | Select-Object -First 8)
+    Write-Host "`nChoose a region near your users and consistent with your data-residency requirements." -ForegroundColor Cyan
+    Write-Host 'The shortlist uses Azure Recommended metadata, not a latency/cost ranking or a guarantee of FC1/EP1 availability or quota. Existing preflight and deployment checks still apply.' -ForegroundColor Yellow
+    $showAll = $false
+    while ($true) {
+        $entries = @(if ($showAll) { $regions | Sort-Object { $_.displayName } } else { $shortlist })
+        if (-not $entries.Count) { Write-Warning 'No regions are available in this view. Show all regions or enter a region name manually.' }
+        $entries += if ($showAll) {
+            @{ id = 'shortlist'; displayName = 'Back to recommended regions' }
+        }
+        else {
+            @{ id = 'all'; displayName = 'Show all physical regions returned for this subscription' }
+        }
+        $entries += @{ id = 'manual'; displayName = 'Enter an Azure region name manually' }
+        $selection = Select-EppOption -Entries $entries -Name Location -PromptName 'Azure region' -AllowCancel
+        if (-not $selection) { return $null }
+        switch ($selection.id) {
+            'all' { $showAll = $true }
+            'shortlist' { $showAll = $false }
+            'manual' {
+                return Read-EppInput -Name Location -Kind Location -Hint 'Programmatic region name, for example westus2; Enter cancels' -AllowCancel
+            }
+            default { return $selection.id }
+        }
+    }
 }
 
 function Get-EppSignInAudienceRestrictions {
-    param([string] $ApplicationObjectId)
+    param([hashtable] $Inputs, [string] $ApplicationObjectId)
 
-    $result = Invoke-MgGraphRequest -Method GET `
-        -Uri "https://graph.microsoft.com/beta/applications/$ApplicationObjectId`?`$select=id,signInAudience,signInAudienceRestrictions" `
-        -OutputType PSObject -ErrorAction Stop
+    $result = Invoke-EppGraphRequest -Inputs $Inputs -Path "/beta/applications/$ApplicationObjectId" `
+        -Query @{ '$select' = 'id,signInAudience,signInAudienceRestrictions' }
     return $result.signInAudienceRestrictions
 }
 
-function Test-EppProviderTenantRestriction {
-    param($Restriction, [string] $ProviderTenantId)
+function Get-EppProviderRestrictionState {
+    param($Restriction)
 
-    return $Restriction -and $Restriction.kind -eq 'allowedTenants' -and
-        $Restriction.isHomeTenantAllowed -eq $true -and
-        @($Restriction.allowedTenantIds).Count -eq 1 -and
-        $Restriction.allowedTenantIds[0] -eq $ProviderTenantId
+    if ($null -eq $Restriction) { return $null }
+    if ($Restriction -isnot [Collections.IDictionary] -or $Restriction['kind'] -cne 'allowedTenants' -or
+        $Restriction['isHomeTenantAllowed'] -isnot [bool] -or $Restriction['allowedTenantIds'] -isnot [Array]) {
+        throw 'The application has an unsupported provider-tenant restriction. Review it before running setup.'
+    }
+    $ids = @($Restriction.allowedTenantIds | ForEach-Object { ConvertTo-EppGuid ([string]$_) })
+    $unique = @($ids | Sort-Object -Unique)
+    if ($unique.Count -ne $ids.Count) { throw 'The application contains duplicate allowed provider tenants.' }
+    return @{
+        kind = 'allowedTenants'; isHomeTenantAllowed = $Restriction.isHomeTenantAllowed
+        allowedTenantIds = $unique
+    }
+}
+
+function Test-EppProviderTenantRestriction {
+    param($Restriction, [string] $ProviderTenantId, [string[]] $ExpectedAllowedTenantIds)
+
+    $state = Get-EppProviderRestrictionState -Restriction $Restriction
+    if (-not $state -or -not $state.isHomeTenantAllowed -or $state.allowedTenantIds -notcontains $ProviderTenantId) { return $false }
+    if ($ExpectedAllowedTenantIds) {
+        return ($state.allowedTenantIds -join ',') -ceq (@($ExpectedAllowedTenantIds | Sort-Object -Unique) -join ',')
+    }
+    return $true
 }
 
 function Set-EppProviderTenantRestriction {
-    param([string] $ApplicationObjectId, [string] $ProviderTenantId)
+    param([hashtable] $Inputs, [string] $ApplicationObjectId, [string] $ProviderTenantId, [string[]] $AllowedTenantIds)
 
-    Invoke-MgGraphRequest -Method PATCH `
-        -Uri "https://graph.microsoft.com/beta/applications/$ApplicationObjectId" `
+    $ids = if ($AllowedTenantIds) { @($AllowedTenantIds | ForEach-Object { ConvertTo-EppGuid $_ } | Sort-Object -Unique) } else { @(ConvertTo-EppGuid $ProviderTenantId) }
+    if ($ids -notcontains $ProviderTenantId) { throw 'The approved tenant allowlist does not contain the selected provider.' }
+
+    Invoke-EppGraphRequest -Inputs $Inputs -Method PATCH -Path "/beta/applications/$ApplicationObjectId" `
         -Body @{
             signInAudience = 'AzureADMultipleOrgs'
             signInAudienceRestrictions = @{
                 '@odata.type' = '#microsoft.graph.allowedTenantsAudience'
                 kind = 'allowedTenants'
                 isHomeTenantAllowed = $true
-                allowedTenantIds = @($ProviderTenantId)
+                allowedTenantIds = @($ids)
             }
-        } -ContentType 'application/json' -ErrorAction Stop | Out-Null
+        } | Out-Null
 }
 
 function Get-EppResourceProviderRequirements {
@@ -785,28 +1073,22 @@ function Connect-EppContext {
         throw "Azure CLI $minimumCliVersion or newer is required for $($Inputs.ServicePlan) deployment with SCM basic authentication disabled."
     }
     Initialize-EppBicep -NonInteractive:$NonInteractive -InstallPrerequisites:$InstallPrerequisites
-    Import-EppGraphModules -NonInteractive:$NonInteractive -InstallPrerequisites:$InstallPrerequisites
     $account = Connect-EppAzureAccount -Inputs $Inputs -NonInteractive:$NonInteractive `
-        -ForceAuthentication:$ForceAuthentication
+        -ForceAuthentication:($ForceAuthentication -and -not $Inputs['AzureSelectionAuthenticated'])
+    $Inputs.AzureSelectionAuthenticated = $true
     $operatorId = Get-EppArmOperatorObjectId -Inputs $Inputs
-    $graphAccount = Connect-EppGraphAccount -Inputs $Inputs -NonInteractive:$NonInteractive `
-        -ForceAuthentication:$ForceAuthentication
+    $graphAccount = Connect-EppGraphAccount -Inputs $Inputs -NonInteractive:$NonInteractive
     $graph = $graphAccount.Context
     $graphOperator = $graphAccount.Operator
-    $applications = @(Get-MgApplication -Filter "appId eq '$($Inputs.ApplicationId)'" -All -ErrorAction Stop)
-    if ($applications.Count -ne 1) { throw 'Complete manual Step 1: exactly one existing application with this client ID is required.' }
-    $application = Get-MgApplication -ApplicationId $applications[0].Id `
-        -Property Id, AppId, DisplayName, SignInAudience, Api, AppRoles, IdentifierUris, KeyCredentials, TokenEncryptionKeyId -ErrorAction Stop
+    $application = Get-EppApplication -Inputs $Inputs -ClientId $Inputs.ApplicationId
     if ($application.SignInAudience -notin @('AzureADMyOrg', 'AzureADMultipleOrgs')) {
         throw 'The existing EPP application must be an organizational single- or multi-tenant app. Create a dedicated organizational app in manual Step 1.'
     }
     if ($application.TokenEncryptionKeyId) { throw 'Clear tokenEncryptionKeyId manually on the endpoint app. Easy Auth requires signed, not encrypted, bearer access tokens.' }
 
-    $endpointPrincipals = @(Get-MgServicePrincipal -Filter "appId eq '$($Inputs.ApplicationId)'" -All -ErrorAction Stop)
-    if ($endpointPrincipals.Count -gt 1) { throw 'Multiple endpoint service principals match the supplied application. Resolve the duplicate tenant objects manually.' }
-    $callerPrincipals = @(Get-MgServicePrincipal -Filter "appId eq '$script:MicrosoftPhoneProviderAppId'" -All -ErrorAction Stop)
-    if ($callerPrincipals.Count -gt 1) { throw 'Multiple Microsoft phone-provider service principals exist in this tenant. Resolve the duplicate tenant objects manually.' }
-    $graphPrincipals = @(Get-MgServicePrincipal -Filter "appId eq '$script:MicrosoftGraphAppId'" -Property Id,AppId,AppRoles -All -ErrorAction Stop)
+    $endpointPrincipals = @(Get-EppServicePrincipal -Inputs $Inputs -AppId $Inputs.ApplicationId -Description endpoint)
+    $callerPrincipals = @(Get-EppServicePrincipal -Inputs $Inputs -AppId $script:MicrosoftPhoneProviderAppId -Description 'Microsoft phone-provider')
+    $graphPrincipals = @(Get-EppServicePrincipal -Inputs $Inputs -AppId $script:MicrosoftGraphAppId -Description 'Microsoft Graph')
     if ($graphPrincipals.Count -ne 1) { throw 'Microsoft Graph has no unique service principal in this tenant.' }
     $graphReadRoles = @($graphPrincipals[0].AppRoles | Where-Object {
         $_.Id -eq $script:MicrosoftGraphApplicationReadAllRoleId -and $_.Value -eq 'Application.Read.All' -and
@@ -823,7 +1105,10 @@ function Connect-EppContext {
             $invokeRoles[0].AllowedMemberTypes -notcontains 'Application'))) {
         throw "The endpoint application has a conflicting '$script:EppInvokeAppRoleValue' app role or role ID."
     }
-    $tenantRestriction = Get-EppSignInAudienceRestrictions -ApplicationObjectId $application.Id
+    $tenantRestriction = Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
+    $providerRestrictionState = Get-EppProviderRestrictionState -Restriction $tenantRestriction
+    $allowedTenants = @(if ($providerRestrictionState) { $providerRestrictionState.allowedTenantIds })
+    $Inputs.ProviderAllowedTenantIds = @(($allowedTenants + @($Inputs.ProviderTenantId)) | Sort-Object -Unique)
     $version = if ($application.Api -and $application.Api.RequestedAccessTokenVersion) { [int]$application.Api.RequestedAccessTokenVersion } else { 1 }
     if ($version -notin @(1, 2)) { throw 'The endpoint application has an unsupported access-token version.' }
 
@@ -859,7 +1144,8 @@ function Connect-EppContext {
         GraphPrincipal = $graphPrincipals[0]
         InvokeRoleExists = $invokeRoles.Count -eq 1
         ProviderTenantRestricted = Test-EppProviderTenantRestriction -Restriction $tenantRestriction `
-            -ProviderTenantId $Inputs.ProviderTenantId
+            -ProviderTenantId $Inputs.ProviderTenantId -ExpectedAllowedTenantIds $Inputs.ProviderAllowedTenantIds
+        ProviderRestrictionState = $providerRestrictionState
         ResourceProviders = $resourceProviders
     }
 }
@@ -887,7 +1173,7 @@ function Get-EppResourceRows {
 }
 
 function Show-EppPlan {
-    param([hashtable] $Inputs, [Collections.IDictionary] $Names, $ProviderConfiguration, $Context, [string] $SourceBaseUri)
+    param([hashtable] $Inputs, [Collections.IDictionary] $Names, $ProviderConfiguration, $Context)
 
     Write-Host "`nDeployment plan (create or update)" -ForegroundColor Cyan
     Write-Host "Tenant:       $($Inputs.TenantId)"
@@ -905,6 +1191,10 @@ function Show-EppPlan {
     Write-Host "Tenant scope: $tenantScope"
     Write-Host "Provider auth: $($ProviderConfiguration.AuthenticationMode)"
     Write-Host "Provider tenant: $($ProviderConfiguration.Settings.EPP_PROVIDER_TENANT_ID)"
+    if ($Inputs['ProviderAllowedTenantIds']) {
+        Write-Host "Allowed provider tenants after deployment: $($Inputs.ProviderAllowedTenantIds -join ', ') (home tenant also allowed)"
+        Write-Host 'Existing allowed provider tenants are preserved; selecting a provider does not configure multi-provider runtime fallback.'
+    }
     Write-Host "SMS endpoint: $($ProviderConfiguration.Settings.EPP_PROVIDER_SMS_ENDPOINT)"
     Write-Host "Voice endpoint: $($ProviderConfiguration.Settings.EPP_PROVIDER_VOICE_ENDPOINT)"
     Write-Host 'Per-channel routing requires a Function package that reads EPP_PROVIDER_SMS_ENDPOINT and EPP_PROVIDER_VOICE_ENDPOINT.' -ForegroundColor Yellow
@@ -918,8 +1208,9 @@ function Show-EppPlan {
     Write-Host "Timeout:      $($ProviderConfiguration.Settings.EPP_PROVIDER_TIMEOUT_MS) ms"
     Write-Host "Retry:        $($ProviderConfiguration.Settings.EPP_PROVIDER_RETRY_INTERVAL_MS) ms (package-dependent; not a retry guarantee)"
     Write-Host "Package:      $($Inputs.PackageUrl)"
+    Write-Host "Release:      $($Inputs.PackageReleaseTag)"
     Write-Host "Source hash:  $($Inputs.SourcePackageSha256) (verified automatically)"
-    Write-Host "Source:       $SourceBaseUri"
+    Write-Host "Setup source: $($Inputs.SourceBaseUri)"
 
     Write-Host "`nAzure resources and configuration" -ForegroundColor Cyan
     Get-EppResourceRows -Names $Names -ServicePlan $Inputs.ServicePlan |
@@ -949,7 +1240,7 @@ function Show-EppPlan {
 
     Write-Host "`nEndpoint security" -ForegroundColor Cyan
     if (-not $Context.ProviderTenantRestricted) {
-        Write-Host '  - Restrict the multi-tenant endpoint application to the customer tenant and selected provider tenant.'
+        Write-Host '  - Configure the multi-tenant application for its home tenant and the displayed provider-tenant allowlist.'
     }
     Write-Host '  - Configure Easy Auth to require HTTPS authentication and allow only the Microsoft phone-provider enterprise application.'
     Show-EppCertificatePlan -Plan $Context.CertificatePlan -Names $Names
@@ -1067,20 +1358,27 @@ function Show-EppDeploymentResult {
 }
 
 function Get-EppServicePrincipal {
-    param([string] $AppId, [string] $Description)
+    param([hashtable] $Inputs, [string] $AppId, [string] $Description)
 
-    $principals = @(Get-MgServicePrincipal -Filter "appId eq '$AppId'" `
-        -Property Id,AppId,DisplayName,AccountEnabled,AppRoleAssignmentRequired,AppRoles -All -ErrorAction Stop)
+    $AppId = ConvertTo-EppGuid $AppId
+    $principals = Invoke-EppDirectoryCommand -Inputs $Inputs -Arguments @('ad', 'sp', 'list', '--filter', "appId eq '$AppId'")
+    if ($principals -isnot [Array]) { throw 'Azure CLI returned an invalid service-principal list.' }
     if ($principals.Count -gt 1) { throw "Multiple $Description service principals match app ID '$AppId'." }
-    return $principals | Select-Object -First 1
+    if ($principals.Count -and ($principals[0]['appId'] -ine $AppId -or -not $principals[0]['id'])) {
+        throw "The $Description service principal does not match its requested app ID."
+    }
+    if ($principals.Count) {
+        return ConvertFrom-EppGraphServicePrincipal -Principal $principals[0]
+    }
 }
 
 function Ensure-EppServicePrincipal {
-    param([string] $AppId, [string] $Description)
+    param([hashtable] $Inputs, [string] $AppId, [string] $Description)
 
-    $principal = Get-EppServicePrincipal -AppId $AppId -Description $Description
+    $principal = Get-EppServicePrincipal -Inputs $Inputs -AppId $AppId -Description $Description
     if (-not $principal) {
-        $principal = New-MgServicePrincipal -AppId $AppId -ErrorAction Stop
+        $created = Invoke-EppDirectoryCommand -Inputs $Inputs -Arguments @('ad', 'sp', 'create', '--id', $AppId)
+        $principal = ConvertFrom-EppGraphServicePrincipal -Principal $created
     }
     if (-not $principal -or $principal.AppId -ne $AppId -or -not $principal.Id -or $principal.AccountEnabled -eq $false) {
         throw "The $Description service principal is missing, disabled, or does not match app ID '$AppId'."
@@ -1089,19 +1387,19 @@ function Ensure-EppServicePrincipal {
 }
 
 function Ensure-EppAppRoleAssignment {
-    param($Principal, $Resource, [string] $AppRoleId, [string] $Description)
+    param([hashtable] $Inputs, $Principal, $Resource, [string] $AppRoleId, [string] $Description)
 
-    $assignments = @(Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $Principal.Id -All -ErrorAction Stop)
+    $assignments = @(Get-EppAppRoleAssignments -Inputs $Inputs -PrincipalId $Principal.Id)
     $matching = @($assignments | Where-Object { $_.ResourceId -eq $Resource.Id -and $_.AppRoleId -eq $AppRoleId })
     if ($matching.Count -gt 1) { throw "Multiple $Description app-role assignments exist for the Microsoft phone-provider service principal." }
     if (-not $matching.Count) {
         for ($attempt = 1; $attempt -le 12; $attempt++) {
             try {
-                New-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $Principal.Id -BodyParameter @{
-                    PrincipalId = $Principal.Id
-                    ResourceId = $Resource.Id
-                    AppRoleId = $AppRoleId
-                } -ErrorAction Stop | Out-Null
+                Invoke-EppGraphRequest -Inputs $Inputs -Method POST -Path "/v1.0/servicePrincipals/$($Principal.Id)/appRoleAssignments" -Body @{
+                    principalId = $Principal.Id
+                    resourceId = $Resource.Id
+                    appRoleId = $AppRoleId
+                } | Out-Null
                 break
             }
             catch {
@@ -1117,14 +1415,20 @@ function Ensure-EppAppRoleAssignment {
 function Initialize-EppGraphAccess {
     param([hashtable] $Inputs, $Context)
 
-    $application = Get-MgApplication -ApplicationId $Context.Application.Id `
-        -Property Id,AppId,SignInAudience,Api,AppRoles,IdentifierUris,KeyCredentials,TokenEncryptionKeyId -ErrorAction Stop
+    $application = Get-EppApplication -Inputs $Inputs -ObjectId $Context.Application.Id
     if ($application.AppId -ne $Inputs.ApplicationId -or
         $application.SignInAudience -notin @('AzureADMyOrg', 'AzureADMultipleOrgs') -or
+        $application.SignInAudience -cne $Context.Application.SignInAudience -or
         $application.TokenEncryptionKeyId) {
         throw 'The dedicated endpoint application changed after preflight or has unsupported token encryption enabled.'
     }
     Assert-EppCertificatePlanUnchanged -Application $application -Plan $Context.CertificatePlan
+    $restriction = Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
+    $currentProviderState = Get-EppProviderRestrictionState -Restriction $restriction
+    if (-not (Test-EppJsonEqual $currentProviderState $Context.ProviderRestrictionState)) {
+        throw 'The application provider configuration changed after the plan was reviewed. Rerun setup; no provider tenants will be removed.'
+    }
+    if (-not $Inputs['ProviderAllowedTenantIds']) { throw 'The approved provider-tenant allowlist is missing. Rerun preflight.' }
     $roles = @($application.AppRoles | Where-Object { $null -ne $_ })
     $invokeRoles = @($roles | Where-Object { $_.Id -eq $script:EppInvokeAppRoleId -or $_.Value -eq $script:EppInvokeAppRoleValue })
     if ($invokeRoles.Count -gt 1 -or
@@ -1135,34 +1439,35 @@ function Initialize-EppGraphAccess {
     }
     if (-not $invokeRoles.Count) {
         $roles += @{
-            AllowedMemberTypes = @('Application')
-            Description = 'Allows the Microsoft phone-provider application to invoke this EPP endpoint.'
-            DisplayName = 'Invoke EPP endpoint'
-            Id = $script:EppInvokeAppRoleId
-            IsEnabled = $true
-            Value = $script:EppInvokeAppRoleValue
+            allowedMemberTypes = @('Application')
+            description = 'Allows the Microsoft phone-provider application to invoke this EPP endpoint.'
+            displayName = 'Invoke EPP endpoint'
+            id = $script:EppInvokeAppRoleId
+            isEnabled = $true
+            value = $script:EppInvokeAppRoleValue
         }
     }
     if (-not $invokeRoles.Count) {
-        Update-MgApplication -ApplicationId $application.Id -AppRoles $roles -ErrorAction Stop
+        Invoke-EppGraphRequest -Inputs $Inputs -Method PATCH -Path "/v1.0/applications/$($application.Id)" -Body @{ appRoles = $roles } | Out-Null
     }
-    $restriction = Get-EppSignInAudienceRestrictions -ApplicationObjectId $application.Id
     if ($application.SignInAudience -ne 'AzureADMultipleOrgs' -or
-        -not (Test-EppProviderTenantRestriction -Restriction $restriction -ProviderTenantId $Inputs.ProviderTenantId)) {
-        Set-EppProviderTenantRestriction -ApplicationObjectId $application.Id -ProviderTenantId $Inputs.ProviderTenantId
+        -not (Test-EppProviderTenantRestriction -Restriction $restriction -ProviderTenantId $Inputs.ProviderTenantId -ExpectedAllowedTenantIds $Inputs.ProviderAllowedTenantIds)) {
+        Set-EppProviderTenantRestriction -Inputs $Inputs -ApplicationObjectId $application.Id -ProviderTenantId $Inputs.ProviderTenantId `
+            -AllowedTenantIds $Inputs.ProviderAllowedTenantIds
     }
 
-    $endpointPrincipal = Ensure-EppServicePrincipal -AppId $Inputs.ApplicationId -Description 'endpoint'
+    $endpointPrincipal = Ensure-EppServicePrincipal -Inputs $Inputs -AppId $Inputs.ApplicationId -Description 'endpoint'
     if (-not $endpointPrincipal.AppRoleAssignmentRequired) {
-        Update-MgServicePrincipal -ServicePrincipalId $endpointPrincipal.Id -AppRoleAssignmentRequired:$true -ErrorAction Stop
-        $endpointPrincipal = Get-EppServicePrincipal -AppId $Inputs.ApplicationId -Description 'endpoint'
+        Invoke-EppGraphRequest -Inputs $Inputs -Method PATCH -Path "/v1.0/servicePrincipals/$($endpointPrincipal.Id)" `
+            -Body @{ appRoleAssignmentRequired = $true } | Out-Null
+        $endpointPrincipal = Get-EppServicePrincipal -Inputs $Inputs -AppId $Inputs.ApplicationId -Description 'endpoint'
     }
     if (-not $endpointPrincipal.AppRoleAssignmentRequired) {
         throw 'The endpoint service principal did not enable app-role assignment requirements.'
     }
 
-    $callerPrincipal = Ensure-EppServicePrincipal -AppId $script:MicrosoftPhoneProviderAppId -Description 'Microsoft phone-provider'
-    $graphPrincipal = Get-EppServicePrincipal -AppId $script:MicrosoftGraphAppId -Description 'Microsoft Graph'
+    $callerPrincipal = Ensure-EppServicePrincipal -Inputs $Inputs -AppId $script:MicrosoftPhoneProviderAppId -Description 'Microsoft phone-provider'
+    $graphPrincipal = Get-EppServicePrincipal -Inputs $Inputs -AppId $script:MicrosoftGraphAppId -Description 'Microsoft Graph'
     if (-not $graphPrincipal) { throw 'Microsoft Graph service principal is missing from the tenant.' }
     $graphReadRoles = @($graphPrincipal.AppRoles | Where-Object {
         $_.Id -eq $script:MicrosoftGraphApplicationReadAllRoleId -and $_.Value -eq 'Application.Read.All' -and
@@ -1170,15 +1475,15 @@ function Initialize-EppGraphAccess {
     })
     if ($graphReadRoles.Count -ne 1) { throw 'Microsoft Graph Application.Read.All does not match its expected application role.' }
 
-    Ensure-EppAppRoleAssignment -Principal $callerPrincipal -Resource $endpointPrincipal `
+    Ensure-EppAppRoleAssignment -Inputs $Inputs -Principal $callerPrincipal -Resource $endpointPrincipal `
         -AppRoleId $script:EppInvokeAppRoleId -Description $script:EppInvokeAppRoleValue
     try {
-        Ensure-EppAppRoleAssignment -Principal $callerPrincipal -Resource $graphPrincipal `
+        Ensure-EppAppRoleAssignment -Inputs $Inputs -Principal $callerPrincipal -Resource $graphPrincipal `
             -AppRoleId $script:MicrosoftGraphApplicationReadAllRoleId -Description 'Microsoft Graph Application.Read.All'
     }
     catch {
         if ($_.Exception.Message -match 'Authorization_RequestDenied|Insufficient privileges|Forbidden') {
-            throw 'Granting Microsoft Graph Application.Read.All to the Microsoft phone-provider service principal requires AppRoleAssignment.ReadWrite.All consent and a sufficiently privileged administrator, normally Privileged Role Administrator.'
+            throw 'The current Azure CLI Graph session is not authorized to grant Application.Read.All. Its effective Graph permissions must allow app-role assignment, and the signed-in user normally needs an active Privileged Role Administrator role. Azure subscription roles alone are insufficient.'
         }
         throw
     }
@@ -1525,11 +1830,8 @@ function Assert-EppGraphAccess {
         [Collections.IDictionary] $CertificatePlan
     )
 
-    $applications = @(Get-MgApplication -Filter "appId eq '$($Inputs.ApplicationId)'" -All -ErrorAction Stop)
-    if ($applications.Count -ne 1) { throw 'The endpoint application was not uniquely readable after configuration.' }
-    $application = Get-MgApplication -ApplicationId $applications[0].Id `
-        -Property Id,AppId,SignInAudience,AppRoles,IdentifierUris,KeyCredentials,TokenEncryptionKeyId -ErrorAction Stop
-    $tenantRestriction = Get-EppSignInAudienceRestrictions -ApplicationObjectId $application.Id
+    $application = Get-EppApplication -Inputs $Inputs -ClientId $Inputs.ApplicationId
+    $tenantRestriction = Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
     $invokeRoles = @($application.AppRoles | Where-Object {
         $_.Id -eq $script:EppInvokeAppRoleId -and $_.Value -eq $script:EppInvokeAppRoleValue -and
         $_.IsEnabled -and $_.AllowedMemberTypes -contains 'Application'
@@ -1539,18 +1841,18 @@ function Assert-EppGraphAccess {
         $application.IdentifierUris -notcontains $IdentifierUri -or $invokeRoles.Count -ne 1) {
         throw 'Endpoint application readback is missing its multi-tenant setting, identifier URI, Epp.Invoke role, or encryption certificate.'
     }
-    if (-not (Test-EppProviderTenantRestriction -Restriction $tenantRestriction -ProviderTenantId $Inputs.ProviderTenantId)) {
+    if (-not (Test-EppProviderTenantRestriction -Restriction $tenantRestriction -ProviderTenantId $Inputs.ProviderTenantId -ExpectedAllowedTenantIds $Inputs.ProviderAllowedTenantIds)) {
         throw 'Endpoint application readback does not restrict the multi-tenant app to the selected provider tenant.'
     }
 
-    $endpointPrincipal = Get-EppServicePrincipal -AppId $Inputs.ApplicationId -Description 'endpoint'
-    $callerPrincipal = Get-EppServicePrincipal -AppId $script:MicrosoftPhoneProviderAppId -Description 'Microsoft phone-provider'
-    $graphPrincipal = Get-EppServicePrincipal -AppId $script:MicrosoftGraphAppId -Description 'Microsoft Graph'
+    $endpointPrincipal = Get-EppServicePrincipal -Inputs $Inputs -AppId $Inputs.ApplicationId -Description 'endpoint'
+    $callerPrincipal = Get-EppServicePrincipal -Inputs $Inputs -AppId $script:MicrosoftPhoneProviderAppId -Description 'Microsoft phone-provider'
+    $graphPrincipal = Get-EppServicePrincipal -Inputs $Inputs -AppId $script:MicrosoftGraphAppId -Description 'Microsoft Graph'
     if (-not $endpointPrincipal -or -not $endpointPrincipal.AppRoleAssignmentRequired -or
         -not $callerPrincipal -or $callerPrincipal.AccountEnabled -eq $false -or -not $graphPrincipal) {
         throw 'Service-principal readback is incomplete or the endpoint does not require app-role assignment.'
     }
-    $assignments = @(Get-MgServicePrincipalAppRoleAssignment -ServicePrincipalId $callerPrincipal.Id -All -ErrorAction Stop)
+    $assignments = @(Get-EppAppRoleAssignments -Inputs $Inputs -PrincipalId $callerPrincipal.Id)
     $endpointAssignments = @($assignments | Where-Object {
         $_.ResourceId -eq $endpointPrincipal.Id -and $_.AppRoleId -eq $script:EppInvokeAppRoleId
     })
@@ -1674,8 +1976,7 @@ function Assert-EppEncryptionReference {
 function Set-EppApplicationEndpoint {
     param([hashtable] $Inputs, $Context, $Outputs, $Certificate, [string] $KeyId, [bool] $ConfigureFederation = $true)
 
-    $application = Get-MgApplication -ApplicationId $Context.Application.Id `
-        -Property Id, AppId, SignInAudience, IdentifierUris, KeyCredentials, TokenEncryptionKeyId -ErrorAction Stop
+    $application = Get-EppApplication -Inputs $Inputs -ObjectId $Context.Application.Id
     if ($application.AppId -ne $Inputs.ApplicationId -or $application.SignInAudience -ne 'AzureADMultipleOrgs' -or $application.TokenEncryptionKeyId) {
         throw 'The application changed after preflight. Its identity, audience, and signed-token configuration must still match.'
     }
@@ -1719,22 +2020,27 @@ function Set-EppApplicationEndpoint {
     }
     $keys += $key
     # Do not set tokenEncryptionKeyId: JWE payload encryption is separate from bearer-token encryption.
-    Update-MgApplication -ApplicationId $application.Id -IdentifierUris $uris -KeyCredentials $keys -ErrorAction Stop
+    Invoke-EppGraphRequest -Inputs $Inputs -Method PATCH -Path "/v1.0/applications/$($application.Id)" -Body @{
+        identifierUris = $uris
+        keyCredentials = @(ConvertTo-EppGraphKeyCredentials -Credentials $keys)
+    } | Out-Null
     if (-not $ConfigureFederation) { return }
 
     $issuer = "https://login.microsoftonline.com/$($Inputs.TenantId)/v2.0"
     $audience = 'api://AzureADTokenExchange'
     $credentialName = "epp-$($Outputs.functionAppName.value)-outbound"
-    $credentials = @(Get-MgApplicationFederatedIdentityCredential -ApplicationId $application.Id -All -ErrorAction Stop)
+    $credentials = Invoke-EppDirectoryCommand -Inputs $Inputs -Arguments @('ad', 'app', 'federated-credential', 'list', '--id', $application.Id)
+    if ($credentials -isnot [Array]) { throw 'Azure CLI returned an invalid federated-credential list.' }
+    $credentials = @($credentials | ForEach-Object { [pscustomobject]$_ })
     $matching = @($credentials | Where-Object {
         $_.Issuer -ceq $issuer -and $_.Subject -ceq $Outputs.outboundPrincipalId.value -and
         @($_.Audiences).Count -eq 1 -and $_.Audiences[0] -ceq $audience
     })
     if (-not $matching.Count) {
         if (@($credentials | Where-Object Name -eq $credentialName).Count) { throw 'The outbound federated credential name is already used for a different trust. It will not be overwritten.' }
-        New-MgApplicationFederatedIdentityCredential -ApplicationId $application.Id -BodyParameter @{
-            Name = $credentialName; Issuer = $issuer; Subject = $Outputs.outboundPrincipalId.value; Audiences = @($audience)
-        } -ErrorAction Stop | Out-Null
+        New-EppFederatedCredential -Inputs $Inputs -ObjectId $application.Id -Credential @{
+            name = $credentialName; issuer = $issuer; subject = $Outputs.outboundPrincipalId.value; audiences = @($audience)
+        }
     }
 }
 
@@ -1861,13 +2167,13 @@ function Assert-EppFunctionPublished {
 function Invoke-EppDeployment {
     param(
         [hashtable] $Inputs, [Collections.IDictionary] $Names, $ProviderConfiguration, $Context,
-        [string] $AssetDirectory, $Package, [string] $OutputDirectory, [string] $SourceBaseUri
+        [string] $AssetDirectory, [string] $WorkingDirectory, $Package, [string] $OutputDirectory
     )
 
-    $graph = Get-MgContext
-    $graphOperator = if (Test-EppGraphContext -Context $graph -TenantId $Inputs.TenantId) { Get-EppGraphOperator } else { $null }
-    if (-not $graphOperator -or $graphOperator.Id -ne $Context.GraphOperatorId) {
-        throw 'The Graph session changed after the plan was reviewed. Rerun setup.'
+    $graphOperator = Get-EppGraphOperator -Inputs $Inputs
+    if ($graphOperator.Id -ne $Context.GraphOperatorId -or
+        (Get-EppArmOperatorObjectId -Inputs $Inputs) -ne $Context.OperatorId) {
+        throw 'The Azure CLI user changed after the plan was reviewed. Rerun setup.'
     }
     # The single setup approval covers these planned writes, including certificate issuance.
     $ConfirmPreference = 'None'
@@ -1890,14 +2196,14 @@ function Invoke-EppDeployment {
         remoteBuild = @{ value = [bool]$Package.RequiresRemoteBuild }
         servicePlan = @{ value = $Inputs.ServicePlan }
     }
-    $parameterPath = Join-Path $AssetDirectory 'deployment.parameters.json'
+    $parameterPath = Join-Path $WorkingDirectory 'deployment.parameters.json'
     @{ '$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'; contentVersion = '1.0.0.0'; parameters = $parameters } |
         ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $parameterPath -Encoding utf8NoBOM
-    Write-Host 'Deploying Bicep infrastructure...' -ForegroundColor Cyan
+    Write-Host 'Deploying the compiled ARM template with your approved parameters...' -ForegroundColor Cyan
     $deploymentName = "epp-$($Inputs.ResourcePrefix)-$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
     $outputs = Invoke-EppRegistrationRetry -Operation {
         Invoke-EppAz deployment sub create --name $deploymentName `
-            --subscription $Inputs.SubscriptionId --location $Inputs.Location --template-file (Join-Path $AssetDirectory 'infra/main.bicep') `
+            --subscription $Inputs.SubscriptionId --location $Inputs.Location --template-file (Join-Path $AssetDirectory 'main.json') `
             --parameters "@$parameterPath" --query properties.outputs --output json
     } | ConvertFrom-Json
     foreach ($mapping in @{ functionAppName = 'functionApp'; storageAccountName = 'storageAccount'; keyVaultName = 'keyVault'; resourceGroupName = 'resourceGroup' }.GetEnumerator()) {
@@ -1919,14 +2225,14 @@ function Invoke-EppDeployment {
         }
         else {
             $issued = Get-EppEncryptionCertificate -Inputs $Inputs -VaultName $Names.keyVault `
-                -CertificateName $certificatePlan.CertificateName -OutputDirectory $OutputDirectory -Directory $AssetDirectory
+                -CertificateName $certificatePlan.CertificateName -OutputDirectory $OutputDirectory -Directory $WorkingDirectory
         }
         $certificate = $issued.Certificate
         $keyId = $certificatePlan.KeyId
         Write-Host "Selected encryption key ID: $keyId"
         Write-Host "Key Vault certificate: $($issued.CertificateId)"
-        Initialize-EppCertificateAccess -Inputs $Inputs -Names $Names -Plan $certificatePlan -Directory $AssetDirectory
-        Set-EppEncryptionSettings -Inputs $Inputs -Names $Names -SecretId $issued.SecretId -KeyId $keyId -Directory $AssetDirectory
+        Initialize-EppCertificateAccess -Inputs $Inputs -Names $Names -Plan $certificatePlan -Directory $WorkingDirectory
+        Set-EppEncryptionSettings -Inputs $Inputs -Names $Names -SecretId $issued.SecretId -KeyId $keyId -Directory $WorkingDirectory
         Assert-EppEncryptionReference -Inputs $Inputs -Names $Names -SecretId $issued.SecretId -KeyId $keyId
         Set-EppApplicationEndpoint -Inputs $Inputs -Context $Context -Outputs $outputs -Certificate $certificate -KeyId $keyId `
             -ConfigureFederation:($Inputs.ProviderAuthentication -eq 'oauth')
@@ -1934,12 +2240,13 @@ function Invoke-EppDeployment {
             -IdentifierUri $outputs.identifierUri.value -CertificatePlan $certificatePlan
         $siteId = "/subscriptions/$($Inputs.SubscriptionId)/resourceGroups/$($Names.resourceGroup)/providers/Microsoft.Web/sites/$($Names.functionApp)"
         $Inputs.PackageSha256 = Publish-EppFunction -Inputs $Inputs -Names $Names -Context $Context -Outputs $outputs `
-            -SiteId $siteId -Package $Package -Directory $AssetDirectory
+            -SiteId $siteId -Package $Package -Directory $WorkingDirectory
         $result = [ordered]@{
             tenantId = $Inputs.TenantId; subscriptionId = $Inputs.SubscriptionId; applicationId = $Inputs.ApplicationId
             provider = $ProviderConfiguration.Id
             endpointRegion = $ProviderConfiguration.EndpointRegion; providerAuthentication = $Inputs.ProviderAuthentication
             providerTenantId = $Inputs.ProviderTenantId
+            allowedProviderTenantIds = @($Inputs.ProviderAllowedTenantIds)
             providerSmsEndpoint = $ProviderConfiguration.Settings.EPP_PROVIDER_SMS_ENDPOINT
             providerVoiceEndpoint = $ProviderConfiguration.Settings.EPP_PROVIDER_VOICE_ENDPOINT
             resourcePrefix = $Inputs.ResourcePrefix; resources = $Names
@@ -1958,8 +2265,10 @@ function Invoke-EppDeployment {
             microsoftPhoneProviderServicePrincipalId = $graphAccess.CallerPrincipalId
             eppInvokeAppRoleId = $script:EppInvokeAppRoleId
             microsoftGraphApplicationReadAll = $true
-            packageUrl = $Inputs.PackageUrl; sourcePackageSha256 = $Inputs.SourcePackageSha256
-            packageSha256 = $Inputs.PackageSha256; source = $SourceBaseUri
+            source = $Inputs.SourceBaseUri; sourceRevision = $Inputs.SourceRevision
+            packageFile = $Inputs.PackageFile; packageUrl = $Inputs.PackageUrl
+            packageReleaseTag = $Inputs.PackageReleaseTag; sourcePackageSha256 = $Inputs.SourcePackageSha256
+            packageSha256 = $Inputs.PackageSha256
             policyChanged = $false
         }
         $resultPath = Join-Path $OutputDirectory "deployment-$([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))-$([Guid]::NewGuid().ToString('N').Substring(0, 8)).json"
@@ -2037,80 +2346,204 @@ function Publish-EppFunction {
 }
 
 function Invoke-EppSetup {
+    <#
+    .SYNOPSIS
+        Configure and deploy one External Phone Provider endpoint in Azure.
+    .DESCRIPTION
+        Uses commit-pinned infrastructure, provider profiles, and setup helpers downloaded by
+        Setup-Epp.ps1. Downloads and verifies the selected Function ZIP from a stable GitHub release.
+        Azure CLI is required. The .NET selection also needs the .NET 8 SDK and NuGet access;
+        Python dependencies are built in Azure. The Azure CLI Bicep component is also required
+        and can be installed after confirmation. Application registration and policy activation
+        remain manual. Review the complete plan before approving resource or tenant changes.
+        Microsoft Graph calls reuse the existing Azure CLI user session through az ad and az rest.
+        No Microsoft Graph PowerShell SDK or separate Graph sign-in is required.
+        Interactive setup discovers cached Azure CLI accounts before asking for other settings.
+        Choose a tenant and subscription, or explicitly refresh/sign in when the list is incomplete.
+    .PARAMETER TenantId
+        Customer tenant ID. When omitted interactively, select from cached Azure subscriptions,
+        or resolve it from an explicitly supplied subscription. Required in noninteractive mode.
+    .PARAMETER SubscriptionId
+        Azure subscription ID. When omitted interactively, select an enabled user subscription
+        in the chosen tenant. Required in noninteractive mode.
+    .PARAMETER ApplicationId
+        Existing application client ID. When omitted interactively, use the current CLI tenant
+        to choose/search an app registration, or enter its client ID.
+        The picker does not create applications. Required in noninteractive mode.
+    .PARAMETER Provider
+        Provider name, never a numbered selection. When omitted interactively, read the app's
+        allowed-tenants configuration: enter a name if none match, confirm one match, or choose
+        by name among multiple matches. Explicit input confirms the choice; required unattended.
+    .PARAMETER Location
+        Azure region name. When omitted interactively, choose an Azure-recommended shortlist,
+        show all physical regions returned for the subscription, or enter the name manually.
+        Recommendations do not guarantee plan availability or quota. Required noninteractively.
+    .PARAMETER PackageReleaseTag
+        Latest stable package release by default. Supply an epp-packages-<run>-<attempt> tag
+        to pin a reviewed Function release.
+    .PARAMETER OutputDirectory
+        Destination for deployment summaries and public certificates.
+    .PARAMETER CertificateAction
+        Create when no encryption certificate is registered, Reuse a selected certificate,
+        or Replace all registered encryption certificates after explicit approval.
+    .PARAMETER EncryptionKeyId
+        App-registration key ID to keep when reusing a certificate. Required for unattended reuse.
+    .PARAMETER KeyVaultCertificateId
+        Versioned Key Vault certificate URL for reuse, not a public certificate or secret value.
+    .PARAMETER KeyVaultSubscriptionId
+        Subscription containing the reused certificate. Defaults to the deployment subscription.
+    .PARAMETER ForceAuthentication
+        Explicitly request a new Azure CLI device-code sign-in. Omit in Cloud Shell to reuse
+        its existing login. Graph always uses the resulting CLI session, never a separate SDK login.
+    .PARAMETER InstallPrerequisites
+        Install the Azure CLI Bicep component if it is missing. The Graph SDK is not required.
+    .PARAMETER PassThru
+        Return the structured deployment summary. By default, only the ordered human-readable
+        result is displayed, ending with Next steps; the summary JSON is always saved.
+    .PARAMETER NonInteractive
+        Require explicit settings and existing user authentication. Does not approve deployment.
+    .PARAMETER ApproveDeployment
+        Authorize the displayed deployment plan without another prompt. This changes Azure
+        resources and application configuration; it is not a preview.
+    .EXAMPLE
+        Invoke-EppSetup
+    .EXAMPLE
+        Invoke-EppSetup -ForceAuthentication -ServicePlan FC1 -Language javascript
+    .OUTPUTS
+        System.Management.Automation.PSCustomObject
+        With PassThru, the completed deployment summary. Cancellation returns no object.
+    #>
     [CmdletBinding()]
     param(
         [string] $TenantId, [string] $SubscriptionId, [string] $ApplicationId, [string] $Location,
         [string] $Provider, [string] $EndpointRegion,
         [string] $ResourcePrefix,
         [string] $Language,
+        [string] $PackageReleaseTag,
         [string] $ServicePlan,
         [ValidateSet('Create', 'Reuse', 'Replace')]
         [string] $CertificateAction,
         [string] $EncryptionKeyId, [string] $KeyVaultCertificateId, [string] $KeyVaultSubscriptionId,
-        [string] $OutputDirectory, [string] $AssetDirectory, [string] $SourceBaseUri,
+        [string] $OutputDirectory = (Join-Path (Get-Location).Path 'epp-output'),
+        [string] $AssetDirectory, [string] $SourceBaseUri,
         [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
         [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample',
-        [string] $PackageReleaseTag,
         [switch] $NonInteractive, [switch] $InstallPrerequisites,
-        [switch] $ForceAuthentication, [switch] $ApproveDeployment
+        [switch] $ForceAuthentication, [switch] $ApproveDeployment, [switch] $PassThru
     )
 
-    Write-Host "`nEnter missing customer settings. Supplied values will not be requested again."
-    $inputs = @{}
-    foreach ($name in @('TenantId', 'SubscriptionId', 'ApplicationId')) {
-        $inputs[$name] = Read-EppInput -Name $name -Value (Get-Variable -Name $name -ValueOnly) -Kind Guid `
-            -NonInteractive:$NonInteractive
+    if ($NonInteractive -and $ForceAuthentication) {
+        throw '-ForceAuthentication requires interactive device-code sign-in and cannot be combined with -NonInteractive.'
     }
-    $inputs.Location = Read-EppInput Location $Location -Kind Location -Hint 'Azure region, for example westus2' -NonInteractive:$NonInteractive
-    $tenantScopeSelection = Select-EppOption -Entries @(
-        @{ id = 'global'; displayName = 'Global' }
-        @{ id = 'eu'; displayName = 'EU' }
-    ) -Name EndpointRegion -PromptName 'Tenant scope' -Value $EndpointRegion -NonInteractive:$NonInteractive
-
-    $providerConfiguration = Get-EppProvider -AssetDirectory $AssetDirectory -SourceBaseUri $SourceBaseUri -Provider $Provider `
-        -EndpointRegion $tenantScopeSelection['id'] `
-        -NonInteractive:$NonInteractive -SourceRepository $SourceRepository
-    $inputs.ProviderAuthentication = $providerConfiguration.AuthenticationMode
-    $inputs.ProviderTenantId = $providerConfiguration.Settings.EPP_PROVIDER_TENANT_ID
-    $selection = Get-EppLanguage -AssetDirectory $AssetDirectory -Language $Language -SourceRepository $SourceRepository `
-        -PackageReleaseTag $PackageReleaseTag -NonInteractive:$NonInteractive
-    $inputs.Language = $selection.Id
-    $inputs.Platform = $selection.DisplayName
-    $inputs.PackageUrl = $selection.Url
-    $inputs.BuildStrategy = $selection.BuildStrategy
-    $plan = Get-EppServicePlan -ServicePlan $ServicePlan -NonInteractive:$NonInteractive
-    $inputs.ServicePlan = $plan.id
-    $inputs.ResourcePrefix = Read-EppInput ResourcePrefix $ResourcePrefix -Kind Prefix `
-        -Hint 'All resources created by this script will start with this prefix' -NonInteractive:$NonInteractive
-    $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix $inputs.ResourcePrefix
-
-    Write-Host "`nChecking prerequisites and the selected Azure context (no resource changes)..." -ForegroundColor Cyan
-    $context = Connect-EppContext -Inputs $inputs -Names $names -NonInteractive:$NonInteractive `
-        -InstallPrerequisites:$InstallPrerequisites -ForceAuthentication:$ForceAuthentication
-    $context.CertificatePlan = Get-EppCertificatePlan -Inputs $inputs -Names $names -Application $context.Application `
-        -CertificateAction $CertificateAction -EncryptionKeyId $EncryptionKeyId -KeyVaultCertificateId $KeyVaultCertificateId `
-        -KeyVaultSubscriptionId $KeyVaultSubscriptionId -NonInteractive:$NonInteractive
-    if (-not $context.CertificatePlan) {
-        Write-Host 'Cancelled. No Azure resources or application credentials were changed.' -ForegroundColor Yellow
-        return
+    if (-not (Test-Path -LiteralPath $AssetDirectory -PathType Container)) {
+        throw 'Setup assets are missing. Run Setup-Epp.ps1 instead of invoking the temporary helper directly.'
     }
-    $package = Get-EppPackage -Selection $selection -Directory $AssetDirectory
-    $inputs.PackageSha256 = $package.Sha256
-    $inputs.SourcePackageSha256 = $package.SourceSha256
-    Invoke-EppAz bicep build --file (Join-Path $AssetDirectory 'infra/main.bicep') `
-        --outfile (Join-Path $AssetDirectory 'main.json') | Out-Null
-    Show-EppPlan -Inputs $inputs -Names $names -ProviderConfiguration $providerConfiguration -Context $context -SourceBaseUri $SourceBaseUri
-    if (-not (Confirm-EppDeployment -NonInteractive:$NonInteractive -ApproveDeployment:$ApproveDeployment)) {
-        Write-Host 'Cancelled. No Azure resources were changed.' -ForegroundColor Yellow
-        return
+    $sourcePattern = '^https://raw\.githubusercontent\.com/' + [regex]::Escape($SourceRepository) + '/(?<revision>[0-9a-fA-F]{40})/setup$'
+    if ($SourceBaseUri -cnotmatch $sourcePattern) {
+        throw 'Setup assets must come from one commit-pinned source repository.'
     }
+    $sourceRevision = $Matches.revision.ToLowerInvariant()
+    $OutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
+    $assetPrefix = $AssetDirectory.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if ($OutputDirectory.Equals($AssetDirectory, [StringComparison]::OrdinalIgnoreCase) -or
+        $OutputDirectory.StartsWith($assetPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw '-OutputDirectory must be outside the temporary setup download directory.'
+    }
+    $workingDirectory = Join-Path ([IO.Path]::GetTempPath()) "epp-setup-$([Guid]::NewGuid().ToString('N'))"
     try {
-        $null = Invoke-EppDeployment -Inputs $inputs -Names $names -ProviderConfiguration $providerConfiguration -Context $context `
-            -AssetDirectory $AssetDirectory -Package $package -OutputDirectory $OutputDirectory -SourceBaseUri $SourceBaseUri
+        New-Item -ItemType Directory -Path $workingDirectory | Out-Null
+        $azureContext = Select-EppAzureContext -TenantId $TenantId -SubscriptionId $SubscriptionId -NonInteractive:$NonInteractive
+        if (-not $azureContext) {
+            Write-Host 'Cancelled. No Azure resources or application credentials were changed.' -ForegroundColor Yellow
+            return
+        }
+        Write-Host "`nEnter remaining customer settings. Supplied values will not be requested again."
+        $inputs = @{
+            SourceBaseUri = $SourceBaseUri
+            SourceRevision = $sourceRevision
+            TenantId = $azureContext.TenantId
+            SubscriptionId = $azureContext.SubscriptionId
+        }
+        $inputs.ApplicationId = Select-EppApplication -Inputs $inputs -ApplicationId $ApplicationId -NonInteractive:$NonInteractive `
+            -InstallPrerequisites:$InstallPrerequisites -ForceAuthentication:$ForceAuthentication
+        if (-not $inputs.ApplicationId) {
+            Write-Host 'Cancelled. No Azure resources or application credentials were changed.' -ForegroundColor Yellow
+            return
+        }
+        $inputs.Location = Select-EppLocation -Inputs $inputs -Location $Location -NonInteractive:$NonInteractive `
+            -ForceAuthentication:$ForceAuthentication
+        if (-not $inputs.Location) {
+            Write-Host 'Cancelled. No Azure resources or application credentials were changed.' -ForegroundColor Yellow
+            return
+        }
+        $tenantScopeSelection = Select-EppOption -Entries @(
+            @{ id = 'global'; displayName = 'Global' }
+            @{ id = 'eu'; displayName = 'EU' }
+        ) -Name EndpointRegion -PromptName 'Tenant scope' -Value $EndpointRegion -NonInteractive:$NonInteractive
+
+        if (-not $NonInteractive -and [string]::IsNullOrWhiteSpace($Provider)) {
+            $null = Connect-EppGraphAccount -Inputs $inputs -ForceAuthentication:$ForceAuthentication
+        }
+        $providerName = Resolve-EppApplicationProvider -Inputs $inputs -AssetDirectory $assetDirectory -Provider $Provider -NonInteractive:$NonInteractive
+        if (-not $providerName) {
+            Write-Host 'Cancelled. No Azure resources or application credentials were changed.' -ForegroundColor Yellow
+            return
+        }
+        $providerConfiguration = Get-EppProvider -AssetDirectory $assetDirectory -Provider $providerName `
+            -EndpointRegion $tenantScopeSelection['id'] -NonInteractive:$NonInteractive
+        $inputs.ProviderAuthentication = $providerConfiguration.AuthenticationMode
+        $inputs.ProviderTenantId = $providerConfiguration.Settings.EPP_PROVIDER_TENANT_ID
+        $selection = Get-EppLanguage -AssetDirectory $assetDirectory -Language $Language -SourceRepository $SourceRepository `
+            -PackageReleaseTag $PackageReleaseTag -NonInteractive:$NonInteractive
+        $inputs.Language = $selection.Id
+        $inputs.Platform = $selection.DisplayName
+        $inputs.PackageFile = ([Uri]$selection.Url).Segments[-1]
+        $inputs.BuildStrategy = $selection.BuildStrategy
+        $plan = Get-EppServicePlan -ServicePlan $ServicePlan -NonInteractive:$NonInteractive
+        $inputs.ServicePlan = $plan.id
+        $inputs.ResourcePrefix = Read-EppInput ResourcePrefix $ResourcePrefix -Kind Prefix `
+            -Hint 'All resources created by setup will start with this prefix' -NonInteractive:$NonInteractive
+        $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix $inputs.ResourcePrefix
+
+        Write-Host "`nChecking prerequisites and the selected Azure context (no resource changes)..." -ForegroundColor Cyan
+        $context = Connect-EppContext -Inputs $inputs -Names $names -NonInteractive:$NonInteractive `
+            -InstallPrerequisites:$InstallPrerequisites -ForceAuthentication:$ForceAuthentication
+        $context.CertificatePlan = Get-EppCertificatePlan -Inputs $inputs -Names $names -Application $context.Application `
+            -CertificateAction $CertificateAction -EncryptionKeyId $EncryptionKeyId -KeyVaultCertificateId $KeyVaultCertificateId `
+            -KeyVaultSubscriptionId $KeyVaultSubscriptionId -NonInteractive:$NonInteractive
+        if (-not $context.CertificatePlan) {
+            Write-Host 'Cancelled. No Azure resources or application credentials were changed.' -ForegroundColor Yellow
+            return
+        }
+        $package = Get-EppPackage -Selection $selection -Directory $workingDirectory
+        $inputs.PackageSha256 = $package.Sha256
+        $inputs.SourcePackageSha256 = $package.SourceSha256
+        $inputs.PackageUrl = $selection.Url
+        $inputs.PackageReleaseTag = $selection.ReleaseTag
+        Invoke-EppAz bicep build --file (Join-Path $assetDirectory 'infra/main.bicep') `
+            --outfile (Join-Path $assetDirectory 'main.json') | Out-Null
+        Show-EppPlan -Inputs $inputs -Names $names -ProviderConfiguration $providerConfiguration -Context $context
+        if (-not (Confirm-EppDeployment -NonInteractive:$NonInteractive -ApproveDeployment:$ApproveDeployment)) {
+            Write-Host 'Cancelled. No Azure resources were changed.' -ForegroundColor Yellow
+            return
+        }
+        try {
+            $result = Invoke-EppDeployment -Inputs $inputs -Names $names -ProviderConfiguration $providerConfiguration -Context $context `
+                -AssetDirectory $assetDirectory -WorkingDirectory $workingDirectory -Package $package -OutputDirectory $OutputDirectory
+            if ($PassThru) { return $result }
+        }
+        catch {
+            Write-Warning 'Deployment did not complete. Previously created resources are left in place; no rollback or policy activation was attempted. Correct the reported failure and rerun with the same inputs and prefix.'
+            throw
+        }
     }
-    catch {
-        Write-Warning 'Deployment did not complete. Previously created resources are left in place; no rollback or policy activation was attempted. Correct the reported failure and rerun with the same inputs and prefix.'
-        throw
+    finally {
+        try {
+            if (Test-Path -LiteralPath $workingDirectory) {
+                Remove-Item -LiteralPath $workingDirectory -Recurse -Force -ErrorAction Stop
+            }
+        }
+        catch { Write-Warning "Could not remove temporary setup files at '$workingDirectory': $($_.Exception.Message)" -WarningAction Continue }
     }
 }
 

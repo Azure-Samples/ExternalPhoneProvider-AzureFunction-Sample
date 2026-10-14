@@ -6,7 +6,7 @@ $directory = Join-Path ([IO.Path]::GetTempPath()) "epp-certificate-tests-$([Guid
 New-Item -ItemType Directory -Path $directory | Out-Null
 try {
     & $module {
-        param($Directory)
+        param($Directory, $SetupDirectory)
 
         function script:Assert($Condition, [string] $Message) {
             if (-not $Condition) { throw $Message }
@@ -134,14 +134,19 @@ try {
                 default { throw "Unexpected Azure call (no network allowed): $command" }
             }
         }
-        function script:Get-MgApplication { param($ApplicationId, $Property, $ErrorAction); return $script:Application }
-        function script:Update-MgApplication {
-            param($ApplicationId, $IdentifierUris, $KeyCredentials, $ErrorAction)
+        function script:Get-EppApplication { param($Inputs, $ClientId, $ObjectId); return $script:Application }
+        function script:Invoke-EppGraphRequest {
+            param($Inputs, $Method, $Path, $Body, $Query)
             if ($script:GraphError) { throw $script:GraphError }
+            Assert ($Method -eq 'PATCH' -and $Path -like '/v1.0/applications/*') 'Certificate registration must use one explicit Graph application PATCH.'
+            Assert (($Body.Keys | Sort-Object) -join ',' -ceq 'identifierUris,keyCredentials') 'Do not modify unrelated application properties during certificate registration.'
             $script:GraphWrites++
             $script:Calls.Add('graph:keys')
-            $script:Application.IdentifierUris = $IdentifierUris
-            $script:Application.KeyCredentials = $KeyCredentials
+            $script:Application.IdentifierUris = $Body.identifierUris
+            $script:Application.KeyCredentials = (ConvertFrom-EppGraphApplication -Application @{
+                id = '11111111-1111-1111-1111-111111111111'; appId = '22222222-2222-2222-2222-222222222222'
+                keyCredentials = $Body.keyCredentials
+            }).KeyCredentials
         }
 
         $rsa = [Security.Cryptography.RSA]::Create(2048)
@@ -165,7 +170,12 @@ try {
                 SubscriptionId = '33333333-3333-3333-3333-333333333333'; ApplicationId = '22222222-2222-2222-2222-222222222222'
                 ServicePlan = 'FC1'; Language = 'javascript'; ProviderAuthentication = 'apiKey'
                 Location = 'westus2'; ResourcePrefix = 'unit'; PackageSha256 = ('a' * 64); SourcePackageSha256 = ('a' * 64)
-                PackageUrl = 'https://github.com/unit/package.zip'; ProviderTenantId = '44444444-4444-4444-4444-444444444444'
+                PackageFile = 'epp-javascript.zip'; SourceRevision = ('a' * 40)
+                SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
+                PackageReleaseTag = 'epp-packages-1-1'
+                PackageUrl = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
+                ProviderTenantId = '44444444-4444-4444-4444-444444444444'
+                ProviderAllowedTenantIds = @('44444444-4444-4444-4444-444444444444')
             }
             $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix unit
             $names.keyVault = 'epptestvault'
@@ -337,6 +347,8 @@ try {
             Assert ($script:Application.KeyCredentials.Count -eq 2) 'Three reruns must not append any encryption credentials.'
             Assert ($null -eq $script:Application.TokenEncryptionKeyId) 'Do not enable bearer-token encryption.'
 
+            $first = $script:Application.KeyCredentials | Where-Object KeyId -eq $keyId
+            $signing = $script:Application.KeyCredentials | Where-Object Usage -ne Encrypt
             $beforeWrites = $script:GraphWrites
             $context.CertificatePlan = Get-EppCertificatePlan @planArgs @reuseArgs -NonInteractive
             $first.DisplayName = 'Changed after approval'
@@ -469,9 +481,9 @@ try {
             Assert ($crossSubscription.VaultSubscriptionId -ceq $secondId) 'A same-tenant certificate vault may be in another explicitly supplied subscription.'
             $script:Vault.id = $originalVaultId
 
-            function script:Get-MgContext { return @{} }
-            function script:Test-EppGraphContext { param($Context, $TenantId); return $true }
-            function script:Get-EppGraphOperator { return @{ Id = 'operator' } }
+            function script:Get-EppGraphOperator { param($Inputs); return @{ Id = 'operator' } }
+            $script:ArmOperator = $context.OperatorId
+            function script:Get-EppArmOperatorObjectId { param($Inputs); return $script:ArmOperator }
             function script:Initialize-EppGraphAccess {
                 param($Inputs, $Context)
                 Assert-EppCertificatePlanUnchanged -Application $script:Application -Plan $Context.CertificatePlan
@@ -500,7 +512,7 @@ try {
             }
             $deployment = @{
                 Inputs = $inputs; Names = $names; ProviderConfiguration = $provider; Context = $context
-                AssetDirectory = $Directory; Package = @{ RequiresRemoteBuild = $false }; OutputDirectory = $Directory; SourceBaseUri = 'https://source.contoso.com/setup'
+                AssetDirectory = $Directory; WorkingDirectory = $Directory; Package = @{ RequiresRemoteBuild = $false }; OutputDirectory = $Directory
             }
             foreach ($action in @('Create', 'Reuse', 'Replace')) {
                 Set-TestBundle $certificate
@@ -515,6 +527,9 @@ try {
                 $script:ReferenceError = ''; $script:Calls.Clear()
                 $result = Invoke-EppDeployment @deployment
                 Assert ($result.certificateAction -ceq $action -and $result.certificateReferenceResolved -eq $true) 'The persisted result must identify the action and resolved reference.'
+                Assert ($result.sourceRevision -ceq ('a' * 40) -and $result.source -ceq $inputs.SourceBaseUri -and
+                    $result.packageFile -ceq 'epp-javascript.zip' -and $result.packageUrl -ceq $inputs.PackageUrl -and
+                    $result.packageReleaseTag -ceq $inputs.PackageReleaseTag) 'The persisted result must identify the setup source and downloaded Function release.'
                 Assert ($result.removedEncryptionKeyIds.Count -eq $context.CertificatePlan.RemoveKeyIds.Count) 'Record the exact retired credential IDs.'
                 $trace = $script:Calls.ToArray()
                 $referenceCall = $trace | Where-Object { $_ -like 'rest --method get */EPP_DECRYPTION_KEY_PEM?*' } | Select-Object -Last 1
@@ -548,18 +563,28 @@ try {
                 return $script:SetupContext
             }
             function script:Get-EppProvider {
-                param($AssetDirectory, $SourceBaseUri, $Provider, $EndpointRegion, [switch] $NonInteractive, $SourceRepository)
+                param($AssetDirectory, $Provider, $EndpointRegion, [switch] $NonInteractive)
                 return $script:TestProvider
+            }
+            function script:Resolve-EppApplicationProvider {
+                param($Inputs, $AssetDirectory, $Provider, [switch] $NonInteractive)
+                return $Provider
             }
             function script:Get-EppLanguage {
                 param($AssetDirectory, $Language, $SourceRepository, $PackageReleaseTag, [switch] $NonInteractive)
-                return @{ Id = 'javascript'; DisplayName = 'Node.js'; Url = 'https://github.com/unit/package.zip'; BuildStrategy = 'ready' }
+                return @{
+                    Id = 'javascript'; DisplayName = 'Node.js'; BuildStrategy = 'ready'
+                    Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
+                    ReleaseTag = 'epp-packages-1-1'
+                }
             }
             function script:Get-EppPackage { param($Selection, $Directory); throw 'package-boundary' }
             $setupInputs = @{
                 TenantId = $inputs.TenantId; SubscriptionId = $inputs.SubscriptionId; ApplicationId = $inputs.ApplicationId
                 Location = 'westus2'; ResourcePrefix = 'unit'; Language = 'javascript'; ServicePlan = 'FC1'
-                Provider = 'unit'; EndpointRegion = 'global'; AssetDirectory = $Directory; OutputDirectory = $Directory; SourceBaseUri = 'https://source.contoso.com/setup'
+                Provider = 'unit'; EndpointRegion = 'global'; OutputDirectory = $Directory
+                AssetDirectory = $SetupDirectory
+                SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
             }
             Set-TestBundle $certificate
             $script:Application.KeyCredentials = @($first, $signing)
@@ -572,7 +597,7 @@ try {
             $tokens = $null; $parseErrors = $null
             $launcher = [Management.Automation.Language.Parser]::ParseFile(
                 (Join-Path $PSScriptRoot '..\Setup-Epp.ps1'), [ref]$tokens, [ref]$parseErrors)
-            Assert ($parseErrors.Count -eq 0) 'The downloaded launcher must parse.'
+            Assert ($parseErrors.Count -eq 0) 'The compatibility wrapper must parse.'
             foreach ($parameter in @('CertificateAction', 'EncryptionKeyId', 'KeyVaultCertificateId', 'KeyVaultSubscriptionId')) {
                 Assert ($launcher.ParamBlock.Parameters.Name.VariablePath.UserPath -contains $parameter) "The launcher must forward $parameter."
             }
@@ -582,7 +607,7 @@ try {
             if ($issued) { $issued.Certificate.Dispose() }
             $certificate.Dispose(); $rsa.Dispose(); $other.Dispose(); $otherRsa.Dispose()
         }
-    } $directory
+    } $directory (Split-Path -Parent $PSScriptRoot)
     Write-Host 'Certificate discovery, selection, staging, cleanup, preservation, vault access, and reference checks passed.'
 }
 finally {

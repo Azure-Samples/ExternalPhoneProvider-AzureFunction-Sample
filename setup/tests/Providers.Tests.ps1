@@ -6,7 +6,9 @@ $module = Import-Module (Join-Path $setupDirectory 'support' 'Epp.Setup.psm1') -
 $directory = Join-Path ([IO.Path]::GetTempPath()) "epp-provider-tests-$([Guid]::NewGuid().ToString('N'))"
 try {
     New-Item -ItemType Directory -Path (Join-Path $directory 'providers') -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $setupDirectory 'providers' 'catalog.json') -Destination (Join-Path $directory 'providers' 'catalog.json')
+    foreach ($file in @('catalog.json', 'telesign.json', 'soprano.json')) {
+        Copy-Item -LiteralPath (Join-Path $setupDirectory 'providers' $file) -Destination (Join-Path $directory 'providers' $file)
+    }
     & $module {
         param($SetupDirectory, $Directory)
 
@@ -22,7 +24,6 @@ try {
             throw "Expected failure matching '$Pattern'."
         }
         $script:SetupDirectory = $SetupDirectory
-        $script:SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
         $script:Messages = [Collections.Generic.List[string]]::new()
         $script:Prompts = [Collections.Generic.List[string]]::new()
         $script:Answers = [Collections.Generic.Queue[string]]::new()
@@ -36,18 +37,54 @@ try {
             Assert ($script:Answers.Count -gt 0) "Unexpected prompt: $Prompt"
             return $script:Answers.Dequeue()
         }
-        function script:Invoke-WebRequest {
-            param($Uri, $OutFile, $TimeoutSec, $MaximumRedirection)
-            $file = ([Uri]$Uri).Segments[-1]
-            Assert ($file -in @('telesign.json', 'soprano.json')) 'Only catalog provider files may be downloaded.'
-            Assert ($Uri -ceq "$script:SourceBaseUri/providers/$file") 'Profiles must remain commit-pinned.'
-            Copy-Item -LiteralPath (Join-Path $script:SetupDirectory 'providers' $file) -Destination $OutFile
-        }
+        function script:Invoke-WebRequest { throw 'Unexpected download (providers must be bundled).' }
         function script:Invoke-EppAz { throw 'Unexpected Azure call (no network allowed).' }
+
+        $packageCases = @(
+            @{ Id = 'javascript'; File = 'epp-javascript.zip'; Strategy = 'ready' }
+            @{ Id = 'dotnet'; File = 'epp-dotnet-source.zip'; Strategy = 'dotnet-publish' }
+            @{ Id = 'python'; File = 'epp-python-source.zip'; Strategy = 'remote-build' }
+        )
+        $script:PackageRelease = [pscustomobject]@{
+            tag_name = 'epp-packages-42-1'; draft = $false; prerelease = $false
+            assets = @(@($packageCases.File) + 'SHA256SUMS.txt' | ForEach-Object { [pscustomobject]@{ name = $_ } })
+        }
+        function script:Invoke-RestMethod {
+            param($Uri, $Headers, $TimeoutSec)
+            Assert ($Uri -ceq $script:ExpectedReleaseUri) 'Resolve only the selected repository and release.'
+            return $script:PackageRelease
+        }
+        foreach ($repository in @('Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample', 'unit/epp-fork')) {
+            foreach ($tag in @('', $script:PackageRelease.tag_name)) {
+                $script:ExpectedReleaseUri = if ($tag) {
+                    "https://api.github.com/repos/$repository/releases/tags/$tag"
+                }
+                else { "https://api.github.com/repos/$repository/releases?per_page=100" }
+                foreach ($case in $packageCases) {
+                    $selection = Get-EppLanguage -AssetDirectory $SetupDirectory -Language $case.Id `
+                        -SourceRepository $repository -PackageReleaseTag $tag -NonInteractive
+                    $releaseUrl = "https://github.com/$repository/releases/download/epp-packages-42-1"
+                    Assert ($selection.Id -ceq $case.Id -and $selection.BuildStrategy -ceq $case.Strategy) 'Preserve each language and its build strategy.'
+                    Assert ($selection.Url -ceq "$releaseUrl/$($case.File)" -and
+                        $selection.ChecksumsUrl -ceq "$releaseUrl/SHA256SUMS.txt" -and
+                        $selection.ReleaseTag -ceq 'epp-packages-42-1') 'Resolve concrete, validated package and checksum URLs from the stable release.'
+                }
+            }
+        }
+        foreach ($url in @(
+            'http://github.com/unit/epp-fork/releases/download/epp-packages-42-1/epp-javascript.zip',
+            'https://github.com/unrelated/repository/releases/download/epp-packages-42-1/epp-javascript.zip'
+        )) {
+            Assert-Throws {
+                Read-EppInput -Name PackageUrl -Value $url -Kind PackageUrl -SourceRepository 'unit/epp-fork' -NonInteractive
+            } 'Invalid -PackageUrl'
+        }
+        Assert ($script:Prompts.Count -eq 0) 'Package resolution must not ask for raw URLs or checksums.'
+        function script:Invoke-RestMethod { throw 'Unexpected REST call (no network allowed).' }
 
         foreach ($id in @('telesign', 'soprano')) {
             foreach ($region in @('global', 'eu')) {
-                $configuration = Get-EppProvider -AssetDirectory $Directory -SourceBaseUri $script:SourceBaseUri `
+                $configuration = Get-EppProvider -AssetDirectory $Directory `
                     -Provider $id -EndpointRegion $region -NonInteractive
                 $route = $configuration.Manifest.deployment.routes[$region]
                 $settings = $configuration.Settings
@@ -112,37 +149,58 @@ try {
 
         function script:Get-EppLanguage {
             param($AssetDirectory, $Language, $SourceRepository, $PackageReleaseTag, [switch] $NonInteractive)
-            return @{ Id = 'javascript'; DisplayName = 'Node.js'; Url = 'https://github.com/unit/package.zip'; BuildStrategy = 'ready' }
+            return @{
+                Id = 'javascript'; DisplayName = 'Node.js'; BuildStrategy = 'ready'
+                Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
+                ReleaseTag = 'epp-packages-1-1'
+            }
         }
         function script:Connect-EppContext {
             param($Inputs, $Names, [switch] $NonInteractive, [switch] $InstallPrerequisites, [switch] $ForceAuthentication)
             throw 'preflight-reached'
         }
+        $script:GraphConnections = 0
+        function script:Connect-EppGraphAccount {
+            param($Inputs, [switch] $NonInteractive, [switch] $ForceAuthentication)
+            $script:GraphConnections++
+            $Inputs.AzureSelectionAuthenticated = $true
+            return @{ Context = @{}; Operator = @{ Id = $inputs.TenantId; Account = 'operator@contoso.test' } }
+        }
+        function script:Get-EppApplication {
+            param($Inputs, $ClientId, $ObjectId)
+            return @{ Id = '44444444-4444-4444-4444-444444444444'; SignInAudience = 'AzureADMyOrg' }
+        }
+        function script:Get-EppSignInAudienceRestrictions { param($Inputs, $ApplicationObjectId); return $null }
         $inputs = @{
             TenantId = '11111111-1111-1111-1111-111111111111'
             SubscriptionId = '22222222-2222-2222-2222-222222222222'
             ApplicationId = '33333333-3333-3333-3333-333333333333'
             Location = 'westus2'; ResourcePrefix = 'unit'; Language = 'javascript'; ServicePlan = 'FC1'
+            AssetDirectory = $SetupDirectory
+            SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
         }
         foreach ($id in @('telesign', 'soprano')) {
             foreach ($region in @('global', 'eu')) {
                 Assert-Throws {
-                    Invoke-EppSetup @inputs -Provider $id -EndpointRegion $region -AssetDirectory $Directory `
-                        -SourceBaseUri $script:SourceBaseUri -OutputDirectory $Directory -NonInteractive
+                    Invoke-EppSetup @inputs -Provider $id -EndpointRegion $region -OutputDirectory $Directory -NonInteractive
                 } '^preflight-reached$'
             }
         }
         Assert ($script:Prompts.Count -eq 0) 'Unattended setup must reach preflight without any channel input.'
-        $script:Answers.Enqueue('2')
-        $script:Answers.Enqueue('2')
         Assert-Throws {
-            Invoke-EppSetup @inputs -AssetDirectory $Directory -SourceBaseUri $script:SourceBaseUri -OutputDirectory $Directory
+            Invoke-EppSetup @inputs -EndpointRegion global -OutputDirectory $Directory -NonInteractive
+        } '\-Provider is required'
+        Assert ($script:GraphConnections -eq 0) 'Reject a missing unattended provider before contacting Graph.'
+        $script:Answers.Enqueue('2')
+        $script:Answers.Enqueue('soprano')
+        Assert-Throws {
+            Invoke-EppSetup @inputs -OutputDirectory $Directory
         } '^preflight-reached$'
-        Assert (($script:Prompts -join ',') -ceq 'Tenant scope number or name,Provider number or name') 'Interactive setup must only ask for missing region and provider selections.'
+        Assert (($script:Prompts -join ',') -ceq 'Tenant scope number or name,Provider name (Enter cancels)') 'Provider selection must use a name rather than a numbered ranking.'
         Assert ($script:Answers.Count -eq 0) 'All expected prompt answers must be consumed.'
 
         $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix $inputs.ResourcePrefix
-        $configuration = Get-EppProvider -AssetDirectory $Directory -SourceBaseUri $script:SourceBaseUri -Provider telesign -EndpointRegion global -NonInteractive
+        $configuration = Get-EppProvider -AssetDirectory $Directory -Provider telesign -EndpointRegion global -NonInteractive
         $script:Messages.Clear()
         Show-EppDeploymentResult -Inputs $inputs -Names $names -ProviderConfiguration $configuration `
             -EndpointUrl 'https://unit.azurewebsites.net/api/SendOtp' -ResultPath (Join-Path $Directory 'deployment.json')
