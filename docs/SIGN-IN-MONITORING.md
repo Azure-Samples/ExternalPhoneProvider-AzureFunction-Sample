@@ -1,13 +1,72 @@
 # Monitor Microsoft Entra sign-ins
 
-Start here to look up a failed sign-in. If you also want ongoing notifications, continue
-through the six steps to create your first alert. The [optional reference](#optional-reference)
-covers more advanced setup and investigation.
+For ongoing monitoring, start with the [three recommendations below](#recommended-monitors).
+To look up one failed sign-in, go to [Step 1](#1-choose-your-tenant-and-access).
+The six-step walkthrough creates a user sign-in alert; the [optional reference](#optional-reference)
+helps your query maintainer adapt it to the other monitors.
 
-**Sign-in logs show authentication outcomes, not OTP delivery.** A failed sign-in does not
-automatically mean a phone-provider failure. Keep identity details private. EPP setup does
-not export these logs or create alerts; the steps below are actions for your administrators,
-not changes made by this guide.
+**Scope: Entra authentication and configuration, not Function or phone delivery.**
+Keep identity details private. EPP setup does not export these logs or create alerts;
+the steps below are actions for your administrators, not changes made by this guide.
+
+## Recommended monitors
+
+Put these in place in priority order. First agree on the source tenant, exact integration
+identities and target resources, and who receives each notification. Use IDs, not name
+substrings or every application in the tenant.
+
+### Priority 1: Integration identities cannot sign in
+
+1. **Watch:** application/service-principal and managed-identity authentication in
+   **AADServicePrincipalSignInLogs** and **AADManagedIdentitySignInLogs**. Filter to the
+   known app/service principal **and** intended resource in the source tenant.
+2. **Notify:** when failures repeat above the usual level for the same observation window,
+   or a new error starts recurring. Group by identity, resource, and error; show the last
+   successful sign-in alongside failures. Start with a review notification, then agree
+   with the owner which sustained failures need paging.
+3. **Owner and first checks:** the Azure/identity integration operator checks the error,
+   identity status, credential validity, federation settings, and recent permission changes.
+   Token success does not prove a later API operation is authorized. Token caching means
+   there is not a sign-in event for every service request: only alert on absent successes
+   after accounting for the expected schedule, caching, and [collection health](#monitor-ingestion-separately).
+
+### Priority 2: Integration credentials, permissions, or trust change
+
+1. **Watch:** **AuditLogs** for the integration's application and service-principal objects.
+   Include credential additions/removals, application identifier or trust-setting updates,
+   service-principal changes, consent, and permission grants/removals. Have the maintainer
+   verify which [audit activities](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/reference-audit-activities#core-directory)
+   actually appear for these operations.
+2. **Notify:** on an unexpected **successful** change to those targets; one can deserve
+   review without a volume threshold. Keep failed attempts separate from completed changes.
+   Record approved maintenance so planned changes do not page as suspected abuse.
+3. **Owner and first checks:** the application/identity administrator checks who changed
+   what, when, and against which approved change ticket. Review target and changed-property
+   names; link to restricted logs instead of attaching raw old/new values. Group related
+   records before escalating an unexplained change to security. This is change monitoring,
+   not a credential-expiry inventory or automatic revocation rule.
+
+### Priority 3: Users repeatedly have trouble signing in
+
+1. **Watch:** **SigninLogs** for the customer-facing app and source tenant. Review
+   **AADNonInteractiveUserSignInLogs** separately for background token/session problems;
+   do not mix those records into the interactive failure count or rate.
+2. **Notify:** when the same error keeps recurring or unresolved failures rise above
+   ordinary traffic for the agreed window. Start with counts; use a rate only with a
+   matching population and minimum traffic level. A consent prompt or expired session
+   can recover, so check later outcomes before treating it as a continuing problem.
+3. **Owner and first checks:** identity support reads the overall error and reason,
+   then checks recent app/policy changes and related recovery records. Successful
+   Conditional Access or MFA steps do not make the overall sign-in successful.
+   Escalate to security only with corroborating signals, not a nonzero code alone.
+
+**Set up once, then adapt.** Follow [export setup](#3-export-logs-for-ongoing-monitoring),
+select the [categories for these monitors](#choose-additional-export-categories), and use
+the [field checks](#field-checks-for-the-recommended-monitors) before adapting a query.
+Reuse the [alert settings](#5-create-your-first-alert) and [safe test/handover](#6-test-then-hand-over);
+the walkthrough's user-failure query and measurement are not interchangeable with the
+other monitors. Choose thresholds from representative ordinary traffic, not a small export
+or a fixed production SLA.
 
 ## 1. Choose your tenant and access
 
@@ -184,7 +243,8 @@ you need more advanced monitoring.
 ## Optional reference
 
 Use these sections when you need more than the first alert: [tenant setup and access](#1-choose-the-tenant-and-permissions),
-[query details](#4-establish-the-baseline), [other alert types](#more-alert-types),
+[monitor field checks](#field-checks-for-the-recommended-monitors), [query details](#4-establish-the-baseline),
+[other alert types](#more-alert-types),
 [collection gaps](#monitor-ingestion-separately), [Workbooks](#6-build-a-sign-in-workbook),
 and [triage, retention, and costs](#7-triage-privacy-retention-and-costs).
 
@@ -245,12 +305,15 @@ and [triage, retention, and costs](#7-triage-privacy-retention-and-costs).
 
 1. Follow the [diagnostic-settings navigation](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-configure-diagnostic-settings#how-to-access-diagnostic-settings)
    and [category descriptions](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-diagnostic-settings-logs-options)
-   when expanding the first export. **AuditLogs** describes directory changes, not sign-in
-   outcomes. Add it only if required.
-2. Non-interactive user, service-principal, and managed-identity sign-ins use
-   `AADNonInteractiveUserSignInLogs`, `AADServicePrincipalSignInLogs`, and
-   `AADManagedIdentitySignInLogs`. Keep their populations/baselines separate from interactive
-   `SigninLogs`. Check categories actually available in your tenant.
+   when expanding the first export. Check categories available in your tenant and confirm
+   arrivals in each destination table. Selecting **SignInLogs** alone does not collect the
+   other sign-in streams or audit events.
+2. Match each diagnostic category to its Log Analytics table:
+   **SignInLogs** to **SigninLogs**; **NonInteractiveUserSignInLogs** to
+   **AADNonInteractiveUserSignInLogs**; **ServicePrincipalSignInLogs** to
+   **AADServicePrincipalSignInLogs**; **ManagedIdentitySignInLogs** to
+   **AADManagedIdentitySignInLogs**; and **AuditLogs** to **AuditLogs**.
+   The recommended monitors need these streams where applicable. Keep their baselines separate.
 3. **SignInLogs** does not enable **RiskyUsers** or **UserRiskEvents**. Provider OAuth logs
    may be in the provider's tenant and need its administrator's help. Function diagnostic
    settings and Application Insights are separate pipelines, not Entra export configuration.
@@ -266,13 +329,59 @@ and [triage, retention, and costs](#7-triage-privacy-retention-and-costs).
 2. Expand a row using its [chevron](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#expand-and-sort-records).
    `AADTenantId` is the source directory; standard `TenantId` is the **workspace ID**.
    `AppId` is the app client ID, not an Object ID or provider API ID.
-3. `ResultType` is a **string**: zero indicates success; populated nonzero values are
-   authentication codes. Keep empty values as unknown. `CreatedDateTime` is sign-in initiation
-   in UTC; `TimeGenerated` is the workspace log timestamp. They are not ingestion time.
+3. In **SigninLogs**, `ResultType` is a **string**: zero indicates success; populated
+   nonzero values are authentication codes. Keep empty values as unknown.
+   `CreatedDateTime` is sign-in initiation in UTC; `TimeGenerated` is the workspace log
+   timestamp. Use the ingestion-time guidance below rather than assuming their difference
+   measures collection delay.
 4. Adapt the [ingestion-latency reference](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-ingestion-time)
    and [standard-column timing guidance](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-standard-columns#_timereceived-column)
    to your `SigninLogs` scope to measure delay, including missing timestamps.
    These generic examples are not a ready-made Entra monitor or delivery-latency measure.
+
+### Field checks for the recommended monitors
+
+Use the [table preview](#4-check-your-data-and-choose-a-query) and verify real values before
+saving an alert query. Portal JSON downloads are not Log Analytics rows.
+
+1. **Scope by the right IDs.** In sign-in tables, use **AADTenantId** for the exporting
+   directory and **AppId** for the client ID. For workload sign-ins, use
+   **ServicePrincipalId** for the identity's object ID; inspect **ResourceIdentity** and
+   **ResourceServicePrincipalId** in the
+   [service-principal schema](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/aadserviceprincipalsigninlogs#columns)
+   and [managed-identity schema](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/aadmanagedidentitysigninlogs#columns).
+   Match the chosen column's ID type, not its display name. Standard **TenantId** denotes
+   the workspace; nullable portal home/resource tenant fields are not a substitute for
+   knowing the source directory.
+2. **Check the overall result, per table.** Portal sign-in JSON uses integer
+   **status.errorCode** (zero for success) and **status.failureReason**. In Log Analytics,
+   inspect **ResultType**, **ResultSignature**, and **ResultDescription** against the
+   [interactive](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/signinlogs#columns),
+   [noninteractive](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/aadnoninteractiveusersigninlogs#columns),
+   and workload schemas above. Some schemas describe Success/Failure while
+   [official query examples](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/queries/aadserviceprincipalsigninlogs)
+   compare a zero code. Do not reuse one result test across all tables; verify values and
+   types in each destination, keeping empty/unknown results separate.
+3. **Treat authentication steps as explanation.** Portal **authenticationDetails** is an
+   array; user-table **AuthenticationDetails** is a string requiring parsing.
+   **conditionalAccessStatus** or a step's **succeeded** value cannot replace the overall
+   result. An empty **authenticationMethodsUsed** summary does not establish absence of MFA,
+   and an MFA requirement or **Previously satisfied** step does not prove a fresh challenge.
+   Use the [step interpretation guidance](#inspect-authentication-steps-safely).
+4. **Count records, not journeys.** Portal **id** / table **Id** identifies a record.
+   Keep streams distinct. **correlationId** / **CorrelationId** and **originalRequestId** /
+   **OriginalRequestId**, where populated, help investigate related outcomes, not establish
+   unique customers or guaranteed recovery. Confirm app, identity, and time context;
+   [correlation IDs are not guaranteed accurate](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-sign-in-log-activity-details#unique-identifiers).
+5. **Inspect audit targets and results.** Use **AADTenantId**, **ActivityDisplayName**,
+   **ActivityDateTime**, **Result**, **ResultReason**, **InitiatedBy**, and **TargetResources**
+   from the [AuditLogs schema](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/tables/auditlogs#columns).
+   Portal counterparts start lowercase. Within **targetResources**, match **id** and
+   **type** to the application or service-principal **object ID**, not the app's client ID.
+   Inspect **modifiedProperties** names in restricted logs. A successful result means
+   the operation completed, not that it was approved. **ActivityDateTime** is activity time;
+   **TimeGenerated** is record creation time. Verify source coverage rather than assuming
+   every trust/policy change or credential expiry appears here.
 
 ### Inspect authentication steps safely
 
