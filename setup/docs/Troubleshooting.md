@@ -33,7 +33,7 @@ before activation.
 
 ## Recover without destructive cleanup
 
-Before approval, setup's read-only checks can fail without Azure resource mutation (local module
+Before approval, setup's read-only checks can fail without Azure resource mutation (Bicep
 installation and sign-in may already have occurred). After approval, partial Azure/Entra changes
 can remain even if no success summary was written. Inspect the Azure subscription/resource-group
 deployment operations and the original failure before retrying.
@@ -199,35 +199,44 @@ Setup cannot grant this permission or bypass a subscription policy. It stops bef
 certificate or deployment resources. Registrations already requested are left in place for a rerun;
 the script does not unregister services that other workloads might now use.
 
-## Get-MgContext reports SessionNotInitialized
+## Azure CLI directory context does not match the selected tenant
 
-This is different from simply not being signed in. A failed attempt to remove Graph Authentication
-can run the SDK's cleanup hook and clear its internal session even though Graph Applications keeps
-the module loaded. Reimporting an already loaded module normally does not initialize it again.
-See the upstream [Graph SDK issue](https://github.com/microsoftgraph/msgraph-sdk-powershell/issues/2457).
+Setup selects an Azure subscription without changing the Azure CLI default tenant. Microsoft
+Graph operations use that CLI directory through `az ad` and `az rest`, so `az account show` must
+describe a public-cloud **user** session in the selected tenant.
 
-Setup now detects this exact error during its initial context check, reloads the **same loaded
-Authentication version** once, and then uses the normal sign-in flow. It does not force-remove the
-SDK, upgrade modules, suppress unrelated errors, or automatically reconnect after deployment approval.
-A healthy existing Graph session is reused unchanged. Noninteractive runs still require prior sign-in.
+In interactive setup, choose **Refresh subscriptions from Azure** or **Sign in to Azure
+(device code)** from the account picker. You can also authenticate before rerunning:
 
-For immediate recovery, start a new process with `pwsh -NoProfile` and rerun the downloaded script.
-If initialization still fails after the one reload, setup gives this same clean-process instruction
-instead of repeatedly retrying or hiding the error.
+```powershell
+az login --tenant '<customer-tenant-id>' --use-device-code
+az account show --subscription '<subscription-id>' --output table
+az ad signed-in-user show --output table
+```
 
-## Remove-Module says Graph Authentication is required by Graph Applications
+In Azure Cloud Shell, first switch the portal to the intended directory and start a PowerShell
+session there. Setup does not silently switch Cloud Shell to another tenant. On a shared
+workstation, `-ForceAuthentication` requests a fresh tenant-specific Azure CLI device-code login
+after account selection. It does not run `az logout`, `az account clear`, or delete shared caches.
 
-Older setup versions imported the Graph SDK inside the temporary EPP module. Unloading that
-helper could then attempt to remove its Graph dependencies in the wrong order, producing this
-cleanup error. The current version imports both Graph modules into the PowerShell session's global
-scope and unloads only its temporary EPP helper. Your Graph modules and sign-in context remain
-available for subsequent commands and reruns.
+## The expected cached account or subscription is missing
 
-Do not add `-Force` to remove the Graph SDK. Download the updated launcher and open a fresh
-PowerShell 7 window to discard module state left by the old version. Cleanup failures are now
-reported as warnings, temporary-file cleanup is attempted independently, and an earlier setup
-error is preserved. A cleanup error alone does not establish whether Azure deployment succeeded;
-review the original output and saved deployment summary.
+The account picker includes only enabled AzureCloud subscriptions associated with an Azure CLI
+**user** login. Disabled subscriptions, service-principal sessions, tenant-level entries, and
+other clouds are excluded. Refresh the CLI cache or choose device-code sign-in. A supplied
+subscription ID is never replaced with another subscription.
+
+For unattended setup, establish the user session first and verify both the tenant and subscription:
+
+```powershell
+az login --tenant '<customer-tenant-id>'
+az account show --subscription '<subscription-id>' --output json
+az account get-access-token --subscription '<subscription-id>' `
+    --resource-type ms-graph --output none
+```
+
+Do not use `-ForceAuthentication` with `-NonInteractive`; the former intentionally requires an
+interactive device-code flow.
 
 ## Setup still asks for PackageUrl or PackageSha256
 
@@ -289,49 +298,55 @@ older downloaded helper by refreshing the launcher/source revision.
 
 ## Authentication, permission, or runtime preflight fails
 
-Use PowerShell 7 on Windows, Azure CLI with Bicep, and the documented Graph modules. Sign into the
-customer tenant with a user account. ARM requests use the supplied subscription; setup does not
-change the CLI's default subscription or adopt unrelated resource groups.
+Use Azure Cloud Shell in PowerShell mode, or PowerShell 7 with Azure CLI and Bicep. The Microsoft
+Graph PowerShell SDK is not used. Sign in to the customer tenant with a user account. ARM requests
+use the selected subscription; setup does not change the CLI default subscription or adopt
+unrelated resource groups. Directory requests reuse the same CLI session through `az ad` and
+`az rest`.
 
-Azure CLI itself must be installed before setup. When a matching session is absent, interactive
-setup launches `az login` for the supplied tenant. Missing Graph modules and the Azure CLI Bicep
-component can be installed after confirmation; noninteractive runs require
-`-InstallPrerequisites` or prior installation.
+Azure CLI itself must be installed before setup. Interactive setup can select cached user
+subscriptions, refresh them, or start tenant-specific device-code sign-in. Only the Azure CLI
+Bicep component can be installed after confirmation. In unattended runs, preinstall Bicep or pass
+`-InstallPrerequisites`, and establish the matching CLI user session before starting setup.
 
 Only the dedicated customer application registration must exist from manual Step 1. After approval,
 setup makes it multi-tenant, restricts it to its home tenant plus the provider JSON's `tenantId`
-through the Entra allowed-tenants preview, creates both required service principals, adds and assigns
+and existing allowed provider tenants through the Entra allowed-tenants preview, creates both
+required service principals, adds and assigns
 `Epp.Invoke`, and grants the Microsoft phone-provider service principal Graph `Application.Read.All`.
 
-Graph needs delegated `User.Read`, `Application.ReadWrite.All`, `Application.Read.All`, and
-`AppRoleAssignment.ReadWrite.All`. Granting a Microsoft Graph application permission normally
-requires a Privileged Role Administrator. Noninteractive runs must authenticate both clients first
-with these scopes and supply `-ApproveDeployment` separately.
+Azure subscription roles do not authorize Microsoft Graph. The signed-in CLI user must be able to
+read and update the application and service principals and create app-role assignments. Granting
+Microsoft Graph `Application.Read.All` to the Microsoft phone-provider service principal normally
+also requires an active Privileged Role Administrator role. Noninteractive runs must establish
+the CLI context first and supply `-ApproveDeployment` separately.
 
 The tenant restriction uses Microsoft Graph beta `signInAudienceRestrictions`. If that preview is
 unavailable or the tenant policy blocks it, setup stops before mutation rather than silently allowing
 all organizational tenants.
 
-## Graph /me returns 403 Forbidden
+## `az ad` or `az rest` returns 403 Forbidden
 
-`GET /me?$select=id,userPrincipalName` requires delegated
-[`User.Read`](https://learn.microsoft.com/en-us/graph/api/user-get?view=graph-rest-1.0#permissions).
-The application-management scopes do not authorize this profile lookup. Versions that added the
-Graph operator readback without requesting `User.Read` could therefore fail during preflight.
-This is a setup sign-in scope issue, not a request for another Azure or Entra administrator role.
-
-Use the updated script and source revision. It requests `User.Read` for the operator's Graph
-PowerShell session and reconnects interactively when a cached session lacks it, before calling
-`/me`. `-ForceAuthentication` also requests the complete scope set. Noninteractive runs must
-authenticate first:
+Microsoft Graph requests use the Azure CLI user session. Verify that it belongs to the selected
+tenant and can resolve the signed-in directory user:
 
 ```powershell
-Connect-MgGraph -TenantId '<customer-tenant-id>' -ContextScope Process `
-    -Scopes 'User.Read', 'Application.ReadWrite.All', 'Application.Read.All', 'AppRoleAssignment.ReadWrite.All'
+az account show --output table
+az ad signed-in-user show --output json
+az rest --method get `
+    --url 'https://graph.microsoft.com/v1.0/me?$select=id,userPrincipalName' `
+    --resource 'https://graph.microsoft.com/' `
+    --output json
 ```
 
-This does not grant `User.Read` to the Microsoft phone-provider service principal or endpoint app.
-Azure role assignments continue to use the ARM token's `oid`, not Graph `/me`.
+A 403 is a directory authorization, Conditional Access, or role-activation problem; Azure
+subscription Owner/Contributor does not fix it. Have the Entra administrator verify the user's
+effective application-management permissions and activate Privileged Role Administrator when
+the approved app-role grant requires it. Then rerun with the same reviewed inputs. Do not install
+or connect the Graph PowerShell SDK as a workaround, and do not paste access tokens into tickets.
+
+The Graph user ID is tracked for directory operations only. Azure role assignments continue to
+use the validated `oid` from the selected subscription's ARM access token.
 
 ## PrincipalNotFound for the Azure operator
 
@@ -340,8 +355,9 @@ especially with brokered, guest, or aliased identities. Setup must not use Graph
 role-assignment principal. The current script decodes the selected subscription's ARM access token
 in memory, validates its tenant, and passes its `oid` to Bicep. The token is never printed or saved.
 
-Use `-ForceAuthentication` to require fresh Azure CLI and Graph device-code sign-in when account
-selection is ambiguous. This does not replace ARM-token identity selection and does not run
+Use `-ForceAuthentication` to require fresh Azure CLI device-code sign-in when account selection
+is ambiguous. Microsoft Graph reuses that same CLI session. This does not replace ARM-token
+identity selection and does not run
 `az logout`, `az account clear`, or delete shared authentication caches. If a correct ARM `oid`
 still receives `PrincipalNotFound`, wait for actual directory/RBAC replication and rerun with the
 same prefix; retries must not substitute a Graph object ID.

@@ -14,12 +14,27 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test script launcher without network access
+        shell: pwsh
+        run: ./setup/tests/Launcher.Tests.ps1
+      - name: Test Azure account selection without Azure access
+        shell: pwsh
+        run: ./setup/tests/Accounts.Tests.ps1
       - name: Test certificate setup without Azure access
         shell: pwsh
         run: ./setup/tests/Certificates.Tests.ps1
+      - name: Test CLI-backed Graph operations without Azure access
+        shell: pwsh
+        run: ./setup/tests/Graph.Tests.ps1
+      - name: Test application provider configuration without Azure access
+        shell: pwsh
+        run: ./setup/tests/ProviderConfiguration.Tests.ps1
       - name: Test provider setup without Azure access
         shell: pwsh
         run: ./setup/tests/Providers.Tests.ps1
+      - name: Test application and region selection without Azure access
+        shell: pwsh
+        run: ./setup/tests/Selections.Tests.ps1
       - name: Compile Bicep without deploying
         shell: pwsh
         run: |
