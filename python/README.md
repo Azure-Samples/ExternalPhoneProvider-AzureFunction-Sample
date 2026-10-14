@@ -106,9 +106,9 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 
 ## Source
 
-To add a customer-owned provider, follow the
-[repository checklist](../docs/BRING-YOUR-OWN-PROVIDER.md#python).
-It shows the files to create or update, not built-in provider or guided setup support.
+Start with the provider-neutral
+[BYOT request and response guide](../docs/BRING-YOUR-OWN-PROVIDER.md) for the SAS payload,
+caller authentication, and response rules. Your team owns the outbound service integration.
 
 For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
 [runtime-specific log discovery](../docs/MONITORING.md#runtime-specific-log-discovery).
