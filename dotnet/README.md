@@ -36,21 +36,20 @@ For local evaluation, start Azurite and replace the test-key placeholder in this
 
 ```json
 {
-	"IsEncrypted": false,
-	"Values": {
-		"AzureWebJobsStorage": "UseDevelopmentStorage=true",
-		"FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
-		"EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>"
-	}
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>"
+  }
 }
 ```
 
 For live delivery, use the [shared settings table](../TECHNICAL.md#configure-environment-variables)
 for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter-specific options.
-Keep values as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"1500"`.
-Replace placeholders and store credentials in the adapter's Key Vault secrets. Each selected
-channel requires a valid endpoint. An invalid or missing endpoint returns an error without using
-the other channel.
+Keep `Values` as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"1500"`.
+Replace the placeholders. API-key adapters store credentials in Key Vault. Each selected channel
+requires a valid endpoint; a missing or invalid endpoint never uses the other channel.
 
 Core Tools loads `Values` into environment variables. Direct worker execution and tests do not.
 Restart after edits. Use a local test PEM because Core Tools cannot resolve Key Vault references.
@@ -86,7 +85,7 @@ Keep caller authentication and public responses in the shared handler.
 For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
 [runtime-specific log discovery](../docs/MONITORING.md#runtime-specific-log-discovery).
 The host's OpenTelemetry setting does not by itself initialize a direct worker exporter.
-verify actual `ILogger` collection before depending on event-based alerts.
+Verify actual `ILogger` collection before depending on event-based alerts.
 
 `SendOtp` validates and decrypts, selects `EPP_PROVIDER_NAME`, resolves credentials, and calls the
 provider. `PhoneProviderBase.SendJsonAsync<TResponse>` owns bounded HTTP transport and typed response
@@ -101,14 +100,14 @@ retry cooldown. Evaluation does no provider credential work. See
 [credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
 
 | Source | Purpose |
-|---|---|
+| --- | --- |
 | [Program.cs](Program.cs) | Host, provider, credential service and HTTP client registration |
 | [Functions/SendOtp.cs](Functions/SendOtp.cs) | HTTP handler, provider selection, credential resolution and delivery orchestration |
 | [Src/AppConfig.cs](Src/AppConfig.cs) | Shared deployment settings |
 | [Src/EntraSendOtpPayload.cs](Src/EntraSendOtpPayload.cs) | Bound request model, strict channel/mode converters and semantic validation |
 | [Src/JweDeliveryContext.cs](Src/JweDeliveryContext.cs) | Pinned JWE decryption and decrypted delivery context |
 | [Src/CredentialTokenService.cs](Src/CredentialTokenService.cs) | Bounded provider-supplied credential retrieval for each live request |
-| [Src/OAuthCredentialSource.cs](Src/OAuthCredentialSource.cs) | Shared managed-identity assertion exchange and reusable SDK clients for Infobip/Soprano |
+| [Src/OAuthCredentialSource.cs](Src/OAuthCredentialSource.cs) | Shared managed-identity assertion exchange and reusable SDK clients for Infobip, Soprano, and Telesign OAuth |
 | [Src/OtpLog.cs](Src/OtpLog.cs) | Source-generated, strongly typed [structured logging events](../docs/LOGGING.md#event-sequence) |
 | [Src/PhoneProviderBase.cs](Src/PhoneProviderBase.cs) | Provider extension contract and shared typed JSON/HTTP transport |
 | [Src/Providers/](Src/Providers/) | Provider identity, credential delegation and API-specific request/response protocols |

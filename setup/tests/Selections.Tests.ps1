@@ -410,7 +410,7 @@ try {
         }
         $setup = @{
             TenantId = $script:Tenant; SubscriptionId = $script:Subscription
-            Provider = 'telesign'; EndpointRegion = 'global'; Language = 'javascript'; ServicePlan = 'FC1'
+            Provider = 'soprano'; EndpointRegion = 'global'; Language = 'javascript'; ServicePlan = 'FC1'
             ResourcePrefix = 'unit'; OutputDirectory = $Directory
             AssetDirectory = $ModulePath
             SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"

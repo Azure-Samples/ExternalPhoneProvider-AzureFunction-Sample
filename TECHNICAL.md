@@ -41,7 +41,7 @@ It covers capacity, shared keys, dependencies, readiness, regional recovery dril
 ## Implementations
 
 | Language | Status | Folder |
-|----------|--------|--------|
+| --- | --- | --- |
 | JavaScript (Node.js) | Available | [javascript/](javascript/) |
 | C# (.NET isolated worker) | Available | [dotnet/](dotnet/) |
 | Python (v2 model) | Available | [python/](python/) |
@@ -70,7 +70,7 @@ Guided setup already publishes the package. Use this section for manual deployme
 Download the latest successful CI ZIP for your chosen language:
 
 | Language | Download | Contents |
-|---|---|---|
+| --- | --- | --- |
 | JavaScript | [epp-javascript.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-javascript.zip) | Application and production dependencies |
 | .NET | [epp-dotnet-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-dotnet-source.zip) | C# Function source and project file. Build and publish before deployment. |
 | Python | [epp-python-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-python-source.zip) | Source for Azure remote build on Linux |
@@ -81,12 +81,12 @@ Verify `SHA256SUMS.txt`, configure the runtime, settings, Key Vault, and **Easy 
 Successful `main` builds publish a versioned [release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest).
 PR builds publish workflow artifacts only. Packaging does not deploy or verify delivery.
 
-## Build ZIPs Locally
+## Build ZIPs locally
 
 Run one packaging script from the repository root. It creates a local ZIP without changing Azure.
 
 | Language | Root-level script | Prerequisites | ZIP in `artifacts/` |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | JavaScript | [package-javascript.ps1](package-javascript.ps1) | PowerShell 7+, Node.js 20 or 22 with npm, npm registry access | `epp-javascript.zip` |
 | .NET | [package-dotnet.ps1](package-dotnet.ps1) | PowerShell 7+ to package. .NET 8 SDK and NuGet feed access when customers build. | `epp-dotnet-source.zip` |
 | Python | [package-python.ps1](package-python.ps1) | PowerShell 7+. Azure remote build required when deploying. | `epp-python-source.zip` |
@@ -228,7 +228,7 @@ For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in JavaScript,
 `config.provider_name` in Python, and `config.ProviderName` in .NET.
 
 | Variable | When needed | Value |
-|---|---|---|
+| --- | --- | --- |
 | `AzureWebJobsStorage` | Functions host storage | Local sample: `UseDevelopmentStorage=true` with Azurite running. Configure Azure host storage separately for the selected plan. |
 | `FUNCTIONS_WORKER_RUNTIME` | Local host / EP1 | `node`, `python`, or `dotnet-isolated`. FC1 uses `functionAppConfig.runtime` instead. Do not add this EP1 setting to FC1. |
 | `EPP_DECRYPTION_KEY_PEM` | Every request | Local test PEM or base64 PEM. In Azure, use a Key Vault reference resolving to the private-key secret. Guided setup pins the PEM backing secret of its Key Vault certificate. |
@@ -244,6 +244,13 @@ For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in JavaScript,
 - **Key Vault:** `KEY_VAULT_URL` and optional `AZURE_CLIENT_ID`.
 - **OAuth:** `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE`, `EPP_OUTBOUND_CLIENT_ID`, and
   `EPP_OUTBOUND_MI_CLIENT_ID`.
+
+For OAuth, setup maps profile `deployment.AccessTokenScopeTenant` to `EPP_PROVIDER_TENANT_ID`.
+The adjacent `deployment.tenantId` remains the provider's Security Store tenant and identifies
+the provider during application discovery. If an older profile omits `AccessTokenScopeTenant`,
+setup uses `tenantId`; explicit empty, invalid, or placeholder values fail validation.
+Both provider tenants are included in the reviewed app allowlist, preserving existing entries.
+This does not change inbound Easy Auth or use request `tenantId` as a source of trust.
 
 All runtimes use `ManagedIdentityCredential` for Key Vault and outbound token access. They do not
 fall back to a developer's Azure CLI identity.
@@ -363,11 +370,9 @@ locale or `en-US`, and sends `beforePasswordText`, `password`, and `afterPasswor
 
 ### Telesign
 
-Telesign uses `telesign-customer-id` and `telesign-api-key` from Key Vault. Basic authentication is:
-
-```text
-base64(UTF8(customer-id:api-key))
-```
+Telesign uses OAuth only, with the same managed-identity client-assertion exchange and settings as
+[Soprano](#soprano). Complete the
+[Telesign profile](docs/ONBOARDING.md#telesign-oauth-configuration-and-handoff) before deployment.
 
 The adapter sends `recipient.phone_number`, `message.text`, optional `message.language`, one
 `channels[].channel`, and `correlation_id`. SMS forwards the message unchanged. Voice separates

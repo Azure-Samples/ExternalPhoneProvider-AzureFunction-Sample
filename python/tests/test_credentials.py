@@ -14,6 +14,7 @@ import src.credentials as credentials_module
 from src.config import read_config
 from src.credentials import CredentialTokenService
 from src.providers.infobip import InfobipProvider
+from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
 from src.providers.telesign import TelesignProvider
 
@@ -123,7 +124,7 @@ def test_empty_secrets_do_not_return_a_previous_or_partial_bundle(empty_secret):
         manager.close()
 
 
-@pytest.mark.parametrize("provider", [SopranoProvider(), InfobipProvider()])
+@pytest.mark.parametrize("provider", [SopranoProvider(), InfobipProvider(), TelesignProvider()])
 def test_oauth_calls_one_sdk_client_per_request_and_only_the_sdk_requests_assertions(monkeypatch, provider):
     identity = Mock(spec=["get_token", "close"], get_token=Mock(return_value=token("PRIVATE-ASSERTION")))
     create_identity = Mock(return_value=identity)
@@ -218,10 +219,10 @@ def test_invalid_configuration_does_not_poison_later_requests():
             with pytest.raises(ValueError, match="unavailable"):
                 manager.resolve(spec, CONFIG)
         secrets.resolve.assert_not_called()
-        provider = TelesignProvider()
+        provider = SinchProvider()
         manager.get_credentials(provider, CONFIG)
         manager.get_credentials(provider, CONFIG)
-        assert secrets.resolve.call_count == 4
+        assert secrets.resolve.call_count == 2
     finally:
         manager.close()
 
