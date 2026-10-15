@@ -392,7 +392,7 @@ See [event order and identifier provenance](LOGGING.md).
 
 `credential_refresh_failed` also differs operationally: JavaScript/Python have a polling
 refresh loop, while .NET emits this event on failed startup/cache-fill acquisition and has no
-periodic poller. See [credential behavior](CONTRACT.md#credential-caching-and-refresh).
+periodic poller. See [credential caching](BRING-YOUR-OWN-PROVIDER.md#credential-caching).
 Absence of a warning, especially in an idle app or a missing export pipeline, is not a credential
 health check.
 

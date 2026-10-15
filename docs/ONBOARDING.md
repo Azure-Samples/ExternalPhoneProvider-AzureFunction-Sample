@@ -28,7 +28,7 @@ missing access. Azure subscription ownership does not grant EPP access.
 
 Assign an **onboarding owner** to coordinate tenant policy, Azure, the provider, and Microsoft support.
 
-Use the [production-readiness considerations](CONTRACT.md#production-limitations) to plan the
+Use [production readiness](BRING-YOUR-OWN-PROVIDER.md#production-readiness) to plan the
 capabilities your live service needs, such as durable delivery, retry and deduplication strategy,
 an end-to-end deadline, certificate renewal, and delivery confirmation.
 
@@ -146,7 +146,8 @@ setup-created encryption certificate unchanged.
    grant broad access, or copy credentials into app settings to bypass a denial.
 3. Complete the [authorized evaluation and live checks](#validate-the-deployed-endpoint).
    Evaluation does not validate these secrets. Setup disables provider caching for FC1 and enables
-   it for EP1; plan first-use/rotation checks from the [cache contract](CONTRACT.md#credential-caching-and-refresh).
+   it for EP1. Plan first-use and rotation checks from
+   [credential caching](BRING-YOUR-OWN-PROVIDER.md#credential-caching).
    No warning is not proof of account authorization.
 
 Use portal secret entry rather than command-line literal values, transcripts, source files,

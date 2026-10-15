@@ -5,162 +5,287 @@
 [Documentation](README.md) | [Exact HTTP contract](CONTRACT.md) | [Runtime guides](README.md#develop)
 
 Connect a phone service to the **External Phone Provider (EPP)** contract. **Microsoft Entra ID**
-sends an encrypted delivery request; the endpoint verifies, decrypts, evaluates, or sends it.
+sends an encrypted delivery request. The endpoint verifies, decrypts, evaluates, or sends it.
 
 Confirm [eligibility, testing, and activation](ONBOARDING.md#before-purchasing-or-deploying)
 before deployment.
 
-Follow [caller verification](#1-verify-the-caller), [decryption](#2-read-and-decrypt-the-request),
-[evaluation/live handling](#3-evaluate-or-send), and [responses](#4-respond-to-entra-id).
-Then [register your integration](#where-to-add-your-integration) and [validate before activation](#before-activation).
+Read the [API contract](CONTRACT.md), then [add your integration](#where-to-add-your-integration)
+and [validate it](#before-activation).
 
 <a id="1-establish-caller-authentication"></a>
-
-## 1. Verify the caller
-
-Entra ID sends **`POST /api/SendOtp` over HTTPS** with a signed bearer token. **Easy Auth**
-authorizes the caller before the anonymous Function trigger runs.
-
-Require HTTPS, return `401` for unauthenticated requests, and restrict access to the trusted
-issuer, audience, and Microsoft caller. Follow the
-[trust checklist](ONBOARDING.md#manual-deployment-trust-checklist).
-
-**Encryption is not caller authentication.** A JWE, nonce, `tenantId`, or tracing header does
-not prove that Entra ID sent the request.
-
-## 2. Read and decrypt the request
-
-The JSON body is an envelope with these fields. Use the forms below across all sample runtimes:
-
-| Field | Required | Value |
-| --- | --- | --- |
-| `type` | Yes | String, exactly `microsoft.mfa.otpDeliver.v1`. |
-| `channel` | Yes | Integer `1` or string `"sms"`; integer `2` or string `"voice"`. |
-| `mode` | Yes | Integer `1` or string `"live"`; integer `2` or string `"evaluation"`. |
-| `encryptedDeliveryContext` | Yes | Nonblank string containing the compact JWE. |
-| `tenantId` | No | String containing routing metadata, not a source of trust or service selection. |
-| `correlationId` | No | Nonempty string for sign-in tracing. |
-| `ttlSeconds` | No | Positive JSON integer up to `2147483647`, or omit it. Use `60`, not `"60"`, `60.0`, `6e1`, or null. |
-
-Channel and mode names are case-insensitive. TTL validation does not enforce passcode expiry
-or a delivery deadline.
-
 <a id="3-decrypt-and-validate-the-delivery-context"></a>
-
-Decrypt `encryptedDeliveryContext` using only **`RSA-OAEP-256`** for key wrapping and **`A256GCM`**
-for content encryption. Accept exactly five nonempty compact-JWE segments, at most **16,384
-characters**. Pass the original JWE, including its protected-header bytes, to a JOSE library.
-Verify the authentication tag before using the decrypted UTF-8 JSON.
-
-The sample uses one RSA private key in `EPP_DECRYPTION_KEY_PEM` as text or base64 PEM. In Azure,
-use a managed-identity-resolved Key Vault reference.
-
-The JWE `kid` does not select a key. `EPP_ENCRYPTION_KEY_ID` only warns after decryption.
-See the [certificate lifecycle](../setup/docs/README.md#encryption-certificate-lifecycle).
-
-The decrypted delivery context contains:
-
-| Field | Required | Value and handling |
-| --- | --- | --- |
-| `nonce` | Yes | Nonblank string. Keep it unchanged for the response. It is not replay protection. |
-| `phoneNumber` | Yes | Nonblank string, expected in E.164 form. Full E.164 validation is not implemented. |
-| `message` | Yes | Nonblank string containing the localized message and passcode. Preserve them; do not generate a new code. |
-| `locale` | No | String for voice selection where supported; no shared locale validation. |
-| `extension` | No | Office-voice data; no shared type validation or forwarding. |
-| `riskContext` | No | Contextual JSON data; no shared schema validation, risk evaluation, or forwarding. |
-| `textToVoice` | No | Legacy speech data; no portable schema or shared forwarding. |
-
-Treat optional fields as available only when the selected integration supports them.
-For parser and wrong-type handling, see [runtime binding differences](CONTRACT.md#runtime-binding-differences).
-
 <a id="4-complete-the-customer-owned-service-integration"></a>
+<a id="1-verify-the-caller"></a>
+<a id="2-read-and-decrypt-the-request"></a>
+<a id="3-evaluate-or-send"></a>
+<a id="4-respond-to-entra-id"></a>
 
-## 3. Evaluate or send
+## Understand the request
 
-**Evaluation (`mode: 2` or `"evaluation"`):** authenticate, validate, decrypt, and return success
-without service selection, credential lookup, outbound HTTP, or delivery.
+The [Send OTP API reference](CONTRACT.md) is the single source for:
 
-**Live (`mode: 1` or `"live"`):** map SMS or voice to your service while preserving the
-destination, message, and passcode. **Never forward the incoming bearer token**.
+- Authentication and headers.
+- Envelope and JWE fields.
+- Evaluation and live modes.
+- Success and error responses.
+- HTTP status codes.
+- Runtime parsing differences.
 
-Return success after the integration recognizes provider acceptance. A queued or pending result
-counts only when the integration defines it as accepted. Map unknown, incomplete, or failed HTTP
-responses to an error, even when the response body looks successful. Use the shared response
-behavior below instead of returning raw service JSON.
+Provider code starts after caller authentication, envelope validation, and decryption. It receives
+validated delivery data and returns a normalized provider result.
 
-The sample uses one configured service per deployment. Follow
-[Where to add your integration](#where-to-add-your-integration) for the source files,
-registration, settings, packaging, and custom deployment steps.
+Keep these boundaries:
 
-## 4. Respond to Entra ID
+- Easy Auth verifies the caller.
+- The shared handler validates and decrypts the request.
+- The provider adapter builds the outbound request and interprets the response.
+- The shared handler creates the response to Microsoft Entra ID.
 
-Return **HTTP `200` with a JSON object containing exactly these fields** after a successful
-evaluation or recognized live acceptance:
-
-| Field | Value |
-| --- | --- |
-| `nonce` | The original decrypted nonce string. |
-| `correlationId` | The request body's correlation string, then `x-ms-correlation-id` as fallback, then a generated request ID. |
-| `providerStatus` | The literal string `"accepted"`, also used for evaluation. |
-
-Correlation header sanitization and empty-value handling differ by runtime; see the
-[binding reference](CONTRACT.md#runtime-binding-differences). `x-ms-client-request-id` supplies
-the internal attempt `messageId`, with a generated fallback. These IDs do not provide deduplication.
-
-**For live requests, echo the nonce only after acceptance, not before sending.**
-Acceptance is not proof of handset receipt. The sample's integration contract expects Entra ID to
-recognize a `2xx` response with a matching nonce; failures or timeouts can lead to native fallback.
-This repository does not implement or verify the Entra ID caller's current fallback or retry policy.
-Confirm that behavior through the [approved test procedure](ONBOARDING.md#validate-the-deployed-endpoint),
-including whether a lost response can lead to another send.
-
-On failure, omit both the nonce and accepted status. Handler errors contain `error` and a
-generated `requestId`, plus a fixed `reason` for validation errors and `correlationId` where
-available. Do not return raw exceptions or service responses. Authentication and host-binding
-errors can occur before the handler and need not use this JSON shape. Use the
-[error reference](CONTRACT.md#epp-response-json) and
-[HTTP status mapping](CONTRACT.md#2-outcome--http-status-mapping) for the exact failure response.
+Do not forward the incoming bearer token. Do not return raw provider JSON. Echo the nonce only
+after evaluation or recognized provider acceptance.
 
 ## Where to add your integration
 
 Choose **one runtime** and work in its source directory. Keep Easy Auth and the shared handler's
 envelope validation, JWE decryption, evaluation branch, and nonce responses. Your provider code
-builds the outbound request and interprets the service result; it does not authenticate the
+builds the outbound request and interprets the service result. It does not authenticate the
 incoming caller or write the HTTP response to Entra ID.
+
+<a id="provider-request-and-response-mapping"></a>
+### Provider request and response mapping
+
+Each provider implementation owns:
+
+- Its fixed provider ID and authentication mode.
+- Its required credentials and settings.
+- SMS and voice request construction.
+- Response parsing and accepted-status rules.
+- Safe failure classification.
+
+The shared transport owns:
+
+- HTTPS URL validation.
+- Disabled redirects.
+- The configured provider timeout.
+- Response-body reading.
+- Network and timeout errors.
+
+Return a normalized result to the handler. Do not return raw provider JSON to Microsoft Entra ID
+or write it to logs. The shared handler applies the
+[HTTP status mapping](CONTRACT.md#2-outcome--http-status-mapping).
+
+A provider `2xx` response is not enough unless the adapter recognizes its status as accepted.
+Acceptance is not recipient delivery.
+The shared outcomes are `Continue`, `Block`, and `Fail`. There is no `StepUp` or `409` mapping.
+Use the existing safe failure reasons: `provider_http_error`, `provider_rejected`,
+`unrecognized_provider_status`, `missing_provider_message_id`, and `invalid_provider_json`.
+
+JavaScript and .NET pass cancellation through response reading. Python uses connect and read
+inactivity timeouts.
+
+<a id="provider-settings"></a>
+### Provider settings
+
+#### Provider and endpoint
+
+- **`EPP_PROVIDER_NAME`** is the fixed ID of the registered adapter.
+- **`EPP_PROVIDER_SMS_ENDPOINT`** is the required SMS URL for a live SMS request.
+- **`EPP_PROVIDER_VOICE_ENDPOINT`** is the required voice URL for a live voice request.
+- **`EPP_PROVIDER_ENDPOINT_REGION`** is the `global` or `eu` routing label from guided setup.
+- **`EPP_PROVIDER_TIMEOUT_MS`** is the provider timeout in milliseconds. The default is `1500`.
+  The maximum is `2500`.
+- **`EPP_PROVIDER_ACCOUNT_NAME`** is the sender or account value when required.
+
+#### Authentication
+
+- **`EPP_PROVIDER_AUTH_MODE`** is `apiKey` or `oauth`, matching the adapter.
+- **`KEY_VAULT_URL`** identifies the vault containing API-key credentials.
+- **`AZURE_CLIENT_ID`** selects a user-assigned identity for Key Vault when needed.
+- **`EPP_PROVIDER_TENANT_ID`** identifies the provider tenant for OAuth.
+- **`EPP_PROVIDER_SCOPE`** is the provider OAuth scope.
+- **`EPP_OUTBOUND_CLIENT_ID`** identifies the client application used for OAuth exchange.
+- **`EPP_OUTBOUND_MI_CLIENT_ID`** identifies the user-assigned identity used for OAuth exchange.
+
+#### Caching
+
+- **`EPP_KEY_VAULT_CACHE_ENABLED`** controls API-key credential caching.
+- **`EPP_ACCESS_TOKEN_CACHE_ENABLED`** controls OAuth credential caching.
+
+Each live request uses the endpoint for its selected channel. There is no shared endpoint fallback.
+Endpoints must be absolute HTTPS URLs with a hostname, valid port, no user information, and no
+fragment. Redirects are not followed.
+
+Settings select registered code. They do not install an adapter. Evaluation does not require a
+provider name, endpoint, or provider credential.
+
+There is no default provider or automatic failover. The request body does not select a provider.
+Telesign and Soprano use the selected URL unchanged. Infobip and Sinch append their API paths to
+the selected base URL. The request channel selects the SMS or voice endpoint.
+The legacy `EPP_PROVIDER_CHANNEL` setting is not used.
+
+<a id="credential-caching"></a>
+### Authentication and credential caching
+
+Use managed identity to read provider credentials from Key Vault. Keep secrets out of code,
+settings, logs, and documentation.
+The default runtime resolver uses `ManagedIdentityCredential`, not the developer's CLI identity.
+
+For OAuth, exchange the outbound managed-identity assertion for the provider token. Do not use a
+client-secret fallback and never forward the incoming Microsoft Entra ID token.
+
+Soprano uses `EPP_PROVIDER_AUTH_MODE=oauth`. With
+`EPP_ACCESS_TOKEN_CACHE_ENABLED=true`, the runtime reuses its credential and SDK token caches.
+
+Cache settings accept trimmed, case-insensitive `true` or `false`. Unset values default to `true`.
+Other values fail live credential acquisition without blocking evaluation. Restart workers after
+a change.
+
+| Runtime | Enabled cache behavior |
+| --- | --- |
+| JavaScript | Warms at startup and polls every 30 seconds. OAuth uses `getToken`. |
+| Python | Uses the same polling model. OAuth uses `get_token_info` when available, then `get_token`. |
+| .NET | Warms once and refreshes on the next cache miss through `GetOrCreateAsync`. It has no polling loop. |
+
+With caching disabled, each live request obtains credentials for that request. There is no startup
+preparation, polling, or cross-request reuse. Evaluation still skips provider credential work.
+The platform's decryption-key reference is separate from these provider caches.
+
+Credential acquisition uses a 2.5-second budget in each runtime. That budget is not the total
+Function deadline. Failed credential acquisition never sends an OTP.
+
+### Built-in provider notes
+
+<a id="soprano-integration"></a>
+#### Soprano
+
+Soprano uses OAuth client-assertion exchange with:
+
+- `EPP_PROVIDER_TENANT_ID`
+- `EPP_PROVIDER_SCOPE`
+- `EPP_OUTBOUND_CLIENT_ID`
+- `EPP_OUTBOUND_MI_CLIENT_ID`
+
+The endpoint app and outbound identity share a home tenant. The app must be multitenant and
+authorized in the provider tenant. The federated credential uses the identity principal ID,
+home-tenant v2 issuer, and `api://AzureADTokenExchange` audience.
+
+The managed identity first requests `api://AzureADTokenExchange/.default`. The selected provider
+scope is used for the final application token. The Function sends that token to the
+`/messages/omnimsg` API and does not store a Soprano client secret.
+
+Only the final provider token is sent. The Function does not forward the managed-identity
+assertion or incoming Microsoft Entra ID token. Missing settings, token failures, blank tokens, and
+tokens with 30 seconds or less remaining fail before provider HTTP. There is no API-key fallback or
+provider retry. The Function treats the token as opaque. The provider validates its claims.
+
+The selected SMS or voice URL is used unchanged.
+
+For voice, the adapter:
+
+1. Finds the first six consecutive digits in `message`, preserving leading zeros.
+2. Splits the text into `beforePasswordText`, `password`, and `afterPasswordText`.
+3. Uses the request locale or `en-US`.
+4. Sends `gender: 1` and `loop: 2` in `voice.text2voice`.
+
+A message without six consecutive digits fails before provider HTTP. SMS forwards `message`
+unchanged. Voice does not send a top-level `text` field.
+
+<a id="telesign-integration"></a>
+#### Telesign
+
+Telesign uses the complete configured SMS or voice URL. It sends:
+
+- `recipient.phone_number`
+- `message.text`
+- Optional `message.language`
+- One `channels[].channel`
+- `correlation_id`
+
+Responses use `reference_id`, `status.code`, and `status.description`. Only safe normalized fields
+are logged.
+
+`phoneNumber` must match `^\+[1-9][0-9]{1,14}$`, including the leading `+`. A nonblank locale
+becomes `message.language`. `correlation_id` uses the request correlation ID or the generated
+message ID.
+
+SMS forwards the message unchanged. Voice separates standalone six-digit runs with commas and
+repeats the full message twice.
+
+Basic authentication uses:
+
+```text
+base64(UTF8(customer-id:api-key))
+```
+
+Set the header to `Authorization: Basic {encoded-value}`. Provider documentation can abbreviate
+this as `Basic YOUR_API_KEY`. Do not send that text literally.
+
+Read `telesign-customer-id` and `telesign-api-key` from Key Vault. Digest and provider-token
+authentication are not implemented.
+
+Recognized success codes are:
+
+- SMS: `200`, `203`, `290`, `291`, `292`
+- Voice: `100`, `101`, `102`, `103`
+- Either channel: `3001` on a successful HTTP response
+
+Unknown or malformed statuses fail closed. `3001` means the provider accepted the operation. It
+does not confirm handset receipt or completed audio.
+
+The adapter does not send `account_lifecycle_event`, `originating_ip`, or `X-Shutter-Mode: true`.
+The legacy `TELESIGN_VOICE` setting has no effect.
+Use Function evaluation mode for a no-send endpoint test.
 
 ### Add and register the provider
 
-Choose a fixed lowercase provider ID, then follow the row for your runtime.
+Choose a fixed lowercase provider ID.
 
-| Runtime | Create your module or class here | Register it here | Add tests here |
-| --- | --- | --- | --- |
-| JavaScript | [javascript/src/functions/providers/](../javascript/src/functions/providers/) | [providers/index.js](../javascript/src/functions/providers/index.js): import the module, add its fixed ID to `selectProvider`, and export it. | [javascript/test/](../javascript/test/) |
-| C# | [dotnet/Src/Providers/](../dotnet/Src/Providers/) | [Program.cs](../dotnet/Program.cs): register the class as a singleton `PhoneProviderBase`. The handler selects it by `Name`. | [dotnet/tests/](../dotnet/tests/) |
-| Python | [python/src/providers/](../python/src/providers/) | [function_app.py](../python/function_app.py): import the class and add an instance to the tuple that builds `_providers`. | [python/tests/](../python/tests/) |
+#### JavaScript
 
-Implement the hooks for your chosen runtime:
+1. Add the module under [providers/](../javascript/src/functions/providers/).
+2. Import it in [providers/index.js](../javascript/src/functions/providers/index.js), add its ID to
+   `selectProvider`, and export it.
+3. Export `name`, `authenticationMode`, `credentialSpec`, `createRequest`, and `interpretResponse`.
+4. Return [ProviderResult](../javascript/src/functions/providerResult.js).
+5. Add tests under [javascript/test/](../javascript/test/).
 
-- **JavaScript:** export `name`, `authenticationMode`, `credentialSpec`, `createRequest`, and
-  `interpretResponse`. Return the shared [ProviderResult](../javascript/src/functions/providerResult.js).
-  [SendOtp.js](../javascript/src/functions/SendOtp.js) passes delivery data, credentials, and `env`
-  to `createRequest`; leave sending to its shared [transport](../javascript/src/functions/providerTransport.js).
-- **C#:** derive from [PhoneProviderBase](../dotnet/Src/PhoneProviderBase.cs). Implement `Name`,
-  `AuthenticationMode`, `FetchCredentialsAsync`, and `SendOtpAsync`. Use the base `SendJsonAsync`
-  transport and return [ProviderResult](../dotnet/Src/Models.cs). Read extra send settings through
-  the supplied `IEnv`; use injected [ISecretResolver](../dotnet/Src/ISecretResolver.cs) for vault secrets.
-  Return credentials with a valid `ExpiresOn` and honor the acquisition cancellation token.
-- **Python:** derive from [PhoneProviderBase](../python/src/provider.py). Supply `name`,
-  `authentication_mode`, and `credential_spec`; implement `build_request` and `map_response`.
-  Return the base module's `OutboundRequest` and the shared [ProviderResult](../python/src/models.py).
-  Use the supplied `env` for extra settings and keep the base `send_otp` transport.
+`createRequest` receives the delivery data, credentials, and `env`. Keep sending in the shared
+[transport](../javascript/src/functions/providerTransport.js).
+
+#### C#
+
+1. Add the class under [Providers/](../dotnet/Src/Providers/).
+2. Register it in [Program.cs](../dotnet/Program.cs) as a singleton `PhoneProviderBase`.
+3. Implement `Name`, `AuthenticationMode`, `FetchCredentialsAsync`, and `SendOtpAsync`.
+4. Use `SendJsonAsync` and return [ProviderResult](../dotnet/Src/Models.cs).
+5. Add tests under [dotnet/tests/](../dotnet/tests/).
+
+Use `IEnv` for settings and [ISecretResolver](../dotnet/Src/ISecretResolver.cs) for vault secrets.
+Return credentials with a valid `ExpiresOn` and honor cancellation.
+
+#### Python
+
+1. Add the class under [providers/](../python/src/providers/).
+2. Add an instance to the `_providers` tuple in [function_app.py](../python/function_app.py).
+3. Derive from [PhoneProviderBase](../python/src/provider.py).
+4. Implement `name`, `authentication_mode`, `credential_spec`, `build_request`, and `map_response`.
+5. Return `OutboundRequest` and [ProviderResult](../python/src/models.py).
+6. Add tests under [python/tests/](../python/tests/).
+
+Use the supplied `env` for extra settings. Keep sending in the base `send_otp` transport.
 
 Your hooks own service-specific mapping, outbound authentication, and recognition of acceptance
 or failure. Keep credential caching in the existing services:
 [JavaScript credentials.js](../javascript/src/functions/credentials.js),
 [C# CredentialTokenService](../dotnet/Src/CredentialTokenService.cs), and
 [Python credentials.py](../python/src/credentials.py). JavaScript/Python resolve the provider's
-credential specification; C# calls `FetchCredentialsAsync`. Do not add a separate credential cache
+credential specification. C# calls `FetchCredentialsAsync`. Do not add a separate credential cache
 or send-retry loop. Keep service secrets in Key Vault, not in settings or source.
+
+Configuration readers are [JavaScript `readConfig`](../javascript/src/functions/config.js),
+[Python `read_config`](../python/src/config.py), and
+[.NET `AppConfig.Read`](../dotnet/Src/AppConfig.cs).
 
 <a id="configure-test-and-package"></a>
 ### Implementation steps
@@ -174,14 +299,14 @@ or send-retry loop. Keep service secrets in Key Vault, not in settings or source
    for the channels you support, plus the credential and extra settings your code reads.
    Keep these aligned with [JavaScript config.js](../javascript/src/functions/config.js),
    [C# AppConfig](../dotnet/Src/AppConfig.cs), or [Python config.py](../python/src/config.py) and the
-   [configuration reference](CONTRACT.md#4-configuration-app-settings--env).
-   **Settings select registered code; they do not create or register an adapter.**
+   [provider settings](#provider-settings).
+   **Settings select registered code. They do not create or register an adapter.**
 3. Add tests in the directory above for registration, request mapping, missing credentials,
    recognized acceptance, rejection, unknown responses, and timeouts on each supported channel.
    Check that evaluation sends nothing, live success waits for acceptance, and failures omit the
-   nonce. Use fake credentials and service responses; run your runtime's tests and build.
+   nonce. Use fake credentials and service responses. Run your runtime's tests and build.
 4. [Package your changed source](../TECHNICAL.md#build-zips-locally), not an unchanged public
-   release. C# needs publish output; Python needs the documented Linux remote build.
+   release. C# needs publish output. Python needs the documented Linux remote build.
    Follow [manual deployment](ONBOARDING.md#optional-local-development-and-manual-deployment)
    to deploy the custom package and apply cloud settings and vault permissions separately.
    Keep the [Easy Auth trust checks](ONBOARDING.md#manual-deployment-trust-checklist), then
@@ -192,17 +317,28 @@ or send-retry loop. Keep service secrets in Key Vault, not in settings or source
 
 ## Before activation
 
+<a id="production-readiness"></a>
+
 Run [authorized endpoint checks](ONBOARDING.md#validate-the-deployed-endpoint): rejected callers,
 invalid or tampered payloads, evaluation without a send, and controlled live tests for each channel.
 Check handset receipt or voice audio separately from acceptance. For local tests, use test keys
-and fake service responses on loopback only, without tunnels; Core Tools has no Easy Auth.
+and fake service responses on loopback only, without tunnels. Core Tools has no Easy Auth.
 
-The sample completes the request after provider acceptance. A live design can add early
-acknowledgement, background delivery, a durable queue, retries, or duplicate-send protection.
-Define the timing and owner for each feature. The outbound timeout covers the provider call,
-not the whole request. Check a timed-out send before retrying because the provider may already
-have accepted it.
+The sample completes the request after provider acceptance. Plan any additional production
+capabilities your design needs:
+
+- Durable queues or background delivery.
+- Duplicate-send protection and safe retries.
+- End-to-end timing for cold starts, Key Vault, and provider calls.
+- Overlapping encryption-key rotation.
+- E.164 and body-size validation.
+- Provider delivery confirmation.
+- Voice locale, passcode, and audio validation.
+
+The outbound timeout covers only the provider call. Check a timed-out send before retrying because
+the provider may already have accepted it.
 
 Keep phone numbers, messages, passcodes, nonces, tokens, keys, JWE contents, and raw service
 responses out of logs. Disable body tracing in the application, platform, and proxies.
-Review the [production-readiness considerations](CONTRACT.md#production-limitations) before activation.
+Complete setup certification, provider account checks, monitoring, renewal, rollback, and the
+approved Microsoft activation procedure before live use.

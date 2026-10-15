@@ -20,7 +20,7 @@ Function decrypts the request, and the selected adapter submits a live message. 
 provider acceptance, not confirmed delivery.
 
 East US is illustrative. API-key integrations use provider secrets; OAuth integrations use
-managed-identity token exchange. See [credential caching](docs/CONTRACT.md#credential-caching-and-refresh)
+managed-identity token exchange. See [credential caching](docs/BRING-YOUR-OWN-PROVIDER.md#credential-caching)
 and [runtime logs](docs/MONITORING.md#runtime-specific-log-discovery).
 
 An authorized **evaluation request (`mode: 2`)** returns the nonce without sending a message.
@@ -145,24 +145,9 @@ For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in JavaScript,
 | `FUNCTIONS_WORKER_RUNTIME` | Local host / EP1 | `node`, `python`, or `dotnet-isolated`. FC1 uses `functionAppConfig.runtime` instead; do not add this EP1 setting to FC1. |
 | `EPP_DECRYPTION_KEY_PEM` | Every request | Local test PEM or base64 PEM. In Azure, use a Key Vault reference resolving to the private-key secret. Guided setup pins the PEM backing secret of its Key Vault certificate. |
 | `EPP_ENCRYPTION_KEY_ID` | Optional | Expected encryption key ID; mismatch only produces an advisory warning. |
-| `EPP_PROVIDER_NAME` | Live delivery | Selected adapter's manifest ID. No default provider. |
-| `EPP_PROVIDER_SMS_ENDPOINT` | Required for SMS delivery | Provider-approved HTTPS SMS endpoint. Guided setup writes the complete send URL from the selected regional profile. |
-| `EPP_PROVIDER_VOICE_ENDPOINT` | Required for voice delivery | Provider-approved HTTPS voice endpoint, which can differ from the SMS endpoint. Guided setup writes the complete send URL. |
-| `EPP_PROVIDER_ENDPOINT_REGION` | Guided deployment metadata | Selected `global` or `eu` route label. |
-| `EPP_PROVIDER_AUTH_MODE` | Live delivery | Must match the adapter: `apiKey` for Infobip, Sinch, or Telesign; `oauth` for Soprano. Bundled adapters do not all have guided setup profiles. |
-| `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE` | Soprano OAuth | Provider tenant and selected API scope. |
-| `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | Soprano OAuth | Existing multitenant application and outbound user-assigned managed identity used for client-assertion exchange. |
-| `EPP_PROVIDER_TIMEOUT_MS` | Optional | Decimal milliseconds. Defaults to `1500`, capped at `2500`; not an end-to-end deadline. |
-| `EPP_KEY_VAULT_CACHE_ENABLED` | Optional | `true` enables provider API-key bundle caching; `false` reads the bundle for each live request. Unset defaults to `true`. |
-| `EPP_ACCESS_TOKEN_CACHE_ENABLED` | Optional | `true` enables OAuth credential caching; `false` uses request-scoped MI/client-assertion credentials. Unset defaults to `true`. |
-| `EPP_PROVIDER_ACCOUNT_NAME` | Adapter-dependent | Sender/account metadata, not an API key or credential identity. |
-| `KEY_VAULT_URL` | Provider credential lookup | URI of the vault containing the manifest-named provider secrets. Separate from the encryption-key reference. |
-| `AZURE_CLIENT_ID` | Optional | User-assigned managed identity's client ID for Key Vault. Leave unset for system-assigned identity. |
 
-The request's channel-specific endpoint is required. A missing, empty, or invalid endpoint fails
-closed; there is no shared or other-channel endpoint fallback. Telesign and Soprano
-use complete URLs unchanged. Infobip and Sinch retain their adapter-specific base-URL behavior;
-see [endpoint selection](docs/CONTRACT.md#default-provider-and-configuration-readers).
+See [provider settings](docs/BRING-YOUR-OWN-PROVIDER.md#provider-settings) for provider IDs,
+endpoints, authentication, credentials, and caching.
 
 1. **Locally:** create private local settings beside the chosen runtime's host file, following its
   [JavaScript](javascript/README.md#environment-configuration), [Python](python/README.md#environment-configuration)
@@ -170,24 +155,11 @@ see [endpoint selection](docs/CONTRACT.md#default-provider-and-configuration-rea
 2. **In Azure:** set the same application variables on the selected Function App (or serving slot)
   under **Settings → Environment variables → App settings**, then apply the changes. Local settings
   are not published automatically. Configure host storage separately for the selected hosting plan.
-3. For Telesign, store provider API credentials in Key Vault using the exact manifest names. For
-  Soprano, configure provider consent plus the profile's tenant/scope and outbound managed-identity
-  federation; the Function stores no Soprano client secret.
+Evaluation needs the decryption key but not provider settings. Use offline tests or loopback-only
+evaluation locally. Never commit local settings, keys, or test credentials.
 
-Evaluation requests do not need provider variables or provider secrets. They still need the decryption
-key. The default credential resolvers use `ManagedIdentityCredential`, **not** the developer's CLI
-login; ordinary local machines have no managed-identity endpoint. Use offline tests or loopback-only
-evaluation locally, or an explicitly injected test resolver for integration work. Never commit local
-settings, keys or test credentials.
-
-For cache values, failure behavior, and runtime differences, use the
-[credential caching contract](docs/CONTRACT.md#credential-caching-and-refresh).
-JavaScript/Python poll; .NET refreshes on cache misses. Setup writes both switches as `false` for FC1
-or `true` for EP1; deploy a supporting package and restart after changes.
-Evaluation skips provider work, but cached workers can independently acquire credentials without
-sending an OTP. Leave `EPP_PROVIDER_NAME` unset or disable its cache for local evaluation without
-credential acquisition. Provider caching is separate from platform-managed identity caching and
-decryption-key references.
+For cache behavior, see
+[credential caching](docs/BRING-YOUR-OWN-PROVIDER.md#credential-caching).
 
 Core Tools does not resolve Azure Key Vault reference expressions locally. Supply the local test PEM
 or base64 PEM directly; use a reference such as `@Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/<private-key-secret>/)`
@@ -206,60 +178,13 @@ there is no deployment-level channel restriction. The legacy `EPP_PROVIDER_CHANN
 
 ## Provider-specific integration details
 
+<a id="telesign-epp"></a>
+
 Use the [credential and deployment-support table](docs/ONBOARDING.md#provider-credential-names)
-for your selected adapter. The [Soprano OAuth and voice contract](docs/CONTRACT.md#soprano-provider-jwt)
-and [Telesign EPP contract](docs/CONTRACT.md#telesign-epp-integration) describe different API requirements,
-not a provider ranking. The wire example below illustrates Telesign's format only.
+for onboarding. Implementation details are in:
 
-### Telesign EPP
-
-The `telesign` adapter sends its JSON contract to the complete SMS or voice URL selected by the
-request channel from the configured endpoints. It does not append or infer a route.
-
-Basic authentication uses `base64(customer-id:api-key)`, with the existing Key Vault secrets
-`telesign-customer-id` and `telesign-api-key`. Digest and provider-token authentication are not
-implemented. The incoming caller's Authorization header is never forwarded.
-
-For an SMS request, the adapter builds the following JSON from the decrypted delivery context and envelope:
-
-```json
-{
-  "recipient": { "phone_number": "+1234567890" },
-  "message": { "text": "Your verification code is 4821", "language": "en" },
-  "channels": [{ "channel": "sms" }],
-  "correlation_id": "unique-string-123"
-}
-```
-
-`phoneNumber` must match `^\+[1-9][0-9]{1,14}$`; the leading `+` is preserved. SMS passes the complete
-`message` unchanged as `message.text`, including whitespace. For Voice, each standalone six-digit
-number is rendered with comma-separated digits. The complete paced message is sent twice with one
-separating space. Telesign performs text-to-speech for Voice; no
-separate speech object is needed.
-A nonblank string `locale` becomes `message.language`; otherwise language is omitted. The envelope
-channel selects the single `sms` or `voice` entry. `correlation_id` uses a nonempty string request
-correlation ID, falling back to the message ID for absent, empty, or non-string values. Reserved
-`account_lifecycle_event` and `originating_ip` fields are
-not sent; no client-IP inference or account-event default is applied. `TELESIGN_VOICE` and the
-legacy sender/form fields no longer affect this adapter.
-
-Telesign's API supports `X-Shutter-Mode: true` for direct provider tests. The Function deliberately
-omits that header on live sends and does not forward it from incoming requests. Use the existing
-`mode: 2` evaluation path for Function tests without delivery: it skips provider HTTP and credential
-lookup entirely, rather than invoking Telesign shutter mode.
-
-Responses normalize `reference_id` and `status.code`/`status.description` internally. Provider
-metadata is not exposed in the public nonce response. [Application logs](docs/LOGGING.md#safe-fields-and-identifiers)
-include the provider HTTP status and mapped status/outcome. They also include a length-limited
-provider reference ID as `providerMessageId` for support lookup. They exclude the raw response
-and description.
-Existing numeric success codes remain unchanged (SMS: 200, 203, 290-292; Voice: 100-103).
-EPP code `3001` ("Message in progress"),
-observed for both channels, is also accepted on successful HTTP responses. This acknowledges
-provider acceptance, not handset receipt or completed audio playback. The sample's recognized
-codes are not a complete provider status-code catalog. Missing, malformed, or
-unknown codes fail closed, as do unsuccessful HTTP responses. Confirm the status-code catalog and
-account access with Telesign before production.
+- [Soprano](docs/BRING-YOUR-OWN-PROVIDER.md#soprano-integration)
+- [Telesign](docs/BRING-YOUR-OWN-PROVIDER.md#telesign-integration)
 
 ## Security
 

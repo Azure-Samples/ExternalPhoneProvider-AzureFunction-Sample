@@ -69,8 +69,8 @@ Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-sen
 authentication and decryption without a provider send. Live success confirms acceptance,
 **not handset receipt**. Check a timeout before retrying.
 
-For message/voice mapping, see the [Soprano delivery contract](../docs/CONTRACT.md#encrypteddeliverycontext-jwe)
-and [Telesign integration](../TECHNICAL.md#telesign-epp).
+For message/voice mapping, see the [Soprano integration](../docs/BRING-YOUR-OWN-PROVIDER.md#soprano-integration)
+and [Telesign integration](../docs/BRING-YOUR-OWN-PROVIDER.md#telesign-integration).
 
 ## Source
 
@@ -83,13 +83,13 @@ For diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
 [runtime-specific log discovery](../docs/MONITORING.md#runtime-specific-log-discovery).
 Verify which Python logging properties the host/export pipeline preserves.
 
-The [cache switches and defaults](../docs/CONTRACT.md#credential-caching-and-refresh) apply here.
+The [cache switches and defaults](../docs/BRING-YOUR-OWN-PROVIDER.md#credential-caching) apply here.
 Disabling the selected cache removes startup preparation, polling, and cross-request reuse,
 not live credential acquisition.
 
 With caching enabled, API keys use Key Vault and `cachetools.TTLCache`; OAuth uses the
 managed-identity/Entra SDKs. A daemon polls every 30 seconds. See the
-[refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh).
+[credential caching guide](../docs/BRING-YOUR-OWN-PROVIDER.md#credential-caching).
 
 | Source | Purpose |
 |---|---|
@@ -106,4 +106,4 @@ managed-identity/Entra SDKs. A daemon polls every 30 seconds. See the
 Add a provider by subclassing `PhoneProviderBase`, declaring its credential specification, and
 implementing `build_request` and `map_response`. Return `ProviderResult` with the coarse endpoint
 outcome and a fixed safe failure classification. Raw provider JSON remains local to the provider.
-See [production-readiness considerations](../docs/CONTRACT.md#production-limitations) when planning a live service.
+See [production readiness](../docs/BRING-YOUR-OWN-PROVIDER.md#production-readiness) when planning a live service.

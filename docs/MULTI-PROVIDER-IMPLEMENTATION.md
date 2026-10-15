@@ -153,11 +153,11 @@ module.exports = { stopProviderCredentialRefresh };
 Remove the singleton import only after replacing its request/lifecycle uses. With its selected
 cache enabled, each service begins periodic refresh when first used. With caching disabled,
 each live attempt acquires credentials without a poller or cross-request reuse. Preserve
-the [cache switches](CONTRACT.md#credential-caching-and-refresh) in each account's configuration;
-setup sets them to `false` for FC1 and `true` for EP1, while omitted values default to `true`.
-An evaluation request must not start credential acquisition;
-already-running refresh is independent. Rebuild contexts on controlled restart when configuration
-changes; never repurpose a live service for another account.
+the [cache switches](BRING-YOUR-OWN-PROVIDER.md#credential-caching) in each account's configuration.
+Setup sets them to `false` for FC1 and `true` for EP1. Omitted values default to `true`.
+An evaluation request must not start credential acquisition. Already-running refresh is independent.
+Rebuild contexts on controlled restart when configuration changes. Never repurpose a live service
+for another account.
 
 <a id="4-add-durable-operation-state-before-enabling-fallback"></a>
 ## 4. Operation state

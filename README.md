@@ -52,7 +52,7 @@ Follow the **[five-step setup guide](docs/GETTING-STARTED.md)** in order:
 4. <a id="4-connect-your-provider-and-test"></a>[Connect and test](docs/GETTING-STARTED.md#4-connect-your-provider-and-test): configure provider access and run approved checks.
 5. <a id="5-activate-and-hand-over"></a>[Activate and hand over](docs/GETTING-STARTED.md#5-activate-and-hand-over): activate after validation and assign owners.
 
-Before live use, review [production readiness](docs/CONTRACT.md#production-limitations).
+Before live use, review [production readiness](docs/BRING-YOUR-OWN-PROVIDER.md#production-readiness).
 
 <a id="find-more-detail"></a>
 ## Guidance

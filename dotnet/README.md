@@ -75,8 +75,8 @@ Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-sen
 authentication and decryption without a provider send. Live success confirms acceptance,
 **not handset receipt**. Check a timeout before retrying.
 
-For message/voice mapping, see the [Soprano delivery contract](../docs/CONTRACT.md#encrypteddeliverycontext-jwe)
-and [Telesign integration](../TECHNICAL.md#telesign-epp).
+For message/voice mapping, see the [Soprano integration](../docs/BRING-YOUR-OWN-PROVIDER.md#soprano-integration)
+and [Telesign integration](../docs/BRING-YOUR-OWN-PROVIDER.md#telesign-integration).
 
 ## Source
 
@@ -99,7 +99,7 @@ accounts require a separate trust, configuration, credential, and test design.
 switches default to `true`; disabling the selected switch skips warmup and fetches on every live
 request. Enabled credentials remain in `MemoryCache` until absolute expiry. There is no polling
 timer, and concurrent misses can fetch more than once. The fetch has a 2.5-second cancellation
-budget. See the [shared cache contract](../docs/CONTRACT.md#credential-caching-and-refresh).
+budget. See [credential caching](../docs/BRING-YOUR-OWN-PROVIDER.md#credential-caching).
 
 | Source | Purpose |
 |---|---|
@@ -122,4 +122,4 @@ method delegates to the base `SendJsonAsync<TResponse>` transport and maps the t
 `ProviderResult`; provider mapping code never handles `HttpResponseMessage` or raw JSON DOM types.
 Each provider keeps its own response rules. Common async HTTP transport lives in
 `PhoneProviderBase`. See
-[production-readiness considerations](../docs/CONTRACT.md#production-limitations) when planning a live service.
+[production readiness](../docs/BRING-YOUR-OWN-PROVIDER.md#production-readiness) when planning a live service.

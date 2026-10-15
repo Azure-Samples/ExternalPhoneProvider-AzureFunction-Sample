@@ -19,7 +19,7 @@ approved test and activation process before deploying in a nonproduction environ
 - [Architecture and implementation](../TECHNICAL.md)
 - [HTTP contract](CONTRACT.md)
 - [Log schema](LOGGING.md)
-- [Production readiness](CONTRACT.md#production-limitations)
+- [Production readiness](BRING-YOUR-OWN-PROVIDER.md#production-readiness)
 
 ## Deploy and validate
 
