@@ -5,8 +5,8 @@
 [Documentation](README.md) | [Setup reference](../setup/docs/README.md) | [Troubleshooting](../setup/docs/Troubleshooting.md)
 
 Deploy **one endpoint in one Azure region** for Microsoft Entra ID SMS and voice requests.
-Guided setup downloads and publishes the selected package, so you can start without cloning or
-building the repository.
+Guided setup downloads and publishes the selected package without requiring a repository clone
+or local build.
 SMS and voice can use different provider URLs on the same endpoint; validate each intended channel.
 
 Follow in order: [prepare](#1-get-ready), [register](#2-register-your-application),
@@ -69,8 +69,8 @@ In the customer tenant's **Microsoft Entra admin center > App registrations > Ne
 
 ![App registration form with an example name, Single tenant only selected, and no redirect URI](images/onboarding/app-registration.png)
 
-*Some portal versions label the account type **Single tenant only**. Choose your own directory.
-The example above is an unsaved form, not an application you can reuse.*
+*Some portal versions label the account type **Single tenant only**. Select the customer directory.
+The example above is an unsaved form and cannot be reused.*
 
 Use these field labels to find the right IDs:
 
@@ -133,7 +133,7 @@ Microsoft phone-provider service principal Microsoft Graph `Application.Read.All
 application-read permission. `No` or Enter cancels deployment; sign-in and prerequisite prompts
 are separate from this approval.
 
-**Want to review without deploying?** Run interactively and choose **No** at that final prompt.
+**Plan review without deployment:** run interactively and choose **No** at the final prompt.
 This still performs online preflight and downloads. There is no `-DryRun` or `-WhatIf` switch;
 see [plan review](../setup/docs/README.md#reviewing-the-plan-without-deploying) for details.
 

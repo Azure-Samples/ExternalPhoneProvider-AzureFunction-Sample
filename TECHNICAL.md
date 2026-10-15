@@ -4,8 +4,8 @@
 
 [Documentation](docs/README.md) | [First deployment](docs/GETTING-STARTED.md) | [HTTP contract](docs/CONTRACT.md)
 
-Use this page when you need implementation details, app settings, or package guidance.
-Go to [implementations](#implementations), [guided setup](#guided-epp-setup),
+This reference covers implementation details, app settings, and packages.
+Sections: [implementations](#implementations), [guided setup](#guided-epp-setup),
 [download](#download-a-function-zip), [build](#build-zips-locally),
 [settings](#configure-environment-variables), [provider details](#provider-specific-integration-details),
 or [security](#security). For regional continuity, see
@@ -126,7 +126,7 @@ first-party tests are excluded. Generated ZIPs are ignored by Git.
 
 JavaScript installs production dependencies from the lockfile in a temporary folder; your working
 `node_modules` is not copied or modified. Dependency lifecycle scripts are disabled for this sample's
-JavaScript dependencies. If you add native dependencies or packages requiring install scripts,
+JavaScript dependencies. When adding native dependencies or packages that require install scripts,
 review packaging and build them for the target Azure OS.
 
 **.NET is a source ZIP, not compiled output.** It contains `dotnet.csproj`, `host.json`, `Program.cs`,
@@ -152,7 +152,7 @@ The same `-OutputPath` option works for all three scripts. Configure the destina
 app settings, Key Vault access, and Easy Auth separately before deployment. See
 [deployment and validation](docs/ONBOARDING.md#4-package-deploy-and-verify). Packaging success does
 not verify cloud configuration or provider delivery. File selection is tailored to this sample;
-extend it deliberately if you add runtime assets, and never put secrets in application source.
+extend it deliberately when adding runtime assets, and never put secrets in application source.
 
 ## The design in one line
 

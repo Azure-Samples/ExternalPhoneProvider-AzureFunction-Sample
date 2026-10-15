@@ -4,8 +4,8 @@
 
 [Documentation](README.md) | [Monitoring walkthrough](MONITORING.md) | [Log schema](LOGGING.md)
 
-Looking for logs or alerts? Start with the [monitoring walkthrough](MONITORING.md).
-If telemetry is missing or incomplete, start with
+For logs and alerts, use the [monitoring walkthrough](MONITORING.md).
+For missing or incomplete telemetry, use
 [single-region configuration](#single-region-configuration). This page covers JavaScript,
 .NET isolated, and Python.
 
@@ -16,7 +16,7 @@ not prove delivery either.
 This page assumes the endpoint is already deployed. Use the [setup guide](GETTING-STARTED.md)
 first, then follow the [approved test handoff](ONBOARDING.md#validate-the-deployed-endpoint).
 
-On this page: [collection pipelines](#how-telemetry-reaches-application-insights),
+Sections: [collection pipelines](#how-telemetry-reaches-application-insights),
 [signals and tables](#signals-tables-and-metrics-are-different-things),
 [single-region checks](#single-region-configuration), [ingestion identity](#identity-and-ingestion),
 [multi-region layout](#multi-region-configuration), [coverage queries](#read-only-queries-to-establish-what-is-present),
@@ -62,7 +62,7 @@ exporters can change formatting, casing, and which properties survive.
 
 To add direct worker instrumentation, follow the
 [Functions OpenTelemetry guidance](https://learn.microsoft.com/en-us/azure/azure-functions/opentelemetry-howto)
-for your language: initialize exporter/instrumentations and credentials, then verify correlation
+for the selected language: initialize exporter/instrumentations and credentials, then verify correlation
 and duplicate suppression. Do not copy another runtime's host settings. For languages outside
 this sample, check Microsoft's corresponding support tab.
 

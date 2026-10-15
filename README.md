@@ -4,8 +4,8 @@ Connect Microsoft Entra ID to your phone provider for SMS and voice one-time pas
 Deploy **one endpoint in one Azure region**, using JavaScript, C#, or Python.
 Guided setup handles the Azure resources and publishes your selected runtime package.
 
-**Use an isolated test environment.** The sample helps you evaluate the integration, plan your
-implementation, and prepare for production. Review [requirements](#requirements) before deploying.
+**Use an isolated test environment.** The sample supports integration evaluation, implementation
+planning, and production preparation. Review [requirements](#requirements) before deployment.
 
 ## Table of Contents
 
@@ -34,7 +34,7 @@ implementation, and prepare for production. Review [requirements](#requirements)
 Before deploying:
 
 - Confirm [supported provider access and Microsoft's approved testing and activation procedure](docs/GETTING-STARTED.md#1-get-ready).
-  These give your team the supported path for setup, validation, and activation.
+  These define the supported path for setup, validation, and activation.
 - Create an isolated test environment: use a nonproduction tenant and subscription, register a
   new application, and choose a unique resource prefix so this endpoint stays separate from
   production and other deployments.

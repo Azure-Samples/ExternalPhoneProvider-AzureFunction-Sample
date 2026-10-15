@@ -2,7 +2,7 @@
 
 [Sample overview and architecture](../README.md)
 
-**New deployment? Start with [Get started](GETTING-STARTED.md).** Before spending or deploying,
+**First deployment:** follow [Get started](GETTING-STARTED.md). Before spending or deploying,
 confirm supported access and Microsoft's approved testing and activation process. Build the first
 endpoint in an isolated nonproduction environment, validate it, and then complete policy activation.
 

@@ -7,7 +7,7 @@
 **Microsoft Entra ID** sends your **External Phone Provider (EPP)** endpoint
 an encrypted phone number and one-time passcode message. Your endpoint verifies the caller,
 decrypts the details, and either evaluates the request without sending or uses your phone service.
-It then responds to Entra ID. **Your team owns the connection to that service.**
+It then responds to Entra ID. **The customer owns the connection to that service.**
 
 Before deploying, ask your tenant administrator to confirm
 [eligibility, testing, and activation with Microsoft](ONBOARDING.md#before-purchasing-or-deploying).
@@ -96,7 +96,7 @@ the success response below **without sending anything**. This request path skips
 selection, credential lookup, and outbound HTTP; no service configuration is needed.
 Configured workers may independently prepare or refresh credentials, but that does not send a message.
 
-**Live (`mode: 1` or `"live"`):** your team implements and maintains the service integration.
+**Live (`mode: 1` or `"live"`):** the customer implements and maintains the service integration.
 Map the requested SMS or voice delivery to your service, preserving the destination, message,
 and passcode. Handle voice rendering and locales as needed. Authenticate with your own service
 credentials; **never forward the incoming bearer token**.

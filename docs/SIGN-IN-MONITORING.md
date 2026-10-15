@@ -9,12 +9,12 @@
 | Diagnose missing records or quiet alerts | [Check data](#4-check-your-data-and-choose-a-query), [monitor ingestion](#monitor-ingestion-separately) |
 | Adapt a query or add advanced alerts | [Advanced monitoring reference](#advanced-monitoring-reference) |
 
-The six-step walkthrough builds one user sign-in alert. Treat it as a worked example: each
-additional monitor needs its own scope, baseline, and query.
+The six-step walkthrough is a worked example for one user sign-in alert. Each additional monitor
+requires its own scope, baseline, and query.
 
 This guide covers Microsoft Entra authentication and configuration. Function execution and phone
-delivery have their own monitoring paths. Keep identity details private; your administrators
-configure this export and its alerts after endpoint setup.
+delivery have separate monitoring paths. Identity details remain private; administrators configure
+the export and alerts after endpoint setup.
 
 ## Recommended monitors
 
@@ -90,7 +90,7 @@ Choose each monitor's threshold from representative traffic, not a small export 
 ## 2. Find one sign-in
 
 1. Open **Entra ID > Monitoring & health > Sign-in logs**. Choose a date range and filter
-   to the application you're investigating. Open a record you're authorized to inspect.
+   to the application under investigation. Open a record authorized for inspection.
 2. In **Basic info**, check the **Application**, **Application ID**, **Resource**, outcome,
    and time. Keep the application's **client ID**, not its Object ID, for later query filters.
    This may not be the endpoint `applicationId` in your EPP deployment summary.
@@ -115,8 +115,8 @@ Choose each monitor's threshold from representative traffic, not a small export 
    If the issue points to the endpoint or provider, follow the
    [Function monitoring guide](MONITORING.md#runtime-specific-log-discovery) separately.
 
-For a single investigation, this portal view may be all you need. Continue when you want ongoing
-alerts, longer-term analysis, or a shared monitoring view.
+A single investigation can end after the portal review. Ongoing alerts, longer-term analysis,
+and shared monitoring require the remaining steps.
 
 ## 3. Export logs for ongoing monitoring
 
@@ -181,12 +181,12 @@ alerts, longer-term analysis, or a shared monitoring view.
    for that window, not a whole week's total. There is no
    universal threshold; the source query is not a turnkey EPP or fraud detector.
 5. Select **Save > Save as query** and choose the agreed query pack. Saving needs
-   **Log Analytics Contributor**; ask an authorized teammate if you only have read access.
+   **Log Analytics Contributor**; an authorized operator must make changes when access is read-only.
    See [saving queries](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/save-query).
-   Keep the filters, count units, baseline, and chosen threshold with your team's setup notes.
+   Keep the filters, count units, baseline, and chosen threshold with the monitoring setup notes.
 
-You now have one scoped query to reuse for the first alert. Leave rate, volume, and
-IP-based detection for [later](#more-alert-types), once you understand this baseline.
+The scoped query can be reused for the first alert. Add rate, volume, and IP-based detection
+only after establishing the [baseline](#more-alert-types).
 
 ## 5. Create your first alert
 
@@ -202,13 +202,13 @@ IP-based detection for [later](#more-alert-types), once you understand this base
    table plan supports the query and rule.
 3. For **Failed Signin reasons**, set **Measure** to **Calculation of a numeric column**,
    choose `Count`, and use **Total** across the result-code groups.
-   Leave **Split by dimensions** unset for this first combined alert. Don't count summary
+   Leave **Split by dimensions** unset for this first combined alert. Do not count summary
    rows as failures. Set **Static**, **Greater than**, and a **Threshold value** based on
    the normal counts for the same observation window in Step 4.
 4. Set **Aggregation granularity (window size)** and **Frequency of evaluation** to match
    the team's observation window, ingestion delay, response needs, and budget. Review
    **Override query time range** with the query's time filter; alert scans are limited to
-   **48 hours**. Start with one evaluation above the threshold; if you need several, review the
+   **48 hours**. Start with one evaluation above the threshold; multiple evaluations require review of the
    [required query output and evaluation settings](#query-identity-and-rule-options) first.
    Review healthy and qualifying periods in Preview. Keep missing-data expectations separate from failure counts;
    [collection-health guidance](#monitor-ingestion-separately) explains why.
@@ -219,7 +219,7 @@ IP-based detection for [later](#more-alert-types), once you understand this base
 6. Choose the query **Identity**. For a **system-assigned managed identity**, clear
    **Enable upon creation**, create the rule disabled, and have your Azure administrator
    grant it reader/query access to the workspace. Wait for role propagation before enabling.
-   An interactive query working under your account doesn't prove the rule can read logs.
+   An interactive query working under the operator account does not prove the rule can read logs.
    Review **Automatically resolve alerts** and [identity options](#query-identity-and-rule-options)
    before **Review + create**. Keep the rule disabled until ready for the test below.
 
@@ -230,12 +230,12 @@ IP-based detection for [later](#more-alert-types), once you understand this base
    and wait for the result; also check that the team receives the message. Microsoft's
    [testing instructions](https://learn.microsoft.com/en-us/azure/azure-monitor/alerts/action-groups#test-an-action-group-in-the-azure-portal)
    cover failures and test permissions. This checks routing, not the sign-in query.
-2. Test the query and a **temporary nonproduction rule** against existing records you're
-   allowed to inspect. Use a restricted test group and a temporary condition those records
+2. Test the query and a **temporary nonproduction rule** against authorized existing records.
+   Use a restricted test group and a temporary condition those records
    satisfy. Check the query's window and portal override together. Verify the scheduled
    alert and its later resolution, then remove the temporary rule/settings. See the
    [full safe-test procedure](#validate-without-generating-provider-sends).
-3. Don't generate live OTPs, repeated wrong codes, or production policy changes to populate
+3. Do not generate live OTPs, repeated wrong codes, or production policy changes to populate
    a chart. If records are insufficient, use an approved **non-phone test sign-in** in a
    test tenant/app. An EPP evaluation does not guarantee a sign-in record or prove delivery.
 4. Before enabling ongoing notifications, check that logs arrive, the rule identity has
@@ -285,7 +285,7 @@ reports for delivery/billing. Evaluation and live requests can both return HTTP 
 3. The [external-tenant feature comparison](https://learn.microsoft.com/en-us/entra/external-id/customers/concept-supported-features-customers#general-feature-comparison)
    currently lists **ID Protection as unavailable in external tenants**. Full supported
    workforce [ID Protection capabilities](https://learn.microsoft.com/en-us/entra/id-protection/overview-identity-protection#license-requirements)
-   require P2 or an applicable entitlement. Don't buy workforce P2 expecting it to enable
+   require P2 or an applicable entitlement. Do not buy workforce P2 expecting it to enable
    external-tenant risk detections.
 
 ### Prepare the external-tenant access path
@@ -302,7 +302,7 @@ reports for delivery/billing. Evaluation and live requests can both return HTTP 
    name and region. In **Select user access**, choose the agreed users/groups and Azure roles.
 3. Review the delegation, destination, region, permissions, and costs before **Create**.
    Wait for confirmation, select **Done**, then configure export as in Step 3.
-   Don't move the EPP subscription or alter authentication policy to imitate workforce setup.
+   Do not move the EPP subscription or alter authentication policy to imitate workforce setup.
 
 <a id="2-export-the-required-log-categories"></a>
 <a id="select-and-save-the-export"></a>
@@ -392,10 +392,10 @@ saving an alert query. Portal JSON downloads are not Log Analytics rows.
    previous authentication can satisfy a step; distinguish the step outcome from the whole sign-in.
 2. Microsoft's [MFA Workbook template](https://github.com/microsoft/external-id-azure-monitor/blob/main/templates/mfaWorkbookDeployment.json)
    currently queries **AuditLogs**, not `SigninLogs` authentication-step arrays. It needs
-   corresponding audit export/activity. Don't substitute tables or read it as a full step sequence.
+   corresponding audit export/activity. Do not substitute tables or read it as a full step sequence.
 3. A `SigninLogs` step report must handle `AuthenticationDetails` as the documented string
    containing parsed array data, with empty/invalid/missing data and nullable outcomes.
-   Array expansion counts **steps**, not sign-ins. Missing steps aren't success or failure.
+   Array expansion counts **steps**, not sign-ins. Missing steps are not success or failure.
    Keep `authenticationMethodDetail` and raw payloads out of shared views; they can contain
    phone identifiers and other personal data.
 
@@ -405,17 +405,17 @@ saving an alert query. Portal JSON downloads are not Log Analytics rows.
 
 1. In the [SigninLogs query collection](https://learn.microsoft.com/en-us/azure/azure-monitor/reference/queries/signinlogs),
    **Failed Signin reasons** groups by code/reason; **Failed login Count** counts failures by
-   resource; **Signin Locations** groups success/failure by location. Pick the measure you need.
+   resource; **Signin Locations** groups success/failure by location. Select the required measure.
    Some examples contain personal fields or limit MFA failures to one code; none is a
    complete endpoint/provider-failure detector.
 2. Add your source tenant/app filters **before aggregation**. Use the
    [filtering tutorial](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#apply-multiple-query-filters)
    or [Simple mode column filters](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-simple-mode#filter-by-column),
-   then switch to KQL to check them. Results-grid searches/header filters don't persist
+   then switch to KQL to check them. Results-grid searches/header filters do not persist
    as alert-query filters. Review numeric-looking code comparisons against the string schema.
 3. Use the [time-range controls](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#set-the-query-time-range)
    with any query time filter and verify the effective range. Preview **Show** limits and
-   browser-side grouping can hide data; don't mistake them for the full baseline.
+   browser-side grouping can hide data; do not treat them as the full baseline.
 4. Save the reviewed query and share its location with a teammate who has log access.
    Check that they get the same filters and columns. Distinct-user, record-count, and step
    measures differ; note unknown-code handling and any exclusions alongside the query.
@@ -444,7 +444,7 @@ saving an alert query. Portal JSON downloads are not Log Analytics rows.
 5. In a new action group, complete **Basics**, **Notifications**, and any **Actions**, then
    **Review + create > Create**. Return to the rule and select the saved group.
    Check processing region, recipients, required verification, and **Common alert schema**
-   where applicable. Keep security results restricted; don't attach automatic policy changes
+   where applicable. Keep security results restricted; do not attach automatic policy changes
    to a heuristic.
 6. **Automatically resolve alerts** makes the rule stateful; resolution timing depends on
    frequency. Review **Mute actions** with the receiving team. Edit an existing rule through
@@ -482,13 +482,13 @@ reviewed query, baseline, and response plan.
    choosing a grouped rule. Account for unknown users, absent IPs, approximate distinct
    counts, distributed attempts, NAT, VPNs, mobile networks, and shared proxies.
    IP geolocation does not prove physical location.
-3. Restrict personal-data results/notifications. Don't automatically block, disable an
+3. Restrict personal-data results/notifications. Do not automatically block, disable an
    account/provider, or change policy solely on these heuristics.
 4. In supported, licensed workforce tenants, follow
    [risk investigation instructions](https://learn.microsoft.com/en-us/entra/id-protection/howto-identity-protection-investigate-risk).
    Check populated `RiskLevelDuringSignIn`, `RiskLevelAggregated`, `RiskState`, and `RiskDetail`.
-   Detections can arrive asynchronously; empty, none, or hidden isn't fraud clearance.
-   A template named "risk detection" doesn't enable ID Protection in external tenants.
+   Detections can arrive asynchronously; empty, none, or hidden is not fraud clearance.
+   A template named "risk detection" does not enable ID Protection in external tenants.
 
 ### Monitor ingestion separately
 
@@ -501,11 +501,11 @@ reviewed query, baseline, and response plan.
    arrival**; test each case. It is not a preconfigured no-data alert. An unresolved table
    or query error must remain visible, not become an empty-success fallback.
 3. Create a separate rule with its own measure, threshold, lookback, frequency, recipient,
-   and maintainer. Match the query-time override to that calculation; don't blindly use
+   and maintainer. Match the query-time override to that calculation; do not blindly use
    the aggregation window. Check the query's frequency restrictions.
 4. Inspect rule health/query errors, export settings, workspace access, transformations,
    ingestion limits, and service health. Fix evaluation failures separately from stale-data
-   incidents. Missing evidence doesn't mean less abuse.
+   incidents. Missing evidence does not mean less abuse.
 
 ### Validate without generating provider sends
 

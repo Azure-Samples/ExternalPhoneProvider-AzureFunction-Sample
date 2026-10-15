@@ -4,15 +4,15 @@
 
 [Documentation](README.md) | [Collection diagnostics](APPLICATION-INSIGHTS.md) | [Log schema](LOGGING.md) | [Endpoint troubleshooting](../setup/docs/Troubleshooting.md#after-deployment-triage)
 
-Use this guide to find your endpoint's logs and set up alerts. Guided setup creates Application
-Insights and a Log Analytics workspace; your operations team chooses, configures, and tests the
+This guide covers endpoint logs and alert configuration. Guided setup creates Application
+Insights and a Log Analytics workspace; the operations team chooses, configures, and tests
 notifications.
 
 For **tenant authentication and potential abuse signals**, use
 [Microsoft Entra ID sign-in monitoring](SIGN-IN-MONITORING.md). Endpoint setup does not configure that pipeline;
 sign-in failures do not by themselves identify provider failures or prove OTP delivery.
 
-For your first single-region deployment:
+For a first single-region deployment:
 
 1. [Find the monitoring resources and confirm data is arriving](#1-record-the-deployment-and-confirm-telemetry)
    after an [authorized test](ONBOARDING.md#validate-the-deployed-endpoint).
@@ -435,7 +435,7 @@ aggregation, window, evaluation frequency, dimensions, and action group.
 As a starting point, where the selected resource exposes the HTTP 5xx metric,
 alert on **Total > 5 over 5 minutes**, evaluated every minute. Use Application
 Insights request failure rules below when that platform signal is unavailable or
-when you need the `SendOtp` operation filter. Add plan-appropriate execution,
+when the `SendOtp` operation filter is required. Add plan-appropriate execution,
 memory, or instance signals only after establishing a baseline; there is no
 single CPU/instance threshold appropriate to both FC1 and EP1.
 
@@ -479,7 +479,7 @@ condition and action group, and save only after reviewing estimated charges.
 Use an explicit query lookback consistent with the query's time filter.
 
 For the request summary examples, change the filter to `ago(5m)` in every source
-and remove `bin(TimeGenerated, 5m)` from the grouping when you want **one summary
+and remove `bin(TimeGenerated, 5m)` from the grouping for **one summary
 row per origin over the whole rolling window**. This avoids evaluating a partial
 calendar bucket as if it were a complete five-minute interval. For the single
 region query, remove the grouping entirely. Remove the final time sort in both

@@ -525,7 +525,7 @@ integration or handset-delivery checks. See [deployment verification](ONBOARDING
 <a id="production-readiness-considerations"></a>
 ## Production readiness
 
-Use this checklist to plan the capabilities your production design may need beyond the sample.
+Use this checklist to plan capabilities required beyond the sample.
 Provider acceptance and nonce checks confirm important stages of the request, while handset
 delivery and provider-specific features need their own validation.
 
@@ -545,8 +545,8 @@ delivery and provider-specific features need their own validation.
   standalone six-digit numeric runs and repeats the full message. Validate supported locales,
   passcode formats, and actual audio for the intended experience.
 - **Additional production capabilities:** add the body-size/content-type and E.164 validation,
-  subscription provisioning, certification, least-cost routing, or voice-callback workflows your
-  design requires. Native caller fallback remains with the caller rather than this Function.
+  subscription provisioning, certification, least-cost routing, or voice-callback workflows
+  required by the design. Native caller fallback remains with the caller rather than this Function.
 
 See [setup compatibility](ONBOARDING.md#setup-script-compatibility) for credential provisioning,
 endpoint format and unsupported setup options.

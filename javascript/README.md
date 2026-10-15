@@ -9,13 +9,13 @@ One configured provider owns its credentials, request mapping, and response inte
 
 ## Setup
 
-**Deploying the sample?** Use the [five-step guide](../docs/GETTING-STARTED.md).
+**Sample deployment:** use the [five-step guide](../docs/GETTING-STARTED.md).
 After guided setup, continue with
 [provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
 The [guided provider list](../docs/ONBOARDING.md#provider-credential-names) covers a subset of
 the adapters in this folder.
 
-**Developing a custom package?** Follow these steps from `javascript/`:
+**Custom package development:** follow these steps from `javascript/`:
 
 1. Create the [local settings below](#environment-configuration). For live integration, choose a
    fixed provider ID from [providers/](src/functions/providers/), configure its endpoints/options,
@@ -83,9 +83,9 @@ For message/voice mapping and credential rules, see the
 
 ## Source and extension points
 
-Start with the provider-neutral
+Use the provider-neutral
 [BYOT request and response guide](../docs/BRING-YOUR-OWN-PROVIDER.md) for the Microsoft Entra ID payload,
-caller authentication, and response rules. Your team owns the outbound service integration.
+caller authentication, and response rules. The customer owns the outbound service integration.
 
 For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and the
 [JavaScript service-event queries](../docs/MONITORING.md#4-javascript-service-event-queries).

@@ -4,7 +4,7 @@
 
 [Documentation](README.md) | [Normal deployment](GETTING-STARTED.md) | [Provider interface](BRING-YOUR-OWN-PROVIDER.md)
 
-Use this guide when you need a customer-owned primary-to-secondary provider design. It adds code,
+This guide describes a customer-owned primary-to-secondary provider design. It adds code,
 durable state, provider-specific approval, and dedicated testing around the existing
 `/api/SendOtp` URL. Keep the provider order on the server for one SMS channel rather than letting
 the caller select accounts or treating the order as a vendor ranking.

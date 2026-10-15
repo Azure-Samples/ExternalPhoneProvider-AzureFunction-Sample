@@ -2,8 +2,8 @@
 
 [Documentation](README.md) | [Find deployed logs](MONITORING.md#runtime-specific-log-discovery) | [HTTP contract](CONTRACT.md)
 
-Use this reference when implementing or interpreting endpoint events. For an incident, start with
-the monitoring walkthrough, not a search for a universal JSON request summary.
+This reference defines endpoint events and their interpretation. Incident investigation begins
+with the monitoring walkthrough rather than a search for a universal JSON request summary.
 
 **Never log request bodies, decrypted fields, credentials, nonces, raw exceptions, or provider
 response bodies.** Keep SDK, platform, and proxy body tracing off. This page describes what the

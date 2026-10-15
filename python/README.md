@@ -9,13 +9,13 @@ selected provider per deployment. Target: Python 3.11, Azure Functions v4, Pytho
 
 ## Setup and deployment
 
-**Deploying the sample?** Use the [five-step guide](../docs/GETTING-STARTED.md).
+**Sample deployment:** use the [five-step guide](../docs/GETTING-STARTED.md).
 Guided setup builds remotely and publishes the Function without requiring a local Python install.
 Next, complete [provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
 The [guided provider list](../docs/ONBOARDING.md#provider-credential-names) covers a subset of
 the adapters in this folder.
 
-**Developing a custom package?** Follow these steps from `python/`:
+**Custom package development:** follow these steps from `python/`:
 
 1. Create the [local settings below](#environment-configuration). For live integration, choose a
    fixed provider ID from [providers/](src/providers/), configure its endpoints/options, and
@@ -81,9 +81,9 @@ and [Telesign integration](../TECHNICAL.md#telesign-epp).
 
 ## Source
 
-Start with the provider-neutral
+Use the provider-neutral
 [BYOT request and response guide](../docs/BRING-YOUR-OWN-PROVIDER.md) for the Microsoft Entra ID payload,
-caller authentication, and response rules. Your team owns the outbound service integration.
+caller authentication, and response rules. The customer owns the outbound service integration.
 
 For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
 [runtime-specific log discovery](../docs/MONITORING.md#runtime-specific-log-discovery).

@@ -2,8 +2,8 @@
 
 [Documentation](../../docs/README.md) | [First deployment](../../docs/GETTING-STARTED.md) | [Troubleshooting](Troubleshooting.md)
 
-Use this page when you need details about setup choices, reruns, or maintenance. For a first
-deployment, follow the five-step guide above; it handles the required source and Bicep files.
+This reference covers setup choices, reruns, and maintenance. For a first deployment, follow the
+five-step guide above; it handles the required source and Bicep files.
 
 | Task | Section |
 | --- | --- |
@@ -18,8 +18,8 @@ deployment, follow the five-step guide above; it handles the required source and
 Confirm [provider access and the approved Microsoft procedure](../../docs/ONBOARDING.md#before-purchasing-or-deploying)
 before purchasing or deploying. A provider purchase alone does not enable the tenant feature or authorize its API.
 
-Setup creates **one endpoint in one Azure region**. When you are ready to add regional continuity,
-follow the [Front Door guide](../../docs/FRONTDOOR.md) to coordinate origins and encryption keys.
+Setup creates **one endpoint in one Azure region**. Regional continuity uses the
+[Front Door guide](../../docs/FRONTDOOR.md) to coordinate origins and encryption keys.
 
 ## Availability
 

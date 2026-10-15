@@ -5,10 +5,10 @@
 
 [Documentation](README.md) | [Single-region setup](GETTING-STARTED.md) | [Routing troubleshooting](../setup/docs/Troubleshooting.md#optional-front-door-deployments)
 
-Use Azure Front Door when you want **one public EPP URL backed by Function Apps in multiple regions**.
+Azure Front Door provides **one public EPP URL backed by Function Apps in multiple regions**.
 Start with a validated [single-region deployment](GETTING-STARTED.md), then use this guide to
 plan and implement the regional origins, readiness route, Front Door configuration, validation,
-failover drills, and rollback. Treat transition errors as part of the acceptance criteria.
+failover drills, and rollback. Transition errors are part of the acceptance criteria.
 
 Follow [scope](#scope-and-observed-behavior), [architecture](#architecture),
 [plan/capacity](#1-plan-the-regional-deployment), [origins/keys](#2-prepare-equivalent-independently-provisioned-origins),
@@ -28,7 +28,7 @@ regional package and validate it before enabling probes. The released packages r
 single-region baseline; include runtime-specific validation for .NET or Python.
 
 The recorded trials cover encrypted evaluation, caller and origin restrictions, and controlled
-Function stop/restart. Extend your acceptance plan to the features you will use: approved live
+Function stop/restart. The acceptance plan must cover the required features: approved live
 SMS/voice checks, real Microsoft Entra caller behavior, regional dependency loss, custom domains,
 WAF or Private Link, and production-representative load.
 
@@ -50,7 +50,7 @@ test context rather than those targets.
 ![Multi-region External Phone Provider architecture with Azure Front Door](images/multi-region-architecture.png)
 
 The diagram shows the design, not the exact test deployment. Its region names are examples.
-Custom domains and Premium/WAF are optional and weren't part of the Standard-tier test.
+Custom domains and Premium/WAF are optional and were not part of the Standard-tier test.
 Give each Function App, storage account, and Key Vault a globally unique name. Each region also has
 its own identity IDs and vault references. Keep the **provider and authentication configuration
 consistent and use the same RSA key**, rather than copying every setting literally.
@@ -99,7 +99,7 @@ live traffic. Review the
   Security Store provider's requirements. A third region adds cost and capacity, but does not
   necessarily shorten failure detection.
 - Check availability of **every** required resource type, not just EP1 quota. Hosting availability
-  doesn't mean Application Insights or other dependencies are available there.
+  does not mean Application Insights or other dependencies are available there.
 - Budget for an EP1 plan and regional dependencies in each region, Front Door, and telemetry.
   Size and validate each region for the survivor workload described below, not just its normal share.
 - Choose one language and verify that each origin receives the same package. Do not mix
@@ -193,14 +193,14 @@ certificate is separate from this JWE encryption certificate.
 - Give each Function identity scoped access to its regional vault. Set `EPP_DECRYPTION_KEY_PEM`
   to the regional certificate's **versioned PEM backing-secret reference**.
 - Verify that the public keys match and each region can decrypt a request. Matching vault names
-  or secret-version strings alone doesn't prove this.
-- Restored certificates are independent copies. They don't stay in sync automatically. Coordinate renewal
+  or secret-version strings alone does not prove this.
+- Restored certificates are independent copies. They do not stay in sync automatically. Coordinate renewal
   and Entra updates across every origin using the [certificate lifecycle guidance](../setup/docs/README.md#encryption-certificate-lifecycle).
   That section explains the single-key constraints; apply the multi-region updates through an
   approved manual procedure, not independent setup reruns. The sample has one active decryption
   key; it does not implement overlapping multi-key rotation.
 - Keep plaintext keys out of source, logs, tickets, and pipeline artifacts. Protect and remove
-  temporary encrypted backups under your approved handling policy.
+  temporary encrypted backups under the approved handling policy.
 
 ## 3. Provide a non-delivering readiness endpoint
 
@@ -248,8 +248,8 @@ These are the **settings we tested**. Treat them as a starting point, not a perf
 | Caching | Disabled |
 
 Create the route under **Front Door manager**, associate it with the endpoint's domain, and select
-the origin group. Inspect **Origin groups > your group > Origins** to see the regional backends.
-You should see one public endpoint with several origins behind it.
+the origin group. Inspect **Origin groups > selected group > Origins** to view the regional backends.
+The profile should show one public endpoint with several origins.
 
 Use the same request body and caller authorization end to end. Do not add header-replacement,
 redirect, cache, or retry rules without separately validating their effect on authentication and OTP
@@ -403,14 +403,14 @@ We saw no failed samples before the outages or after restarting the Functions.
 A failed request is not guaranteed to be replayed on another origin. The actual Entra caller's
 handling of these errors was not tested.
 
-These trials didn't show a consistent benefit from 10-second probes or a third region.
-More regions can add capacity and help tolerate additional failures, but they don't remove routing
+These trials did not show a consistent benefit from 10-second probes or a third region.
+More regions can add capacity and help tolerate additional failures, but they do not remove routing
 delays, shared provider dependencies, or application faults. Faster probes generate more traffic
 and can make brief problems trigger routing changes sooner. Decide how much disruption your
 application can accept, then repeat the tests from your callers' locations and at your expected load.
 
 Do not add blind retries to live sends: a timeout can occur after provider acceptance, and the sample
-does not deduplicate deliveries. These results don't establish zero downtime, a production SLA,
+does not deduplicate deliveries. These results do not establish zero downtime, a production SLA,
 or successful delivery to a phone.
 
 ## Operations and rollback

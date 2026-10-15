@@ -2,7 +2,7 @@
 
 [Documentation](../../docs/README.md) | [Setup reference](README.md) | [Resume onboarding](../../docs/GETTING-STARTED.md)
 
-Start with the stage that failed. Keep existing resources in place, and never blindly retry a
+Select the stage that failed. Keep existing resources in place, and never blindly retry a
 live send. Before rerunning setup, read [safe recovery](#recover-without-destructive-cleanup).
 After deployment, complete the provider and delivery checks separately.
 

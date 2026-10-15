@@ -48,7 +48,7 @@ approved folder.
 The following sample installs the required Microsoft Graph modules for the current user,
 connects to Microsoft Graph, identifies SMS and voice authentication steps, and matches
 each masked phone detail to a registered phone method. It caches phone-method lookups so
-each user is queried only once. Replace `$start` and `$end` with the period you want to
+each user is queried only once. Replace `$start` and `$end` with the required period to
 analyze.
 
 ```powershell
@@ -216,9 +216,10 @@ Apply the provider's destination-specific rates to those estimated requests. Use
 rows when rates differ by destination, sender type, route, or message category. Include a
 contingency for growth, retries, fallback behavior, and seasonal peaks.
 
-## Confirm the final estimate with your provider
+<a id="confirm-the-final-estimate-with-your-provider"></a>
+## Confirm provider rates
 
-Work with your provider to validate:
+Confirm the following with the provider:
 
 - How each international calling code maps to the provider's destination pricing.
 - Country and carrier coverage, sender registration, and route-specific rates.
