@@ -1,4 +1,6 @@
-# External Phone Provider Function: Language-Agnostic Contract
+# HTTP contract
+
+<a id="external-phone-provider-function-language-agnostic-contract"></a>
 
 [Documentation](README.md) | [Implementation walkthrough](BRING-YOUR-OWN-PROVIDER.md) | [Settings and packages](../TECHNICAL.md)
 
@@ -48,7 +50,8 @@ Forwarded headers, including `x-ms-client-principal`, do not establish trust by 
 replace the required Easy Auth gate. The handler does not use them to authenticate callers or forward
 the incoming `Authorization` header to the provider. Configure Easy Auth as described in section 5.
 
-### EPP request body: `Envelope` (cleartext envelope)
+<a id="epp-request-body-envelope-cleartext-envelope"></a>
+### EPP request body
 
 | Field | Required | Notes |
 |-------|----------|-------|
@@ -519,7 +522,8 @@ An authorized evaluation must succeed without provider I/O. These checks do not 
 integration or handset-delivery checks. See [deployment verification](ONBOARDING.md#4-package-deploy-and-verify).
 
 <a id="production-limitations"></a>
-## Production-readiness considerations
+<a id="production-readiness-considerations"></a>
+## Production readiness
 
 Use this checklist to plan the capabilities your production design may need beyond the sample.
 Provider acceptance and nonce checks confirm important stages of the request, while handset

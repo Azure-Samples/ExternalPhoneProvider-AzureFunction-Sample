@@ -163,7 +163,8 @@ If the vault denies access, ask the approved credential administrator for help; 
 vault protection or copy credentials into Function settings. See the permission and runtime
 checks in the provider-specific steps below.
 
-### Telesign: enter and verify the two vault secrets
+<a id="telesign-enter-and-verify-the-two-vault-secrets"></a>
+### Telesign credentials
 
 1. Confirm account access to each intended channel's EPP URL. Use the
    [vault steps above](#where-to-enter-api-key-credentials-in-key-vault) to store the raw API key as
@@ -185,7 +186,8 @@ screenshots, or chat. During rotation, coordinate the matching pair and provider
 two secret updates are not atomic. Keep old credentials usable during the approved transition
 where the provider supports it, and verify live delivery before retiring them.
 
-### Soprano: provider-administrator handoff
+<a id="soprano-provider-administrator-handoff"></a>
+### Soprano credentials
 
 Setup creates customer-side federation, **not** the commercial account or access in Soprano's
 tenant. Complete this handoff before treating OAuth as ready.
@@ -259,7 +261,8 @@ runs and repeats the message. Verify the actual locale, spoken digits, and recip
 Do not blindly retry timeouts: provider acceptance can precede a lost response or caller fallback.
 Repeat deployed checks after package, authentication, credential, key, or routing changes.
 
-## Activate, operate, and retire
+<a id="activate-operate-and-retire"></a>
+## Operations lifecycle
 
 Only after the acceptance checks pass, have the policy administrator follow
 [manual activation and rollback](../setup/docs/README.md#step-3---manually-validate-and-activate-policy).

@@ -52,8 +52,8 @@ endpoint in an isolated nonproduction environment, validate it, and then complet
 <a id="optional-designs"></a>
 ## Advanced topics
 
-Extend a validated single-region endpoint with the design that fits your resiliency and provider
-strategy. Each guide includes implementation, validation, operations, and rollback guidance.
+Use these guides after validating a single-region endpoint. Each one includes implementation,
+validation, operations, and rollback guidance.
 
 - **Route across regions:** [Multi-region Front Door design](FRONTDOOR.md)
 - **Add provider fallback:** [Multi-provider implementation](MULTI-PROVIDER-IMPLEMENTATION.md)

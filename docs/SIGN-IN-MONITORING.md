@@ -21,7 +21,8 @@ configure this export and its alerts after endpoint setup.
 Agree source tenant, exact identity/resource IDs, and notification owners, then implement in
 priority order. Do not scope by name fragments or every tenant application.
 
-### Priority 1: Integration identities cannot sign in
+<a id="priority-1-integration-identities-cannot-sign-in"></a>
+### Integration sign-in failures
 
 1. **Watch:** application/service-principal and managed-identity authentication in
    **AADServicePrincipalSignInLogs** and **AADManagedIdentitySignInLogs**. Filter to the
@@ -36,7 +37,8 @@ priority order. Do not scope by name fragments or every tenant application.
    there is not a sign-in event for every service request: only alert on absent successes
    after accounting for the expected schedule, caching, and [collection health](#monitor-ingestion-separately).
 
-### Priority 2: Integration credentials, permissions, or trust change
+<a id="priority-2-integration-credentials-permissions-or-trust-change"></a>
+### Credential and permission changes
 
 1. **Watch:** **AuditLogs** for the integration's application and service-principal objects.
    Include credential additions/removals, application identifier or trust-setting updates,
@@ -52,7 +54,8 @@ priority order. Do not scope by name fragments or every tenant application.
    records before escalating an unexplained change to security. This is change monitoring,
    not a credential-expiry inventory or automatic revocation rule.
 
-### Priority 3: Users repeatedly have trouble signing in
+<a id="priority-3-users-repeatedly-have-trouble-signing-in"></a>
+### Repeated user sign-in failures
 
 1. **Watch:** **SigninLogs** for the customer-facing app and source tenant. Review
    **AADNonInteractiveUserSignInLogs** separately for background token/session problems;
@@ -220,7 +223,8 @@ IP-based detection for [later](#more-alert-types), once you understand this base
    Review **Automatically resolve alerts** and [identity options](#query-identity-and-rule-options)
    before **Review + create**. Keep the rule disabled until ready for the test below.
 
-## 6. Test, then hand over
+<a id="6-test-then-hand-over"></a>
+## 6. Test and hand over
 
 1. Save the action group, open it, and select **Test**. Choose the notification receivers
    and wait for the result; also check that the team receives the message. Microsoft's
@@ -266,7 +270,8 @@ reports for delivery/billing. Evaluation and live requests can both return HTTP 
 
 <a id="1-choose-the-tenant-and-permissions"></a>
 
-### Tenant setup, access, and licensing
+<a id="tenant-setup-access-and-licensing"></a>
+### Tenant access and licensing
 
 1. Microsoft Entra ID roles and Azure RBAC are separate. Use the roles in
    [portal access](#1-choose-your-tenant-and-access) and [export setup](#3-export-logs-for-ongoing-monitoring).
@@ -515,7 +520,8 @@ reviewed query, baseline, and response plan.
 
 <a id="6-build-a-sign-in-workbook"></a>
 
-### Build a Workbook when you need a shared view
+<a id="build-a-workbook-when-you-need-a-shared-view"></a>
+### Workbook
 
 1. Review the [Microsoft monitoring repository](https://github.com/microsoft/external-id-azure-monitor)
    with the query maintainer. Its templates are deployable ARM resources, not text to paste into

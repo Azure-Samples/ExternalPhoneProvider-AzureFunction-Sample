@@ -1,6 +1,7 @@
-# Multi-region onboarding with Azure Front Door
+# Azure Front Door multi-region deployment
 
 <a id="optional-multi-region-onboarding-with-azure-front-door"></a>
+<a id="multi-region-onboarding-with-azure-front-door"></a>
 
 [Documentation](README.md) | [Single-region setup](GETTING-STARTED.md) | [Routing troubleshooting](../setup/docs/Troubleshooting.md#optional-front-door-deployments)
 
@@ -9,7 +10,7 @@ Start with a validated [single-region deployment](GETTING-STARTED.md), then use 
 plan and implement the regional origins, readiness route, Front Door configuration, validation,
 failover drills, and rollback. Treat transition errors as part of the acceptance criteria.
 
-Follow [scope](#scope-and-observed-behavior), [architecture](#architecture-one-url-multiple-origins),
+Follow [scope](#scope-and-observed-behavior), [architecture](#architecture),
 [plan/capacity](#1-plan-the-regional-deployment), [origins/keys](#2-prepare-equivalent-independently-provisioned-origins),
 [readiness](#3-provide-a-non-delivering-readiness-endpoint), [routing](#4-configure-front-door-manually),
 [validation](#5-validate-before-manually-activating-policy), and [fire-drill](#6-regional-failover-fire-drill).
@@ -43,7 +44,8 @@ isolation, survivor capacity, real-caller checks, and regional-outage evidence. 
 set RTO/RPO, tolerable failures, latency, and evidence requirements; historical results provide
 test context rather than those targets.
 
-## Architecture: one URL, multiple origins
+<a id="architecture-one-url-multiple-origins"></a>
+## Architecture
 
 ![Multi-region External Phone Provider architecture with Azure Front Door](images/multi-region-architecture.png)
 
@@ -111,7 +113,8 @@ application. The setup script creates one region; the steps below coordinate Fro
 key material, regional registrations, and failover without replacing an existing endpoint's
 application configuration or certificate unexpectedly.
 
-### Capacity gate: each region must support the combined peak load
+<a id="capacity-gate-each-region-must-support-the-combined-peak-load"></a>
+### Regional capacity
 
 **EACH region must be provisioned and validated to serve the combined peak workload on its own.**
 For a balanced two-region active-active baseline, this means **at least twice its normal per-region
@@ -150,7 +153,8 @@ and credential/key refresh so warm caches do not hide a dependency on the failed
 this separate from the evaluation-only fire-drill; do not silently enable live sends in that drill
 or mark the full capacity gate passed using evaluation-only throughput.
 
-## 2. Prepare equivalent, independently provisioned origins
+<a id="2-prepare-equivalent-independently-provisioned-origins"></a>
+## 2. Prepare regional origins
 
 Create each regional Function App and its dependencies through your approved Azure process.
 Keep public access disabled while setting up authentication, keys, identities, and packages.
@@ -251,7 +255,8 @@ Use the same request body and caller authorization end to end. Do not add header
 redirect, cache, or retry rules without separately validating their effect on authentication and OTP
 delivery. A cached response cannot confirm a new delivery request. Front Door does not cache POST.
 
-### Restrict each origin to this Front Door profile
+<a id="restrict-each-origin-to-this-front-door-profile"></a>
+### Restrict origin access
 
 Before allowing Front Door to reach the Functions, configure their access restrictions:
 

@@ -1,12 +1,11 @@
-# External Phone Provider: Azure Function Sample
+# External Phone Provider Azure Function Sample
 
 Connect Microsoft Entra ID to your phone provider for SMS and voice one-time passwords.
 Deploy **one endpoint in one Azure region**, using JavaScript, C#, or Python.
 Guided setup handles the Azure resources and publishes your selected runtime package.
 
-**Explore the integration in an isolated test environment.** Use the sample to shape your
-implementation and prepare for your organization's production-readiness review. Review
-[requirements](#requirements) before deploying.
+**Use an isolated test environment.** The sample helps you evaluate the integration, plan your
+implementation, and prepare for production. Review [requirements](#requirements) before deploying.
 
 ## Table of Contents
 
@@ -99,8 +98,8 @@ as you plan the live service.
 - [Multi-region routing with Azure Front Door](docs/FRONTDOOR.md)
 - [Conservative primary-to-secondary provider fallback](docs/MULTI-PROVIDER-IMPLEMENTATION.md)
 
-Build on the validated single-region endpoint with regional routing or a carefully controlled
-provider-fallback strategy. Each guide covers capacity, validation, operations, and rollback.
+Use these guides after validating the single-region endpoint. They cover regional routing,
+provider fallback, capacity, validation, operations, and rollback.
 
 ## Getting help
 

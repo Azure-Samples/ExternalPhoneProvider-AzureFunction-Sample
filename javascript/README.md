@@ -1,4 +1,6 @@
-# External Phone Provider Function: JavaScript
+# JavaScript implementation
+
+<a id="external-phone-provider-function-javascript"></a>
 
 [Documentation](../docs/README.md) | [Settings](#environment-configuration) | [Request behavior](#request-behavior) | [Source](#source-and-extension-points)
 

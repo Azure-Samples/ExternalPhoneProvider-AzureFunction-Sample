@@ -1,4 +1,6 @@
-# BYOT integration: the Entra ID request and response
+# Bring your own provider
+
+<a id="byot-integration-the-entra-id-request-and-response"></a>
 
 [Documentation](README.md) | [Exact HTTP contract](CONTRACT.md) | [Runtime guides](README.md#develop)
 
@@ -178,7 +180,8 @@ or failure. Keep credential caching in the existing services:
 credential specification; C# calls `FetchCredentialsAsync`. Do not add a separate credential cache
 or send-retry loop. Keep service secrets in Key Vault, not in settings or source.
 
-### Configure, test, and package
+<a id="configure-test-and-package"></a>
+### Implementation steps
 
 1. Start from [local.settings.sample.json](local.settings.sample.json). Copy it to an untracked
    `local.settings.json` beside your runtime's `host.json`, keep all `Values` entries as strings,

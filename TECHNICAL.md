@@ -1,4 +1,6 @@
-# External Phone Provider: Technical Reference
+# Technical reference
+
+<a id="external-phone-provider-technical-reference"></a>
 
 [Documentation](docs/README.md) | [First deployment](docs/GETTING-STARTED.md) | [HTTP contract](docs/CONTRACT.md)
 

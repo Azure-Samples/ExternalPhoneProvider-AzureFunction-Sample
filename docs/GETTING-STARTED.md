@@ -1,4 +1,6 @@
-# Set up an External Phone Provider endpoint
+# Deployment guide
+
+<a id="set-up-an-external-phone-provider-endpoint"></a>
 
 [Documentation](README.md) | [Setup reference](../setup/docs/README.md) | [Troubleshooting](../setup/docs/Troubleshooting.md)
 

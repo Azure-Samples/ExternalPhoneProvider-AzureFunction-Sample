@@ -1,4 +1,6 @@
-# Monitoring setup and sample queries
+# Monitoring
+
+<a id="monitoring-setup-and-sample-queries"></a>
 
 [Documentation](README.md) | [Collection diagnostics](APPLICATION-INSIGHTS.md) | [Log schema](LOGGING.md) | [Endpoint troubleshooting](../setup/docs/Troubleshooting.md#after-deployment-triage)
 
@@ -28,7 +30,8 @@ These examples do not create monitors automatically. Review permissions, privacy
 before applying them. Thresholds and intervals are **starting points, not SLAs**; tune them to
 your deployment.
 
-## 1. Record the deployment and confirm telemetry
+<a id="1-record-the-deployment-and-confirm-telemetry"></a>
+## 1. Record the deployment
 
 Keep a private inventory with one row per expected regional endpoint:
 
@@ -49,7 +52,8 @@ Workbooks, or alerts. [Verify the deployed collection configuration](APPLICATION
 resource creation alone does not prove ingestion, and other deployment methods can differ.
 The template requests 30-day retention; check effective workspace/table retention and policy before changes.
 
-### Find the linked resources in the portal
+<a id="find-the-linked-resources-in-the-portal"></a>
+### Portal resources
 
 1. Open the Function App named in your deployment summary.
 2. Select **Monitoring > Application Insights**. Follow the linked resource name; do not
@@ -92,7 +96,8 @@ AppRequests
 Grant only required read access on **each workspace**. Workbook sharing does not grant data access;
 alert evaluation needs its own identity's access, not the author's.
 
-### Run a first query and read the results
+<a id="run-a-first-query-and-read-the-results"></a>
+### First query
 
 1. In your workspace's **Logs**, close any welcome or Queries hub dialog. If the portal opens
    in **Agent** mode, switch it off for this walkthrough, then choose **KQL mode**.
@@ -268,7 +273,8 @@ filtered, and an empty JSON result can mean a parser/pipeline mismatch. Check
 [runtime collection defaults](APPLICATION-INSIGHTS.md#what-the-checked-in-sample-configures)
 and [sampling limits](APPLICATION-INSIGHTS.md#sampling-privacy-and-collection-limits).
 
-### Separate evaluated, accepted, and failed completions
+<a id="separate-evaluated-accepted-and-failed-completions"></a>
+### Evaluation and delivery outcomes
 
 ```kusto
 AppTraces
@@ -440,7 +446,8 @@ throttling, storage availability/latency, and credential/certificate expiry thro
 their respective resource monitoring. A successful Function response alone does
 not validate those dependencies' future readiness.
 
-### Certificate, credential, and cost ownership
+<a id="certificate-credential-and-cost-ownership"></a>
+### Operational ownership
 
 Keep `certificateExpiresUtc`, vault certificate/secret versions, and Entra encryption credential
 expiry in a restricted inventory with a renewal owner and backup. Follow the
@@ -527,7 +534,8 @@ replacing hardcoded windows. Scheduled alerts cannot depend on Workbook-only par
 Save to the approved resource group and verify both Workbook and data access for readers.
 Keep identifiers, exports, and screenshots private. See [Workbook authoring][workbooks].
 
-## 7. Availability, authenticated Functions, and FC1
+<a id="7-availability-authenticated-functions-and-fc1"></a>
+## 7. Availability monitoring
 
 Keep `SendOtp` protected by Easy Auth for every probe and test.
 An unauthenticated 401/403 demonstrates rejection, not a successful authorized
@@ -571,7 +579,8 @@ Review the current [availability test capabilities][availability] before choosin
 Standard tests or a custom authenticated runner.
 
 <a id="8-optional-azure-front-door-layer"></a>
-## 8. Regional edge monitoring with Azure Front Door
+<a id="8-regional-edge-monitoring-with-azure-front-door"></a>
+## 8. Front Door monitoring
 
 Use this layer with the [Front Door multi-region design](FRONTDOOR.md).
 For Standard/Premium, inspect the profile's Metrics for **Origin Health Percentage**,
@@ -599,7 +608,8 @@ as edge observations. Front Door probes do not perform an authenticated encrypte
 `SendOtp` evaluation or prove provider delivery. A probe path must follow the
 separate readiness design described above. See [Front Door monitoring][front-door].
 
-## 9. Sampling, ingestion gaps, privacy, and validation
+<a id="9-sampling-ingestion-gaps-privacy-and-validation"></a>
+## 9. Sampling and data quality
 
 If data stops arriving, check the time range and workspace/component/role filters,
 actual traffic, deployment changes, log levels, host/worker exporter configuration,

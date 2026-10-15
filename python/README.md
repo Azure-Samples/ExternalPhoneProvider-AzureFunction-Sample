@@ -1,4 +1,6 @@
-# External Phone Provider Function: Python (v2 model)
+# Python implementation
+
+<a id="external-phone-provider-function-python-v2-model"></a>
 
 [Documentation](../docs/README.md) | [Settings](#environment-configuration) | [Request behavior](#request-behavior) | [Source](#source)
 

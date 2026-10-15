@@ -1,4 +1,6 @@
-# External Phone Provider Function: C# (.NET isolated worker)
+# C# implementation
+
+<a id="external-phone-provider-function-c-net-isolated-worker"></a>
 
 [Documentation](../docs/README.md) | [Settings](#environment-configuration) | [Request behavior](#request-behavior) | [Source](#source)
 

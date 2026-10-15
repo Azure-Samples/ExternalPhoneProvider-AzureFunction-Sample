@@ -1,4 +1,6 @@
-# Application Insights for the External Phone Provider
+# Application Insights
+
+<a id="application-insights-for-the-external-phone-provider"></a>
 
 [Documentation](README.md) | [Monitoring walkthrough](MONITORING.md) | [Log schema](LOGGING.md)
 
@@ -64,7 +66,8 @@ for your language: initialize exporter/instrumentations and credentials, then ve
 and duplicate suppression. Do not copy another runtime's host settings. For languages outside
 this sample, check Microsoft's corresponding support tab.
 
-## Signals, tables, and metrics are different things
+<a id="signals-tables-and-metrics-are-different-things"></a>
+## Telemetry signals and tables
 
 The following table maps **Application Insights Logs** names to **Log Analytics workspace**
 names. Table availability and contents depend on what was actually emitted and ingested.
@@ -183,7 +186,8 @@ For the [Front Door multi-region design](FRONTDOOR.md), inspect
 Edge/WAF rejections, origin-connectivity failures, and probes need not appear as Function requests.
 Origin health does not prove provider authentication or delivery.
 
-## Read-only queries to establish what is present
+<a id="read-only-queries-to-establish-what-is-present"></a>
+## Telemetry coverage queries
 
 Run these examples from the **linked Log Analytics workspace's Logs** view. They use workspace
 table/column names (`TimeGenerated`, `AppRoleName`, `OperationId`, `Properties`), not the

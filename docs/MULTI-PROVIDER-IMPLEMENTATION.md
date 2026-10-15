@@ -1,4 +1,6 @@
-# Add conservative primary-to-secondary provider fallback
+# Provider fallback
+
+<a id="add-conservative-primary-to-secondary-provider-fallback"></a>
 
 [Documentation](README.md) | [Normal deployment](GETTING-STARTED.md) | [Provider interface](BRING-YOUR-OWN-PROVIDER.md)
 
@@ -18,7 +20,8 @@ Follow [policy](#1-set-a-fixed-provider-order-and-a-deny-by-default-policy),
 [deadline](#6-enforce-one-aggregate-deadline), and [validation](#7-validate-offline-then-deploy-only-after-separate-approval).
 [.NET/Python pointers](#net-and-python-integration-pointers) are not implemented fallback.
 
-## 1. Set a fixed provider order and a deny-by-default policy
+<a id="1-set-a-fixed-provider-order-and-a-deny-by-default-policy"></a>
+## 1. Provider order
 
 Keep the existing HTTP registration in [SendOtp.js](../javascript/src/functions/SendOtp.js).
 Define the provider order in server-owned startup configuration:
@@ -111,7 +114,8 @@ the system-assigned identity, grant that identity instead. Client-ID settings do
 identities or grant access. Complete provider account, recipient, sender and consent prerequisites;
 see [provider onboarding](ONBOARDING.md#complete-provider-authentication).
 
-## 3. Give each context its own credential service and lifecycle
+<a id="3-give-each-context-its-own-credential-service-and-lifecycle"></a>
+## 3. Credential isolation
 
 Open [credentials.js](../javascript/src/functions/credentials.js). When caching is enabled, its
 singleton retains the first selected configuration; passing another account does not switch that cache.
@@ -164,7 +168,8 @@ An evaluation request must not start credential acquisition;
 already-running refresh is independent. Rebuild contexts on controlled restart when configuration
 changes; never repurpose a live service for another account.
 
-## 4. Add durable operation state before enabling fallback
+<a id="4-add-durable-operation-state-before-enabling-fallback"></a>
+## 4. Operation state
 
 The repository has **no durable attempt store or idempotency contract**. Implement these before
 adding a second possible submission. Agree on a stable, authorized logical-operation key with
@@ -199,7 +204,8 @@ external provider send: it is **not provider-side idempotency or true exactly-on
 Entra ID retries or native fallback outside this endpoint can still produce duplicates; confirm that
 behavior with the owner rather than promising the local guard prevents it.
 
-## 5. Integrate one guarded fallback into the handler
+<a id="5-integrate-one-guarded-fallback-into-the-handler"></a>
+## 5. Fallback orchestration
 
 In [SendOtp.js](../javascript/src/functions/SendOtp.js), preserve authentication at the platform
 boundary, [envelope validation](../javascript/src/functions/entraPayload.js),
@@ -283,7 +289,8 @@ deadline or cancellation changes after dispatch, record uncertainty and never fa
 Reserve enough time for the whole secondary attempt and finalization, rechecking before intent;
 insufficient budget means no secondary even when nonacceptance is otherwise eligible.
 
-## 7. Validate offline, then deploy only after separate approval
+<a id="7-validate-offline-then-deploy-only-after-separate-approval"></a>
+## 7. Validation and deployment
 
 Before editing, run the existing JavaScript tests from the repository root. Restore missing
 dependencies from the existing lockfile only when needed:
