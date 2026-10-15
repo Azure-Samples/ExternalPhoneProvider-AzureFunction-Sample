@@ -1,10 +1,18 @@
-# Documentation
+# Documentation by task
 
 [Sample overview and architecture](../README.md)
 
 **New deployment? Start with [Get started](GETTING-STARTED.md).** Confirm supported access and
 Microsoft's approved test/activation procedure before spending or deploying. Use a dedicated
 nonproduction environment; deployment does not activate policy.
+
+## Table of Contents
+
+- [Deploy and validate](#deploy-and-validate)
+- [Operate](#operate)
+- [Develop](#develop)
+- [Optional designs](#optional-designs)
+- [Get help](#get-help)
 
 ## Deploy and validate
 
@@ -18,22 +26,27 @@ nonproduction environment; deployment does not activate policy.
 
 ## Operate
 
-- [Find Function logs and create alerts](MONITORING.md); [diagnose collection](APPLICATION-INSIGHTS.md).
-- [Investigate Microsoft Entra ID sign-ins and configure identity alerts](SIGN-IN-MONITORING.md).
-- [Renew encryption certificates](../setup/docs/README.md#encryption-certificate-lifecycle) and
-  [roll back or decommission](../setup/docs/README.md#rollback-and-decommissioning).
+- **Function logs and alerts:** [Monitoring](MONITORING.md)
+- **Missing or incomplete telemetry:** [Application Insights collection](APPLICATION-INSIGHTS.md)
+- **Microsoft Entra ID sign-ins and identity alerts:** [Identity monitoring](SIGN-IN-MONITORING.md)
+- **Certificate renewal:** [Certificate lifecycle](../setup/docs/README.md#encryption-certificate-lifecycle)
+- **Rollback or decommissioning:** [Rollback procedure](../setup/docs/README.md#rollback-and-decommissioning)
 
 ## Develop
 
-- Local setup and source: [JavaScript](../javascript/README.md), [C#](../dotnet/README.md), [Python](../python/README.md).
-- [Settings and packages](../TECHNICAL.md), [HTTP contract](CONTRACT.md), and [application log schema](LOGGING.md).
-- [Implement the provider-neutral BYOT interface](BRING-YOUR-OWN-PROVIDER.md).
-- [Review sample limitations](CONTRACT.md#production-limitations) before production use.
+- **Runtime development:** [JavaScript](../javascript/README.md), [C#](../dotnet/README.md), or [Python](../python/README.md)
+- **Settings and packages:** [Technical reference](../TECHNICAL.md)
+- **Requests and responses:** [HTTP contract](CONTRACT.md)
+- **Runtime events:** [Application log schema](LOGGING.md)
+- **Provider integration:** [Provider-neutral BYOT interface](BRING-YOUR-OWN-PROVIDER.md)
+- **Production gaps:** [Sample limitations](CONTRACT.md#production-limitations)
 
 ## Optional designs
 
-[Multi-region Front Door](FRONTDOOR.md) and [primary-to-secondary provider fallback](MULTI-PROVIDER-IMPLEMENTATION.md)
-require separate implementation and validation. Neither is enabled by guided setup.
+These designs require separate implementation and validation; guided setup enables neither.
+
+- **Route across regions:** [Multi-region Front Door design](FRONTDOOR.md)
+- **Add provider fallback:** [Multi-provider implementation](MULTI-PROVIDER-IMPLEMENTATION.md)
 
 ## Get help
 

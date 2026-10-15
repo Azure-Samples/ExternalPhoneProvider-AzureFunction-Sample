@@ -9,6 +9,12 @@ production certification. Before deploying, [confirm supported provider access a
 approved testing and activation procedure](docs/GETTING-STARTED.md#1-get-ready).
 If either is unavailable, stop. Azure resources and provider services can incur charges.
 
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Get started](#get-started)
+- [Guidance](#guidance)
+
 ## Architecture
 
 ![Microsoft Entra ID sends an encrypted request through Easy Auth to a Function, which uses Key Vault and calls the phone provider](docs/images/single-region-architecture.png)
@@ -32,12 +38,13 @@ Follow the **[five-step setup guide](docs/GETTING-STARTED.md)** in order:
 See the [sample's production limitations](docs/CONTRACT.md#production-limitations).
 
 <a id="find-more-detail"></a>
-## References
+## Guidance
 
-- [Setup reference](setup/docs/README.md) and [troubleshooting](setup/docs/Troubleshooting.md)
-- [Provider configuration and validation](docs/ONBOARDING.md)
-- [Monitoring](docs/MONITORING.md), [Microsoft Entra ID sign-in alerts](docs/SIGN-IN-MONITORING.md#recommended-monitors), and [SMS cost estimation](docs/COST-CALCULATOR.md)
-- [Technical reference](TECHNICAL.md), [HTTP contract](docs/CONTRACT.md), and [BYOT integration](docs/BRING-YOUR-OWN-PROVIDER.md)
+- **Deploy and validate:** [Five-step setup](docs/GETTING-STARTED.md)
+- **Configure:** [Setup reference](setup/docs/README.md) and [provider configuration](docs/ONBOARDING.md)
+- **Troubleshoot:** [Setup and endpoint failures](setup/docs/Troubleshooting.md)
+- **Operate:** [Monitoring, identity, renewal, rollback, and costs](docs/README.md#operate)
+- **Develop:** [Runtimes, contract, logging, and provider integration](docs/README.md#develop)
+- **Extend:** [Optional multi-region and fallback designs](docs/README.md#optional-designs)
 
-Use the [documentation index](docs/README.md) for deployment, troubleshooting, operations, and development.
-Optional multi-region and provider-fallback designs are not built-in guided setup features.
+See the [documentation index](docs/README.md) for all guides.
