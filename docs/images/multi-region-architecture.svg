@@ -29,8 +29,6 @@
   <text x="480" y="323" text-anchor="middle">Forward the original bearer token and encrypted body unchanged.</text>
   <path d="M350 347V371H260V404" class="line"/>
   <path d="M610 347V371H700V404" class="line"/>
-  <path d="M120 290H24V713H70" class="probe"/>
-  <path d="M840 290H936V713H890" class="probe"/>
 
   <rect x="48" y="406" width="424" height="378" rx="12" fill="#f8fafc" stroke="#7595b7" stroke-width="1.5"/>
   <text x="72" y="444" class="heading">Region A</text>
@@ -57,6 +55,9 @@
   <rect x="512" y="681" width="376" height="79" rx="8" fill="#fff7e8" stroke="#ae8741"/>
   <text x="530" y="713" font-weight="650">Separate readiness handler</text>
   <text x="530" y="744" class="small">Key usable; no provider call or message</text>
+
+  <path d="M120 290H24V713H70" class="probe"/>
+  <path d="M840 290H936V713H890" class="probe"/>
 
   <path d="M260 784V833" class="line"/>
   <path d="M700 784V833" class="line"/>

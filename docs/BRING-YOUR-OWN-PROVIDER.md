@@ -207,35 +207,13 @@ and the suites use the shared `tests/fixtures/contract.json`. Run the unchanged 
 then rerun it after adding your integration. You do not need a tenant, app registration,
 `local.settings.json`, Azurite, Core Tools, or provider account for these tests.
 
-Choose only your runtime. Open a terminal in the indicated folder, relative to the repository
-root, without production or deployed provider settings in its environment.
+Choose only your runtime's instructions:
+[JavaScript](../javascript/README.md#run-offline-tests),
+[C#](../dotnet/README.md#run-offline-tests), or
+[Python](../python/README.md#run-offline-tests). Each gives the working folder, tools, and commands.
+Use a terminal without production or deployed provider settings in its environment.
 Dependency preparation needs the package registry; the tests use local test keys and
 fake credentials/transport rather than Azure sign-in or live sends.
-
-**JavaScript — `javascript/`, Node.js 20 or 22 with npm:**
-
-```powershell
-# First checkout, or after package-lock.json changes:
-npm ci
-npm test
-```
-
-**C# — `dotnet/`, .NET 8 SDK:**
-
-```powershell
-dotnet test .\tests\Epp.Otp.Tests.csproj
-```
-
-`dotnet test` restores and builds the test project, which compiles the handler and shared source
-directly. Also run `dotnet build` in `dotnet/` before packaging to check the actual Function project.
-
-**Python — `python/`, Python 3.11 in an activated virtual environment:**
-
-```powershell
-# First checkout, or after requirements.txt changes:
-python -m pip install -r requirements.txt pytest
-python -m pytest tests
-```
 
 Use the test runner's final summary and exit code: no collected tests, a missing module, or a
 failed restore is not a passing run. These commands follow the repository's

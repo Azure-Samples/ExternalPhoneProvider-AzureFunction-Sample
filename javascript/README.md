@@ -37,12 +37,24 @@ sample's release package. No Front Door deployment script is supplied.
    the authorized Microsoft caller. Do not exclude SendOtp. There is no backup application token validation;
    never expose the endpoint to the public internet with Easy Auth disabled or bypassed.
 5. Install dependencies from [package.json](package.json), run the
-   [offline test commands](../docs/BRING-YOUR-OWN-PROVIDER.md#run-the-offline-tests), and start the
+   [offline test commands](#run-offline-tests), and start the
    local Functions host from this folder. Core Tools has no Easy Auth: bind only to loopback, with no
    tunnels or public forwarding. Publish this app folder only, preserving dependencies and observing
    [.funcignore](.funcignore); inspect the package before upload. Offline tests cover application
    behavior, not platform authentication; run the separate
    [deployed security checks](../docs/ONBOARDING.md#4-package-deploy-and-verify).
+
+## Run offline tests
+
+For developer work, open `javascript/` in a full repository checkout with **Node.js 20 or 22
+and npm**. Follow the [shared offline prerequisites](../docs/BRING-YOUR-OWN-PROVIDER.md#run-the-offline-tests);
+you do not need to start the Functions host or configure a provider.
+
+```powershell
+# First checkout or changed lockfile:
+npm ci
+npm test
+```
 
 ## Environment configuration
 

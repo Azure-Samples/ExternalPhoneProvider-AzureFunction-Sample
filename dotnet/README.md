@@ -41,12 +41,25 @@ used JavaScript; validate an equivalent .NET readiness implementation and deploy
 	handler's custom error response body; platform diagnostics and responses apply instead.
 4. Build [dotnet.csproj](dotnet.csproj), run the offline xUnit suites in
 	[tests/Epp.Otp.Tests.csproj](tests/Epp.Otp.Tests.csproj) using the
-	[offline test commands](../docs/BRING-YOUR-OWN-PROVIDER.md#run-the-offline-tests), and start the local Functions host from this folder.
+	[offline test commands](#run-offline-tests), and start the local Functions host from this folder.
 	Core Tools has no Easy Auth: bind only to loopback, with no tunnels or public forwarding.
 5. Publish this app folder to a compatible .NET isolated Function App. Inspect the package: both
 	[.funcignore](.funcignore) and the project protect local settings; private keys must not be included.
 	Offline tests cover application behavior, not platform authentication; run the separate
 	[deployed security checks](../docs/ONBOARDING.md#4-package-deploy-and-verify).
+
+## Run offline tests
+
+For developer work, open `dotnet/` in a full repository checkout with the **.NET 8 SDK**.
+Follow the [shared offline prerequisites](../docs/BRING-YOUR-OWN-PROVIDER.md#run-the-offline-tests);
+you do not need to start the Functions host or configure a provider.
+
+```powershell
+dotnet test .\tests\Epp.Otp.Tests.csproj
+```
+
+`dotnet test` restores and builds the test project, which compiles the handler and shared source
+directly. Also run `dotnet build` in `dotnet/` before packaging to check the actual Function project.
 
 ## Environment configuration
 

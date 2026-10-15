@@ -36,12 +36,25 @@ used JavaScript; validate an equivalent Python readiness implementation and depl
 	endpoint to the public internet with Easy Auth disabled or bypassed.
 4. Use a virtual environment, install [requirements.txt](requirements.txt) and pytest, then run the
 	offline [tests/](tests/) from this folder using the
-	[offline test commands](../docs/BRING-YOUR-OWN-PROVIDER.md#run-the-offline-tests). Start the local Functions host from this app root.
+	[offline test commands](#run-offline-tests). Start the local Functions host from this app root.
 	Core Tools has no Easy Auth: bind only to loopback, with no tunnels or public forwarding.
 5. Publish this folder to a compatible Linux Python Function App with dependencies or a supported
 	remote build. Inspect the package and apply [.funcignore](.funcignore); keep local settings and keys private.
 	Offline tests cover application behavior, not platform authentication; run the separate
 	[deployed security checks](../docs/ONBOARDING.md#4-package-deploy-and-verify).
+
+## Run offline tests
+
+For developer work, open `python/` in a full repository checkout with **Python 3.11 in an
+activated virtual environment**. Follow the
+[shared offline prerequisites](../docs/BRING-YOUR-OWN-PROVIDER.md#run-the-offline-tests);
+you do not need to start the Functions host or configure a provider.
+
+```powershell
+# First checkout or changed requirements:
+python -m pip install -r requirements.txt pytest
+python -m pytest tests
+```
 
 ## Environment configuration
 
