@@ -2,10 +2,10 @@
 
 [Documentation](README.md) | [Implementation walkthrough](BRING-YOUR-OWN-PROVIDER.md) | [Settings and packages](../TECHNICAL.md)
 
-This defines the shared contract for [JavaScript](../javascript/), [Python](../python/) and
+This page defines the shared contract for [JavaScript](../javascript/), [Python](../python/) and
 [.NET](../dotnet/). See [production limitations](#production-limitations) before production use.
 
-Jump to [request/response](#1-http-api), [HTTP outcomes](#2-outcome--http-status-mapping),
+Go to [request/response](#1-http-api), [HTTP outcomes](#2-outcome--http-status-mapping),
 [provider contract](#3-provider-contract), [settings](#4-configuration-app-settings--env),
 [caching](#credential-caching-and-refresh), [required behaviors](#5-required-behaviors),
 [logs](#application-logs), or [tests](#6-lightweight-tests).
@@ -14,14 +14,14 @@ Jump to [request/response](#1-http-api), [HTTP outcomes](#2-outcome--http-status
 > request and delivery models are `Envelope`, `DeliveryContext` and provider-neutral OTP delivery.
 > Documentation names do not change the external JSON fields or `microsoft.mfa.otpDeliver.v1` version.
 
-The design selects one provider per deployment. The HTTP Function owns the request lifecycle, while
+Each deployment selects one provider. The HTTP Function owns the request lifecycle, while
 API-specific credentials, paths, headers, payloads, response rules, outcomes and safe failure
 classifications remain inside each provider implementation.
 
-An [optional manual Front Door topology](FRONTDOOR.md) can route this same API to regional origins.
-It does not change caller authentication, JWE validation, nonce semantics, or provider selection,
-and it does not add automatic provider failover or delivery deduplication. Any readiness endpoint
-is separate from this contract and must not deliver OTPs.
+For regional continuity, the [Front Door design](FRONTDOOR.md) routes this same API to regional
+origins while preserving caller authentication, JWE validation, nonce semantics, and provider
+selection. Its readiness endpoint is separate from this contract and never delivers OTPs.
+Provider fallback and delivery deduplication remain separate designs.
 
 ---
 

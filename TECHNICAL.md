@@ -2,8 +2,8 @@
 
 [Documentation](docs/README.md) | [First deployment](docs/GETTING-STARTED.md) | [HTTP contract](docs/CONTRACT.md)
 
-Use this page for implementation choices, settings, and packages.
-Jump to [implementations](#implementations), [guided setup](#guided-epp-setup),
+Use this page when you need implementation details, app settings, or package guidance.
+Go to [implementations](#implementations), [guided setup](#guided-epp-setup),
 [download](#download-a-function-zip), [build](#build-zips-locally),
 [settings](#configure-environment-variables), [provider details](#provider-specific-integration-details),
 or [security](#security). For regional continuity, see

@@ -2,9 +2,9 @@
 
 [Documentation](README.md) | [First deployment](GETTING-STARTED.md) | [Troubleshooting](../setup/docs/Troubleshooting.md)
 
-**After guided setup:** complete [provider authentication](#complete-provider-authentication),
-then [endpoint validation](#validate-the-deployed-endpoint). Azure and code are already deployed;
-no local settings, Core Tools, or second deployment is needed.
+Guided setup has already deployed Azure resources and code. Next, complete
+[provider authentication](#complete-provider-authentication), then
+[validate the endpoint](#validate-the-deployed-endpoint).
 
 | Task | Go to |
 | --- | --- |

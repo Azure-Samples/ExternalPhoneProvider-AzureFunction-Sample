@@ -3,7 +3,8 @@
 [Documentation](README.md) | [Setup reference](../setup/docs/README.md) | [Troubleshooting](../setup/docs/Troubleshooting.md)
 
 Deploy **one endpoint in one Azure region** for Microsoft Entra ID SMS and voice requests.
-No clone, manual package build, or second language deployment is needed.
+Guided setup downloads and publishes the selected package, so you can start without cloning or
+building the repository.
 SMS and voice can use different provider URLs on the same endpoint; validate each intended channel.
 
 Follow in order: [prepare](#1-get-ready), [register](#2-register-your-application),

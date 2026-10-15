@@ -6,8 +6,8 @@ Use this reference when implementing or interpreting endpoint events. For an inc
 the monitoring walkthrough, not a search for a universal JSON request summary.
 
 **Never log request bodies, decrypted fields, credentials, nonces, raw exceptions, or provider
-response bodies.** Keep SDK, platform, and proxy body tracing off. This page specifies emission,
-not guaranteed collection.
+response bodies.** Keep SDK, platform, and proxy body tracing off. This page describes what the
+application emits; your monitoring pipeline determines what is collected.
 
 ## Runtime formats
 

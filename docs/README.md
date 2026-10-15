@@ -2,9 +2,9 @@
 
 [Sample overview and architecture](../README.md)
 
-**New deployment? Start with [Get started](GETTING-STARTED.md).** Confirm supported access and
-Microsoft's approved test/activation procedure before spending or deploying. Use a dedicated
-nonproduction environment; deployment does not activate policy.
+**New deployment? Start with [Get started](GETTING-STARTED.md).** Before spending or deploying,
+confirm supported access and Microsoft's approved testing and activation process. Use a dedicated
+nonproduction environment. You will activate policy separately after validation.
 
 ## Table of Contents
 

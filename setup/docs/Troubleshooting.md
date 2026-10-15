@@ -2,9 +2,9 @@
 
 [Documentation](../../docs/README.md) | [Setup reference](README.md) | [Resume onboarding](../../docs/GETTING-STARTED.md)
 
-Choose the failing stage below. **Do not delete resources or blindly retry a live send.**
-Before rerunning setup, read [safe recovery](#recover-without-destructive-cleanup).
-A completed deployment does not prove provider access or delivery.
+Start with the stage that failed. Keep existing resources in place, and never blindly retry a
+live send. Before rerunning setup, read [safe recovery](#recover-without-destructive-cleanup).
+After deployment, complete the provider and delivery checks separately.
 
 ## Find your symptom
 

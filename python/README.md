@@ -8,9 +8,10 @@ selected provider per deployment. Target: Python 3.11, Azure Functions v4, Pytho
 ## Setup and deployment
 
 **Deploying the sample?** Use the [five-step guide](../docs/GETTING-STARTED.md).
-Guided setup builds remotely and publishes; no local Python installation or second deployment.
-Continue with [provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
-[Guided provider support](../docs/ONBOARDING.md#provider-credential-names) is narrower than the adapter set.
+Guided setup builds remotely and publishes the Function without requiring a local Python install.
+Next, complete [provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
+The [guided provider list](../docs/ONBOARDING.md#provider-credential-names) covers a subset of
+the adapters in this folder.
 
 **Developing a custom package?** Follow these steps from `python/`:
 

@@ -3,7 +3,8 @@
 [Documentation](README.md) | [Collection diagnostics](APPLICATION-INSIGHTS.md) | [Log schema](LOGGING.md) | [Endpoint troubleshooting](../setup/docs/Troubleshooting.md#after-deployment-triage)
 
 Use this guide to find your endpoint's logs and set up alerts. Guided setup creates Application
-Insights and a Log Analytics workspace, but **you still need to configure and test notifications**.
+Insights and a Log Analytics workspace; your operations team chooses, configures, and tests the
+notifications.
 
 For **tenant authentication and potential abuse signals**, use
 [Microsoft Entra ID sign-in monitoring](SIGN-IN-MONITORING.md). Endpoint setup does not configure that pipeline;

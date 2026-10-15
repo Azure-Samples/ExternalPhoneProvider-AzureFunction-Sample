@@ -9,12 +9,12 @@
 | Diagnose missing records or quiet alerts | [Check data](#4-check-your-data-and-choose-a-query), [monitor ingestion](#monitor-ingestion-separately) |
 | Adapt a query or add advanced alerts | [Optional reference](#optional-reference) |
 
-The six-step walkthrough creates one user sign-in alert. Use its baseline and measurement only
-for that monitor; the other recommendations need their own scoped queries.
+The six-step walkthrough builds one user sign-in alert. Treat it as a worked example: each
+additional monitor needs its own scope, baseline, and query.
 
-**Scope: Entra authentication and configuration, not Function or phone delivery.**
-Keep identity details private. EPP setup does not export these logs or create alerts;
-the steps below are actions for your administrators, not changes made by this guide.
+This guide covers Microsoft Entra authentication and configuration. Function execution and phone
+delivery have their own monitoring paths. Keep identity details private; your administrators
+configure this export and its alerts after endpoint setup.
 
 ## Recommended monitors
 

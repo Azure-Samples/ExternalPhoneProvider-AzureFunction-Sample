@@ -8,10 +8,10 @@ selected provider per deployment. Target: .NET 8 isolated worker, Azure Function
 ## Setup and deployment
 
 **Deploying the sample?** Use the [five-step guide](../docs/GETTING-STARTED.md).
-Guided setup builds with the .NET 8 SDK and publishes. Continue with
-[provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication),
-not a local host or second deployment.
-[Guided provider support](../docs/ONBOARDING.md#provider-credential-names) is narrower than the adapter set.
+Guided setup builds with the .NET 8 SDK and publishes the Function. Next, complete
+[provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
+The [guided provider list](../docs/ONBOARDING.md#provider-credential-names) covers a subset of
+the adapters in this folder.
 
 **Developing a custom package?** Follow these steps from `dotnet/`:
 

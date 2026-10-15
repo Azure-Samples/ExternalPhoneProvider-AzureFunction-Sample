@@ -2,10 +2,10 @@
 
 [Documentation](README.md) | [Normal deployment](GETTING-STARTED.md) | [Provider interface](BRING-YOUR-OWN-PROVIDER.md)
 
-**The sample has no provider fallback.** This walkthrough requires customer code, durable state,
-provider-specific approval, and separate testing. Keep one `/api/SendOtp` URL for Microsoft Entra ID
-and a server-owned primary/secondary order for the same SMS channel, not caller-selected accounts
-or a vendor ranking.
+Use this guide when you need a customer-owned primary-to-secondary provider design. It adds code,
+durable state, provider-specific approval, and dedicated testing around the existing
+`/api/SendOtp` URL. Keep the provider order on the server for one SMS channel rather than letting
+the caller select accounts or treating the order as a vendor ranking.
 
 Try a secondary **only with proof that the primary did not accept**. Timeouts, lost responses,
 and generic errors are not that proof; never automatically resend on those signals.

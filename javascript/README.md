@@ -8,9 +8,10 @@ One configured provider owns its credentials, request mapping, and response inte
 ## Setup
 
 **Deploying the sample?** Use the [five-step guide](../docs/GETTING-STARTED.md).
-After guided setup, go to [provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication),
-not local settings or another deployment. [Guided provider support](../docs/ONBOARDING.md#provider-credential-names)
-is narrower than the bundled adapter set.
+After guided setup, continue with
+[provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
+The [guided provider list](../docs/ONBOARDING.md#provider-credential-names) covers a subset of
+the adapters in this folder.
 
 **Developing a custom package?** Follow these steps from `javascript/`:
 

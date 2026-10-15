@@ -2,18 +2,19 @@
 
 [Documentation](README.md) | [Monitoring walkthrough](MONITORING.md) | [Log schema](LOGGING.md)
 
-**Find logs and create alerts:** use the [monitoring walkthrough](MONITORING.md).
-**Check collection or missing data:** start with [single-region configuration](#single-region-configuration)
-below. This reference covers JavaScript, .NET isolated, and Python; Front Door is not required.
+Looking for logs or alerts? Start with the [monitoring walkthrough](MONITORING.md).
+If telemetry is missing or incomplete, start with
+[single-region configuration](#single-region-configuration). This page covers JavaScript,
+.NET isolated, and Python.
 
-Function telemetry describes execution, timing, and logs, **not recipient delivery**.
+Function telemetry shows execution, timing, and logs, **not recipient delivery**.
 [Microsoft Entra ID sign-in monitoring](SIGN-IN-MONITORING.md) uses a separate tenant export pipeline and does
 not prove delivery either.
 
-These instructions do not deploy resources or enable instrumentation, alerts, or availability tests.
-Use the [setup guide](GETTING-STARTED.md) and [approved test handoff](ONBOARDING.md#validate-the-deployed-endpoint).
+This page assumes the endpoint is already deployed. Use the [setup guide](GETTING-STARTED.md)
+first, then follow the [approved test handoff](ONBOARDING.md#validate-the-deployed-endpoint).
 
-Jump to [collection pipelines](#how-telemetry-reaches-application-insights),
+On this page: [collection pipelines](#how-telemetry-reaches-application-insights),
 [signals and tables](#signals-tables-and-metrics-are-different-things),
 [single-region checks](#single-region-configuration), [ingestion identity](#identity-and-ingestion),
 [multi-region layout](#multi-region-configuration), [coverage queries](#read-only-queries-to-establish-what-is-present),

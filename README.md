@@ -4,8 +4,9 @@ Connect Microsoft Entra ID to your phone provider for SMS and voice one-time pas
 Deploy **one endpoint in one Azure region**, using JavaScript, C#, or Python.
 Guided setup handles Azure resources and code publication; no repository clone is needed.
 
-**Start in a dedicated nonproduction tenant and subscription.** This sample is not production
-certification. Review [requirements](#requirements) before purchasing or deploying.
+**Start in a dedicated nonproduction tenant and subscription.** This sample demonstrates the
+integration pattern; it is not a production certification. Review [requirements](#requirements)
+before purchasing or deploying.
 
 ## Table of Contents
 
