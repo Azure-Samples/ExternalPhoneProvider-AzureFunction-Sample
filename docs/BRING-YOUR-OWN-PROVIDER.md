@@ -4,14 +4,11 @@
 
 [Documentation](README.md) | [Exact HTTP contract](CONTRACT.md) | [Runtime guides](README.md#develop)
 
-This guide shows how to connect a phone service to the **External Phone Provider (EPP)**
-contract. **Microsoft Entra ID** sends the endpoint an encrypted phone number and one-time
-passcode message. The endpoint verifies the caller, decrypts the details, and either evaluates
-the request without sending or uses the connected phone service.
+Connect a phone service to the **External Phone Provider (EPP)** contract. **Microsoft Entra ID**
+sends an encrypted delivery request; the endpoint verifies, decrypts, evaluates, or sends it.
 
-Before deploying, ask your tenant administrator to confirm
-[eligibility, testing, and activation with Microsoft](ONBOARDING.md#before-purchasing-or-deploying).
-Deploying the endpoint alone does not enable tenant policy.
+Confirm [eligibility, testing, and activation](ONBOARDING.md#before-purchasing-or-deploying)
+before deployment.
 
 Follow [caller verification](#1-verify-the-caller), [decryption](#2-read-and-decrypt-the-request),
 [evaluation/live handling](#3-evaluate-or-send), and [responses](#4-respond-to-entra-id).
@@ -21,22 +18,15 @@ Then [register your integration](#where-to-add-your-integration) and [validate b
 
 ## 1. Verify the caller
 
-Entra ID sends **`POST /api/SendOtp` over HTTPS**, with a signed bearer token in `Authorization`.
-In this sample, **Easy Auth** (Azure App Service Authentication) checks the token and authorizes
-the caller before the Function runs. Keep Easy Auth enabled because the anonymous Function
-trigger relies on this platform check.
+Entra ID sends **`POST /api/SendOtp` over HTTPS** with a signed bearer token. **Easy Auth**
+authorizes the caller before the anonymous Function trigger runs.
 
-Require HTTPS and authentication, return `401` for unauthenticated requests, and restrict access
-to the trusted tenant issuer, endpoint-app audience, and authorized Microsoft caller application ID.
-Your Azure operator should use the endpoint app registration and
-[approved setup configuration](../setup/support/Epp.Setup.psm1) for these values, then verify
-**Function App > Authentication**. Follow the
-[trust checklist](ONBOARDING.md#manual-deployment-trust-checklist) for exact settings,
-caller-ID guidance, and token-version details.
+Require HTTPS, return `401` for unauthenticated requests, and restrict access to the trusted
+issuer, audience, and Microsoft caller. Follow the
+[trust checklist](ONBOARDING.md#manual-deployment-trust-checklist).
 
-**Encryption is not caller authentication.** Anyone with the public key can create a JWE
-(JSON Web Encryption) payload. Neither its nonce, the body's `tenantId`, nor tracing or
-forwarded principal headers prove that Entra ID sent it.
+**Encryption is not caller authentication.** A JWE, nonce, `tenantId`, or tracing header does
+not prove that Entra ID sent the request.
 
 ## 2. Read and decrypt the request
 
@@ -52,8 +42,8 @@ The JSON body is an envelope with these fields. Use the forms below across all s
 | `correlationId` | No | Nonempty string for sign-in tracing. |
 | `ttlSeconds` | No | Positive JSON integer up to `2147483647`, or omit it. Use `60`, not `"60"`, `60.0`, `6e1`, or null. |
 
-Channel and mode names are case-insensitive. Reject unsupported versions, channels, or modes.
-TTL is only checked as a number; it does not enforce passcode expiry or a delivery deadline.
+Channel and mode names are case-insensitive. TTL validation does not enforce passcode expiry
+or a delivery deadline.
 
 <a id="3-decrypt-and-validate-the-delivery-context"></a>
 
@@ -62,15 +52,11 @@ for content encryption. Accept exactly five nonempty compact-JWE segments, at mo
 characters**. Pass the original JWE, including its protected-header bytes, to a JOSE library.
 Verify the authentication tag before using the decrypted UTF-8 JSON.
 
-The sample decrypts in-process with one RSA private key in `EPP_DECRYPTION_KEY_PEM`: a PEM key
-or certificate bundle containing it, as text or base64-encoded PEM. In Azure, use a
-managed-identity-resolved Key Vault secret reference. The matching public encryption credential
-belongs to the endpoint app registration.
+The sample uses one RSA private key in `EPP_DECRYPTION_KEY_PEM` as text or base64 PEM. In Azure,
+use a managed-identity-resolved Key Vault reference.
 
-The header's `kid` does not select a key in this sample. `EPP_ENCRYPTION_KEY_ID` only enables
-a warning on mismatch after successful decryption. Setup pins one certificate's secret version;
-renewal needs coordination because Key Vault renewal alone does not update the app registration
-or pinned reference. See the [certificate lifecycle](../setup/docs/README.md#encryption-certificate-lifecycle).
+The JWE `kid` does not select a key. `EPP_ENCRYPTION_KEY_ID` only warns after decryption.
+See the [certificate lifecycle](../setup/docs/README.md#encryption-certificate-lifecycle).
 
 The decrypted delivery context contains:
 
@@ -91,15 +77,11 @@ For parser and wrong-type handling, see [runtime binding differences](CONTRACT.m
 
 ## 3. Evaluate or send
 
-**Evaluation (`mode: 2` or `"evaluation"`):** authenticate, validate, and decrypt, then return
-the success response below **without sending anything**. This request path skips service
-selection, credential lookup, and outbound HTTP; no service configuration is needed.
-Configured workers may independently prepare or refresh credentials, but that does not send a message.
+**Evaluation (`mode: 2` or `"evaluation"`):** authenticate, validate, decrypt, and return success
+without service selection, credential lookup, outbound HTTP, or delivery.
 
-**Live (`mode: 1` or `"live"`):** the customer implements and maintains the service integration.
-Map the requested SMS or voice delivery to your service, preserving the destination, message,
-and passcode. Handle voice rendering and locales as needed. Authenticate with your own service
-credentials; **never forward the incoming bearer token**.
+**Live (`mode: 1` or `"live"`):** map SMS or voice to your service while preserving the
+destination, message, and passcode. **Never forward the incoming bearer token**.
 
 Return success after the integration recognizes provider acceptance. A queued or pending result
 counts only when the integration defines it as accepted. Map unknown, incomplete, or failed HTTP

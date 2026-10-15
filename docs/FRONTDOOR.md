@@ -5,58 +5,43 @@
 
 [Documentation](README.md) | [Single-region setup](GETTING-STARTED.md) | [Routing troubleshooting](../setup/docs/Troubleshooting.md#optional-front-door-deployments)
 
-Azure Front Door provides **one public EPP URL backed by Function Apps in multiple regions**.
-Start with a validated [single-region deployment](GETTING-STARTED.md), then use this guide to
-plan and implement the regional origins, readiness route, Front Door configuration, validation,
-failover drills, and rollback. Include transition errors in the acceptance checks.
+Azure Front Door provides **one public EPP URL across regional Function Apps**. Start with a
+validated [single-region deployment](GETTING-STARTED.md), then add origins, readiness, routing,
+validation, failover drills, and rollback.
 
 Follow [scope](#scope-and-observed-behavior), [architecture](#architecture),
 [plan/capacity](#1-plan-the-regional-deployment), [origins/keys](#2-prepare-equivalent-independently-provisioned-origins),
 [readiness](#3-provide-a-non-delivering-readiness-endpoint), [routing](#4-configure-front-door-manually),
 [validation](#5-validate-before-manually-activating-policy), and [fire-drill](#6-regional-failover-fire-drill).
-Use [historical results](#observed-failover-results-and-limitations) as background for the
-acceptance plan. After validation, follow [operations and rollback](#operations-and-rollback).
+Use [historical results](#observed-failover-results-and-limitations) as test context.
 
 ## Scope and observed behavior
 
-Testing used isolated JavaScript origins, Front Door Standard, two/three regions, a shared key,
-and a separate non-delivering readiness handler. It covered encrypted evaluation, invalid callers,
-direct-origin restrictions, and individual Function stop/restart.
+Testing used JavaScript origins, Front Door Standard, two or three regions, a shared key, and a
+non-delivering readiness handler.
 
-Implement the [readiness contract](#3-provide-a-non-delivering-readiness-endpoint) as part of each
-regional package and validate it before enabling probes. The released packages remain the
-single-region baseline; include runtime-specific validation for .NET or Python.
+Add the [readiness contract](#3-provide-a-non-delivering-readiness-endpoint) to each regional
+package before enabling probes. Released packages remain single-region.
 
-The recorded trials cover encrypted evaluation, caller and origin restrictions, and controlled
-Function stop/restart. Build the acceptance plan around the features in use. It can include approved live SMS and voice
-checks, real Microsoft Entra caller behavior, regional dependency loss, custom domains, WAF or
-Private Link, and realistic load.
+Build acceptance tests around the selected runtime and features, including approved live checks,
+Microsoft caller behavior, dependency loss, networking, and realistic load.
 
 ### Regional resiliency responsibility
 
-Microsoft defines, configures, documents, and validates its standard regional-failover baseline
-and exercise procedure. Customers operate that baseline: ownership, capacity, credentials and
-keys, monitoring, and approved drills. An alternate topology becomes a customer-owned design
-with its own validation plan.
+Customers own capacity, credentials, keys, monitoring, and approved drills. Validate any
+alternate topology separately.
 
-Use single-region onboarding as the foundation, then add Front Door, readiness, dependency
-isolation, survivor capacity, real-caller checks, and regional-outage evidence. Deployment owners
-set RTO/RPO, tolerable failures, latency, and evidence requirements; historical results provide
-test context rather than those targets.
+Set RTO/RPO, failure, latency, capacity, and evidence targets for the regional design.
 
 <a id="architecture-one-url-multiple-origins"></a>
 ## Architecture
 
 ![Multi-region External Phone Provider architecture with Azure Front Door](images/multi-region-architecture.png)
 
-The diagram shows the design, not the exact test deployment. Its region names are examples.
-Custom domains and Premium/WAF are optional and were not part of the Standard-tier test.
-Give each Function App, storage account, and Key Vault a globally unique name. Each region also has
-its own identity IDs and vault references. Keep the **provider and authentication configuration
-consistent and use the same RSA key**, rather than copying every setting literally.
-The SMS/voice arrows show live delivery. Evaluation returns the nonce without contacting the provider.
-The diagram's provider-secret arrows apply to API-key integrations; OAuth uses each region's
-outbound managed identity. Match the key material across regions, not the vault URLs or version IDs.
+Region names are examples. Give each Function App, storage account, and Key Vault a unique name.
+Keep **provider and authentication configuration consistent and use the same RSA key**.
+Evaluation returns the nonce without contacting the provider. API-key integrations use secrets;
+OAuth uses each region's outbound identity. Match key material, not vault URLs or version IDs.
 
 | Component | Purpose |
 |---|---|
@@ -65,27 +50,18 @@ outbound managed identity. Match the key material across regions, not the vault 
 | Origin group | Contain the regional Function hostnames and their health, priority, weight, and latency settings. |
 | Regional origin | Run the same selected implementation and provider integration, with local storage, Key Vault, identity, and telemetry. |
 
-The caller uses `https://<front-door-host>/api/SendOtp`, not a list of regional URLs.
-Front Door chooses an origin based on health, priority, latency, and weight. Equal priorities
-allow both origins to serve traffic. Equal weights do **not** guarantee a 50/50 split. Adding a third region
-normally adds an **origin**, not another customer-facing endpoint.
+The caller uses `https://<front-door-host>/api/SendOtp`. Front Door selects an origin by health,
+priority, latency, and weight. Equal weights do not guarantee a 50/50 split.
 
 ### Two-region baseline to provision and validate
 
-Use two separate regional stacks, A and B, at equal Front Door priority for active-active service.
-Each stack has its own Function App, hosting capacity, private package storage, Key Vault, managed
-identities, and telemetry. Both vaults contain the matching decryption key and the provider
-credentials needed in that region. Configure provider federation for each regional outbound
-identity when required. Verify that each stack can start, resolve keys, refresh credentials, and
-serve requests without the other region's storage, vault, or identity.
+Use two regional stacks at equal priority. Each has its own Function App, capacity, storage,
+Key Vault, identities, telemetry, matching decryption key, and provider credentials. Verify each
+can operate without the other region.
 
-Keep one shared Front Door public SendOtp URL and endpoint application registration, with identical
-issuer, audience, authorized-caller policy, selected provider route, and encryption public-key
-identity across both stacks. Replicate and renew the matching private key securely in each regional
-vault using the [key coordination procedure](#coordinate-the-encryption-key). Failover must not
-require changing the caller URL, trust configuration, or registered encryption certificate.
-Front Door, Entra authentication, and the selected provider remain shared dependencies; regional
-duplication does not add provider failover or remove those dependencies.
+Share the public URL, endpoint app, issuer, audience, caller policy, provider route, and public-key
+identity. Replicate the private key using [key coordination](#coordinate-the-encryption-key).
+Front Door, Entra authentication, and the provider remain shared dependencies.
 
 ## 1. Plan the regional deployment
 

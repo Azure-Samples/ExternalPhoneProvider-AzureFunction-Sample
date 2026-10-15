@@ -2,12 +2,10 @@
 
 [Documentation](README.md) | [Find deployed logs](MONITORING.md#runtime-specific-log-discovery) | [HTTP contract](CONTRACT.md)
 
-This reference explains endpoint events and how to read them. Start an investigation with the
-monitoring walkthrough, then use the runtime format shown here.
+Use this reference with the [monitoring walkthrough](MONITORING.md).
 
-**Keep request bodies, decrypted fields, credentials, nonces, raw exceptions, and provider
-response bodies out of logs.** Keep SDK, platform, and proxy body tracing off. This page
-describes what the application emits; the monitoring pipeline determines what is collected.
+**Exclude request bodies, decrypted fields, credentials, nonces, raw exceptions, and provider
+responses.** Keep body tracing off.
 
 ## Runtime formats
 
@@ -17,13 +15,9 @@ describes what the application emits; the monitoring pipeline determines what is
 | Python | Standard `logging`; `otp_log.py` defines fixed event IDs, names, levels, and fields. An immutable `LoggerAdapter` supplies Function and Microsoft trace identifiers. |
 | .NET | Standard `ILogger`; `OtpLog` defines source-generated IDs/names. `ILogger.BeginScope` supplies `FunctionName`, `FunctionRequestId`, `FunctionInvocationId`, `MsClientRequestId`, `MsCorrelationId`, and `MsCorrelationIdSource`. |
 
-Each invocation ends with a fixed `request_completed` event. It is not a changing summary of
-every earlier event.
-The configured logger/exporter owns formatting and property preservation.
-The fields below describe JavaScript, **not portable custom properties**. Python uses `event_name`
-and extras such as `httpStatus`; .NET uses `HttpStatus` and scopes such as `FunctionRequestId`.
-Python/.NET provider-result events expose fewer fields; do not assume a provider reference ID is
-collected. Verify the [deployed schema](MONITORING.md#runtime-specific-log-discovery).
+Each invocation ends with `request_completed`. Logger/exporter behavior controls formatting and
+property preservation. JavaScript, Python, and .NET field names differ; verify the
+[deployed schema](MONITORING.md#runtime-specific-log-discovery).
 
 ## Event sequence
 
@@ -46,21 +40,18 @@ A successful live request emits these events in order:
 | `request_completed` | Final HTTP status, result, and elapsed time; stage-specific fields stay on their events. |
 
 JavaScript uses `envelope_validated`; Python/.NET use `payload_validated`.
-Evaluation skips provider configuration, credentials, HTTP, and provider events. It emits
-`evaluation_completed`, then `response_prepared` and `request_completed`.
+Evaluation skips provider work and emits `evaluation_completed`, `response_prepared`, and
+`request_completed`.
 
-Failures emit `request_failed` with fixed stage, reason, and HTTP status (`FailureStage`,
-`FailureReason`, `HttpStatus` in .NET). Provider results retain coarse `Outcome` and a safe
-classification: `provider_http_error`, `provider_rejected`, `unrecognized_provider_status`,
+Failures emit `request_failed` with stage, reason, and HTTP status (`FailureStage` and
+`FailureReason` in .NET). Provider results use
+`Outcome` and a safe classification: `provider_http_error`, `provider_rejected`, `unrecognized_provider_status`,
 `missing_provider_message_id`, or `invalid_provider_json`. `provider_response_processed` includes
 that classification, upstream HTTP status, and normalized status, never descriptions/bodies.
 Credential acquisition/refresh failures use `credential_refresh_failed`; unexpected failures use
 `unexpected_error`. No event adds credential reads, acquisition, or send retries.
 
-`response_prepared` runs on success **and failure** before the handler returns. It does not prove
-host serialization/transmission or caller receipt; use platform request telemetry for transport
-completion. A parsed provider rejection uses `provider_response_processed` with a non-success
-outcome and fixed reason.
+`response_prepared` runs before successful and failed returns; it does not prove caller receipt.
 
 `providerHttpStatus` is recorded when response headers arrive.
 An upstream `200` can precede a body-read timeout: `provider_response_received` may be followed by
@@ -70,9 +61,8 @@ Unknown status text and malformed JSON are never logged; malformed JSON emits on
 
 ## Safe fields and identifiers
 
-Build metadata from **validated allowlisted fields**, not a body dump with sensitive properties
-removed. Unknown properties, `tenantId`, locale/risk data, and decrypted fields stay excluded.
-Invalid envelopes never contribute unvalidated type or TTL values.
+Build metadata from **validated allowlisted fields**. Exclude unknown, tenant, locale, risk, and
+decrypted data.
 
 `providerCredentialSource` is `managed_identity_client_assertion` for app tokens and `key_vault`
 for API keys. Cached resolution does not imply a network fetch or fresh token exchange.

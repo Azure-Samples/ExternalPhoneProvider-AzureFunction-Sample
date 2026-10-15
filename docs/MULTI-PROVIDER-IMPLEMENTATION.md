@@ -4,13 +4,11 @@
 
 [Documentation](README.md) | [Normal deployment](GETTING-STARTED.md) | [Provider interface](BRING-YOUR-OWN-PROVIDER.md)
 
-This guide shows how to add controlled primary-to-secondary provider fallback around the existing
-`/api/SendOtp` URL. The design adds durable state, provider-specific approval, and dedicated
-tests. Keep the provider order on the server for one SMS channel.
+Add controlled primary-to-secondary fallback around `/api/SendOtp`. Keep one server-owned SMS
+provider order with durable state and provider-specific approval.
 
-Use the secondary **only after confirmed proof that the primary did not accept the request**.
-Treat timeouts, lost responses, and generic errors as uncertain outcomes and investigate them
-without an automatic resend.
+Use the secondary **only after proof that the primary did not accept the request**. Timeouts,
+lost responses, and generic errors are uncertain and must not trigger an automatic resend.
 
 Follow [policy](#1-set-a-fixed-provider-order-and-a-deny-by-default-policy),
 [account configuration](#2-configure-and-prevalidate-both-accounts),
@@ -23,8 +21,7 @@ Follow [policy](#1-set-a-fixed-provider-order-and-a-deny-by-default-policy),
 <a id="1-set-a-fixed-provider-order-and-a-deny-by-default-policy"></a>
 ## 1. Provider order
 
-Keep the existing HTTP registration in [SendOtp.js](../javascript/src/functions/SendOtp.js).
-Define the provider order in server-owned startup configuration:
+Keep [SendOtp.js](../javascript/src/functions/SendOtp.js) and define the order at startup:
 
 ```javascript
 const providerOrder = Object.freeze({
@@ -34,9 +31,8 @@ const providerOrder = Object.freeze({
 });
 ```
 
-Reject unsupported channels and invalid configuration. Do not accept provider IDs, endpoints,
-vaults or scopes from request headers or bodies. There is no round-robin selection, fan-out,
-recursive fallback or primary retry. The secondary can be attempted at most once.
+Reject unsupported channels and request-supplied provider configuration. Do not use round-robin,
+fan-out, recursive fallback, or primary retries. Attempt the secondary at most once.
 
 Keep **routing order** separate from **fallback eligibility**. Use this policy:
 
@@ -49,20 +45,15 @@ Keep **routing order** separate from **fallback eligibility**. Use this policy:
 | Primary-only credential acquisition fails before transport is entered | Eligible only if this pre-dispatch fact is recorded, the account policy explicitly permits it, the durable operation guard allows the transition, and the request budget is sufficient. |
 | Provider-specific, documented proof that the primary did not accept the operation | Eligible only through a reviewed nonacceptance classifier, explicit account policy, the durable guard and sufficient budget. |
 
-**Keep fallback off until the provider confirms a safe nonacceptance signal.** Review that
-provider-specific signal and the account policy before enabling the path. An expired or rejected
-inbound token never reaches fallback. Provider credential handling continues to honor account
-status, consent, access rules, and provider blocks.
+**Enable fallback only after the provider confirms a safe nonacceptance signal.** Caller
+authentication and provider account controls still apply.
 
 ## 2. Configure and prevalidate both accounts
 
 [config.js](../javascript/src/functions/config.js) accepts `readConfig(settings)`, so each
 account can use its own immutable settings without changing `process.env` per request.
-The following is a **customer-owned configuration format**, not a file the sample loads.
-The account IDs are role labels. Replace each `<supported-adapter-name>` with the adapter selected
-for that account from the [existing lookup](../javascript/src/functions/providers/index.js);
-placeholders are not valid runtime provider names. This example uses API-key authentication;
-each account's settings must match its selected adapter's actual credential requirements.
+The following **customer-owned format** is not loaded by the sample. Replace each
+`<supported-adapter-name>` with a registered adapter and match its credential requirements.
 
 ```json
 [

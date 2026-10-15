@@ -4,35 +4,28 @@
 
 [Documentation](../docs/README.md) | [Settings](#environment-configuration) | [Request behavior](#request-behavior) | [Source](#source-and-extension-points)
 
-A Node.js Azure Function implementing the shared [HTTP contract](../docs/CONTRACT.md).
-One configured provider owns its credentials, request mapping, and response interpretation.
+A Node.js Azure Function implementing the shared [HTTP contract](../docs/CONTRACT.md) with one
+provider per deployment.
 
 ## Setup
 
-**Sample deployment:** use the [five-step guide](../docs/GETTING-STARTED.md).
-After guided setup, continue with
+**Sample deployment:** follow the [five-step guide](../docs/GETTING-STARTED.md), then complete
 [provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
-The [guided provider list](../docs/ONBOARDING.md#provider-credential-names) covers a subset of
-the adapters in this folder.
 
 **Custom package development:** follow these steps from `javascript/`:
 
-1. Create the [local settings below](#environment-configuration). For live integration, choose a
-   fixed provider ID from [providers/](src/functions/providers/), configure its endpoints/options,
-   and complete [provider authentication](../docs/ONBOARDING.md#complete-provider-authentication).
-   Select one provider explicitly.
+1. Create the [local settings below](#environment-configuration). Select a fixed provider ID from
+   [providers/](src/functions/providers/), configure it, and complete
+   [provider authentication](../docs/ONBOARDING.md#complete-provider-authentication).
 2. Install [package.json](package.json) dependencies, run its offline test script, and start Core Tools
    from this folder. **Bind only to loopback, without tunnels:** Core Tools has no Easy Auth.
-3. For manual deployment, [package](../TECHNICAL.md#build-zips-locally) this app only, preserving
-   dependencies and [.funcignore](.funcignore). Inspect for secrets before upload. Complete the
-   [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist) before public
-   access. Keep Easy Auth enabled for SendOtp, then run
+3. For manual deployment, [package](../TECHNICAL.md#build-zips-locally) this app, inspect it for
+   secrets, and complete the [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist).
+   Keep Easy Auth enabled for SendOtp, then run
    [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint) to verify
    platform authentication.
 
-**Regional continuity:** [Front Door](../docs/FRONTDOOR.md) uses multiple regional origins behind
-one URL. Its JavaScript trials and readiness contract provide the starting point for implementing
-and validating your regional package and provisioning process.
+**Regional continuity:** use the [Front Door guide](../docs/FRONTDOOR.md).
 
 ## Environment configuration
 
@@ -58,10 +51,9 @@ Keep `Values` as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"150
 Replace placeholders; Store API keys in Key Vault. Each selected channel requires a valid endpoint; an invalid or
 missing endpoint returns an error without using the other channel.
 
-Core Tools copies `Values` into the process environment; direct Node processes and offline tests do
-not load this file. [AppConfig](src/functions/config.js) reads `process.env` when `readConfig()` runs.
-Restart after edits. Core Tools cannot resolve Key Vault references locally, so use a local
-test PEM or base64 PEM. Keep Azurite settings in the local environment.
+Core Tools copies `Values` into the process environment; direct Node processes and offline tests
+do not load the file. Restart after edits. Use a local test PEM because Core Tools cannot resolve
+Key Vault references locally. Keep Azurite settings local.
 
 In Azure, configure the same app settings and use a Key Vault reference for the private PEM.
 Provider secrets use managed identity, not a developer CLI login. Keep local evaluation on loopback.
@@ -73,10 +65,9 @@ Easy Auth authenticates the caller. JWE decryption, nonce values, and request fi
 parts of the contract. The handler leaves incoming `Authorization` processing to Easy Auth and
 does not echo it.
 
-Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) for no-send validation:
-authentication and decryption still run, but request-path provider lookup, credentials, and HTTP do not.
-Live success waits for acceptance, **not handset receipt**; failures omit the nonce.
-Treat a timeout as uncertain; check the provider outcome before deciding whether to retry.
+Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) to validate
+authentication and decryption without a provider send. Live success confirms acceptance,
+**not handset receipt**. Check a timeout before retrying.
 
 For message/voice mapping and credential rules, see the
 [Soprano delivery contract](../docs/CONTRACT.md#encrypteddeliverycontext-jwe) and
@@ -89,19 +80,16 @@ Use the provider-neutral
 caller authentication, and response rules. Customers can connect the outbound phone service
 that meets their requirements.
 
-For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and the
-[JavaScript service-event queries](../docs/MONITORING.md#4-javascript-service-event-queries).
-Logs are JSON `service` events ending in `request_completed`, not a `logType: "request"` summary.
+For diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and the
+[JavaScript event queries](../docs/MONITORING.md#4-javascript-service-event-queries).
 
 The [cache switches and defaults](../docs/CONTRACT.md#credential-caching-and-refresh) apply here.
 Disabling the selected cache removes startup preparation, polling, and cross-request reuse,
 not live credential acquisition.
 
-With caching enabled, startup selects only the provider's API-key or OAuth cache. API keys use
-Key Vault and `lru-cache`; OAuth uses the managed-identity/Entra SDKs. A shared 30-second refresh
-loop and one in-flight acquisition keep warm reads nonblocking; failures never extend expiry.
-See the [refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh). Leave the provider
-unset for local evaluation without credential acquisition; prewarming never sends an OTP.
+With caching enabled, API keys use Key Vault and `lru-cache`; OAuth uses the managed-identity/Entra
+SDKs. A 30-second refresh loop and one in-flight acquisition support warm reads. See the
+[refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh).
 
 | Source | Purpose |
 |---|---|

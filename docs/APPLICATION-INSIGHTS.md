@@ -4,17 +4,11 @@
 
 [Documentation](README.md) | [Monitoring walkthrough](MONITORING.md) | [Log schema](LOGGING.md)
 
-For logs and alerts, use the [monitoring walkthrough](MONITORING.md).
-For missing or incomplete telemetry, use
-[single-region configuration](#single-region-configuration). This page covers JavaScript,
-.NET isolated, and Python.
+Use the [monitoring walkthrough](MONITORING.md) for queries and alerts. Use
+[single-region configuration](#single-region-configuration) for missing telemetry.
 
-Function telemetry shows execution, timing, and logs. Confirm recipient delivery through the
-provider's supported delivery evidence. [Microsoft Entra ID sign-in monitoring](SIGN-IN-MONITORING.md)
-uses a separate tenant export pipeline for identity activity.
-
-This page assumes the endpoint is already deployed. Use the [setup guide](GETTING-STARTED.md)
-first, then follow the [approved test handoff](ONBOARDING.md#validate-the-deployed-endpoint).
+Function telemetry covers execution, timing, and logs. Provider delivery evidence and
+[Microsoft Entra ID sign-in monitoring](SIGN-IN-MONITORING.md) are separate.
 
 Sections: [collection pipelines](#how-telemetry-reaches-application-insights),
 [signals and tables](#signals-tables-and-metrics-are-different-things),
@@ -24,27 +18,20 @@ or [sampling/privacy limits](#sampling-privacy-and-collection-limits).
 
 ## How telemetry reaches Application Insights
 
-The **Functions host** dispatches invocations and records their telemetry; the **language worker**
-runs endpoint code. Standard worker logs pass through the host. A direct worker SDK/OpenTelemetry
-exporter instead needs its own initialization, authentication, filtering, and sampling.
-Host configuration alone does not configure every worker signal.
+The **Functions host** records invocation telemetry; the **language worker** runs endpoint code.
+A direct worker exporter needs separate initialization, authentication, filtering, and sampling.
 
-Exporters send data to Application Insights; its linked Log Analytics workspace stores records
-for views and queries. Propagated correlation context connects requests, dependencies, and logs.
-Background work need not belong to a request.
+Application Insights sends records to its linked Log Analytics workspace. Correlation context
+connects requests, dependencies, and logs.
 
-In OpenTelemetry terminology, a distributed trace contains spans. In Application Insights,
-server spans generally appear as **requests**, client spans as **dependencies**, and
-application log messages as **traces**. The `traces` table is not a list of all distributed
-tracing spans.
+Application Insights generally stores server spans as **requests**, client spans as
+**dependencies**, and log messages as **traces**.
 
 ### What the checked-in sample configures
 
-The [deployment template](../setup/infra/resources.bicep) defines a workspace-based Application
-Insights resource, the Function's connection and authentication settings, and a role assignment
-for ingestion. It also defines a **separate** Function diagnostic setting that sends `allLogs`
-and `AllMetrics` to the workspace. Diagnostic settings do not install worker instrumentation
-and do not mean every Azure resource or every dependency is being observed.
+The [deployment template](../setup/infra/resources.bicep) configures Application Insights,
+authenticated ingestion, and a separate `allLogs`/`AllMetrics` diagnostic setting. Diagnostic
+settings do not instrument every worker or dependency.
 
 | Implementation | Checked-in behavior | What not to assume |
 | --- | --- | --- |
@@ -52,19 +39,15 @@ and do not mean every Azure resource or every dependency is being observed.
 | [JavaScript](../javascript/host.json) | Uses standard host Application Insights settings with sampling enabled and `Request` excluded from sampling. | The [package manifest](../javascript/package.json) does not include a direct Application Insights/OpenTelemetry exporter. Host integration is not proof that all outbound Node.js HTTP calls are traced. |
 | [Python](../python/host.json) | Uses standard host Application Insights settings with sampling enabled and `Request` excluded from sampling. | The [requirements](../python/requirements.txt) do not include an Azure Monitor/OpenTelemetry exporter. A Python log message or `requests` call is not automatically a structured custom event or a dependency span. |
 
-These are source defaults, not an inventory of a running deployment. Deployed package versions,
-application-setting overrides, runtime versions, and log filters can change the result. The
-guided setup can publish a released package rather than the current source.
+These are source defaults. Packages, settings, runtime versions, and filters can change them.
 
 [Application events](LOGGING.md#event-sequence) are **logs**, not guaranteed `customEvents`.
 Use [runtime-specific discovery](MONITORING.md#runtime-specific-log-discovery) before sharing queries:
 exporters can change formatting, casing, and which properties survive.
 
-To add direct worker instrumentation, follow the
+For direct worker instrumentation, follow the
 [Functions OpenTelemetry guidance](https://learn.microsoft.com/en-us/azure/azure-functions/opentelemetry-howto)
-for the selected language. Initialize the exporter, instrumentation, and credentials, then verify
-correlation and duplicate suppression. Use the settings for that runtime. For languages outside
-this sample, check the matching Microsoft support tab.
+for the selected language and verify correlation and duplicate suppression.
 
 <a id="signals-tables-and-metrics-are-different-things"></a>
 ## Telemetry signals and tables

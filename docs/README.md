@@ -2,9 +2,8 @@
 
 [Sample overview and architecture](../README.md)
 
-**First deployment:** follow [Get started](GETTING-STARTED.md). Confirm supported access and
-Microsoft's approved testing and activation process first. Build the endpoint in a separate
-nonproduction environment, validate it, and then complete policy activation.
+**First deployment:** follow [Get started](GETTING-STARTED.md). Confirm access and Microsoft's
+approved test and activation process before deploying in a nonproduction environment.
 
 ## Table of Contents
 
@@ -17,10 +16,10 @@ nonproduction environment, validate it, and then complete policy activation.
 
 ## Understand the sample
 
-- **Architecture and implementation choices:** [Technical reference](../TECHNICAL.md)
-- **Requests, responses, settings, and required behavior:** [HTTP contract](CONTRACT.md)
-- **Runtime events and safe diagnostic fields:** [Application log reference](LOGGING.md)
-- **Security and production planning:** [Production-readiness considerations](CONTRACT.md#production-limitations)
+- [Architecture and implementation](../TECHNICAL.md)
+- [HTTP contract](CONTRACT.md)
+- [Log schema](LOGGING.md)
+- [Production readiness](CONTRACT.md#production-limitations)
 
 ## Deploy and validate
 
@@ -34,34 +33,28 @@ nonproduction environment, validate it, and then complete policy activation.
 
 ## Operate
 
-- **Function logs and alerts:** [Monitoring](MONITORING.md)
-- **Missing or incomplete telemetry:** [Application Insights collection](APPLICATION-INSIGHTS.md)
-- **Microsoft Entra ID sign-ins and identity alerts:** [Identity monitoring](SIGN-IN-MONITORING.md)
-- **Certificate renewal:** [Certificate lifecycle](../setup/docs/README.md#encryption-certificate-lifecycle)
-- **Rollback or decommissioning:** [Rollback procedure](../setup/docs/README.md#rollback-and-decommissioning)
+- [Function logs and alerts](MONITORING.md)
+- [Application Insights collection](APPLICATION-INSIGHTS.md)
+- [Microsoft Entra ID monitoring](SIGN-IN-MONITORING.md)
+- [Certificate renewal](../setup/docs/README.md#encryption-certificate-lifecycle)
+- [Rollback and decommissioning](../setup/docs/README.md#rollback-and-decommissioning)
 
 ## Develop
 
-- **Runtime development:** [JavaScript](../javascript/README.md), [C#](../dotnet/README.md), or [Python](../python/README.md)
-- **Settings and packages:** [Technical reference](../TECHNICAL.md)
-- **Requests and responses:** [HTTP contract](CONTRACT.md)
-- **Runtime events:** [Application log schema](LOGGING.md)
-- **Provider integration:** [Provider-neutral BYOT interface](BRING-YOUR-OWN-PROVIDER.md)
-- **Production planning:** [Readiness considerations](CONTRACT.md#production-limitations)
+- Runtimes: [JavaScript](../javascript/README.md), [C#](../dotnet/README.md), [Python](../python/README.md)
+- [Settings and packages](../TECHNICAL.md)
+- [HTTP contract](CONTRACT.md)
+- [Log schema](LOGGING.md)
+- [Phone-service integration](BRING-YOUR-OWN-PROVIDER.md)
 
 <a id="optional-designs"></a>
 ## Advanced topics
 
-Use these guides after validating a single-region endpoint. Each one includes implementation,
-validation, operations, and rollback guidance.
-
-- **Route across regions:** [Multi-region Front Door design](FRONTDOOR.md)
-- **Add provider fallback:** [Multi-provider implementation](MULTI-PROVIDER-IMPLEMENTATION.md)
+- [Multi-region routing](FRONTDOOR.md)
+- [Provider fallback](MULTI-PROVIDER-IMPLEMENTATION.md)
 
 ## Get help
 
-For access, approved testing, or activation, use the
-[provider/Microsoft support route](ONBOARDING.md#before-purchasing-or-deploying).
-For setup or runtime problems, start with the [troubleshooting routes](../setup/docs/Troubleshooting.md).
-Keep credentials, phone data, and raw payloads out of support requests; use
-[safe diagnostic evidence](../setup/docs/Troubleshooting.md#after-deployment-triage).
+- [Provider access, testing, and activation](ONBOARDING.md#before-purchasing-or-deploying)
+- [Troubleshooting](../setup/docs/Troubleshooting.md)
+- [Safe diagnostic evidence](../setup/docs/Troubleshooting.md#after-deployment-triage)

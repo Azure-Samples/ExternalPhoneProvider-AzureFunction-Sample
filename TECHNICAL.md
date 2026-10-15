@@ -15,32 +15,21 @@ or [security](#security). For regional continuity, see
 
 See the [single-region diagram in the sample overview](README.md#architecture).
 
-Microsoft Entra ID sends an authenticated, encrypted request. Easy Auth checks the caller,
-then the Function decrypts the request using its Key Vault-backed key. For a live request, the
-selected adapter submits the message and returns success after provider acceptance, not after
-confirmed recipient delivery. Application Insights collects the available request and log telemetry.
+Microsoft Entra ID sends an authenticated, encrypted request. Easy Auth checks the caller, the
+Function decrypts the request, and the selected adapter submits a live message. Success means
+provider acceptance, not confirmed delivery.
 
-The diagram is an overview, not a portal screenshot. East US is illustrative; select a region
-with capacity and quota for your hosting plan. The provider-secret path applies to API-key
-integrations; OAuth integrations use managed-identity token exchange instead. Credential caching
-depends on the [selected cache settings](docs/CONTRACT.md#credential-caching-and-refresh), and
-[log formats vary by runtime](docs/MONITORING.md#runtime-specific-log-discovery).
+East US is illustrative. API-key integrations use provider secrets; OAuth integrations use
+managed-identity token exchange. See [credential caching](docs/CONTRACT.md#credential-caching-and-refresh)
+and [runtime logs](docs/MONITORING.md#runtime-specific-log-discovery).
 
-An authorized, valid encrypted **evaluation request (`mode: 2`)** returns the matching nonce
-without submitting a message to the provider. When caching is enabled, credential preparation
-can run independently; it never sends an OTP. Authentication failures can return **401 or 403**,
-neither of which is a successful evaluation.
+An authorized **evaluation request (`mode: 2`)** returns the nonce without sending a message.
+Authentication failures return **401 or 403**.
 
 ## Resiliency and business continuity
 
-Start with a validated single-region deployment. For regional continuity, the
-[Azure Front Door design](docs/FRONTDOOR.md) uses one public URL across separate regional
-origins while preserving the SendOtp contract.
-
-The guide covers capacity, shared encryption keys, regional dependencies, safe failover drills,
-and rollback. It also defines a non-delivering readiness endpoint for each regional package.
-Add regional deployment and readiness to the approved BCDR process, then activate after both
-failover directions pass the documented checks.
+The [Azure Front Door design](docs/FRONTDOOR.md) adds regional origins behind one public URL.
+It covers capacity, shared keys, dependencies, readiness, failover drills, and rollback.
 
 ## Implementations
 
@@ -50,37 +39,26 @@ failover directions pass the documented checks.
 | C# (.NET isolated worker) | Available | [dotnet/](dotnet/) |
 | Python (v2 model) | Available | [python/](python/) |
 
-Choose **one language and one provider per Function App**; no provider is preferred or selected
-by default. All implementations share the [HTTP, configuration, and trust contract](docs/CONTRACT.md),
-but provider APIs, binding errors, credential caching, and telemetry can differ by runtime.
+Choose **one language and one provider per Function App**. All implementations share the
+[HTTP, configuration, and trust contract](docs/CONTRACT.md); runtime behavior can differ.
 
-For [local development or manual deployment](docs/ONBOARDING.md#optional-local-development-and-manual-deployment),
-follow the selected runtime guide. For a custom service integration, start with the
-[provider-neutral BYOT interface](docs/BRING-YOUR-OWN-PROVIDER.md), then implement and validate
-the outbound adapter through the selected runtime.
+For local work, use the selected runtime guide. For a custom integration, start with
+[Bring your own provider](docs/BRING-YOUR-OWN-PROVIDER.md).
 
 ## Guided EPP setup
 
-Follow the [five-step guide](docs/GETTING-STARTED.md), including its access and approval gates.
-Download only `Setup-Epp.ps1`; it retrieves its support files from one commit and deploys after
-you approve the complete plan. The [setup reference](setup/docs/README.md#step-2---download-and-run-one-script)
-explains provider, route, runtime, hosting, and resource choices.
+Follow the [five-step guide](docs/GETTING-STARTED.md). `Setup-Epp.ps1` retrieves its support files
+from one commit and deploys after plan approval. See the [setup reference](setup/docs/README.md#step-2---download-and-run-one-script).
 
-Review [application permissions and caller trust](setup/docs/README.md#step-1---manually-create-the-application),
-including tenant-wide Graph `Application.Read.All`, and the
-[certificate selection rules](setup/docs/README.md#encryption-certificate-selection).
-Setup pins one PEM secret version and verifies Function access before changing registered encryption
-credentials. Only the public certificate is downloaded. Replacement requires coordinated maintenance,
-not zero-downtime rotation; certificate synchronization and policy activation remain manual.
+Review [application permissions](setup/docs/README.md#step-1---manually-create-the-application)
+and [certificate selection](setup/docs/README.md#encryption-certificate-selection). Setup pins one
+PEM secret version and downloads only the public certificate.
 
 One deployment accepts SMS and voice; each request's `channel` selects its configured provider URL.
 
 ## Download a Function ZIP
 
-**Optional developer/manual deployment path:** guided setup already selects, verifies, builds as
-needed, and publishes the package. Customers using it should continue with
-[provider authentication and validation](docs/ONBOARDING.md#complete-provider-authentication);
-the deployed package is ready for that handoff.
+Guided setup already publishes the package. Use this section for manual deployment.
 
 Download the latest successful CI ZIP for your chosen language:
 
@@ -90,22 +68,15 @@ Download the latest successful CI ZIP for your chosen language:
 | .NET | [epp-dotnet-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-dotnet-source.zip) | C# Function source and project file; build/publish before deployment |
 | Python | [epp-python-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-python-source.zip) | Source for Azure remote build on Linux |
 
-Downloads need no PowerShell or build tools. Verify the release's `SHA256SUMS.txt`, then configure
-the target runtime, app settings, Key Vault access, and **Easy Auth before deployment**.
-Build/publish .NET source; use Azure remote build for Python dependencies. Neither source ZIP is
-directly runnable as a run-from-package artifact. **Code > Download ZIP** is the repository, not
-a deployment package.
+Verify `SHA256SUMS.txt`, configure the runtime, settings, Key Vault, and **Easy Auth**, then build
+.NET or use Python remote build. Source ZIPs are not run-from-package artifacts.
 
-Each successful `main` build tests all three runtimes and inspects the ZIPs before publishing a
-versioned [latest release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest).
-These links and guided setup track that release; older assets remain available and are not overwritten.
-PR builds publish workflow artifacts only, which may require GitHub sign-in. Public releases do not.
-Packaging neither deploys nor verifies provider delivery.
+Successful `main` builds publish a versioned [release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest).
+PR builds publish workflow artifacts only. Packaging does not deploy or verify delivery.
 
 ## Build ZIPs Locally
 
-For custom builds, run the script for your chosen language from the repository root. These standalone scripts create
-ZIPs locally; they do not sign in to Azure, upload code, or change app settings.
+Run one packaging script from the repository root. It creates a local ZIP without changing Azure.
 
 | Language | Root-level script | Prerequisites | ZIP in `artifacts/` |
 |---|---|---|---|
@@ -119,28 +90,19 @@ pwsh -File ./package-dotnet.ps1
 pwsh -File ./package-python.ps1
 ```
 
-Choose one command; each packages only its language. The scripts locate source relative to their
-own location, so invoking an absolute script path also works from another directory. Each ZIP has
-`host.json` at its root, with no enclosing language folder. Local settings, credential files, and
-first-party tests are excluded. Generated ZIPs are ignored by Git.
+Choose one command. Each ZIP has `host.json` at its root and excludes local settings, credentials,
+and tests.
 
-JavaScript installs production dependencies from the lockfile in a temporary folder; your working
-`node_modules` is not copied or modified. Dependency lifecycle scripts are disabled for this sample's
-JavaScript dependencies. When adding native dependencies or packages that require install scripts,
-review packaging and build them for the target Azure OS.
+JavaScript installs production dependencies from the lockfile in a temporary folder. Review
+packaging for native dependencies or required lifecycle scripts. It does not modify `node_modules`.
 
-**The .NET download contains source code.** It includes `dotnet.csproj`, `host.json`, `Program.cs`,
-and the C# files under `Functions/` and `Src/`. Packaging does not run restore, build, or publish,
-and needs no .NET SDK. It excludes `bin/`, `obj/`, tests, local settings, and compiled dependencies.
-Customers extract it and run `dotnet publish dotnet.csproj --configuration Release --output ../publish`
-with the .NET 8 SDK, or use a deployment pipeline that builds the project. Deploy the resulting
-publish output with `host.json` at its root, not the source ZIP directly. CI tests this customer
-build from an extracted copy; that temporary publish output is not included in the download.
+**The .NET download contains source.** Run
+`dotnet publish dotnet.csproj --configuration Release --output ../publish` with .NET 8, then deploy
+the publish output with `host.json` at its root. The archive includes `dotnet.csproj`,
+`Program.cs`, `Functions/`, and `Src/`, and excludes `bin/` and `obj/`.
 
-**The Python download contains source code.** Deploy it to a Linux Function App with remote build
-enabled so Azure installs `requirements.txt`. Use the supported remote-build path instead of
-run-from-package or Windows-installed dependencies. The packaging script does not run pip or
-include a local virtual environment.
+**The Python download contains source.** Deploy it to Linux with remote build so Azure installs
+`requirements.txt`.
 
 Existing archives are never overwritten. For another build, specify a new path:
 
@@ -148,11 +110,8 @@ Existing archives are never overwritten. For another build, specify a new path:
 pwsh -File ./package-javascript.ps1 -OutputPath ./artifacts/epp-javascript-v2.zip
 ```
 
-The same `-OutputPath` option works for all three scripts. Configure the destination app's runtime,
-app settings, Key Vault access, and Easy Auth separately before deployment. See
-[deployment and validation](docs/ONBOARDING.md#4-package-deploy-and-verify). Packaging success does
-not verify cloud configuration or provider delivery. File selection is tailored to this sample;
-extend it deliberately when adding runtime assets, and never put secrets in application source.
+`-OutputPath` works for all three scripts. Configure the destination and follow
+[deployment and validation](docs/ONBOARDING.md#4-package-deploy-and-verify). Never include secrets.
 
 ## The design in one line
 
@@ -168,19 +127,13 @@ not in application environment settings or incoming request data.
 
 ## Configure environment variables
 
-For guided deployment, use the [customer values and ownership table](docs/ONBOARDING.md#values-and-ownership)
-to inspect what setup already configured. The following sample/local instructions are for
-developers and manual deployments; they are not an extra guided-setup step.
+For guided deployment, inspect the [values and ownership table](docs/ONBOARDING.md#values-and-ownership).
+The following settings are for local or manual deployment.
 
-Use the [sample settings](docs/local.settings.sample.json) as the starting point for the chosen
-runtime. All entries in its `Values` object are **strings**. The application reads environment
-variables; Azure Functions Core Tools loads that `Values` object for local runs.
+Start from [sample settings](docs/local.settings.sample.json). Every `Values` entry is a string.
 
-The sample uses `node`; change it to `python` or `dotnet-isolated` for those runtimes. Replace the
-provider, endpoint, vault and test-key placeholders before use. Its storage value assumes **Azurite
-is running**; do not copy `UseDevelopmentStorage=true` into Azure. Optional settings stay in the table
-below rather than appearing as required placeholders in the sample. Keep explanatory comments outside
-`Values`, otherwise the host loads them as environment variables too.
+Change `node` to `python` or `dotnet-isolated` as needed. Replace placeholders. The sample storage
+value requires **Azurite** and must not be copied to Azure.
 
 Local settings supply environment variables, **not a serialized `AppConfig` or request model**.
 For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in JavaScript,

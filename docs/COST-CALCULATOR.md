@@ -1,24 +1,17 @@
 # Estimate SMS provider costs
 
-Use this guide to create a planning estimate for SMS traffic before onboarding an
-External Phone Provider (EPP). The report finds SMS and voice authentication steps in
-recent sign-in activity and groups them by the phone number's international calling
-code, such as `+1` or `+91`. Apply your provider's destination rates to the report to
-estimate a budget.
+Estimate SMS and voice traffic before onboarding an External Phone Provider (EPP). The report
+groups recent authentication steps by calling code, such as `+1` or `+91`. Apply provider rates
+to estimate a budget.
 
-**This is an estimate, not a usage or billing report.** A sign-in does not prove that
-the provider accepted or delivered an SMS or voice call. Authentication details can
-contain multiple SMS or voice steps for one sign-in, so this guide counts each matching
-step as one estimated request. Actual provider billing can differ because of retries,
-fallback, failures, message segmentation, and provider-specific charging rules. Confirm
-the assumptions, supported destinations, taxes, fees, and final pricing with your provider.
+**This is not a billing report.** It counts each matching authentication step as one estimated
+request. Confirm retries, fallback, segmentation, destinations, taxes, fees, and pricing with
+the provider.
 
 The `authenticationDetails` data used by this guide is currently available through the
 [Microsoft Graph beta API](https://learn.microsoft.com/en-us/graph/api/resources/authenticationdetail?view=graph-rest-beta).
-Beta APIs are subject to change and are not supported for production applications. Review
-and test this reporting script before each planning exercise. Because sign-in details mask
-phone numbers, the script matches their visible trailing digits to the user's registered
-phone authentication methods and derives the calling code from the matched registration.
+Review the beta API and script before each planning exercise. The script matches masked trailing
+digits to registered phone methods to derive the calling code.
 
 ## Prerequisites
 
@@ -28,17 +21,12 @@ account must be allowed to consent to or use these Microsoft Graph delegated per
 - `AuditLog.Read.All`
 - `UserAuthenticationMethod.Read.All`
 
-Reading other users' phone methods also requires a
+Reading other users' phone methods requires a
 [supported Entra role](https://learn.microsoft.com/en-us/graph/api/authentication-list-phonemethods?view=graph-rest-1.0#permissions),
-not just consent to those scopes. Authentication Administrator receives masked phone numbers;
-if the calling code is unavailable, the script reports `Unknown`. Confirm approved read access
-with your identity administrator rather than granting broader roles just to fill the report.
+Authentication Administrator receives masked phone numbers; unresolved calling codes appear as `Unknown`.
 
-Access to sign-in logs also depends on your Microsoft Entra licensing, directory role,
-and log-retention period. Review the requested permissions before consenting. The script
-processes sign-in authentication details that can include phone numbers. It exports only
-aggregated calling codes, methods, and counts, not full phone numbers. Store, share, and
-delete the output according to your organization's privacy and retention requirements.
+Access also depends on Microsoft Entra licensing, roles, and retention. The script exports
+aggregated calling codes, methods, and counts, not full phone numbers. Protect the output.
 
 Create `C:\temp` before running the script, or change the `Export-Csv` path to an
 approved folder.

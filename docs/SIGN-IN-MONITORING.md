@@ -9,18 +9,11 @@
 | Diagnose missing records or quiet alerts | [Check data](#4-check-your-data-and-choose-a-query), [monitor ingestion](#monitor-ingestion-separately) |
 | Adapt a query or add advanced alerts | [Advanced monitoring reference](#advanced-monitoring-reference) |
 
-The six-step walkthrough is a worked example for one user sign-in alert. Each additional monitor
-requires its own scope, baseline, and query.
-
-This guide covers Microsoft Entra authentication and configuration. Function execution and phone
-delivery have separate monitoring paths. Identity details remain private; administrators configure
-the export and alerts after endpoint setup.
+The six-step walkthrough creates one user sign-in alert. Function and delivery monitoring are separate.
 
 ## Recommended monitors
 
-Agree on the source tenant, exact identity and resource IDs, and notification owners. Then
-implement the monitors in priority order. Use exact IDs instead of name fragments or every
-tenant application.
+Choose the tenant, exact identity/resource IDs, and notification owners. Use exact IDs.
 
 <a id="priority-1-integration-identities-cannot-sign-in"></a>
 ### Integration sign-in failures
@@ -28,15 +21,10 @@ tenant application.
 1. **Watch:** application/service-principal and managed-identity authentication in
    **AADServicePrincipalSignInLogs** and **AADManagedIdentitySignInLogs**. Filter to the
    known app/service principal **and** intended resource in the source tenant.
-2. **Notify:** when failures repeat above the usual level for the same observation window,
-   or a new error starts recurring. Group by identity, resource, and error; show the last
-   successful sign-in alongside failures. Start with a review notification, then agree
-   with the owner which sustained failures need paging.
-3. **Owner and first checks:** the Azure/identity integration operator checks the error,
-   identity status, credential validity, federation settings, and recent permission changes.
-   Token success does not prove a later API operation is authorized. Token caching means
-   there is not a sign-in event for every service request: only alert on absent successes
-   after accounting for the expected schedule, caching, and [collection health](#monitor-ingestion-separately).
+2. **Notify:** when failures exceed the normal level or a new error recurs. Group by identity,
+   resource, and error; include the last successful sign-in.
+3. **First checks:** review the error, identity, credentials, federation, permissions, expected
+   schedule, token caching, and [collection health](#monitor-ingestion-separately).
 
 <a id="priority-2-integration-credentials-permissions-or-trust-change"></a>
 ### Credential and permission changes
@@ -46,14 +34,10 @@ tenant application.
    service-principal changes, consent, and permission grants/removals. Have the maintainer
    verify which [audit activities](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/reference-audit-activities#core-directory)
    actually appear for these operations.
-2. **Notify:** on an unexpected **successful** change to those targets; one can deserve
-   review without a volume threshold. Keep failed attempts separate from completed changes.
-   Record approved maintenance so planned changes do not page as suspected abuse.
-3. **Owner and first checks:** the application/identity administrator checks who changed
-   what, when, and against which approved change ticket. Review target and changed-property
-   names; link to restricted logs instead of attaching raw old/new values. Group related
-   records before escalating an unexplained change to security. This is change monitoring,
-   not a credential-expiry inventory or automatic revocation rule.
+2. **Notify:** on an unexpected **successful** change. Keep failed attempts separate and record
+   approved maintenance.
+3. **First checks:** review the actor, target, time, approved change, and changed-property names.
+   Link to restricted logs instead of copying raw values.
 
 <a id="priority-3-users-repeatedly-have-trouble-signing-in"></a>
 ### Repeated user sign-in failures
@@ -61,20 +45,14 @@ tenant application.
 1. **Watch:** **SigninLogs** for the customer-facing app and source tenant. Review
    **AADNonInteractiveUserSignInLogs** separately for background token/session problems;
    do not mix those records into the interactive failure count or rate.
-2. **Notify:** when the same error keeps recurring or unresolved failures rise above
-   ordinary traffic for the agreed window. Start with counts; use a rate only with a
-   matching population and minimum traffic level. A consent prompt or expired session
-   can recover, so check later outcomes before treating it as a continuing problem.
-3. **Owner and first checks:** identity support reads the overall error and reason,
-   then checks recent app/policy changes and related recovery records. Successful
-   Conditional Access or MFA steps do not make the overall sign-in successful.
-   Escalate to security only with corroborating signals, not a nonzero code alone.
+2. **Notify:** when an error recurs or unresolved failures exceed the baseline. Check later
+   outcomes because consent prompts and expired sessions can recover.
+3. **First checks:** review the overall error, recent app or policy changes, and recovery records.
+   Successful MFA steps do not make the overall sign-in successful.
 
-**Set up once, then adapt:** select the [required categories](#choose-additional-export-categories),
-verify [fields](#field-checks-for-the-recommended-monitors), and reuse the
-[alert setup](#5-create-your-first-alert) and [safe test](#6-test-then-hand-over).
-Choose each monitor's threshold from normal traffic for that environment rather than a small
-export or a universal SLA.
+Select the [required categories](#choose-additional-export-categories), verify
+[fields](#field-checks-for-the-recommended-monitors), and reuse the
+[alert setup](#5-create-your-first-alert). Set thresholds from normal traffic.
 
 ## 1. Choose your tenant and access
 
@@ -83,11 +61,10 @@ export or a universal SLA.
    from the tenant hosting the Function. Note its **Tenant ID** from **Overview**.
 2. Ask your tenant administrator for **Reports Reader**, the minimum role for viewing
    activity logs. See Microsoft's [access requirements](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-access-activity-logs#prerequisites).
-   This role does not grant access to an Azure workspace (where exported logs are stored).
+   This role does not grant workspace access.
 3. Check whether you have a **workforce tenant** or an **external tenant** for customer apps.
-   If unsure, use the [tenant comparison](https://learn.microsoft.com/en-us/entra/external-id/customers/concept-supported-features-customers)
-   with your administrator. Both can use the portal investigation below, but external
-   tenants need a different export setup in Step 3.
+   Use the [tenant comparison](https://learn.microsoft.com/en-us/entra/external-id/customers/concept-supported-features-customers)
+   if needed. External tenants use a different export path in Step 3.
 
 ## 2. Find one sign-in
 

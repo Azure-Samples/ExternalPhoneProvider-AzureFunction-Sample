@@ -4,38 +4,28 @@
 
 [Documentation](README.md) | [Implementation walkthrough](BRING-YOUR-OWN-PROVIDER.md) | [Settings and packages](../TECHNICAL.md)
 
-This page defines the shared contract for [JavaScript](../javascript/), [Python](../python/) and
-[.NET](../dotnet/). Use the [production-readiness considerations](#production-limitations) when
-planning a live service.
+Shared contract for [JavaScript](../javascript/), [Python](../python/), and [.NET](../dotnet/).
 
 Go to [request/response](#1-http-api), [HTTP outcomes](#2-outcome--http-status-mapping),
 [provider contract](#3-provider-contract), [settings](#4-configuration-app-settings--env),
 [caching](#credential-caching-and-refresh), [required behaviors](#5-required-behaviors),
 [logs](#application-logs), or [tests](#6-lightweight-tests).
 
-> **Naming.** EPP means **External Phone Provider**. App settings use the `EPP_` prefix; the
-> request and delivery models are `Envelope`, `DeliveryContext` and provider-neutral OTP delivery.
-> Documentation names do not change the external JSON fields or `microsoft.mfa.otpDeliver.v1` version.
+> **Naming:** EPP means **External Phone Provider**. App settings keep the `EPP_` prefix;
+> documentation names do not change external fields or `microsoft.mfa.otpDeliver.v1`.
 
-Each deployment selects one provider. The HTTP Function owns the request lifecycle, while
-API-specific credentials, paths, headers, payloads, response rules, outcomes and safe failure
-classifications remain inside each provider implementation.
+Each deployment selects one provider. Provider-specific API behavior stays inside its implementation.
 
-For regional continuity, the [Front Door design](FRONTDOOR.md) routes this same API to regional
-origins while preserving caller authentication, JWE validation, nonce semantics, and provider
-selection. Its readiness endpoint is separate from this contract and never delivers OTPs.
-Provider fallback and delivery deduplication remain separate designs.
+The [Front Door design](FRONTDOOR.md) routes this API to regional origins. Its readiness endpoint
+is separate and never delivers OTPs.
 
 ---
 
 ## 1. HTTP API
 
-**Endpoint:** `POST /api/SendOtp` (Functions HTTP trigger, `authLevel: anonymous`). **Easy Auth is the
-only caller-authentication boundary and runs before the handler**; the application has no token
-validator or function-key gate. This is the interface **Microsoft Entra ID** calls.
-Entra ID sends a signed bearer JWT; Easy Auth validates it, not the handler.
-PII (phone number + the rendered message, which contains the passcode) is **encrypted** inside a JWE;
-the cleartext envelope carries routing/scheduling only.
+**Endpoint:** `POST /api/SendOtp` (`authLevel: anonymous`). **Easy Auth is the caller-authentication
+boundary before the handler**. The phone number and message are encrypted inside a JWE; the
+cleartext envelope carries routing data.
 
 ### Request headers
 
@@ -46,9 +36,8 @@ the cleartext envelope carries routing/scheduling only.
 | `x-ms-correlation-id` | tracing only; fallback for envelope `correlationId`, not authentication |
 | `x-ms-client-request-id` | per-attempt tracing id (used as `messageId`), not authentication |
 
-Easy Auth provides caller trust. Forwarded headers such as `x-ms-client-principal` provide context,
-not authentication. The handler does not use them to authenticate callers or forward the incoming
-`Authorization` header to the provider. Configure Easy Auth as described in section 5.
+Forwarded headers such as `x-ms-client-principal` provide context, not authentication. The handler
+never forwards `Authorization` to the provider.
 
 <a id="epp-request-body-envelope-cleartext-envelope"></a>
 ### EPP request body

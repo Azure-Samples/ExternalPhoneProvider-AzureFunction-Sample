@@ -2,10 +2,8 @@
 
 [Documentation](../../docs/README.md) | [Setup reference](README.md) | [Resume onboarding](../../docs/GETTING-STARTED.md)
 
-Select the stage that failed and keep existing resources in place. Before rerunning setup, use
-[safe recovery](#recover-without-destructive-cleanup). For a live-send timeout, check the provider
-outcome before retrying. After deployment, complete provider acceptance and delivery checks
-separately.
+Select the failed stage and keep existing resources. Before rerunning, use
+[safe recovery](#recover-without-destructive-cleanup). Check provider outcomes before retrying timeouts.
 
 ## Find your symptom
 
@@ -22,10 +20,9 @@ separately.
 
 ## After-deployment triage
 
-Keep the original error and timestamped summary. In a private support case, record tenant,
-subscription, resource group, runtime/release, UTC test time, and safe correlation IDs.
-Never attach complete settings, tokens, phone numbers, OTPs, private keys, encrypted bodies, or
-raw provider responses. Keep body tracing off.
+Keep the error and timestamped summary. For private support, record the tenant, subscription,
+resource group, runtime/release, UTC time, and safe correlation IDs. Exclude settings, tokens,
+phone numbers, OTPs, private keys, encrypted bodies, and raw responses. Keep body tracing off.
 
 | Symptom | First checks / owner | Safeguard |
 |---|---|---|
@@ -40,18 +37,16 @@ raw provider responses. Keep body tracing off.
 | Requests exist but Python/.NET event query is empty | Use [runtime-specific discovery](../../docs/MONITORING.md#runtime-specific-log-discovery). Python extras/.NET scopes may not be exported; .NET host OpenTelemetry does not initialize direct worker export. | Do not apply JavaScript's JSON parser to other runtimes or promise complete dependencies/exceptions. |
 | No expiry email or alert | Operations owner checks vault certificate contacts/lifetime policy, independently configured reminders/action groups/rules, and notification tests. | Do not assume setup created alerts, or diagnostic settings deliver Key Vault expiry events. |
 
-Keep nonce-match **booleans**, statuses, latency, safe IDs, and delivery-confirmation outcomes.
-Evaluation success, provider acceptance, and recipient delivery are different evidence.
-[Complete acceptance checks](../../docs/ONBOARDING.md#validate-the-deployed-endpoint) before activation.
+Keep nonce-match **booleans**, statuses, latency, safe IDs, and delivery outcomes. Complete
+[acceptance checks](../../docs/ONBOARDING.md#validate-the-deployed-endpoint) before activation.
 
 ## Recover without destructive cleanup
 
-1. **Locate the failure.** Before approval, checks do not change Azure resources, although sign-in
-   or Bicep installation may occur. After approval, partial Azure or Microsoft Entra ID changes can
-   remain without a summary. Inspect the original error and **resource group > Deployments**.
-2. **Fix, then rerun with the same reviewed inputs:** tenant, subscription, app, runtime, plan,
-   prefix, provider/route, and source/package versions. This keeps resource names, keys, and
-   endpoint configuration consistent. Active endpoints need a change window because setup has
+1. **Locate the failure.** Before approval, only sign-in or Bicep installation can change the
+   environment. After approval, partial Azure or Microsoft Entra ID changes can remain. Inspect
+   the error and **resource group > Deployments**.
+2. **Fix, then rerun with the same inputs:** tenant, subscription, app, runtime, plan, prefix,
+   provider/route, and source/package versions. Active endpoints need a change window; setup has
    no checkpoint resume or automatic undo.
 3. **Verify the failed stage and complete acceptance checks.** Keep resource-group deletion,
    vault purge/recreation, encryption-credential removal, and shared-grant revocation out of
@@ -74,20 +69,17 @@ Existing credentials require explicit **Reuse** or **Replace**, not an automatic
 | Credentials or the source vault's permission model changed after approval | Stop competing changes and rerun selection/approval against the current state. Do not force an outdated cleanup plan. |
 | An encryption credential has an unsupported type, or a non-encryption credential cannot be read | Have the application owner review the credential and read permissions. Setup cannot safely preserve or interpret it and will not blindly reset the credential collection. |
 
-**Recover:** a failed key-reference/source-vault check leaves registered encryption credentials
-intact, but resources/settings may have changed. If registration already succeeded, choose **Reuse**
-with the printed certificate ID and the same prefix; another **Replace** requests another rotation.
+**Recover:** a failed key-reference check leaves registered encryption credentials intact, but
+resources or settings may have changed. If registration succeeded, choose **Reuse** with the
+printed certificate ID and same prefix.
 
-**Expected:** one approved application encryption credential. Cleanup removes only approved
-`AsymmetricX509Cert` / `Encrypt` entries, not vault objects or unrelated credentials.
-Coordinate maintenance and evaluation for every endpoint sharing the app; cached/in-flight
-requests can still use a retired key.
+**Expected:** one approved encryption credential. Cleanup removes only approved
+`AsymmetricX509Cert` / `Encrypt` entries. Coordinate every endpoint sharing the app.
 
 <a id="optional-front-door-deployments"></a>
 ## Multi-region Front Door deployments
 
-Build regional routing on top of a validated single-region endpoint by following the
-[Front Door guide](../../docs/FRONTDOOR.md), including its readiness endpoint and origin checks.
+Follow the [Front Door guide](../../docs/FRONTDOOR.md), including readiness and origin checks.
 
 - A 401/403/404 probe is unhealthy. Check the readiness path, origin host header, and profile-pinned
   network restriction. Never exempt SendOtp or disable Easy Auth.
@@ -111,10 +103,9 @@ registration. A supported Linux EP1 region can still have zero quota for your su
 5. Alternatively, choose another region only after checking its quota, service availability,
    and your residency and provider requirements. Review the updated deployment plan before approval.
 
-**Expected:** the approved quota is visible and large enough for the deployment. A submitted
-request alone is not enough. See [quota support](https://learn.microsoft.com/azure/quotas/quotas-overview).
-Do not change SKU, authentication, or provider credentials to bypass the error; rerun with reviewed
-inputs after quota is resolved, then validate the endpoint.
+**Expected:** the approved quota is visible and sufficient. See
+[quota support](https://learn.microsoft.com/azure/quotas/quotas-overview). Rerun with the reviewed
+inputs after quota is available.
 
 ## Service plan selection or availability fails
 
@@ -123,9 +114,8 @@ The parameter is required unattended. FC1 availability uses `az functionapp list
 EP1 uses the [ARM check below](#appservice-list-locations-rejects-ep1). Availability is plan-specific.
 FC1 has zero always-ready instances and a usage grant, not a zero-cost guarantee.
 
-**Fix:** follow [plan selection and migration rules](README.md#service-plan-selection).
-In-place FC1/EP1 switching is unsupported: use a different prefix, plus a dedicated app or an approved
-key-continuity plan, and validate before policy changes. A new prefix does not authorize key rotation.
+**Fix:** follow [plan selection and migration rules](README.md#service-plan-selection). Use a
+different prefix and a dedicated app or approved key-continuity plan. A new prefix does not authorize key rotation.
 Existing EP1 deployments use `-ServicePlan EP1`; setup checks actual SKU when tags are absent.
 Never remove tags to bypass this guard.
 
@@ -169,22 +159,16 @@ another Python runtime is not required to fix this check.
 
 ## A required Azure resource provider is not registered
 
-The current setup detects missing providers such as `Microsoft.Web` during read-only preflight
-and lists them in the resource plan instead of asking the customer to register them manually.
-After `Yes` (or explicit noninteractive approval), it registers only the six namespaces needed by
-this deployment in the supplied subscription. No registration occurs if approval is declined.
+Setup lists missing providers such as `Microsoft.Web` during preflight. After approval, it
+registers only the six required namespaces. Declining approval registers nothing.
 
-Already registered providers are skipped. `Registering` is not a failure: Azure registers each
-region separately, so setup proceeds when the needed region is exposed and retries recognized
-registration-propagation errors. Metadata polling is limited to 60 checks with 10-second pauses;
-regional propagation retries are limited to 12 attempts. An actively `Unregistering` provider is
-not reversed automatically.
+Registered providers are skipped. Setup proceeds from `Registering` when the region is exposed.
+Polling is limited to 60 checks at 10-second intervals and 12 regional propagation retries.
+It does not reverse `Unregistering`.
 
-If registration fails, inspect the original Azure CLI error. The account needs subscription-scoped
-resource-provider `/register/action` permission, generally included in Contributor or Owner.
-Setup cannot grant this permission or bypass a subscription policy. It stops before creating the
-certificate or deployment resources. Registrations already requested are left in place for a rerun;
-the script does not unregister services that other workloads might now use.
+If registration fails, inspect the Azure CLI error. The account needs subscription-scoped
+`/register/action`, generally included in Contributor or Owner. Setup leaves completed registration
+requests in place for the rerun.
 
 ## Azure CLI directory context does not match the selected tenant
 
@@ -206,10 +190,8 @@ after account selection. It does not run `az logout`, `az account clear`, or del
 
 ## The expected cached account or subscription is missing
 
-The account picker includes only enabled AzureCloud subscriptions associated with an Azure CLI
-**user** login. Disabled subscriptions, service-principal sessions, tenant-level entries, and
-other clouds are excluded. Refresh the CLI cache or choose device-code sign-in. A supplied
-subscription ID is never replaced with another subscription.
+The picker includes enabled AzureCloud subscriptions from an Azure CLI **user** login. Refresh
+the cache or use device-code sign-in. Setup never replaces a supplied subscription ID.
 
 For unattended setup, establish the user session first and verify both the tenant and subscription:
 
@@ -258,15 +240,11 @@ access to its SCM endpoint. Setup enables `SCM_DO_BUILD_DURING_DEPLOYMENT` and `
 without `WEBSITE_RUN_FROM_PACKAGE` during the build, and requests Azure remote build explicitly.
 It never installs Windows Python dependencies for the Linux app.
 
-SCM basic authentication remains disabled for both plans. The CLI uses Microsoft Entra authentication.
-For EP1, the built
-`site/wwwroot` snapshot must include the Python Functions dependency payload; an unbuilt source
-archive is rejected even when an upload command returned success. The built output is then stored
-in private Blob storage, and temporary remote-build settings are cleared.
+SCM basic authentication remains disabled. For EP1, `site/wwwroot` must contain the Python
+dependency payload; setup rejects unbuilt source, stores the built output in private Blob storage,
+and clears temporary build settings.
 
-If build, snapshot, publication, or startup fails after opening SCM ingress, setup attempts to
-disable public ingress again. An inability to close ingress is an explicit error requiring
-immediate administrator inspection. Do not bypass certificate errors or enable basic auth.
+After build or startup failure, setup closes public ingress. If that fails, inspect it immediately.
 
 ## Azure CLI warnings break JSON parsing
 
@@ -303,11 +281,9 @@ az rest --method get `
     --output json
 ```
 
-A 403 is a directory authorization, Conditional Access, or role-activation problem; Azure
-subscription Owner/Contributor does not fix it. Have the Entra administrator verify the user's
-effective application-management permissions and activate Privileged Role Administrator when
-the approved app-role grant requires it. Then rerun with the same reviewed inputs. Do not install
-or connect the Graph PowerShell SDK as a workaround, and do not paste access tokens into tickets.
+A 403 indicates directory authorization, Conditional Access, or role activation. Azure
+Owner/Contributor does not grant this access. Verify application-management permissions and
+Privileged Role Administrator activation, then rerun. Do not paste tokens into tickets.
 
 The Graph user ID is tracked for directory operations only. Azure role assignments continue to
 use the validated `oid` from the selected subscription's ARM access token.

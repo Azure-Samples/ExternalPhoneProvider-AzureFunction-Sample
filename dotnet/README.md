@@ -4,36 +4,29 @@
 
 [Documentation](../docs/README.md) | [Settings](#environment-configuration) | [Request behavior](#request-behavior) | [Source](#source)
 
-Implements the shared [contract](../docs/CONTRACT.md) with one `SendOtp` request pipeline and one
-selected provider per deployment. Target: .NET 8 isolated worker, Azure Functions v4.
+Implements the shared [contract](../docs/CONTRACT.md) with one provider per deployment.
+Target: .NET 8 isolated worker, Azure Functions v4.
 
 ## Setup and deployment
 
-**Sample deployment:** use the [five-step guide](../docs/GETTING-STARTED.md).
-Guided setup builds with the .NET 8 SDK and publishes the Function. Next, complete
+**Sample deployment:** follow the [five-step guide](../docs/GETTING-STARTED.md), then complete
 [provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
-The [guided provider list](../docs/ONBOARDING.md#provider-credential-names) covers a subset of
-the adapters in this folder.
 
 **Custom package development:** follow these steps from `dotnet/`:
 
-1. Create the [local settings below](#environment-configuration). For live integration, choose an
-   adapter's fixed `Name` from [Providers/](Src/Providers/), configure its endpoints/options, and
-   complete [provider authentication](../docs/ONBOARDING.md#complete-provider-authentication).
-   Select one provider explicitly.
+1. Create the [local settings below](#environment-configuration). Select an adapter's fixed `Name`
+   from [Providers/](Src/Providers/), configure it, and complete
+   [provider authentication](../docs/ONBOARDING.md#complete-provider-authentication).
 2. Build [dotnet.csproj](dotnet.csproj), run [xUnit tests](tests/Epp.Otp.Tests.csproj), and start
    Core Tools here, **on loopback only, without tunnels**; it has no Easy Auth.
-3. For manual deployment, publish this app to a compatible .NET isolated Function App.
-   Inspect the output and [.funcignore](.funcignore); the project excludes local settings, and
-   private keys must not be packaged. Complete the
-   [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist) before public
-   access. Keep Easy Auth enabled for SendOtp, then run
+3. For manual deployment, publish to a compatible .NET isolated Function App. Inspect the output
+   for private settings and complete the
+   [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist), then run
    [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint) to verify
    platform authentication.
 
-**Regional continuity:** use the [Front Door guide](../docs/FRONTDOOR.md) to implement and validate
-the readiness route and regional deployment for .NET. The recorded trials used JavaScript, so
-include .NET-specific package, startup, dependency, and telemetry checks.
+**Regional continuity:** use the [Front Door guide](../docs/FRONTDOOR.md) and include
+.NET-specific package, startup, dependency, and telemetry checks.
 
 ## Environment configuration
 
@@ -59,10 +52,9 @@ Replace placeholders and store credentials in the adapter's Key Vault secrets. E
 channel requires a valid endpoint; an invalid or missing endpoint returns an error without using
 the other channel.
 
-Core Tools loads `Values` into environment variables; direct worker execution and unit tests do not
-load local settings. [AppConfig.Read](Src/AppConfig.cs) reads them through `IEnv`. Restart after
-edits. Core Tools cannot resolve Key Vault references locally, so use only a local test PEM or
-base64 PEM. The [project](dotnet.csproj) excludes local settings from publish output.
+Core Tools loads `Values` into environment variables; direct worker execution and tests do not.
+Restart after edits. Use a local test PEM because Core Tools cannot resolve Key Vault references.
+The [project](dotnet.csproj) excludes local settings from publish output.
 
 In Azure, configure the same app settings and use a Key Vault reference for the private PEM.
 Provider credentials use managed identity, not a developer CLI login. Keep local evaluation on loopback.
@@ -79,10 +71,9 @@ enum tokens, or other deserialization errors can fail before `SendOtp`, its `ILo
 or its custom error response. Successfully bound requests retain application validation,
 privacy-safe logging, and response behavior. See [binding differences](../docs/CONTRACT.md#runtime-binding-differences).
 
-Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) for no-send validation:
-authentication and decryption still run, but request-path provider lookup, credentials, and HTTP do not.
-Live success waits for acceptance, **not handset receipt**; failures omit the nonce.
-Treat a timeout as uncertain; check the provider outcome before deciding whether to retry.
+Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) to validate
+authentication and decryption without a provider send. Live success confirms acceptance,
+**not handset receipt**. Check a timeout before retrying.
 
 For message/voice mapping, see the [Soprano delivery contract](../docs/CONTRACT.md#encrypteddeliverycontext-jwe)
 and [Telesign integration](../TECHNICAL.md#telesign-epp).

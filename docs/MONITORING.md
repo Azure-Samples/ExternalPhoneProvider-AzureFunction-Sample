@@ -4,13 +4,10 @@
 
 [Documentation](README.md) | [Collection diagnostics](APPLICATION-INSIGHTS.md) | [Log schema](LOGGING.md) | [Endpoint troubleshooting](../setup/docs/Troubleshooting.md#after-deployment-triage)
 
-This guide covers endpoint logs and alert configuration. Guided setup creates Application
-Insights and a Log Analytics workspace; the operations team chooses, configures, and tests
-notifications.
+Guided setup creates Application Insights and Log Analytics. Use this guide to query them and
+configure alerts.
 
-For **tenant authentication and potential abuse signals**, use
-[Microsoft Entra ID sign-in monitoring](SIGN-IN-MONITORING.md). Endpoint setup does not configure that pipeline;
-sign-in failures do not by themselves identify provider failures or prove OTP delivery.
+For identity signals, use [Microsoft Entra ID sign-in monitoring](SIGN-IN-MONITORING.md).
 
 For a first single-region deployment:
 
@@ -21,14 +18,12 @@ For a first single-region deployment:
 3. [Set up and test alerts](#5-set-up-notifications-and-alert-rules), including certificate
    reminders and cost ownership.
 
-For **missing data**, use [collection checks](#9-sampling-ingestion-gaps-privacy-and-validation).
-Additional guidance covers [multiple regions](#3-multiple-regions-and-cross-workspace-queries),
+For missing data, use [collection checks](#9-sampling-ingestion-gaps-privacy-and-validation).
+See also [multiple regions](#3-multiple-regions-and-cross-workspace-queries),
 [Workbook](#6-build-a-shared-operations-workbook), [availability checks](#7-availability-authenticated-functions-and-fc1),
-and [Front Door](#8-optional-azure-front-door-layer). Start with the single-region steps above.
+and [Front Door](#8-optional-azure-front-door-layer).
 
-These examples do not create monitors automatically. Review permissions, privacy, and charges
-before applying them. Thresholds and intervals are **starting points, not SLAs**; tune them to
-your deployment.
+Review permissions, privacy, and charges. Tune sample thresholds to the deployment.
 
 <a id="1-record-the-deployment-and-confirm-telemetry"></a>
 ## 1. Record the deployment
@@ -44,13 +39,10 @@ Keep a private inventory with one row per expected regional endpoint:
 | Expected traffic or authorized synthetic-test cadence | Decide whether missing data is actionable, including standby origins. |
 | Front Door profile, endpoint, origin group, and origin | Associate regional routing and health with the Function. |
 
-Build the expected inventory from the deployment record. Recent telemetry alone can miss an
-origin that has not reported.
+Build the inventory from the deployment record, not recent telemetry.
 
-[Guided setup](../setup/docs/README.md) creates the collection resources, not action groups,
-Workbooks, or alerts. [Verify the deployed collection configuration](APPLICATION-INSIGHTS.md#single-region-configuration);
-resource creation alone does not prove ingestion, and other deployment methods can differ.
-The template requests 30-day retention; check effective workspace/table retention and policy before changes.
+Guided setup does not create action groups, Workbooks, or alerts. Verify
+[collection](APPLICATION-INSIGHTS.md#single-region-configuration) and effective retention.
 
 <a id="find-the-linked-resources-in-the-portal"></a>
 ### Portal resources
@@ -66,20 +58,15 @@ The template requests 30-day retention; check effective workspace/table retentio
 
 ![Application Insights Overview showing the Logs workspace link with account and connection details redacted](images/onboarding/monitoring-workspace.png)
 
-These test-deployment screenshots hide identifiers and connection details. Names, regions, and
-layout may differ; navigation links do not prove successful traffic or delivery.
+Screenshots hide identifiers. Portal names and layout may differ.
 
-Keep connection strings and credentials private.
-`AppRequests`/`AppTraces` are not interchangeable with `FunctionAppLogs` or `AzureDiagnostics`.
-Diagnostic export alone does not prove request collection; platform metrics need no log export.
+Keep connection strings private. `AppRequests`/`AppTraces` are not interchangeable with
+`FunctionAppLogs` or `AzureDiagnostics`.
 See [pipelines and table names](APPLICATION-INSIGHTS.md#signals-tables-and-metrics-are-different-things).
 
-Use **Log Analytics workspace > Logs** for all KQL below. Application Insights'
-application-context query experience can instead use names such as `requests`,
-`traces`, `timestamp`, and `cloud_RoleName`; do not mix that schema with these
-workspace examples. Replace every angle-bracket placeholder with your private
-inventory value before running. `_ResourceId` in these application tables identifies
-the **Application Insights component**, not the Function App.
+Run the KQL below in **Log Analytics workspace > Logs** and replace every placeholder.
+Application Insights uses a different table schema. `_ResourceId` identifies the Application
+Insights component, not the Function App.
 
 Run this discovery query after a controlled authorized test. The examples use
 `SendOtp` as the request name; replace that literal everywhere if your observed
