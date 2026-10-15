@@ -21,12 +21,12 @@ Guided setup deploys **one regional endpoint** using JavaScript, C#, or Python.
 
 - JavaScript, C#, and Python implementations of one [HTTP and trust contract](docs/CONTRACT.md).
 - Guided Azure deployment with Easy Auth, Key Vault, and monitoring.
-- No-send evaluation for authentication and decryption checks.
+- Evaluation mode checks authentication and decryption without sending a message.
 - Built-in provider integrations and an [Add Twilio](docs/BRING-YOUR-OWN-PROVIDER.md) guide.
 
 ## Requirements
 
-- Use a separate test environment with a Microsoft Entra tenant, Azure subscription, app
+- Use a separate test environment with a Microsoft Entra ID tenant, Azure subscription, app
   registration, and unique resource name prefix.
 - Check [roles, permissions, tools, regional availability, and quota](setup/docs/README.md#prerequisites-for-step-2).
 - Plan for Azure, telemetry, and provider charges. The [cost estimate](docs/COST-CALCULATOR.md) is not a bill.
@@ -37,7 +37,8 @@ Guided setup deploys **one regional endpoint** using JavaScript, C#, or Python.
 ![Microsoft Entra ID sends an encrypted request through Easy Auth to a Function, which uses Key Vault and calls the phone provider](docs/images/single-region-architecture.png)
 
 *Easy Auth checks the Microsoft caller before the Function decrypts the request.
-Live success confirms provider acceptance. Confirm delivery separately. Evaluation sends nothing.
+Live success confirms provider acceptance. Confirm delivery separately. Evaluation validates the
+request without sending a message.
 See [architecture details](TECHNICAL.md#single-region-architecture).
 [Open the full-size diagram](docs/images/single-region-architecture.png).*
 

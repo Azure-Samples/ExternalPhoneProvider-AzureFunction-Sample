@@ -4,13 +4,19 @@
 
 [Documentation](docs/README.md) | [First deployment](docs/GETTING-STARTED.md) | [HTTP contract](docs/CONTRACT.md)
 
-This reference covers implementation details, app settings, and packages.
-Sections: [implementations](#implementations), [guided setup](#guided-epp-setup),
-[download](#download-a-function-zip), [build](#build-zips-locally),
-[HTTP details](#http-implementation-details), [settings](#configure-environment-variables),
-[built-in providers](#built-in-providers), [production readiness](#production-readiness),
-or [security](#security). For regional continuity, see
-[resiliency and business continuity](#resiliency-and-business-continuity).
+This reference covers implementation details, app settings, packages, and built-in providers.
+
+| Task | Section |
+| --- | --- |
+| Choose a runtime | [Implementations](#implementations) |
+| Understand guided setup | [Guided EPP setup](#guided-epp-setup) |
+| Download or build a package | [Download](#download-a-function-zip) or [build](#build-zips-locally) |
+| Review request processing | [HTTP implementation details](#http-implementation-details) |
+| Configure settings | [Environment variables](#configure-environment-variables) |
+| Configure Soprano or Telesign | [Built-in providers](#built-in-providers) |
+| Prepare for live use | [Production readiness](#production-readiness) |
+| Review trust boundaries | [Security](#security) |
+| Design regional continuity | [Resiliency and business continuity](#resiliency-and-business-continuity) |
 
 ## Single-region architecture
 
@@ -117,7 +123,7 @@ pwsh -File ./package-javascript.ps1 -OutputPath ./artifacts/epp-javascript-v2.zi
 <a id="the-design-in-one-line"></a>
 ## Request flow
 
-Microsoft Entra ID → Easy Auth → anonymous HTTP handler (`POST /api/SendOtp`, validate envelope + decrypt JWE) →
+Microsoft Entra ID → Easy Auth → Function handler (`POST /api/SendOtp`, validate envelope + decrypt JWE) →
 configured provider (API key or OAuth) → HTTP result with nonce on success.
 Only provider acceptance returns the nonce for live requests. Incoming `mode: 2` (evaluation) is the
 non-delivery path: after platform authentication, validate and decrypt, then echo the nonce without
@@ -197,8 +203,8 @@ The following settings are for local or manual deployment.
 
 Start from [sample settings](docs/local.settings.sample.json). Every `Values` entry is a string.
 
-Change `node` to `python` or `dotnet-isolated` as needed. Replace placeholders. The sample storage
-value requires **Azurite** and must not be copied to Azure.
+Set the runtime to `node`, `python`, or `dotnet-isolated`, then replace the placeholders. The
+sample storage value requires **Azurite** and is for local use only.
 
 Local settings supply environment variables, **not a serialized `AppConfig` or request model**.
 For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in JavaScript,
@@ -229,7 +235,8 @@ The provider timeout defaults to `1500` and is capped at `2500` milliseconds.
 
 Each live request uses the endpoint for its selected channel. Endpoints must be absolute HTTPS
 URLs with a hostname, valid port, no user information, and no fragment. Redirects are not followed.
-There is no shared endpoint fallback or automatic provider failover.
+Each channel uses only its configured endpoint. Provider failover requires the
+[advanced fallback design](docs/MULTI-PROVIDER-IMPLEMENTATION.md).
 
 Cache switches accept `true` or `false` and default to `true`. JavaScript and Python warm at startup
 and poll every 30 seconds. .NET warms once and refreshes on a cache miss. Disabling the selected
@@ -253,12 +260,13 @@ deployment summary. Initial creation uses `phone-provider-encryption`. Replaceme
 name, and reuse preserves the selected certificate's name and vault. The secret contains the
 certificate and its exportable RSA private key in PEM format. Do not reconstruct its URL from the
 certificate name or version. A new Key Vault certificate version does not automatically switch
-the Function or update Entra. See [certificate lifecycle](setup/docs/README.md#encryption-certificate-lifecycle).
+the Function or update Microsoft Entra ID. See
+[certificate lifecycle](setup/docs/README.md#encryption-certificate-lifecycle).
 
 Configure inbound issuer/audience/caller trust in **Easy Auth**, not these application variables.
 Incoming `tenantId`, `channel`, `mode` and `ttlSeconds` are request data and never override the
 configured provider or authentication. `channel` selects the configured SMS or voice endpoint.
-there is no deployment-level channel restriction. The legacy `EPP_PROVIDER_CHANNEL` setting is ignored.
+Every deployment can serve both configured channels. The legacy `EPP_PROVIDER_CHANNEL` setting is ignored.
 
 <a id="provider-specific-integration-details"></a>
 ## Built-in providers
@@ -284,7 +292,7 @@ The outbound managed identity first requests `api://AzureADTokenExchange/.defaul
 provider scope is used for the final token sent to `/messages/omnimsg`. The Function stores no
 Soprano client secret and does not forward the incoming Microsoft Entra ID token.
 Missing settings, blank tokens, and tokens with 30 seconds or less remaining fail before provider
-HTTP. There is no API-key fallback or provider retry.
+HTTP. Soprano uses OAuth only, and the adapter does not retry provider sends.
 
 For voice, the adapter extracts the first six consecutive digits from `message`, uses the request
 locale or `en-US`, and sends `beforePasswordText`, `password`, and `afterPasswordText` in
@@ -328,20 +336,21 @@ Before live use:
 
 ## Security
 
-**Easy Auth is the only caller-authentication gate before the anonymous Function.**
+**Easy Auth is the caller-authentication gate before the Function runs.**
 Follow the [exact trust checklist](docs/ONBOARDING.md#manual-deployment-trust-checklist) for HTTPS,
 issuer, audience, caller allowlist, and unauthenticated rejection. Never disable it or exempt SendOtp.
 There is no handler token validator or function-key fallback.
 
-JWE and its nonce prove no caller identity: anyone with the public key can encrypt.
+JWE encryption and the nonce do not identify the caller. Anyone with the public key can encrypt.
 Provider credentials authenticate outbound calls, not incoming requests. Vault access uses managed identity.
-Core Tools has no Easy Auth: bind locally to loopback without tunnels.
+Because Core Tools does not provide Easy Auth, bind local hosts to loopback without tunnels.
 [Deployed checks](docs/ONBOARDING.md#validate-the-deployed-endpoint) remain required after offline tests.
 
 ## Docs
 
 Use the [documentation index](docs/README.md) for setup, troubleshooting, operations, and advanced designs.
-For code work, keep the [HTTP contract](docs/CONTRACT.md) and [log schema](docs/LOGGING.md) together.
+For code changes, review both the [HTTP contract](docs/CONTRACT.md) and
+[log schema](docs/LOGGING.md).
 
 ## Contributing a language or provider
 

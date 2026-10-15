@@ -5,7 +5,7 @@
 
 [Documentation](README.md) | [Send OTP API](CONTRACT.md) | [Technical details](../TECHNICAL.md)
 
-Use this guide to add a Twilio adapter to one runtime.
+Add a Twilio adapter to one runtime.
 
 > [!NOTE]
 > Twilio is not included in the sample or configured by guided setup. Adding it requires code,

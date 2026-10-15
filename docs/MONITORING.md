@@ -4,7 +4,7 @@
 
 [Documentation](README.md) | [Application Insights](APPLICATION-INSIGHTS.md) | [Log fields](LOGGING.md) | [Troubleshooting](../setup/docs/Troubleshooting.md#after-deployment-triage)
 
-Guided setup creates Application Insights and Log Analytics. Use this page to confirm telemetry,
+Guided setup creates Application Insights and Log Analytics. Start here to confirm telemetry,
 review failures and latency, and create alerts.
 
 | Task | Start here |
@@ -16,7 +16,7 @@ review failures and latency, and create alerts.
 | Monitor several regions | [Multiple regions](#multiple-regions) |
 | Create notifications | [Alerts](#alerts) |
 | Diagnose missing data | [Collection and data quality](#collection-and-data-quality) |
-| Monitor Microsoft Entra sign-ins | [Sign-in monitoring](SIGN-IN-MONITORING.md) |
+| Monitor Microsoft Entra ID sign-ins | [Sign-in monitoring](SIGN-IN-MONITORING.md) |
 
 Run queries only after an [authorized test](ONBOARDING.md#validate-the-deployed-endpoint).
 Keep phone numbers, OTPs, request bodies, credentials, tokens, nonces, and raw provider responses
@@ -167,7 +167,8 @@ AppTraces
 ```
 
 Credential refresh can run outside a request. A successful evaluation does not prove provider
-credentials work, and no warning does not prove they are healthy when collection or refresh is off.
+credentials work. When collection or refresh is off, verify credential health directly instead
+of relying on warnings.
 
 <a id="runtime-specific-log-discovery"></a>
 ## Runtime log formats
@@ -280,8 +281,8 @@ Tune all sample thresholds to measured traffic and costs.
 
 Assign owners for certificate renewal, provider credentials, alert routing, telemetry retention,
 and cost. Follow the [certificate lifecycle runbook](../setup/docs/README.md#encryption-certificate-lifecycle).
-A new Key Vault certificate version does not update the Function's pinned reference or Microsoft
-Entra ID registration automatically.
+A new Key Vault certificate version does not update the Function's pinned reference or the
+Microsoft Entra ID registration automatically.
 
 Guided setup does not create action groups, alerts, Workbooks, availability tests, or certificate
 contacts. Cost budgets notify but do not stop spending.
@@ -334,7 +335,7 @@ access restrictions and Easy Auth enabled while investigating routing.
   ingestion delay, filters, sampling, caps, retention, and exporter configuration.
 - **Sampling changes counts.** Use `ItemCount` where available. Weighted totals remain estimates.
 - **Pipelines differ.** Host requests, worker logs, resource metrics, diagnostics, and Microsoft
-  Entra sign-ins are separate data sources.
+  Entra ID sign-ins are separate data sources.
 - **Protect customer data.** Do not collect phone numbers, OTPs, bodies, encrypted payloads,
   tokens, credentials, private keys, nonces, or raw provider responses.
 - **Test the monitor.** Validate the query, rule identity, action group, notification, resolution,

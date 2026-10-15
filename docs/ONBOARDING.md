@@ -2,8 +2,7 @@
 
 [Documentation](README.md) | [Deployment guide](GETTING-STARTED.md) | [Troubleshooting](../setup/docs/Troubleshooting.md)
 
-Use this page after deployment to connect the provider, validate the endpoint, and hand it to
-operations.
+After deployment, connect the provider, validate the endpoint, and assign operational owners.
 
 | Task | Go to |
 | --- | --- |
@@ -47,7 +46,7 @@ renewal.
 | --- | --- | --- |
 | Customer tenant ID | Microsoft Entra admin center > Overview | `-TenantId` |
 | Azure subscription ID | Azure portal > Subscriptions | `-SubscriptionId` |
-| Endpoint application client ID | Entra > App registrations > application > Overview | `-ApplicationId` |
+| Endpoint application client ID | Microsoft Entra admin center > App registrations > application > Overview | `-ApplicationId` |
 | Azure region | Available Linux FC1/EP1 region that meets quota and organization requirements | `-Location` |
 | Provider | Approved Security Store integration | `-Provider telesign` or `soprano` |
 | Provider route | Provider-confirmed Global or EU route | `-EndpointRegion global` or `eu` |
@@ -259,5 +258,5 @@ the deployed validation checks.
 The handler has no fallback token validator. Never use `common` or `organizations` as the issuer,
 derive trust from request fields, or exempt `SendOtp`.
 
-Keep the app registration's `tokenEncryptionKeyId` null. Microsoft Entra bearer-token encryption
+Keep the app registration's `tokenEncryptionKeyId` null. Microsoft Entra ID bearer-token encryption
 is separate from the JWE delivery payload and is not supported by this sample.

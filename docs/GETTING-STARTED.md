@@ -157,7 +157,7 @@ Complete the [approved endpoint checks](ONBOARDING.md#validate-the-deployed-endp
    both provider acceptance and receipt of the SMS or voice call. Acceptance alone is not proof of delivery.
 4. Check that the request and relevant logs appear in Application Insights.
 
-Use Microsoft's approved caller and test procedure for these checks; an ordinary Azure CLI token
+Use Microsoft's approved caller and test procedure for these checks. An ordinary Azure CLI token
 cannot represent that caller. Activate the endpoint after every required check passes. If a live
 send times out, investigate its outcome before trying again because the provider may already have
 accepted it.
@@ -170,7 +170,7 @@ They save the existing policy, apply the approved endpoint URL and application c
 preserve other settings, and validate the result.
 
 Repeat for each authentication method you intend to enable. SMS and voice can share the same
-Function endpoint URL and application client ID; no additional setup run is needed for the second channel.
+Function endpoint URL and application client ID. No additional setup run is needed for the second channel.
 
 Before handing over, confirm:
 

@@ -18,7 +18,7 @@ Target: Python 3.11, Azure Functions v4, Python v2 programming model.
    [providers/](src/providers/), configure it, and complete
    [provider authentication](../docs/ONBOARDING.md#complete-provider-authentication).
 2. Use a virtual environment, install [requirements.txt](requirements.txt) and pytest, and run
-   [tests/](tests/). Start Core Tools here, **on loopback only, without tunnels**; it has no Easy Auth.
+   [tests/](tests/). Start Core Tools here, **on loopback only, without tunnels**. It has no Easy Auth.
 3. For manual deployment, publish to a compatible Linux Python Function with dependencies or
    remote build. Inspect the package for private settings, complete the
    [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist), and run
@@ -47,11 +47,11 @@ For local evaluation, start Azurite and replace the test-key placeholder in this
 
 For live delivery, use the [shared settings table](../TECHNICAL.md#configure-environment-variables)
 for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter-specific options.
-Keep values as strings, including `EPP_PROVIDER_TIMEOUT_MS: "1500"`. Replace placeholders;
+Keep values as strings, including `EPP_PROVIDER_TIMEOUT_MS: "1500"`. Replace the placeholders.
 Store API keys in provider-named Key Vault secrets. Each selected channel requires a valid
-endpoint; an invalid or missing endpoint returns an error without using the other channel.
+endpoint. An invalid or missing endpoint returns an error without using the other channel.
 
-Core Tools loads `Values` into `os.environ`; direct Python and pytest do not. Restart after edits.
+Core Tools loads `Values` into `os.environ`. Direct Python and pytest do not. Restart after edits.
 Use a local test PEM because Core Tools cannot resolve Key Vault references locally. Keep Azurite
 settings local.
 
@@ -61,9 +61,8 @@ Provider secrets use managed identity, not a developer CLI login. Keep local eva
 ## Request behavior
 
 `POST /api/SendOtp` follows the [shared request/response contract](../docs/CONTRACT.md#1-http-api).
-Easy Auth authenticates the caller. JWE decryption, nonce values, and request fields serve other
-parts of the contract. The handler leaves incoming `Authorization` processing to Easy Auth and
-does not echo it.
+Easy Auth authenticates the caller. The handler then validates and decrypts the payload. It never
+forwards or returns the incoming `Authorization` header.
 
 Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) to validate
 authentication and decryption without a provider send. Live success confirms acceptance,
@@ -85,21 +84,21 @@ The [cache switches and defaults](../TECHNICAL.md#provider-settings-and-credenti
 Disabling the selected cache removes startup preparation, polling, and cross-request reuse,
 not live credential acquisition.
 
-With caching enabled, API keys use Key Vault and `cachetools.TTLCache`; OAuth uses the
-managed-identity/Entra SDKs. A daemon polls every 30 seconds. See the
+With caching enabled, API keys use Key Vault and `cachetools.TTLCache`. OAuth uses managed identity
+and the Azure Identity SDK. A daemon polls every 30 seconds. See the
 [credential caching guide](../TECHNICAL.md#provider-settings-and-credential-caching).
 
 | Source | Purpose |
 |---|---|
 | [function_app.py](function_app.py) | Typed request orchestration and direct provider selection |
 | [src/config.py](src/config.py) | Shared deployment settings |
-| [src/models.py](src/models.py) | Typed Entra payload, delivery context, provider request and result dataclasses |
+| [src/models.py](src/models.py) | Typed Microsoft Entra ID payload, delivery context, provider request and result dataclasses |
 | [src/jwe.py](src/jwe.py) | Pinned JWE decryption and typed delivery-context conversion |
 | [src/provider.py](src/provider.py) | Shared HTTPS transport, timeout handling and endpoint status mapping |
 | [src/credentials.py](src/credentials.py) | `CredentialTokenService`, `ApiKeyCache` and `AccessTokenCache` |
 | [src/otp_log.py](src/otp_log.py) | Fixed standard-logging event definitions and immutable request context |
 | [src/providers/](src/providers/) | Provider-owned credentials, requests and response mapping |
-| [src/secrets.py](src/secrets.py) | Key Vault transport; bundle caching belongs to `ApiKeyCache` |
+| [src/secrets.py](src/secrets.py) | Key Vault transport. Bundle caching belongs to `ApiKeyCache`. |
 
 Add a provider by subclassing `PhoneProviderBase`, declaring its credential specification, and
 implementing `build_request` and `map_response`. Return `ProviderResult` with the coarse endpoint

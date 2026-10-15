@@ -1,9 +1,9 @@
-# Monitor Microsoft Entra sign-ins
+# Monitor Microsoft Entra ID sign-ins
 
 [Documentation](README.md) | [Function monitoring](MONITORING.md)
 
-Use this page to investigate sign-ins and create identity alerts. Function execution, provider
-acceptance, and delivery are monitored separately.
+Sign-in records explain identity activity. Monitor Function execution, provider acceptance, and
+delivery through their own data sources.
 
 | Task | Start here |
 | --- | --- |
@@ -229,7 +229,7 @@ Missing evidence does not mean fewer failures.
 
 ## Privacy, licensing, and costs
 
-- Microsoft Entra roles and Azure RBAC are separate.
+- Microsoft Entra ID roles and Azure RBAC are separate.
 - External tenants have different subscription and export arrangements.
 - Risk and premium report features can require additional licensing and may not be available in
   external tenants.

@@ -4,8 +4,8 @@
 
 [Documentation](README.md) | [Monitoring](MONITORING.md) | [Log fields](LOGGING.md)
 
-Use this page when telemetry is missing, incomplete, or unclear. For everyday queries and alerts,
-start with [monitoring](MONITORING.md).
+Start here when telemetry is missing or incomplete. For everyday queries and alerts, use
+[monitoring](MONITORING.md).
 
 | Task | Go to |
 | --- | --- |
@@ -16,7 +16,7 @@ start with [monitoring](MONITORING.md).
 | Diagnose missing data | [Coverage checks](#coverage-checks) |
 | Review privacy and sampling | [Limits](#limits) |
 
-Function telemetry covers execution, timing, and logs. Microsoft Entra sign-ins and provider
+Function telemetry covers execution, timing, and logs. Microsoft Entra ID sign-ins and provider
 delivery evidence are separate.
 
 <a id="how-telemetry-reaches-application-insights"></a>

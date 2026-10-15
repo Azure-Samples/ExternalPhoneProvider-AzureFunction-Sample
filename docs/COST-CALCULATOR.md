@@ -14,7 +14,7 @@ authentication steps by calling code. Apply provider rates to estimate a budget.
 | 3 | [Calculate the estimate](#convert-activity-into-a-cost-estimate) |
 | 4 | [Confirm provider rates](#confirm-provider-rates) |
 
-The `authenticationDetails` data used by this guide is currently available through the
+The report uses `authenticationDetails`, which is currently available through the
 [Microsoft Graph beta API](https://learn.microsoft.com/en-us/graph/api/resources/authenticationdetail?view=graph-rest-beta).
 Review the beta API and script before each planning exercise. The script matches masked trailing
 digits to registered phone methods to derive the calling code.
@@ -28,10 +28,10 @@ account must be allowed to consent to or use these Microsoft Graph delegated per
 - `UserAuthenticationMethod.Read.All`
 
 Reading other users' phone methods requires a
-[supported Entra role](https://learn.microsoft.com/en-us/graph/api/authentication-list-phonemethods?view=graph-rest-1.0#permissions),
-Authentication Administrator receives masked phone numbers; unresolved calling codes appear as `Unknown`.
+[supported Microsoft Entra ID role](https://learn.microsoft.com/en-us/graph/api/authentication-list-phonemethods?view=graph-rest-1.0#permissions).
+Authentication Administrators receive masked phone numbers. Unresolved calling codes appear as `Unknown`.
 
-Access also depends on Microsoft Entra licensing, roles, and retention. The script exports
+Access also depends on Microsoft Entra ID licensing, roles, and retention. The script exports
 aggregated calling codes, methods, and counts, not full phone numbers. Protect the output.
 
 Create `C:\temp` before running the script, or change the `Export-Csv` path to an
