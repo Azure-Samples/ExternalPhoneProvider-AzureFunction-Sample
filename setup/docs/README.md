@@ -292,6 +292,12 @@ Setup reads `keyCredentials` before deployment and identifies **`type=Asymmetric
 It displays each key ID, certificate thumbprint, name, and validity. Signing/verification
 certificates are not encryption candidates, and unsupported encryption credential types stop setup.
 
+![Certificate reuse identifier map: match the app encryption credential key ID to the exact Key Vault certificate version; setup resolves its backing secret for the Function without downloading the private key.](../../docs/images/onboarding/certificate-reuse.png)
+
+*Original identifier map; [open the scalable illustration](../../docs/images/onboarding/certificate-reuse.svg).
+For **Reuse**, supply the two top inputs. The Function's secret reference is an output,
+not a secret value to copy. Follow the selection and validity checks below.*
+
 | Existing encryption credentials | Choice | Result after successful deployment |
 |---|---|---|
 | None | Creation is automatic; optional `-CertificateAction Create`. | Register one certificate from the setup vault. |

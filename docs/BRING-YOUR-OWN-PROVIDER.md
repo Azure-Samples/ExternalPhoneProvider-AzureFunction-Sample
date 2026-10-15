@@ -5,12 +5,21 @@ an encrypted phone number and one-time passcode message. Your endpoint verifies 
 decrypts the details, and either evaluates the request without sending or uses your phone service.
 It then responds to Entra ID. **Your team owns the connection to that service.**
 
-See the [request-path illustration](../TECHNICAL.md#single-region-architecture) for the
-authentication boundary, separate decryption key, and evaluation/live branches.
-
 Before deploying, ask your tenant administrator to confirm
 [eligibility, testing, and activation with Microsoft](ONBOARDING.md#before-purchasing-or-deploying).
 Deploying the endpoint alone does not enable tenant policy.
+
+## End-to-end endpoint request
+
+![UML sequence showing Microsoft Entra ID calling Easy Auth, the Function validating and decrypting, and alternative evaluation and live paths. Only live calls reach the provider; success returns through Easy Auth after evaluation or recognized acceptance.](images/request-sequence.png)
+
+*Original UML sequence; [open the scalable diagram](images/request-sequence.svg).
+Solid arrows are calls; dashed arrows are replies. The two branches are alternatives.
+This illustrates the [shared contract](CONTRACT.md#1-http-api), not a completed live test.*
+
+The success response acknowledges evaluation or provider acceptance, **not recipient delivery**.
+The steps below explain each interaction; the
+[architecture view](../TECHNICAL.md#single-region-architecture) shows the separate key and credential paths.
 
 <a id="1-establish-caller-authentication"></a>
 

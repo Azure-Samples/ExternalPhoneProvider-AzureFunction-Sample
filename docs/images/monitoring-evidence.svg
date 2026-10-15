@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="550" viewBox="0 0 960 550" role="img" aria-labelledby="title description">
+  <title id="title">Pick the evidence for your question</title>
+  <desc id="description">For authentication outcomes and configuration changes, use Microsoft Entra ID sign-in and audit logs. For Function execution, latency and runtime events, use Application Insights and its workspace. For provider acceptance, delivery and charges, use provider records and separate recipient checks. These are different evidence sources, not interchangeable proof.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#245b91"/></marker>
+    <style>
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #172b40; font-size: 18px; }
+      .title { font-size: 30px; font-weight: 700; }
+      .heading { font-size: 22px; font-weight: 650; }
+      .line { stroke: #245b91; stroke-width: 2; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="960" height="550" fill="white"/>
+  <text x="32" y="43" class="title">Pick the evidence for your question</text>
+  <text x="32" y="77">Different systems answer different questions. None substitutes for the others.</text>
+
+  <rect x="32" y="112" width="280" height="106" rx="10" fill="#f3effa" stroke="#8d75b0"/>
+  <text x="56" y="151" class="heading">Did authentication</text>
+  <text x="56" y="182" class="heading">succeed?</text>
+  <rect x="340" y="112" width="280" height="106" rx="10" fill="#f1f6fc" stroke="#7595b7"/>
+  <text x="364" y="151" class="heading">Did the endpoint</text>
+  <text x="364" y="182" class="heading">run?</text>
+  <rect x="648" y="112" width="280" height="106" rx="10" fill="#fff7e8" stroke="#ae8741"/>
+  <text x="672" y="151" class="heading">Did the message</text>
+  <text x="672" y="182" class="heading">arrive?</text>
+  <path d="M172 218V258" class="line"/>
+  <path d="M480 218V258" class="line"/>
+  <path d="M788 218V258" class="line"/>
+
+  <rect x="32" y="260" width="280" height="188" rx="10" fill="#f3effa" stroke="#8d75b0"/>
+  <text x="56" y="297" class="heading">Microsoft Entra ID</text>
+  <text x="56" y="331">Sign-in and audit logs</text>
+  <text x="56" y="364">User / workload sign-ins</text>
+  <text x="56" y="393">and configuration changes</text>
+  <text x="56" y="428" font-weight="650">Not proof of a provider send</text>
+
+  <rect x="340" y="260" width="280" height="188" rx="10" fill="#f1f6fc" stroke="#7595b7"/>
+  <text x="364" y="297" class="heading">Function telemetry</text>
+  <text x="364" y="331">Application Insights</text>
+  <text x="364" y="364">Request outcome + latency</text>
+  <text x="364" y="393">Runtime-specific events</text>
+  <text x="364" y="428" font-weight="650">Not proof of handset receipt</text>
+
+  <rect x="648" y="260" width="280" height="188" rx="10" fill="#fff7e8" stroke="#ae8741"/>
+  <text x="672" y="297" class="heading">Provider + recipient</text>
+  <text x="672" y="331">Approved provider records</text>
+  <text x="672" y="364">Acceptance and delivery</text>
+  <text x="672" y="393">Billing and recipient checks</text>
+  <text x="672" y="428" font-weight="650">Acceptance is not delivery</text>
+
+  <text x="32" y="495">Match scope, UTC time and verified IDs; do not assume IDs are identical across systems.</text>
+  <text x="32" y="527">Setup creates Function telemetry resources, not tenant log exports or alert rules.</text>
+</svg>
