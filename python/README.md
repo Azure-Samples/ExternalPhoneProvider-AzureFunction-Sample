@@ -1,46 +1,34 @@
 # External Phone Provider Function: Python (v2 model)
 
+[Documentation](../docs/README.md) | [Settings](#environment-configuration) | [Request behavior](#request-behavior) | [Source](#source)
+
 Implements the shared [contract](../docs/CONTRACT.md) with a direct Azure Function flow and one
 selected provider per deployment. Target: Python 3.11, Azure Functions v4, Python v2 programming model.
 
 ## Setup and deployment
 
-**Customer deployment:** start with the [root guide](../README.md). Guided setup performs the
-Azure remote build, publishes this runtime, and configures its Azure settings. Continue with
-[provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication);
-do not install Python locally or republish as another onboarding step.
+**Deploying the sample?** Use the [five-step guide](../docs/GETTING-STARTED.md).
+Guided setup builds remotely and publishes; no local Python installation or second deployment.
+Continue with [provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
+[Guided provider support](../docs/ONBOARDING.md#provider-credential-names) is narrower than the adapter set.
 
-**The steps below are optional developer/manual deployment work.** Guided providers are
-Telesign and Soprano; other adapters require separate integration.
+**Developing a custom package?** Follow these steps from `python/`:
 
-For multiple regional origins behind one URL, see [manual Front Door onboarding](../docs/FRONTDOOR.md).
-No Front Door deployment script or readiness handler is supplied. The reported multi-region trials
-used JavaScript; validate an equivalent Python readiness implementation and deployment separately.
+1. Create the [local settings below](#environment-configuration). For live integration, choose a
+   fixed provider ID from [providers/](src/providers/), configure its endpoints/options, and
+   complete [provider authentication](../docs/ONBOARDING.md#complete-provider-authentication).
+   No provider is selected by default.
+2. Use a virtual environment, install [requirements.txt](requirements.txt) and pytest, and run
+   [tests/](tests/). Start Core Tools here, **on loopback only, without tunnels**; it has no Easy Auth.
+3. For manual deployment, publish this app to a compatible Linux Python Function with dependencies
+   or a supported remote build. Inspect [.funcignore](.funcignore) and the package for private
+   settings/keys. Complete the [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist)
+   before public access: it is the only caller-authentication gate; never disable it or exempt SendOtp.
+   Run [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint);
+   offline tests do not verify platform authentication.
 
-1. Follow [customer onboarding](../docs/ONBOARDING.md). Set `EPP_PROVIDER_NAME` to the selected
-	provider id (`<adapter-id>` is only a placeholder).
-2. Consult the selected provider in [src/providers/](src/providers/) for required credentials and
-	options. For API-key authentication, store credentials in Key Vault under the provider-owned secret names
-	and grant the Function's managed identity *Key Vault Secrets User*. For OAuth, complete the
-	[provider-administrator handoff](../docs/ONBOARDING.md#soprano-provider-administrator-handoff)
-	instead of creating API-key secrets. Configure the matching endpoints/options for either mode.
-3. Base private local settings on [../docs/local.settings.sample.json](../docs/local.settings.sample.json),
-	replacing placeholders and selecting `FUNCTIONS_WORKER_RUNTIME=python`. Put settings at the
-	app root beside [host.json](host.json). Configure decryption from the
-	[shared catalog](../docs/CONTRACT.md#4-configuration-app-settings--env) and caller trust through
-	[Easy Auth](../docs/ONBOARDING.md#2-provision-encryption-and-deployment-trust), the only authentication
-	gate before the anonymous Function. Enable `requireAuthentication=true`,
-	`unauthenticatedClientAction=Return401` and `requireHttps=true`; pin the trusted tenant issuer,
-	endpoint-app `allowedAudiences` and a nonempty `allowedApplications` list for the authorized Microsoft
-	caller. Do not exclude SendOtp. There is no backup application token validation; never expose the
-	endpoint to the public internet with Easy Auth disabled or bypassed.
-4. Use a virtual environment, install [requirements.txt](requirements.txt) and pytest, then run the
-	offline [tests/](tests/) from this folder. Start the local Functions host from this app root.
-	Core Tools has no Easy Auth: bind only to loopback, with no tunnels or public forwarding.
-5. Publish this folder to a compatible Linux Python Function App with dependencies or a supported
-	remote build. Inspect the package and apply [.funcignore](.funcignore); keep local settings and keys private.
-	Offline tests cover application behavior, not platform authentication; run the separate
-	[deployed security checks](../docs/ONBOARDING.md#4-package-deploy-and-verify).
+**Optional:** [Front Door](../docs/FRONTDOOR.md) has no supplied deployment script/readiness handler.
+Trials used JavaScript; independently implement and validate Python readiness and regional deployment.
 
 ## Environment configuration
 
@@ -59,14 +47,11 @@ For local evaluation, start Azurite and replace the test-key placeholder in this
 }
 ```
 
-For live delivery, add `EPP_PROVIDER_NAME`, `EPP_PROVIDER_SMS_ENDPOINT`,
-`EPP_PROVIDER_VOICE_ENDPOINT`, and matching provider authentication settings to `Values`.
-Each request's `channel` selects its required endpoint; the URLs may differ.
-A missing, empty, or invalid selected endpoint fails closed without fallback.
-Add `EPP_PROVIDER_ACCOUNT_NAME` and any adapter-specific options only when required. Keep values as
-strings, including optional `EPP_PROVIDER_TIMEOUT_MS: "1500"`. Replace placeholders; provider API
-keys belong in the provider-named Key Vault secrets, not this file. See the
-[complete variable table](../TECHNICAL.md#configure-environment-variables).
+For live delivery, use the [shared settings table](../TECHNICAL.md#configure-environment-variables)
+for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter-specific options.
+Keep values as strings, including `EPP_PROVIDER_TIMEOUT_MS: "1500"`. Replace placeholders;
+API keys belong in provider-named Key Vault secrets, not this file.
+A missing/invalid selected channel endpoint fails closed without fallback.
 
 Core Tools loads `Values` into `os.environ`. Direct Python execution and pytest do not automatically
 read local settings. [read_config](src/config.py) returns an `AppConfig` object; the handler/engine
@@ -82,27 +67,17 @@ tests on an ordinary workstation, and bind local hosts only to loopback.
 
 ## Request behavior
 
-`POST /api/SendOtp` uses the same request and trust boundaries as the other runtimes. Incoming
-`mode`, `channel`, `ttlSeconds` and `tenantId` are request data, not deployment authentication settings.
-Easy Auth authenticates and authorizes the caller before the anonymous handler validates the envelope
-and decrypts the JWE. Incoming `Authorization` is not parsed or echoed by the handler. JWE does not
-authenticate the caller: anyone with the public key can encrypt a request, and a fixed nonce is not authentication.
+`POST /api/SendOtp` follows the [shared request/response contract](../docs/CONTRACT.md#1-http-api).
+Easy Auth authenticates; JWE decryption, nonce values, and request fields do not.
+The handler never parses or echoes incoming `Authorization`.
 
-For any provider, use incoming `mode: 2` or `mode: "evaluation"` to evaluate without sending.
-Platform authentication on Azure, handler validation and decryption run, but provider lookup, provider Key Vault
-reads and provider HTTP do not. No provider configuration or diagnostic environment flag is required.
-Live requests use the configured provider's API key or OAuth token and
-await acceptance before returning the nonce; failures omit it. Acceptance is not handset delivery.
-Platform/key prerequisites and HTTP outcomes are defined in the
-[contract](../docs/CONTRACT.md#evaluation-no-provider-send).
+Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) for no-send validation:
+authentication and decryption still run, but request-path provider lookup, credentials, and HTTP do not.
+Live success waits for acceptance, **not handset receipt**; failures omit the nonce.
+Never blindly retry a timeout.
 
-For Soprano voice, the adapter extracts the first six-digit passcode from the rendered message. It
-uses the request's nonblank locale as the language, falling back to `en-US`, and sends fixed gender
-`1` and loop `2`. These values require no additional environment settings. Soprano SMS continues to
-forward the rendered message unchanged.
-
-Telesign SMS also forwards the rendered message unchanged. Telesign voice comma-separates each
-six-digit numeric run that is not part of a longer number and repeats the complete paced message twice.
+For message/voice mapping, see the [Soprano delivery contract](../docs/CONTRACT.md#encrypteddeliverycontext-jwe)
+and [Telesign integration](../TECHNICAL.md#telesign-epp).
 
 ## Source
 
@@ -115,9 +90,9 @@ For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHT
 Python emits fixed messages with `event_name` and other logging extras, not a universal JSON
 request summary. Verify which properties the host/export pipeline preserves.
 
-`EPP_KEY_VAULT_CACHE_ENABLED` controls API-key caching; `EPP_ACCESS_TOKEN_CACHE_ENABLED` controls
-OAuth caching. Both default to `true`. Setting the selected switch to `false` acquires credentials
-per live request, with no startup preparation, polling, or cross-request reuse.
+The [cache switches and defaults](../docs/CONTRACT.md#credential-caching-and-refresh) apply here.
+Disabling the selected cache removes startup preparation, polling, and cross-request reuse,
+not live credential acquisition.
 
 With caching enabled, worker initialization selects `ApiKeyCache` or `AccessTokenCache` from the provider's credential specification.
 Only the selected cache starts: API keys use Key Vault and `cachetools.TTLCache`; access tokens use

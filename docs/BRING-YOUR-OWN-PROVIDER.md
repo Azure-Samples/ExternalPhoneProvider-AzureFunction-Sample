@@ -1,5 +1,7 @@
 # BYOT integration: the Entra ID request and response
 
+[Documentation](README.md) | [Exact HTTP contract](CONTRACT.md) | [Runtime guides](README.md#develop)
+
 **Microsoft Entra ID** sends your **External Phone Provider (EPP)** endpoint
 an encrypted phone number and one-time passcode message. Your endpoint verifies the caller,
 decrypts the details, and either evaluates the request without sending or uses your phone service.
@@ -8,6 +10,10 @@ It then responds to Entra ID. **Your team owns the connection to that service.**
 Before deploying, ask your tenant administrator to confirm
 [eligibility, testing, and activation with Microsoft](ONBOARDING.md#before-purchasing-or-deploying).
 Deploying the endpoint alone does not enable tenant policy.
+
+Follow [caller verification](#1-verify-the-caller), [decryption](#2-read-and-decrypt-the-request),
+[evaluation/live handling](#3-evaluate-or-send), and [responses](#4-respond-to-entra-id).
+Then [register your integration](#where-to-add-your-integration) and [validate before activation](#before-activation).
 
 <a id="1-establish-caller-authentication"></a>
 

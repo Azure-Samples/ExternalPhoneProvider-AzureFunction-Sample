@@ -1,15 +1,16 @@
 # External Phone Provider: Technical Reference
 
-For the single-region customer deployment flow, start with the
-[five-step setup guide](docs/GETTING-STARTED.md).
+[Documentation](docs/README.md) | [First deployment](docs/GETTING-STARTED.md) | [HTTP contract](docs/CONTRACT.md)
+
+Use this page for implementation choices, settings, and packages.
+Jump to [implementations](#implementations), [guided setup](#guided-epp-setup),
+[download](#download-a-function-zip), [build](#build-zips-locally),
+[settings](#configure-environment-variables), [provider details](#provider-specific-integration-details),
+or [security](#security).
 
 Azure Front Door is an [optional manual multi-region design](docs/FRONTDOOR.md), not a feature
 enabled by the single-region setup script. Its additional readiness endpoint is not shipped in
 the release packages, and regional failover does not change the SendOtp contract.
-
-Use this reference when developing or customizing the endpoint. Each language folder implements
-the same [HTTP contract](docs/CONTRACT.md), with provider-specific adapters, environment settings,
-and managed-identity access to credentials.
 
 ## Single-region architecture
 
@@ -151,8 +152,6 @@ Only provider acceptance returns the nonce for live requests. Incoming `mode: 2`
 non-delivery path: after platform authentication, validate and decrypt, then echo the nonce without
 calling a provider.
 
-See [docs/CONTRACT.md](docs/CONTRACT.md) for the full specification every implementation follows.
-
 Request `tenantId`, `channel`, `mode` and `ttlSeconds` are request data, not extra environment settings.
 The trusted tenant issuer, endpoint-app audience and authorized Microsoft caller are configured in Easy Auth,
 not in application environment settings or incoming request data.
@@ -287,7 +286,7 @@ omits that header on live sends and does not forward it from incoming requests. 
 lookup entirely, rather than invoking Telesign shutter mode.
 
 Responses normalize `reference_id` and `status.code`/`status.description` internally; provider
-metadata is not exposed in the public nonce response. [Application logs](docs/CONTRACT.md#application-logs)
+metadata is not exposed in the public nonce response. [Application logs](docs/LOGGING.md#safe-fields-and-identifiers)
 include only the provider HTTP status, mapped status/outcome and the bounded raw provider reference
 ID as `providerMessageId` for support lookup, never the raw response or description. Existing numeric success codes
 are retained (SMS: 200, 203, 290-292; Voice: 100-103). EPP code `3001` ("Message in progress"),
@@ -299,34 +298,20 @@ account access with Telesign before production.
 
 ## Security
 
-**Easy Auth (App Service Authentication) is the only caller-authentication gate, before the anonymous
-Function.** Enable it with `requireAuthentication=true`, `unauthenticatedClientAction=Return401` and
-`requireHttps=true`. Configure the trusted tenant issuer and `allowedAudiences` for the endpoint app,
-and a **nonempty `allowedApplications`** list pinned to the authorized Microsoft caller application ID.
-Do not exclude the SendOtp path. The handler does not parse or validate bearer tokens, and there is
-no backup application validation or function-key gate. **Never expose this endpoint to the public
-internet with Easy Auth disabled or bypassed.** See [platform setup](docs/ONBOARDING.md#2-provision-encryption-and-deployment-trust).
+**Easy Auth is the only caller-authentication gate before the anonymous Function.**
+Follow the [exact trust checklist](docs/ONBOARDING.md#manual-deployment-trust-checklist) for HTTPS,
+issuer, audience, caller allowlist, and unauthenticated rejection. Never disable it or exempt SendOtp;
+there is no handler token validator or function-key fallback.
 
-JWE decryption protects the payload but **does not authenticate the caller**: anyone with the public key can
-encrypt a request. A nonce echo, including a fixed nonce, is not caller authentication. Provider API
-keys are read from **Key Vault** via **managed identity**; they authenticate the outbound provider call,
-not the inbound request.
-
-Core Tools does not provide Easy Auth. Local execution is unauthenticated: bind only to loopback,
-with no tunnels or public forwarding. Offline tests cover application behavior, not platform
-authentication; [separate deployed security checks](docs/ONBOARDING.md#4-package-deploy-and-verify) are required.
+JWE and its nonce prove no caller identity: anyone with the public key can encrypt.
+Provider credentials authenticate outbound calls, not incoming requests; vault access uses managed identity.
+Core Tools has no Easy Auth: bind locally to loopback without tunnels.
+[Deployed checks](docs/ONBOARDING.md#validate-the-deployed-endpoint) remain required after offline tests.
 
 ## Docs
 
-- **[README.md](README.md)**: sample overview and architecture.
-- **[Setup guide](docs/GETTING-STARTED.md)**: single-region customer onboarding.
-- **[docs/ONBOARDING.md](docs/ONBOARDING.md)**: customer value sources, provider handoffs, validation, and optional manual deployment.
-- **[docs/FRONTDOOR.md](docs/FRONTDOOR.md)**: optional manual multi-region onboarding and observed failover limitations.
-- **[docs/CONTRACT.md](docs/CONTRACT.md)**: the language-agnostic contract every implementation follows.
-- **[Application logs](docs/CONTRACT.md#application-logs)**: separate service and completion events,
-  and the meaning of Microsoft, Function and provider identifier fields.
-- **[Application Insights](docs/APPLICATION-INSIGHTS.md)** and **[monitoring](docs/MONITORING.md)**:
-  collection, runtime-aware queries, alert setup, and ongoing operations.
+Use the [documentation index](docs/README.md) for setup, troubleshooting, operations, and advanced designs.
+For code work, keep the [HTTP contract](docs/CONTRACT.md) and [log schema](docs/LOGGING.md) together.
 
 ## Contributing a language or provider
 

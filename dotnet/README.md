@@ -1,51 +1,36 @@
 # External Phone Provider Function: C# (.NET isolated worker)
 
+[Documentation](../docs/README.md) | [Settings](#environment-configuration) | [Request behavior](#request-behavior) | [Source](#source)
+
 Implements the shared [contract](../docs/CONTRACT.md) with one `SendOtp` request pipeline and one
 selected provider per deployment. Target: .NET 8 isolated worker, Azure Functions v4.
 
 ## Setup and deployment
 
-**Customer deployment:** start with the [root guide](../README.md). Guided setup builds with the
-.NET 8 SDK, publishes this runtime, and configures its Azure settings. Continue with
-[provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication);
-do not start a local host or republish as another onboarding step.
+**Deploying the sample?** Use the [five-step guide](../docs/GETTING-STARTED.md).
+Guided setup builds with the .NET 8 SDK and publishes. Continue with
+[provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication),
+not a local host or second deployment.
+[Guided provider support](../docs/ONBOARDING.md#provider-credential-names) is narrower than the adapter set.
 
-**The steps below are optional developer/manual deployment work.** Guided providers are
-Telesign and Soprano; other adapters require separate integration.
+**Developing a custom package?** Follow these steps from `dotnet/`:
 
-For multiple regional origins behind one URL, see [manual Front Door onboarding](../docs/FRONTDOOR.md).
-No Front Door deployment script or readiness handler is supplied. The reported multi-region trials
-used JavaScript; validate an equivalent .NET readiness implementation and deployment separately.
+1. Create the [local settings below](#environment-configuration). For live integration, choose an
+   adapter's fixed `Name` from [Providers/](Src/Providers/), configure its endpoints/options, and
+   complete [provider authentication](../docs/ONBOARDING.md#complete-provider-authentication).
+   No provider is selected by default.
+2. Build [dotnet.csproj](dotnet.csproj), run [xUnit tests](tests/Epp.Otp.Tests.csproj), and start
+   Core Tools here, **on loopback only, without tunnels**; it has no Easy Auth.
+3. For manual deployment, publish this app to a compatible .NET isolated Function App.
+   Inspect the output and [.funcignore](.funcignore); the project excludes local settings, and
+   private keys must not be packaged. Complete the
+   [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist) before public
+   access: it is the only caller-authentication gate; never disable it or exempt SendOtp.
+   Run [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint);
+   offline tests do not verify platform authentication.
 
-1. Follow [customer onboarding](../docs/ONBOARDING.md). Set `EPP_PROVIDER_NAME` to the selected
-	adapter's `Name` (`<adapter-id>` is only a placeholder).
-2. Consult the selected adapter in [Src/Providers/](Src/Providers/) for required credentials and
-	options. For API-key authentication, store credentials in Key Vault under the provider's secret names
-	and grant the Function's managed identity *Key Vault Secrets User*. For OAuth, complete the
-	[provider-administrator handoff](../docs/ONBOARDING.md#soprano-provider-administrator-handoff)
-	instead of creating API-key secrets. Configure the matching endpoints/options for either mode.
-3. Base private local settings on [../docs/local.settings.sample.json](../docs/local.settings.sample.json),
-	replacing placeholders and selecting `FUNCTIONS_WORKER_RUNTIME=dotnet-isolated`. Put settings
-	at the app root beside [host.json](host.json). Configure decryption from the
-	[shared catalog](../docs/CONTRACT.md#4-configuration-app-settings--env) and caller trust through
-	[Easy Auth](../docs/ONBOARDING.md#2-provision-encryption-and-deployment-trust), the only authentication
-	gate before the anonymous Function. Enable `requireAuthentication=true`,
-	`unauthenticatedClientAction=Return401` and `requireHttps=true`; pin the trusted tenant issuer,
-	endpoint-app `allowedAudiences` and a nonempty `allowedApplications` list for the authorized Microsoft
-	caller. Do not exclude SendOtp. There is no backup application token validation; never expose the
-	endpoint to the public internet with Easy Auth disabled or bypassed.
-
-	`SendOtp` uses Azure Functions `[FromBody]` binding to create `EntraSendOtpPayload`. Malformed JSON,
-	invalid enum tokens and other deserialization failures are rejected by the Functions binding/runtime
-	before `SendOtp` runs. Those failures therefore do not produce application `ILogger` events or the
-	handler's custom error response body; platform diagnostics and responses apply instead.
-4. Build [dotnet.csproj](dotnet.csproj), run the offline xUnit suites in
-	[tests/Epp.Otp.Tests.csproj](tests/Epp.Otp.Tests.csproj), and start the local Functions host from this folder.
-	Core Tools has no Easy Auth: bind only to loopback, with no tunnels or public forwarding.
-5. Publish this app folder to a compatible .NET isolated Function App. Inspect the package: both
-	[.funcignore](.funcignore) and the project protect local settings; private keys must not be included.
-	Offline tests cover application behavior, not platform authentication; run the separate
-	[deployed security checks](../docs/ONBOARDING.md#4-package-deploy-and-verify).
+**Optional:** [Front Door](../docs/FRONTDOOR.md) has no supplied deployment script/readiness handler.
+Trials used JavaScript; independently implement and validate .NET readiness and regional deployment.
 
 ## Environment configuration
 
@@ -64,14 +49,11 @@ For local evaluation, start Azurite and replace the test-key placeholder in this
 }
 ```
 
-For live delivery, add `EPP_PROVIDER_NAME`, `EPP_PROVIDER_SMS_ENDPOINT`,
-`EPP_PROVIDER_VOICE_ENDPOINT`, and matching provider authentication settings to `Values`.
-Each request's `channel` selects its required endpoint; the URLs may differ.
-A missing, empty, or invalid selected endpoint fails closed without fallback.
-Add `EPP_PROVIDER_ACCOUNT_NAME` and adapter-specific options only when required. Optional
-`EPP_PROVIDER_TIMEOUT_MS` is a string such as `"1500"`. Replace placeholders; store provider credentials
-under the adapter's Key Vault secret names, not in local settings. See the
-[complete variable table](../TECHNICAL.md#configure-environment-variables).
+For live delivery, use the [shared settings table](../TECHNICAL.md#configure-environment-variables)
+for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter-specific options.
+Keep values as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"1500"`.
+Replace placeholders; credentials belong in the adapter's Key Vault secrets, not this file.
+A missing/invalid selected channel endpoint fails closed without fallback.
 
 Core Tools loads `Values` into environment variables. [AppConfig.Read](Src/AppConfig.cs) reads them
 through `IEnv`; direct worker execution and unit tests do not automatically load local settings.
@@ -87,28 +69,22 @@ or the offline tests' injected environment and secret resolver for local develop
 
 ## Request behavior
 
-`POST /api/SendOtp` uses the same request and trust boundaries as the other runtimes. Incoming
-`mode`, `channel`, `ttlSeconds` and `tenantId` are request data, not deployment authentication settings.
-Easy Auth authenticates and authorizes the caller before the anonymous handler validates the payload
-and decrypts the JWE. Incoming `Authorization` is not parsed or echoed by the handler. JWE does not
-authenticate the caller: anyone with the public key can encrypt a request, and a fixed nonce is not authentication.
-Requests that bind successfully retain the application validation, PII-safe logging and response lifecycle.
+`POST /api/SendOtp` follows the [shared request/response contract](../docs/CONTRACT.md#1-http-api).
+Easy Auth authenticates; JWE decryption, nonce values, and request fields do not.
+The handler never parses or echoes incoming `Authorization`.
 
-For any provider, use incoming `mode: 2` or `mode: "evaluation"` to evaluate without sending.
-Platform authentication on Azure, handler validation and decryption run, but provider lookup, provider Key Vault
-reads and provider HTTP do not. No provider configuration or diagnostic environment flag is required.
-Live requests use the configured provider's API key or OAuth token and
-await acceptance before returning the nonce; failures omit it. Acceptance is not handset delivery.
-Platform/key prerequisites and HTTP outcomes are defined in the
-[contract](../docs/CONTRACT.md#evaluation-no-provider-send).
+**.NET binding runs first:** `[FromBody]` creates `EntraSendOtpPayload`. Malformed JSON, invalid
+enum tokens, or other deserialization errors can fail before `SendOtp`, its `ILogger` events,
+or its custom error response. Successfully bound requests retain application validation,
+privacy-safe logging, and response behavior. See [binding differences](../docs/CONTRACT.md#runtime-binding-differences).
 
-For Soprano voice, the adapter extracts the first six-digit passcode from the rendered message. It
-uses the request's nonblank locale as the language, falling back to `en-US`, and sends fixed gender
-`1` and loop `2`. These values require no additional environment settings. Soprano SMS continues to
-forward the rendered message unchanged.
+Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) for no-send validation:
+authentication and decryption still run, but request-path provider lookup, credentials, and HTTP do not.
+Live success waits for acceptance, **not handset receipt**; failures omit the nonce.
+Never blindly retry a timeout.
 
-Telesign SMS also forwards the rendered message unchanged. Telesign voice comma-separates each
-six-digit numeric run that is not part of a longer number and repeats the complete paced message twice.
+For message/voice mapping, see the [Soprano delivery contract](../docs/CONTRACT.md#encrypteddeliverycontext-jwe)
+and [Telesign integration](../TECHNICAL.md#telesign-epp).
 
 ## Source
 
@@ -152,7 +128,7 @@ shared-acquisition behavior applies here. Evaluation remains independent.
 | [Src/EntraSendOtpPayload.cs](Src/EntraSendOtpPayload.cs) | Bound request model, strict channel/mode converters and semantic validation |
 | [Src/JweDeliveryContext.cs](Src/JweDeliveryContext.cs) | Pinned JWE decryption and decrypted delivery context |
 | [Src/CredentialTokenService.cs](Src/CredentialTokenService.cs) | Provider-supplied retrieval, one expiring `MemoryCache` value and startup warmup |
-| [Src/OtpLog.cs](Src/OtpLog.cs) | Source-generated, strongly typed [structured logging events](../docs/CONTRACT.md#application-logs) |
+| [Src/OtpLog.cs](Src/OtpLog.cs) | Source-generated, strongly typed [structured logging events](../docs/LOGGING.md#event-sequence) |
 | [Src/PhoneProviderBase.cs](Src/PhoneProviderBase.cs) | Provider extension contract and shared typed JSON/HTTP transport |
 | [Src/Providers/](Src/Providers/) | Provider identity, credential delegation and API-specific request/response protocols |
 | [Src/SecretResolver.cs](Src/SecretResolver.cs) | Key Vault transport; `ISecretResolver.ResolveAsync` accepts cancellation |

@@ -1,18 +1,22 @@
 # Add conservative primary-to-secondary provider fallback
 
-You can adapt this application to try a secondary provider **only when the primary is known
-not to have accepted the message**. Keep one URL for Microsoft Entra ID, `/api/SendOtp`, with a primary
-account and a secondary account for the same SMS channel. You choose their order according to
-your approved account policy; these roles do not imply a vendor ranking or recommendation.
-The caller does not select an account or supply a provider header.
+[Documentation](README.md) | [Normal deployment](GETTING-STARTED.md) | [Provider interface](BRING-YOUR-OWN-PROVIDER.md)
 
-The sample still ships with one provider per deployment and **no provider fallback**. This guide
-describes customer code you must implement and review. A timeout, lost response or generic
-provider error is not proof of nonacceptance: in those cases, do not automatically send again.
+**The sample has no provider fallback.** This walkthrough requires customer code, durable state,
+provider-specific approval, and separate testing. Keep one `/api/SendOtp` URL for Microsoft Entra ID
+and a server-owned primary/secondary order for the same SMS channel, not caller-selected accounts
+or a vendor ranking.
 
-For a normal deployment, follow the [five-step setup guide](GETTING-STARTED.md) instead. This is an advanced
-developer walkthrough: it requires custom code, durable operation state, provider-specific
-approval, and separate testing. It is not another step in guided onboarding.
+Try a secondary **only with proof that the primary did not accept**. Timeouts, lost responses,
+and generic errors are not that proof; never automatically resend on those signals.
+
+Follow [policy](#1-set-a-fixed-provider-order-and-a-deny-by-default-policy),
+[account configuration](#2-configure-and-prevalidate-both-accounts),
+[credential isolation](#3-give-each-context-its-own-credential-service-and-lifecycle),
+[durable state](#4-add-durable-operation-state-before-enabling-fallback),
+[orchestration](#5-integrate-one-guarded-fallback-into-the-handler),
+[deadline](#6-enforce-one-aggregate-deadline), and [validation](#7-validate-offline-then-deploy-only-after-separate-approval).
+[.NET/Python pointers](#net-and-python-integration-pointers) are not implemented fallback.
 
 ## 1. Set a fixed provider order and a deny-by-default policy
 
@@ -307,16 +311,13 @@ store faults; block external network. Verify:
 - Evaluation returns before operation claims/provider calls; incomplete/decryption failures remain
   errors. Credentials, endpoints and wire responses stay isolated between accounts.
 
-An offline policy-model experiment can check those branches, but a fake classifier does not
-prove any real provider's nonacceptance semantics, and a fake store does not prove distributed
-durability. Routing/isolation tests alone are **not fallback tests**. No production
-nonacceptance classifier is supplied here; keep response-based fallback disabled until reviewed.
+Fake classifiers/stores cannot prove provider nonacceptance or distributed durability.
+Routing/isolation tests alone are **not fallback tests**. No production classifier is supplied;
+keep response-based fallback disabled until reviewed.
 
-Use one Function App/package and the existing `/api/SendOtp` entry point. Deploy new code for the
-orchestrator, classifier, durable-store integration or code-owned policy changes. Validate
-startup-loaded configuration changes and perform a controlled restart. For secret rotation,
-verify cache refresh; update pinned references explicitly. Repeating an unchanged approved test
-or editing Markdown needs no redeployment.
+Deploy one app/package at `/api/SendOtp` for code-owned policy, orchestrator, classifier, or store changes.
+Validate startup configuration on controlled restart. Verify cache refresh for rotation and update
+pinned references explicitly. Unchanged approved tests or Markdown edits need no redeployment.
 
 Preserve inbound authentication and origin/network restrictions, including any Front Door
 forwarding. Regional failover is separate from provider fallback. Before live use, review

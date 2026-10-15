@@ -1,5 +1,7 @@
 # Monitoring setup and sample queries
 
+[Documentation](README.md) | [Collection diagnostics](APPLICATION-INSIGHTS.md) | [Log schema](LOGGING.md) | [Endpoint troubleshooting](../setup/docs/Troubleshooting.md#after-deployment-triage)
+
 Use this guide to find your endpoint's logs and set up alerts. Guided setup creates Application
 Insights and a Log Analytics workspace, but **you still need to configure and test notifications**.
 
@@ -16,9 +18,10 @@ For your first single-region deployment:
 3. [Set up and test alerts](#5-set-up-notifications-and-alert-rules), including certificate
    reminders and cost ownership.
 
-The multi-region queries, shared Workbook, and Front Door sections are optional.
-You do not need them to find single-region logs. For collection and identity details, see
-[Application Insights](APPLICATION-INSIGHTS.md).
+For **missing data**, use [collection checks](#9-sampling-ingestion-gaps-privacy-and-validation).
+Optional: [multiple regions](#3-multiple-regions-and-cross-workspace-queries),
+[Workbook](#6-build-a-shared-operations-workbook), [availability checks](#7-availability-authenticated-functions-and-fc1),
+and [Front Door](#8-optional-azure-front-door-layer). None is needed to find single-region logs.
 
 These examples do not create monitors automatically. Review permissions, privacy, and charges
 before applying them. Thresholds and intervals are **starting points, not SLAs**; tune them to
@@ -58,9 +61,8 @@ The template requests 30-day retention; check effective workspace/table retentio
 
 ![Application Insights Overview showing the Logs workspace link with account and connection details redacted](images/onboarding/monitoring-workspace.png)
 
-These are real portal views of an existing test deployment, with identifying information and
-connection details permanently hidden. Resource names, regions, and portal layouts may differ.
-The links show where to navigate; they do not prove that test traffic or delivery succeeded.
+These test-deployment screenshots hide identifiers and connection details. Names, regions, and
+layout may differ; navigation links do not prove successful traffic or delivery.
 
 Keep connection strings and credentials private.
 `AppRequests`/`AppTraces` are not interchangeable with `FunctionAppLogs` or `AzureDiagnostics`.
@@ -86,10 +88,8 @@ AppRequests
 | order by LastSeen desc
 ```
 
-Read access is required on every workspace queried. Give operators only the
-necessary resource/workspace access; saving a Workbook does not grant its readers
-access to its data. Cross-workspace alert evaluation also needs access to each
-workspace under the rule's configured identity.
+Grant only required read access on **each workspace**. Workbook sharing does not grant data access;
+alert evaluation needs its own identity's access, not the author's.
 
 ### Run a first query and read the results
 
@@ -144,16 +144,10 @@ AppRequests
 | order by TimeGenerated asc
 ```
 
-`ItemCount` accounts for the telemetry items represented by a sampled record.
-Weighted counts and percentiles remain estimates when sampling is active; they
-cannot recover telemetry that was never ingested. Empty buckets are **no data**,
-not zero failures or 100% availability. `Success` is the instrumented request
-outcome, not evidence that a phone received an OTP.
-
-Both evaluation and live calls can return HTTP 200. These request-table statistics
-combine them unless your deployed instrumentation provides a verified classification.
-Use the JavaScript service-event query below for a separate view; do not infer
-live delivery from the HTTP status.
+`ItemCount` weights sampled records; counts/percentiles remain estimates, not recovery of lost data.
+Empty buckets mean **no data**, not zero failures or availability. `Success` is a request outcome,
+not handset receipt. HTTP 200 includes both evaluation and live calls; use
+[classified service events](#separate-evaluated-accepted-and-failed-completions) where verified.
 
 ### Failure status breakdown
 
@@ -396,12 +390,11 @@ collection before creating alerts. Missing events require investigation, not a h
 .NET host OpenTelemetry does not initialize a direct worker exporter, and malformed .NET binding
 can fail before handler events. See [collection configuration](APPLICATION-INSIGHTS.md#what-the-checked-in-sample-configures).
 
-For an incident, use the host `OperationId`/invocation ID and whichever application request ID
-is actually exported. Keep raw Microsoft/provider support IDs distinct; not every runtime
-exports the provider reference. Never use OTPs/nonces or message bodies as correlation keys.
-Look for a correlated `request_failed` event's stage/reason and endpoint status, then the
-separate provider-response event's upstream status. A provider `200` can precede a body-read
-timeout and Function `504`; it is not necessarily a successful invocation.
+For incidents, correlate `request_failed` stage/reason/status with provider-response events.
+Use the exported host `OperationId`/invocation and application request IDs, not OTPs, nonces, or bodies.
+Keep Microsoft/provider IDs distinct; some runtimes omit provider references.
+An upstream `200` can precede a body-read timeout and Function `504`.
+See [event order and identifier provenance](LOGGING.md).
 
 `credential_refresh_failed` also differs operationally: JavaScript/Python have a polling
 refresh loop, while .NET emits this event on failed startup/cache-fill acquisition and has no
@@ -411,22 +404,17 @@ health check.
 
 ## 5. Set up notifications and alert rules
 
-Have an operator review and create these resources in a nonproduction environment
-first. Rule creation requires appropriate write permissions; data access alone is
-not enough. Agree on ownership, severity, escalation, and maintenance handling.
+Start in nonproduction with an operator who has rule-write permissions, not just data access.
+Agree ownership, severity, escalation, and maintenance handling.
 
 ### Action groups
 
-In **Azure Monitor > Alerts > Action groups > Create**, select the resource group,
-name, and processing region appropriate to your residency policy. Add an on-call
-email receiver and, if required, a secured incident-management integration. Prefer
-a notification path that does not depend on the OTP provider being monitored.
-Use the common alert schema where supported and send a test notification before
-attaching production rules. A test notification verifies routing, not that an
-alert condition actually evaluates correctly.
+In **Azure Monitor > Alerts > Action groups > Create**, choose the resource group, name, and
+residency-appropriate processing region. Add on-call email and any secured incident integration;
+avoid depending on the monitored OTP provider. Use the common alert schema where supported.
+Test notification routing before attaching production rules; that test does not verify the alert query.
 
-For multi-region deployments, decide whether the action group should use global
-or supported regional processing, and ensure an incident in one app region cannot
+For multiple regions, choose global/supported regional processing so one failed app region cannot
 disable the only response path. See [action group setup][action-groups].
 
 ### Metric alerts
@@ -530,17 +518,13 @@ Add query panels using the correct workspace scope:
    that parser is verified; otherwise show the runtime-specific validated view.
 5. Relevant Function/dependency metric charts, current alerts, and deployment context.
 
-For one region, select one workspace/component/role. For several regions, use
-explicit workspace sources or a carefully scoped shared workspace and retain the
-regional breakdown. Add time/resource parameters for interactive investigation;
-replace hardcoded query windows when wiring a time parameter so it actually
-controls every source. Keep scheduled-alert queries independent of Workbook-only
-parameters. Do not color an empty panel green.
+Scope to the chosen workspace/component/role; multiple regions need explicit sources or scoped
+shared-workspace queries with regional grouping. Bind time/resource parameters into every source,
+replacing hardcoded windows. Scheduled alerts cannot depend on Workbook-only parameters.
+**Do not color an empty panel green.**
 
-Save to an appropriate resource group, grant Workbook access to the operations
-team, and verify readers also have data access. Keep private resource identifiers,
-query exports, and screenshots out of public documentation. See
-[Workbook authoring][workbooks].
+Save to the approved resource group and verify both Workbook and data access for readers.
+Keep identifiers, exports, and screenshots private. See [Workbook authoring][workbooks].
 
 ## 7. Availability, authenticated Functions, and FC1
 

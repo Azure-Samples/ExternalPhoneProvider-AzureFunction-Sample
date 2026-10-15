@@ -1,7 +1,14 @@
 # External Phone Provider Function: Language-Agnostic Contract
 
+[Documentation](README.md) | [Implementation walkthrough](BRING-YOUR-OWN-PROVIDER.md) | [Settings and packages](../TECHNICAL.md)
+
 This defines the shared contract for [JavaScript](../javascript/), [Python](../python/) and
 [.NET](../dotnet/). See [production limitations](#production-limitations) before production use.
+
+Jump to [request/response](#1-http-api), [HTTP outcomes](#2-outcome--http-status-mapping),
+[provider contract](#3-provider-contract), [settings](#4-configuration-app-settings--env),
+[caching](#credential-caching-and-refresh), [required behaviors](#5-required-behaviors),
+[logs](#application-logs), or [tests](#6-lightweight-tests).
 
 > **Naming.** EPP means **External Phone Provider**. App settings use the `EPP_` prefix; the
 > request and delivery models are `Envelope`, `DeliveryContext` and provider-neutral OTP delivery.
@@ -286,7 +293,7 @@ the transport result and returns a normalized provider result. Raw API-specific 
 by the Function and never enters public responses or logs.
 
 This model is internal: do not serialize it into the endpoint response or logs. The
-[request logger](#application-logs) selects only the provider HTTP status, a recognized normalized
+[request logger](LOGGING.md) selects only the provider HTTP status, a recognized normalized
 status, the mapped outcome and a bounded raw provider message ID; descriptions and raw
 metadata remain private. Public HTTP responses still expose only the existing
 nonce/correlation/status or sanitized error contract.
@@ -478,143 +485,13 @@ Do not log SDK exception details or tokens. No cache retries/deduplicates provid
 
 ### Application logs
 
-JavaScript emits JSON service records with an immutable request context. Python uses the standard
-`logging` pipeline: `otp_log.py` defines fixed event IDs, names, levels and fields, while an immutable
-`LoggerAdapter` context supplies the Function and Microsoft trace identifiers. The configured
-logging provider owns Python output formatting and export. Neither runtime manually builds a mutable
-comprehensive request summary; each invocation ends with a fixed `request_completed` event.
+See the [application log reference](LOGGING.md) for event order, allowlisted fields, identifier
+provenance, levels, and runtime formats. Each invocation emits fixed events ending in
+`request_completed`, not a mutable request summary. Evaluation emits no provider events.
+Keep bodies, nonces, credentials, and raw exceptions out of every pipeline.
 
-Likewise, .NET uses the standard `ILogger` pipeline instead of manually serializing JSON. `OtpLog`
-defines source-generated events with stable IDs and names, while `ILogger.BeginScope` supplies
-`FunctionName`, `FunctionRequestId`, `FunctionInvocationId`, `MsClientRequestId`,
-`MsCorrelationId` and `MsCorrelationIdSource`. The configured logging provider owns output
-formatting and export. .NET emits `request_completed` as an ordinary typed event rather than a
-mutable comprehensive summary. JavaScript follows the same fixed-event model while retaining its
-existing JSON field names.
-
-A successful live request in each runtime emits:
-
-`request_received`, `payload_validated` (`envelope_validated` in JavaScript),
-`delivery_context_decrypted`, `provider_selected`,
-`provider_credential_resolution_started`, `provider_credential_resolved`,
-`provider_request_build_started`, `provider_request_built`, `provider_request_started`,
-`provider_response_received`, `provider_response_processed`, `response_prepared`,
-`request_completed`.
-
-Failures emit `request_failed` with fixed `FailureStage`, `FailureReason` and `HttpStatus` values.
-Provider results retain the coarse endpoint `Outcome` plus a safe diagnostic classification:
-`provider_http_error`, `provider_rejected`, `unrecognized_provider_status`,
-`missing_provider_message_id` or `invalid_provider_json`. The structured
-`provider_response_processed` event includes this classification together with the upstream HTTP
-status and normalized provider status; raw provider descriptions and bodies remain excluded.
-Credential refresh failures use `credential_refresh_failed`; unexpected unclassified failures use
-`unexpected_error`. Typed event arguments are explicitly allowlisted and never include request
-bodies, decrypted delivery fields, credentials, provider response bodies, query strings or private
-exception messages. Endpoint values contain only scheme, host/port and path. Evaluation omits all
-provider events and emits `evaluation_completed`.
-
-A successful live request emits these separate service events:
-
-| Service event | Safe information recorded |
-|---|---|
-| `request_received` | Function invocation and available raw Microsoft trace IDs under their `x-ms-*` names; no raw body or arbitrary headers. |
-| `envelope_validated` / `payload_validated` | Allowlisted body metadata: validated payload type, normalized `channel`, `evaluation` and optional `ttlSeconds`. |
-| `delivery_context_decrypted` | Decryption completed; no plaintext fields, JWE or key ID. |
-| `provider_selected` | Registered provider and its authentication mode. |
-| `provider_credential_resolution_started` | OAuth client-assertion or Key Vault credential source, with explicitly named raw OAuth application/identity/tenant IDs. |
-| `provider_credential_resolved` | Credential resolution and usability checks completed, with elapsed time; no secret, token, assertion or claims. |
-| `provider_request_build_started` | The provider is preparing the outbound request. |
-| `provider_request_built` | Allowlisted HTTP method, final endpoint scheme/host/port/API path, HTTPS and disabled redirects; no query string, authorization headers or body. |
-| `provider_request_started` | The outbound send is beginning, with method, sanitized endpoint and timeout. |
-| `provider_response_received` | Actual upstream HTTP status; emitted before response-body reading completes. |
-| `provider_response_processed` | Mapped provider status/outcome, fixed failure classification and duration. Raw provider descriptions and bodies are excluded. |
-| `response_prepared` | Response status and booleans indicating nonce/correlation inclusion, not their values or the response body. |
-
-Body metadata is built from validated fields, **not** from a body dump with a few sensitive
-properties removed. Unknown request properties, `tenantId`, locale/risk data and all decrypted
-fields remain excluded. An invalid envelope never contributes unvalidated type or TTL values.
-
-`providerCredentialSource` is `managed_identity_client_assertion` for the app-token path and
-`key_vault` for API-key providers. Resolution may use cached credentials: these events do not claim
-a Key Vault network fetch or a fresh identity/token exchange occurred. `providerCredentialElapsedMs`
-covers resolution plus the existing credential checks, not a separately enforced deadline. SDK
-diagnostics remain suppressed as before; logging adds no token acquisition, secret reads or retries.
-
-`provider_request_built` describes the provider request, not creation of a new physical HTTP connection
-or a new HTTP client in every runtime. `providerEndpoint` uses the **final** provider URL, which can
-differ from the configured base URL, but records only scheme + host/port + API path. For example,
-`https://provider.example/epp/voice?key=secret` is logged as `https://provider.example/epp/voice`.
-Userinfo, the entire query string and fragments are excluded. Use provider-approved paths that do
-not embed secrets or personal data; path segments are not redacted. This does not alter the outbound
-URL or its required query parameters. Standard HTTP verbs are logged in uppercase; custom or invalid
-values are represented as `other` without changing the request sent.
-
-`response_prepared` is emitted on success **and failure** immediately before returning the handler
-response. It does not claim the host has serialized/transmitted that response or Microsoft received
-it; consult platform request telemetry for transport completion. Evaluation emits
-`evaluation_completed` instead of provider events, then `response_prepared` and `request_completed`,
-without resolving provider configuration, credentials or HTTP. Failures emit the fixed
-`request_failed` event with a safe stage, reason and HTTP status.
-A parsed provider rejection uses `provider_response_processed` with its non-success outcome and
-fixed failure reason.
-
-In JavaScript and Python, every service event carries the Function request/invocation IDs, the Microsoft trace IDs available
-at that point. JavaScript also carries known channel/evaluation/provider context; Python supplies
-selected context through its logging adapter and event arguments. The initial event can
-only know header trace IDs; a valid envelope can subsequently supply the selected correlation.
-The generated Function request ID joins these events even when Microsoft IDs are absent or change
-from header to envelope. The identifiers are intentionally not named simply `requestId` or
-`correlationId` in logs:
-
-| Log field | Source and meaning |
-|---|---|
-| `functionName` | Runtime function name: `SendOtp` in JavaScript/.NET, `send_otp` in Python. The HTTP route remains `/api/SendOtp` in every runtime. |
-| `functionRequestId` | Generated by this handler. Matches `requestId` in failure responses; it is not Microsoft's request ID. |
-| `functionInvocationId` | Azure Functions host invocation ID. Null for direct handler calls without a host context. |
-| `x-ms-client-request-id` | Raw Microsoft per-attempt ID from the header of the same name, not the generated fallback used by dispatch. |
-| `x-ms-correlation-id` | Raw selected Microsoft correlation: envelope `correlationId` first, then the header of the same name. The existing precedence is unchanged, and this never contains a generated Function ID. |
-| `msCorrelationIdSource` | `envelope`, `header` or `none`; disambiguates the selected value when the envelope and header differ. |
-| `providerMessageId` | Raw provider-normalized message/reference ID returned by the provider, including Telesign `reference_id`, for support lookup. Not filled from delivery or Function IDs, although a provider may echo an ID it received. |
-| `providerTenantId` | Raw configured `EPP_PROVIDER_TENANT_ID` for OAuth, not incoming envelope `tenantId`. |
-| `functionOutboundClientId` | Raw application's `EPP_OUTBOUND_CLIENT_ID` used for provider access, not a Microsoft request ID. Guided setup reuses the endpoint app client ID here; its outbound purpose is distinct from the inbound audience setting. |
-| `functionOutboundManagedIdentityClientId` | Raw configured `EPP_OUTBOUND_MI_CLIENT_ID` used to obtain the app assertion, not the Key Vault identity or the identity's principal/Object ID. |
-| `providerEndpoint` | Validated final outbound URL without userinfo, query string or fragment; scheme, host/port and API path remain visible. |
-
-The six external/configuration ID fields preserve their raw values and case for cross-system support
-lookup; they are not hashed or truncated. To avoid dumping arbitrary text, only nonblank strings
-of 1-128 ASCII characters are recorded: the first character must be a letter or digit, followed by
-letters, digits, `.`, `_`, `:`, or `-`. This includes GUIDs, hex IDs and ordinary opaque references.
-Missing/blank values are null; other invalid values are null and their field names appear in
-`omittedIdFields`, never the rejected values. These guards affect logs only, not wire IDs or outcomes.
-Application/client/tenant IDs are identifiers, not client secrets or bearer tokens.
-These are tracing fields, not authentication assertions. In particular, an incoming `tenantId`
-does not become a trusted tenant identity in logs. The existing wire correlation precedence,
-provider request IDs and public responses are unchanged.
-
-The fixed `request_completed` event contains only the final HTTP status, result and elapsed time.
-Stage-specific fields remain on the event where they become known instead of being accumulated into
-a mutable summary. `providerHttpStatus` is recorded when response headers arrive, so a response-body
-timeout can legitimately produce `provider_response_received` with upstream `200` followed by
-`request_failed` with Function status `504`, without a mapped provider status or success
-acknowledgement. Unknown provider status text and malformed JSON are never logged; malformed JSON
-emits only `provider_response_invalid_json` before the provider outcome rules run.
-
-Normal events and completion events use Information; invalid requests, non-success 4xx outcomes and
-advisory warnings use Warning; 5xx failures and timeouts use Error. Keep application Information logs
-enabled when investigating. This contract describes **emission**, not guaranteed collection:
-host/telemetry filters and sampling can drop trace records. Application events are logs, not
-the host's Request telemetry type, so excluding `Request` from sampling does not by itself retain
-every event. Configure collection and retention deliberately without enabling SDK/body tracing.
-Easy Auth rejections occur before the handler; inspect available platform/authentication diagnostics
-and caller observations, not just application events.
-
-The camelCase/`x-ms-*` fields above describe the JavaScript schema and are **not a portable
-custom-properties contract**. Python uses `event_name` with logging extras such as `httpStatus`;
-.NET uses typed `ILogger` fields such as `HttpStatus` and scopes such as `FunctionRequestId`.
-The simpler Python/.NET provider-result events do not expose every JavaScript field (for example,
-do not assume a provider reference ID is collected). Exporters can omit extras/scopes.
-Use [runtime-specific queries](MONITORING.md#runtime-specific-log-discovery) and
-[collection guidance](APPLICATION-INSIGHTS.md) to verify what actually arrives.
+Emission is not guaranteed collection. Use [runtime-specific queries](MONITORING.md#runtime-specific-log-discovery)
+and [collection diagnostics](APPLICATION-INSIGHTS.md) before relying on alerts.
 
 ---
 

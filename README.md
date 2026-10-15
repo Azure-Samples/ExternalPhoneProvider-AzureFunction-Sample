@@ -39,5 +39,5 @@ See the [sample's production limitations](docs/CONTRACT.md#production-limitation
 - [Monitoring](docs/MONITORING.md), [Microsoft Entra ID sign-in alerts](docs/SIGN-IN-MONITORING.md#recommended-monitors), and [SMS cost estimation](docs/COST-CALCULATOR.md)
 - [Technical reference](TECHNICAL.md), [HTTP contract](docs/CONTRACT.md), and [BYOT integration](docs/BRING-YOUR-OWN-PROVIDER.md)
 
-Optional multi-region and custom-provider designs are in the [detailed reference index](docs/GETTING-STARTED.md#find-more-detail);
-they are not built-in guided setup features.
+Use the [documentation index](docs/README.md) for deployment, troubleshooting, operations, and development.
+Optional multi-region and provider-fallback designs are not built-in guided setup features.

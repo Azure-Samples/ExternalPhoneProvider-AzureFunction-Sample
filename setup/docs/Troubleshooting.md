@@ -1,17 +1,30 @@
 # Setup and onboarding troubleshooting
 
-Find your symptom in the [triage table](#after-deployment-triage), then follow the matching checks.
-If the setup script stopped, start with [safe recovery](#recover-without-destructive-cleanup)
-before rerunning it. A successful deployment does not yet prove provider access or delivery.
+[Documentation](../../docs/README.md) | [Setup reference](README.md) | [Resume onboarding](../../docs/GETTING-STARTED.md)
 
-Return to the [five-step setup guide](../../docs/GETTING-STARTED.md) when you are ready to continue onboarding.
+Choose the failing stage below. **Do not delete resources or blindly retry a live send.**
+Before rerunning setup, read [safe recovery](#recover-without-destructive-cleanup).
+A completed deployment does not prove provider access or delivery.
+
+## Find your symptom
+
+| Stage / symptom | Start here |
+| --- | --- |
+| Account missing or wrong tenant | [Account picker](#the-expected-cached-account-or-subscription-is-missing), [directory context](#azure-cli-directory-context-does-not-match-the-selected-tenant) |
+| Permission or prerequisite failure | [Preflight](#authentication-permission-or-runtime-preflight-fails), [Graph 403](#az-ad-or-az-rest-returns-403-forbidden), [PrincipalNotFound](#principalnotfound-for-the-azure-operator) |
+| Region or hosting rejected | [Quota](#deployment-fails-with-subscriptionisoverquotaforsku), [plan selection](#service-plan-selection-or-availability-fails), [FC1 object-reference error](#fc1-deployment-preflight-reports-an-object-reference-error), [EP1 location check](#appservice-list-locations-rejects-ep1) |
+| Certificate or resource registration fails | [Certificate selection](#certificate-selection-reuse-or-cleanup-fails), [resource providers](#a-required-azure-resource-provider-is-not-registered) |
+| Download, build, or parser failure | [Old package prompts](#setup-still-asks-for-packageurl-or-packagesha256), [checksum/download](#a-checksum-or-package-download-fails), [.NET](#net-build-fails), [Python](#python-remote-build-fails), [CLI JSON](#azure-cli-warnings-break-json-parsing) |
+| Deployment stops after approval | [Publication and startup](#deployment-stops-after-approval) |
+| Endpoint rejects calls, does not deliver, or has no logs | [After-deployment triage](#after-deployment-triage), [401/live delivery](#the-endpoint-returns-401-or-live-delivery-fails), [cache settings](#credential-caching-does-not-match-the-selected-plan) |
+| Optional regional routing fails | [Front Door checks](#optional-front-door-deployments) |
 
 ## After-deployment triage
 
-Keep the timestamped deployment summary and original error. Record the intended tenant,
-subscription, resource group, runtime/release, test UTC time, and safe correlation IDs in a private
-support case. Never attach complete app settings, tokens, phone numbers, OTPs, private keys,
-encrypted request bodies, or raw provider responses. Do not enable body tracing for diagnosis.
+Keep the original error and timestamped summary. In a private support case, record tenant,
+subscription, resource group, runtime/release, UTC test time, and safe correlation IDs.
+Never attach complete settings, tokens, phone numbers, OTPs, private keys, encrypted bodies, or
+raw provider responses. Keep body tracing off.
 
 | Symptom | First checks / owner | Do not do this |
 |---|---|---|
@@ -26,35 +39,30 @@ encrypted request bodies, or raw provider responses. Do not enable body tracing 
 | Requests exist but Python/.NET event query is empty | Use [runtime-specific discovery](../../docs/MONITORING.md#runtime-specific-log-discovery). Python extras/.NET scopes may not be exported; .NET host OpenTelemetry does not initialize direct worker export. | Do not apply JavaScript's JSON parser to other runtimes or promise complete dependencies/exceptions. |
 | No expiry email or alert | Operations owner checks vault certificate contacts/lifetime policy, independently configured reminders/action groups/rules, and notification tests. | Do not assume setup created alerts, or diagnostic settings deliver Key Vault expiry events. |
 
-An accepted provider response, HTTP 200, a matching evaluation nonce, and actual recipient
-delivery are different evidence. Retain only nonce-match booleans, statuses, latency, safe support
-IDs, and delivery-confirmation outcomes. [Run the complete acceptance checks](../../docs/ONBOARDING.md#validate-the-deployed-endpoint)
-before activation.
+Keep nonce-match **booleans**, statuses, latency, safe IDs, and delivery-confirmation outcomes.
+Evaluation success, provider acceptance, and recipient delivery are different evidence.
+[Complete acceptance checks](../../docs/ONBOARDING.md#validate-the-deployed-endpoint) before activation.
 
 ## Recover without destructive cleanup
 
-Before approval, setup's read-only checks can fail without Azure resource mutation (Bicep
-installation and sign-in may already have occurred). After approval, partial Azure/Entra changes
-can remain even if no success summary was written. Inspect the Azure subscription/resource-group
-deployment operations and the original failure before retrying.
-
-Correct the underlying error, then use the same reviewed tenant, subscription, app, runtime,
-plan, prefix, provider/route, and intended source/package versions for a recovery rerun.
-Changing identifiers can create new resources or break certificate continuity; changing a route
-can reconfigure the existing endpoint. Setup does not resume from a checkpoint or undo previous
-steps. For an active endpoint, arrange a change window because reruns can disable ingress and
-update app settings/Entra.
-
-Do not delete a resource group, purge/recreate the vault, remove encryption credentials, or revoke
-shared Microsoft service-principal grants as a generic retry strategy. Use the separate
-[rollback and decommissioning procedure](README.md#rollback-and-decommissioning) if retirement
-is actually intended.
+1. **Locate the failure.** Before approval, checks do not mutate Azure resources, although sign-in
+   or Bicep installation may have occurred. After approval, partial Azure/Microsoft Entra ID changes
+   can remain without a summary. Inspect **Azure portal > subscription/resource group > Deployments**
+   and the original error.
+2. **Fix, then rerun with the same reviewed inputs:** tenant, subscription, app, runtime, plan,
+   prefix, provider/route, and source/package versions. Changed IDs can create resources or break
+   key continuity; a changed route can reconfigure the endpoint. There is no checkpoint resume or
+   automatic undo. Active endpoints need a change window because reruns can disable ingress and
+   change settings.
+3. **Verify the failed stage and complete acceptance checks.** Never use resource-group deletion,
+   vault purge/recreation, encryption-credential removal, or shared-grant revocation as a retry.
+   Retirement uses the separate [rollback procedure](README.md#rollback-and-decommissioning).
 
 ## Certificate selection, reuse, or cleanup fails
 
-Setup checks the application's encryption credentials before approval. With existing credentials,
-choose **Reuse** and a certificate key ID/location, or **Replace**; it never silently adds another
-encryption certificate on a rerun. See [certificate selection](README.md#encryption-certificate-selection).
+**Check:** compare the application key ID and exact vault version using
+[certificate selection](README.md#encryption-certificate-selection).
+Existing credentials require explicit **Reuse** or **Replace**, not an automatic new certificate.
 
 | Failure | Safe recovery |
 |---|---|
@@ -66,16 +74,14 @@ encryption certificate on a rerun. See [certificate selection](README.md#encrypt
 | Credentials or the source vault's permission model changed after approval | Stop competing changes and rerun selection/approval against the current state. Do not force an outdated cleanup plan. |
 | An encryption credential has an unsupported type, or a non-encryption credential cannot be read | Have the application owner review the credential and read permissions. Setup cannot safely preserve or interpret it and will not blindly reset the credential collection. |
 
-New certificates are prepared before old application entries are removed. A failed reference or
-source-vault access check leaves the registered encryption credentials intact, although Azure
-resources/app settings may already have changed. If registration succeeded and a later publication
-step failed, inspect the current app and choose **Reuse** with the certificate ID printed by setup;
-repeating **Replace** would request another rotation. Keep the same resource prefix for recovery.
+**Recover:** a failed key-reference/source-vault check leaves registered encryption credentials
+intact, but resources/settings may have changed. If registration already succeeded, choose **Reuse**
+with the printed certificate ID and the same prefix; another **Replace** requests another rotation.
 
-An approved cleanup removes only the listed `AsymmetricX509Cert` / `Encrypt` entries from the
-application. It never deletes vault certificates, keys, secrets, or unrelated application
-credentials. Coordinate maintenance and authorized evaluation for every active endpoint sharing
-the application; cached or in-flight requests can still use a retired key.
+**Expected:** one approved application encryption credential. Cleanup removes only approved
+`AsymmetricX509Cert` / `Encrypt` entries, not vault objects or unrelated credentials.
+Coordinate maintenance and evaluation for every endpoint sharing the app; cached/in-flight
+requests can still use a retired key.
 
 ## Optional Front Door deployments
 
@@ -95,10 +101,8 @@ Use the [manual Front Door guide](../../docs/FRONTDOOR.md) for that option.
 
 ## Deployment fails with SubscriptionIsOverQuotaForSku
 
-This is a subscription quota check, not an authentication failure or a missing resource-provider
-registration. A region can support Linux Premium EP1 while your subscription has an **EP1 VMs**
-limit of zero there. Quotas are regional: an allowance in one region does not establish an
-allowance in another.
+**Check:** the selected subscription's regional **EP1 VMs** quota, not authentication or resource
+registration. A supported Linux EP1 region can still have zero quota for your subscription.
 
 1. Confirm the tenant, subscription, region, and SKU in the deployment plan and Azure error.
 2. In the Azure portal, open **Quotas**, select **App Service**, and filter to the intended
@@ -113,60 +117,49 @@ allowance in another.
 5. Alternatively, choose another region only after checking its quota, service availability,
    and your residency and provider requirements. Review the updated deployment plan before approval.
 
-See the [Azure quotas overview](https://learn.microsoft.com/azure/quotas/quotas-overview) for the
-quota-management and support options. Setup does not request or guarantee a quota increase.
-Do not change the hosting SKU, disable Easy Auth, or change provider credentials to bypass this
-error. After resolving quota, rerun setup and complete the normal deployed validation checks.
+**Expected:** sufficient effective quota, not merely a submitted request. Setup cannot guarantee
+an increase. See [quota support](https://learn.microsoft.com/azure/quotas/quotas-overview).
+Do not change SKU, authentication, or provider credentials to bypass the error; rerun with reviewed
+inputs after quota is resolved, then validate the endpoint.
 
 ## Service plan selection or availability fails
 
-Choose `-ServicePlan FC1` for Flex Consumption or `-ServicePlan EP1` for Premium. The parameter is
-required in noninteractive mode. FC1 requires Azure CLI **2.60.0+**, while EP1 keeps **2.48.1+**.
-FC1 regional checks use `az functionapp list-flexconsumption-locations`; EP1 uses its existing ARM
-check below. Availability in one plan does not imply availability in the other.
+**Check:** `-ServicePlan FC1` needs Azure CLI **2.60.0+**; `EP1` needs **2.48.1+**.
+The parameter is required unattended. FC1 availability uses `az functionapp list-flexconsumption-locations`;
+EP1 uses the [ARM check below](#appservice-list-locations-rejects-ep1). Availability is plan-specific.
+FC1 has zero always-ready instances and a usage grant, not a zero-cost guarantee.
 
-FC1 offers a free usage grant, not a zero-cost guarantee. It configures zero always-ready instances;
-supporting services and usage beyond the grant can still incur charges.
-
-Setup refuses to switch an existing prefix between FC1 and EP1. Use a different prefix and validate
-the new endpoint before manually changing policy. For an active endpoint, also onboard a new
-dedicated application or coordinate key continuity. A new prefix still requires the existing
-application's certificate reuse/replacement decision; choose the existing Key Vault certificate
-to retain its key rather than inadvertently rotating every endpoint sharing that application.
-For older deployments without a service-plan tag,
-preflight checks the actual hosting-plan SKU. Use `-ServicePlan EP1` when rerunning an existing EP1
-deployment; do not delete tags to bypass the migration guard.
+**Fix:** follow [plan selection and migration rules](README.md#service-plan-selection).
+In-place FC1/EP1 switching is unsupported: use a different prefix, plus a dedicated app or an approved
+key-continuity plan, and validate before policy changes. A new prefix does not authorize key rotation.
+Existing EP1 deployments use `-ServicePlan EP1`; setup checks actual SKU when tags are absent.
+Never remove tags to bypass this guard.
 
 ## FC1 deployment preflight reports an object-reference error
 
-An affected setup template can fail with `InvalidTemplateDeployment` against
+**Symptom:** `InvalidTemplateDeployment` against
 `Microsoft.Web/serverfarms` and the inner message `Object reference not set to an instance of an object`.
-The cause is the Function App's entire `properties` object being wrapped in a `union()` expression
-that contains the Flex deployment storage endpoint's runtime `reference()`. ARM defers that whole
-expression, including `serverFarmId`, so the provider cannot see the Function-to-plan association
-during preflight. This error is not evidence that the FC1 SKU or selected region is unsupported.
+An older template wraps all Function `properties` in `union()` with a storage `reference()`.
+ARM defers `serverFarmId` with it, hiding the Function-to-plan association during preflight.
+This does not establish that FC1 or the region is unsupported.
 
-The corrected Bicep keeps `properties` as a literal object with an explicit `serverFarmId` and makes
-only `functionAppConfig` conditional on FC1. The storage endpoint lookup, hosting-plan configuration,
-scaling, managed identities, authentication, and public-access settings are unchanged.
+**Fix:** download the corrected launcher with matching `-SourceRepository` and
+`-SourceRef <source-branch-or-fixed-commit>`. The fixed template keeps literal `properties` and
+explicit `serverFarmId`, with only `functionAppConfig` conditional; storage lookup, scaling,
+identity, authentication, and ingress behavior are unchanged. An old pinned commit still loads the old template.
+Keep the original deployment inputs rather than switching plans.
 
-Download the updated `Setup-Epp.ps1` from the intended source branch and rerun it with matching
-`-SourceRepository` and `-SourceRef <source-branch-or-fixed-commit>` values. A command pinned to an
-older commit still downloads the old support files and template. Keep the original tenant, subscription, application,
-language, service plan, and resource prefix rather than changing plans to bypass this error.
-`az deployment sub validate` can check the corrected template without creating resources. Passing
-validation does not prove successful publication, runtime startup, Easy Auth enforcement, or delivery.
+**Verify:** `az deployment sub validate` checks the template without creating resources.
+It does not verify publication, startup, Easy Auth, or delivery.
 
 ## Credential caching does not match the selected plan
 
-Check `EPP_KEY_VAULT_CACHE_ENABLED` and `EPP_ACCESS_TOKEN_CACHE_ENABLED` on the serving Function App.
-Setup writes both as `"false"` for FC1 or `"true"` for EP1; rerunning setup restores those values.
-These settings only affect a deployed Function package that implements the cache readers.
-Deploy a supporting runtime release and restart after edits; older packages ignore the switches.
-Values must be `true` or `false` (case-insensitive, trimmed); unset defaults to enabled.
-Invalid selected values fail live credential acquisition closed without blocking evaluation.
-Only the selected provider's authentication mode chooses the switch; disabling it skips startup
-preparation and cross-request reuse, not live credential acquisition or the platform's decryption-key reference.
+**Check:** serving-app `EPP_KEY_VAULT_CACHE_ENABLED` and `EPP_ACCESS_TOKEN_CACHE_ENABLED`.
+Setup writes both as `"false"` for FC1 or `"true"` for EP1 and restores them on rerun.
+**Fix:** deploy a supporting release and restart after edits; older packages ignore the switches.
+The [cache contract](../../docs/CONTRACT.md#credential-caching-and-refresh) defines accepted values,
+fail-closed invalid settings, and runtime differences. Disabling a cache does not eliminate live
+credential acquisition or affect the platform's decryption-key reference.
 
 ## appservice list-locations rejects EP1
 
@@ -201,12 +194,10 @@ the script does not unregister services that other workloads might now use.
 
 ## Azure CLI directory context does not match the selected tenant
 
-Setup selects an Azure subscription without changing the Azure CLI default tenant. Microsoft
-Graph operations use that CLI directory through `az ad` and `az rest`, so `az account show` must
-describe a public-cloud **user** session in the selected tenant.
-
-In interactive setup, choose **Refresh subscriptions from Azure** or **Sign in to Azure
-(device code)** from the account picker. You can also authenticate before rerunning:
+**Check:** `az account show` must identify an AzureCloud **user** session in the selected tenant.
+Setup does not change the CLI default tenant; Graph uses that directory through `az ad`/`az rest`.
+**Fix:** choose **Refresh subscriptions from Azure** or **Sign in to Azure (device code)**,
+or authenticate before rerunning:
 
 ```powershell
 az login --tenant '<customer-tenant-id>' --use-device-code
@@ -240,32 +231,25 @@ interactive device-code flow.
 
 ## Setup still asks for PackageUrl or PackageSha256
 
-You are running an older launcher or source revision. Download `Setup-Epp.ps1` again and supply
-the intended `-SourceRepository` and `-SourceRef`. The current version asks for **one language**
-and reads its package URL and published checksum automatically. Remove old package URL/hash
-arguments from saved commands.
+**Fix:** refresh `Setup-Epp.ps1` and its reviewed `-SourceRepository`/`-SourceRef`; remove old
+URL/hash arguments. **Expected:** one language choice, with package URL/checksum read automatically.
 
 ## A checksum or package download fails
 
-Setup resolves the latest stable `epp-packages-*` CI release by default, then downloads the selected
-catalog asset and that release's `SHA256SUMS.txt`. Use `-PackageReleaseTag` when reproducing a
-specific release. The checksum file must contain exactly one valid entry for that asset. Missing,
-duplicate, malformed, or mismatched checksums fail closed; there is no manual-hash or
-skip-verification workaround. Verify the release assets and your access to GitHub.
+**Check:** GitHub access, the selected `epp-packages-*` release, asset, and `SHA256SUMS.txt`.
+Exactly one valid checksum entry must match; missing, duplicate, malformed, or mismatched entries
+fail closed. **Never bypass verification or supply a replacement hash.**
 
-Supporting tools, Bicep, catalogs, and provider JSON all come from the commit selected at startup.
-For a public-fork branch, pass both source options. A full commit SHA avoids branch-resolution
-API rate limits. Private repositories are not supported by these unauthenticated raw downloads.
+**Fix:** align the launcher and [source/package versions](README.md#source-versioning).
+Pin `-PackageReleaseTag` to reproduce a release. Public-fork branches need both source options;
+a full SHA avoids branch-resolution API rate limits. Private raw downloads are unsupported.
 
 ## .NET build fails
 
-Install the **.NET 8 SDK** and allow NuGet access. Setup selects an installed 8.x SDK, extracts the
-verified source into its temporary workspace, runs a Linux-targeted Release publish, checks the
-publish output, and creates the ready ZIP. The source ZIP is not uploaded as runnable code.
-Build failures occur before Azure resource creation and include the `dotnet` failure output.
-
-Do not manually replace the published source checksum with a hash of the build output. These
-represent different artifacts; setup computes the built artifact's hash itself.
+**Fix:** install the **.NET 8 SDK**, allow NuGet access, and inspect the reported `dotnet` error.
+**Expected:** setup selects 8.x, publishes verified source for Linux in its temporary workspace,
+checks output, and packages it before Azure resource creation. Source ZIPs are not runnable.
+Do not replace the source checksum with the built ZIP hash; setup calculates that separately.
 
 ## Python remote build fails
 
@@ -292,38 +276,24 @@ immediate administrator inspection. Do not bypass certificate errors or enable b
 
 ## Azure CLI warnings break JSON parsing
 
-The current helper separates stdout from stderr. Successful command JSON is parsed independently
-of SDK warnings, while stderr warnings are shown and nonzero exit codes still fail. Upgrade an
-older downloaded helper by refreshing the launcher/source revision.
+**Fix:** refresh the reviewed launcher/source revision.
+**Expected:** stdout JSON is parsed separately from visible stderr warnings; nonzero exits still fail.
 
 ## Authentication, permission, or runtime preflight fails
 
-Use Azure Cloud Shell in PowerShell mode, or PowerShell 7 with Azure CLI and Bicep. The Microsoft
-Graph PowerShell SDK is not used. Sign in to the customer tenant with a user account. ARM requests
-use the selected subscription; setup does not change the CLI default subscription or adopt
-unrelated resource groups. Directory requests reuse the same CLI session through `az ad` and
-`az rest`.
-
-Azure CLI itself must be installed before setup. Interactive setup can select cached user
-subscriptions, refresh them, or start tenant-specific device-code sign-in. Only the Azure CLI
-Bicep component can be installed after confirmation. In unattended runs, preinstall Bicep or pass
-`-InstallPrerequisites`, and establish the matching CLI user session before starting setup.
-
-Only the dedicated customer application registration must exist from manual Step 1. After approval,
-setup makes it multi-tenant, restricts it to its home tenant plus the provider JSON's `tenantId`
-and existing allowed provider tenants through the Entra allowed-tenants preview, creates both
-required service principals, adds and assigns
-`Epp.Invoke`, and grants the Microsoft phone-provider service principal Graph `Application.Read.All`.
-
-Azure subscription roles do not authorize Microsoft Graph. The signed-in CLI user must be able to
-read and update the application and service principals and create app-role assignments. Granting
-Microsoft Graph `Application.Read.All` to the Microsoft phone-provider service principal normally
-also requires an active Privileged Role Administrator role. Noninteractive runs must establish
-the CLI context first and supply `-ApproveDeployment` separately.
-
-The tenant restriction uses Microsoft Graph beta `signInAudienceRestrictions`. If that preview is
-unavailable or the tenant policy blocks it, setup stops before mutation rather than silently allowing
-all organizational tenants.
+1. Check [tools and permissions](README.md#prerequisites-for-step-2): PowerShell 7/Cloud Shell,
+   installed Azure CLI, and a customer-tenant **user** session. Graph reuses that session; no Graph
+   PowerShell SDK. ARM uses the selected subscription without adopting unrelated resource groups
+   or changing the CLI default subscription.
+2. Resolve missing Bicep through its interactive confirmation, or preinstall/use
+   `-InstallPrerequisites` unattended. Azure CLI itself is not installed by setup.
+3. Verify the [dedicated app and approved grants](README.md#step-1---manually-create-the-application).
+   Azure roles do not grant Graph permissions; the user needs application/service-principal
+   management and app-role assignment permissions, including active Privileged Role Administrator
+   for the approved `Application.Read.All` grant.
+4. Confirm beta `signInAudienceRestrictions` availability. If tenant policy/preview access blocks it,
+   stop; setup does not silently allow all tenants. Unattended runs still need the user session
+   and separate `-ApproveDeployment`.
 
 ## `az ad` or `az rest` returns 403 Forbidden
 
@@ -366,9 +336,9 @@ app to another runtime with the same prefix.
 
 ## Deployment stops after approval
 
-Some resources can remain. No automatic deletion, vault purge/recovery, policy activation, or
-rollback occurs. Inspect the named Azure deployment and the reported error, then rerun with the
-same tenant, subscription, application, language, service plan, and prefix after correcting it.
+**Check:** the named deployment and original error. Partial resources remain; setup does not
+delete, purge/recover vaults, activate policy, or roll back. Follow
+[safe recovery](#recover-without-destructive-cleanup) before a same-input rerun.
 
 Recognized storage/Key Vault RBAC propagation errors are retried for at most twelve attempts.
 Transient Function startup errors also have bounded retries. This includes the specific ARM
@@ -378,23 +348,23 @@ return while a newly restarted host is still loading an otherwise valid package.
 `SendOtp` must appear in Azure's function metadata. No success summary is written if publication or
 registration fails.
 
-If setup exhausts the retries, inspect Application Insights for host initialization, worker startup,
-and function discovery errors before rerunning. The expected healthy sequence includes `Worker process
-started and initialized`, `Found the following functions: Host.Functions.SendOtp`, and `Job host
-started`. Setup closes public ingress after a persistent publication failure.
+**Verify:** inspect [host/worker logs](../../docs/APPLICATION-INSIGHTS.md#single-region-configuration)
+for startup/discovery failures. Expected messages include `Worker process started and initialized`,
+`Found the following functions: Host.Functions.SendOtp`, and `Job host started`.
+Setup closes public ingress after persistent publication failure.
 
 ## The endpoint returns 401 or live delivery fails
 
-Keep Easy Auth enabled. Check the trusted tenant, actual token version, audience, HTTPS requirement,
-and nonempty Microsoft caller allowlist. Keep `tokenEncryptionKeyId` null on the endpoint app;
-payload JWE encryption is separate from signed bearer-token validation.
+1. **Before invocation:** use the [Easy Auth checklist](../../docs/ONBOARDING.md#manual-deployment-trust-checklist).
+   Check issuer, token version, audience, HTTPS, and the nonempty Microsoft caller allowlist.
+   Keep Easy Auth enabled and app `tokenEncryptionKeyId` null; bearer validation and payload JWE are separate.
+2. **After invocation:** correlate [runtime events](../../docs/MONITORING.md#runtime-specific-log-discovery).
+   Confirm `EPP_PROVIDER_SMS_ENDPOINT` or `EPP_PROVIDER_VOICE_ENDPOINT` and account access.
+   The selected URL is required and has no shared/other-channel fallback; deploy a supporting package.
+3. Complete [provider authentication](../../docs/ONBOARDING.md#complete-provider-authentication):
+   exact vault secrets for Telesign, provider-side authorization for Soprano.
+   Arrange [authorized evaluation, then controlled live checks](../../docs/ONBOARDING.md#validate-the-deployed-endpoint).
+   Verify acceptance and receipt separately; never blindly resend a timeout.
 
-For live delivery, confirm the request's channel-specific provider URL
-(`EPP_PROVIDER_SMS_ENDPOINT` or `EPP_PROVIDER_VOICE_ENDPOINT`) and its account authorization.
-The matching setting is required; missing, empty, or invalid URLs fail closed without using a
-shared or other-channel endpoint. Use a package that supports these settings.
-Telesign needs its exact Key Vault secret names; Soprano needs provider-side authorization, not
-API-key secrets. Arrange an authorized evaluation through the
-[test handoff](../../docs/ONBOARDING.md#validate-the-deployed-endpoint) before controlled live
-messages. EPP policy remains a separate assisted administrator-approved operation; no setup code
-updates it. Public Graph SMS/voice schemas do not document the EPP activation fields.
+**Activation remains separate:** use the [assisted policy procedure](README.md#step-3---manually-validate-and-activate-policy).
+Setup does not change policy, and public Graph SMS/voice schemas do not document the EPP fields.

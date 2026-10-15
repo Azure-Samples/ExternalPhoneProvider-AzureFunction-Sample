@@ -1,24 +1,30 @@
 # Optional multi-region onboarding with Azure Front Door
 
+[Documentation](README.md) | [Single-region setup](GETTING-STARTED.md) | [Routing troubleshooting](../setup/docs/Troubleshooting.md#optional-front-door-deployments)
+
 Use Azure Front Door when you want **one public EPP URL backed by Function Apps in multiple regions**.
 You configure this option manually. For a single region, start with the
 [five-step setup guide](GETTING-STARTED.md).
 
-**We don't provide a Front Door deployment script.** The guided setup creates one regional endpoint,
-not the multi-region setup described here. This guide covers what you need to configure and test.
-Failover can still interrupt requests.
+**No Front Door deployment script is supplied.** This manual design is not guided setup,
+and failover can interrupt requests.
+
+Follow [scope](#scope-and-observed-behavior), [architecture](#architecture-one-url-multiple-origins),
+[plan/capacity](#1-plan-the-regional-deployment), [origins/keys](#2-prepare-equivalent-independently-provisioned-origins),
+[readiness](#3-provide-a-non-delivering-readiness-endpoint), [routing](#4-configure-front-door-manually),
+[validation](#5-validate-before-manually-activating-policy), and [fire-drill](#6-regional-failover-fire-drill).
+Keep [historical results](#observed-failover-results-and-limitations) separate from
+your acceptance criteria; use [operations/rollback](#operations-and-rollback) after validation.
 
 ## Scope and observed behavior
 
-We tested an isolated JavaScript deployment with Front Door Standard, two and three regional
-origins, a shared encryption certificate, and a separate readiness handler that sends no messages.
-The tests covered encrypted evaluation requests, rejection of invalid callers, direct-origin
-access restrictions, and stopping and restarting individual Functions.
+Testing used isolated JavaScript origins, Front Door Standard, two/three regions, a shared key,
+and a separate non-delivering readiness handler. It covered encrypted evaluation, invalid callers,
+direct-origin restrictions, and individual Function stop/restart.
 
-**The readiness handler used in testing is not part of the released sample.** You must implement
-and validate the [readiness contract below](#3-provide-a-non-delivering-readiness-endpoint) before
-enabling multi-origin health probes. There is no app setting that adds this endpoint to a release ZIP.
-You can adapt the design for other runtimes, but we haven't tested it with .NET or Python.
+**The readiness handler is not released.** Implement and validate the
+[readiness contract](#3-provide-a-non-delivering-readiness-endpoint) before enabling probes;
+no setting adds it to a ZIP. .NET/Python adaptations are untested.
 
 We **did not test** live SMS/voice delivery, calls and retries from the real Entra service, a full
 Azure regional outage, custom domains, WAF, Private Link, or production load. Test the features your
@@ -26,21 +32,15 @@ deployment needs before activating policy.
 
 ### Regional resiliency responsibility
 
-For the Microsoft-configured baseline, Microsoft is responsible for defining, configuring,
-documenting, and validating the standard regional-failover pattern and its exercise procedure.
-Customers using that baseline should not have to design regional disaster recovery (DR) themselves.
-Customers operate their deployed baseline: assign
-owners, maintain regional capacity, credentials and keys, monitor it, and run approved drills.
-Customers who replace the topology own the alternate regional-failover design and its validation.
-Customer operation of the standard baseline does not transfer responsibility for designing that
-baseline to the customer.
+Microsoft owns defining, configuring, documenting, and validating its standard regional-failover
+baseline and exercise procedure; customers using it should not design regional DR themselves.
+Customers operate the deployed baseline: ownership, capacity, credentials/keys, monitoring, and
+approved drills. Replacing the topology makes its alternate design/validation customer-owned;
+operating the standard baseline does not transfer its design responsibility.
 
-The two-region pattern below makes the intended baseline concrete, but today's onboarding remains
-single-region and Front Door setup remains manual. The readiness-handler, regional-dependency,
-capacity, real-caller, and outage-validation gaps described here remain to be addressed before
-relying on this pattern for regional recovery. Recovery-time and recovery-point objectives
-(RTO/RPO), tolerable request failures, latency limits, and required evidence must be defined and
-approved by the deployment owners; the observed results below do not establish those targets.
+Onboarding remains single-region and Front Door manual. Readiness, dependency isolation, capacity,
+real-caller behavior, and regional-outage validation remain gaps. Deployment owners must approve
+RTO/RPO, tolerable failures, latency, and required evidence; historical results do not set those targets.
 
 ## Architecture: one URL, multiple origins
 
@@ -289,21 +289,14 @@ preserve unrelated properties, and read the policy back to confirm the change. T
 
 ### Test scenarios to plan and record
 
-Use this checklist to agree what you will test and what counts as a pass. **These are proposed
-tests, not a report that they have all been run.** The historical JavaScript evaluation, access
-rejection, and individual app-stop/restart tests are described in
-[scope and observed behavior](#scope-and-observed-behavior) and
-[observed failover results](#observed-failover-results-and-limitations). Those results do not prove
-double-load capacity, complete dependency isolation, or a full regional outage.
+**Proposed tests, not completed results.** Historical [app-stop trials](#observed-failover-results-and-limitations)
+do not prove double-load capacity, dependency isolation, or a regional outage.
+Approve synthetic data, bounded load, and the [drill's abort/restoration safeguards](#6-regional-failover-fire-drill)
+in isolated nonproduction. Agree load/headroom, recovery, errors/latency, soak, and restoration deadlines first.
 
-Run only in an approved, isolated nonproduction environment, with synthetic data, bounded load,
-and the [fire-drill's approval, abort, and restoration safeguards](#6-regional-failover-fire-drill).
-Use an authorized test harness calling the Front Door endpoint, not an actual Entra ID sign-in flow.
-**Function evaluation suppresses sends only inside this endpoint.** Confirm Entra ID fallback
-and retry behavior with Microsoft rather than assuming a whole sign-in flow is non-delivering.
-Entra ID sign-in and delivery testing require separate safety approval and are not part of this checklist.
-Agree load, headroom, recovery time, error/latency limits, soak duration, and restoration deadlines
-before starting; do not substitute the historical measurements for your acceptance targets.
+Use an authorized harness, **not a real Microsoft Entra ID sign-in flow**. Evaluation suppresses
+sends only inside this endpoint; caller fallback/retries can still deliver. Confirm caller behavior
+with Microsoft and obtain separate approval for sign-in or delivery tests.
 
 | What to test | How and where to test safely | Expected outcome / acceptance | Evidence to keep |
 |---|---|---|---|

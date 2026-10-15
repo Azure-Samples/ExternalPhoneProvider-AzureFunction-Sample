@@ -1,5 +1,7 @@
 # Application Insights for the External Phone Provider
 
+[Documentation](README.md) | [Monitoring walkthrough](MONITORING.md) | [Log schema](LOGGING.md)
+
 **Find logs and create alerts:** use the [monitoring walkthrough](MONITORING.md).
 **Check collection or missing data:** start with [single-region configuration](#single-region-configuration)
 below. This reference covers JavaScript, .NET isolated, and Python; Front Door is not required.
@@ -10,6 +12,12 @@ not prove delivery either.
 
 These instructions do not deploy resources or enable instrumentation, alerts, or availability tests.
 Use the [setup guide](GETTING-STARTED.md) and [approved test handoff](ONBOARDING.md#validate-the-deployed-endpoint).
+
+Jump to [collection pipelines](#how-telemetry-reaches-application-insights),
+[signals and tables](#signals-tables-and-metrics-are-different-things),
+[single-region checks](#single-region-configuration), [ingestion identity](#identity-and-ingestion),
+[multi-region layout](#multi-region-configuration), [coverage queries](#read-only-queries-to-establish-what-is-present),
+or [sampling/privacy limits](#sampling-privacy-and-collection-limits).
 
 ## How telemetry reaches Application Insights
 
@@ -45,19 +53,15 @@ These are source defaults, not an inventory of a running deployment. Deployed pa
 application-setting overrides, runtime versions, and log filters can change the result. The
 guided setup can publish a released package rather than the current source.
 
-Events such as `request_received`, `provider_response_processed`, `request_failed`,
-`request_completed`, and `credential_refresh_failed` are **logs**, not guaranteed `customEvents`.
-Use [runtime-specific log discovery](MONITORING.md#runtime-specific-log-discovery) to check
-JavaScript JSON, Python logging extras, or .NET `ILogger` fields in the deployed schema.
-Exporters can change formatting, casing, and which properties survive; queries are not portable
-without that check.
+[Application events](LOGGING.md#event-sequence) are **logs**, not guaranteed `customEvents`.
+Use [runtime-specific discovery](MONITORING.md#runtime-specific-log-discovery) before sharing queries:
+exporters can change formatting, casing, and which properties survive.
 
-When adding direct worker instrumentation in a future code change, follow the
+To add direct worker instrumentation, follow the
 [Functions OpenTelemetry guidance](https://learn.microsoft.com/en-us/azure/azure-functions/opentelemetry-howto)
-for the selected language. Initialize the exporter and required instrumentations, configure
-its credential, and verify correlation and duplicate suppression. Do not simply copy another
-language's host settings. Other Azure Functions languages are outside this repository's sample;
-use the corresponding language tab in the Microsoft guidance for their support requirements.
+for your language: initialize exporter/instrumentations and credentials, then verify correlation
+and duplicate suppression. Do not copy another runtime's host settings. For languages outside
+this sample, check Microsoft's corresponding support tab.
 
 ## Signals, tables, and metrics are different things
 

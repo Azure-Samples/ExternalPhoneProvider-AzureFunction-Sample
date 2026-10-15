@@ -1,9 +1,16 @@
 # Monitor Microsoft Entra sign-ins
 
-For ongoing monitoring, start with the [three recommendations below](#recommended-monitors).
-To look up one failed sign-in, go to [Step 1](#1-choose-your-tenant-and-access).
-The six-step walkthrough creates a user sign-in alert; the [optional reference](#optional-reference)
-helps your query maintainer adapt it to the other monitors.
+[Documentation](README.md) | [Function monitoring](MONITORING.md)
+
+| Task | Start here |
+| --- | --- |
+| Investigate one sign-in without creating resources | [Choose tenant/access](#1-choose-your-tenant-and-access), then [find the sign-in](#2-find-one-sign-in) |
+| Set up ongoing identity alerts | [Recommended monitors](#recommended-monitors), then [export](#3-export-logs-for-ongoing-monitoring) and follow Steps 4-6 |
+| Diagnose missing records or quiet alerts | [Check data](#4-check-your-data-and-choose-a-query), [monitor ingestion](#monitor-ingestion-separately) |
+| Adapt a query or add advanced alerts | [Optional reference](#optional-reference) |
+
+The six-step walkthrough creates one user sign-in alert. Use its baseline and measurement only
+for that monitor; the other recommendations need their own scoped queries.
 
 **Scope: Entra authentication and configuration, not Function or phone delivery.**
 Keep identity details private. EPP setup does not export these logs or create alerts;
@@ -11,9 +18,8 @@ the steps below are actions for your administrators, not changes made by this gu
 
 ## Recommended monitors
 
-Put these in place in priority order. First agree on the source tenant, exact integration
-identities and target resources, and who receives each notification. Use IDs, not name
-substrings or every application in the tenant.
+Agree source tenant, exact identity/resource IDs, and notification owners, then implement in
+priority order. Do not scope by name fragments or every tenant application.
 
 ### Priority 1: Integration identities cannot sign in
 
@@ -60,13 +66,10 @@ substrings or every application in the tenant.
    Conditional Access or MFA steps do not make the overall sign-in successful.
    Escalate to security only with corroborating signals, not a nonzero code alone.
 
-**Set up once, then adapt.** Follow [export setup](#3-export-logs-for-ongoing-monitoring),
-select the [categories for these monitors](#choose-additional-export-categories), and use
-the [field checks](#field-checks-for-the-recommended-monitors) before adapting a query.
-Reuse the [alert settings](#5-create-your-first-alert) and [safe test/handover](#6-test-then-hand-over);
-the walkthrough's user-failure query and measurement are not interchangeable with the
-other monitors. Choose thresholds from representative ordinary traffic, not a small export
-or a fixed production SLA.
+**Set up once, then adapt:** select the [required categories](#choose-additional-export-categories),
+verify [fields](#field-checks-for-the-recommended-monitors), and reuse the
+[alert setup](#5-create-your-first-alert) and [safe test](#6-test-then-hand-over).
+Choose each monitor's threshold from representative traffic, not a small export or a universal SLA.
 
 ## 1. Choose your tenant and access
 
@@ -109,9 +112,8 @@ or a fixed production SLA.
    If the issue points to the endpoint or provider, follow the
    [Function monitoring guide](MONITORING.md#runtime-specific-log-discovery) separately.
 
-**Only investigating one problem? You can stop here.** You don't need to export logs, create
-a workspace, or incur additional Azure Monitor collection costs for this portal-only path.
-Continue if your team wants ongoing alerts or longer-term analysis.
+**For a single investigation, stop here.** This portal-only path needs no workspace/export
+or additional Azure Monitor collection costs. Continue for ongoing alerts or longer-term analysis.
 
 ## 3. Export logs for ongoing monitoring
 
@@ -237,39 +239,37 @@ IP-based detection for [later](#more-alert-types), once you understand this base
    Leave a teammate the query, rule, workspace, action group, settings, and support contacts.
    Arrange a check for [missing logs](#monitor-ingestion-separately), not just sign-in failures.
 
-Your first alert is ready once these checks pass. Use the optional reference below when
-you need more advanced monitoring.
+Enable the ongoing alert only after these checks pass. Advanced options follow below.
 
 ## Optional reference
 
-Use these sections when you need more than the first alert: [tenant setup and access](#1-choose-the-tenant-and-permissions),
-[monitor field checks](#field-checks-for-the-recommended-monitors), [query details](#4-establish-the-baseline),
-[other alert types](#more-alert-types),
-[collection gaps](#monitor-ingestion-separately), [Workbooks](#6-build-a-sign-in-workbook),
-and [triage, retention, and costs](#7-triage-privacy-retention-and-costs).
+For query maintainers: [access/licensing](#tenant-setup-access-and-licensing),
+[external tenants](#prepare-the-external-tenant-access-path), [categories](#choose-additional-export-categories),
+[schema](#inspect-schema-and-arrival-delays), [field checks](#field-checks-for-the-recommended-monitors),
+[query adaptation](#adapt-official-queries), [rule options](#query-identity-and-rule-options),
+[other alerts](#more-alert-types), [safe testing](#validate-without-generating-provider-sends),
+[Workbooks](#build-a-workbook-when-you-need-a-shared-view), and [triage/costs](#investigate-alerts-and-manage-the-data).
 
 <a id="what-these-logs-can-and-cannot-tell-you"></a>
 
 ### Understand the evidence
 
-1. Counts represent **stored sign-in records**, not unique customers, completed sessions,
-   or sends. Several records can describe one authentication sequence. A successful sign-in
-   can use an existing token claim without a phone challenge.
-2. Invalid passwords, interrupted challenges, cancellation, and policy rejection can all
-   cause non-success results. Neither an SMS/Voice label nor an MFA requirement identifies
-   the provider. `SigninLogs` has no guaranteed EPP delivery-mode, provider-attribution,
-   phone-delivery, or provider-cost field.
-3. Use [Function request queries](MONITORING.md#2-single-region-function-queries) and
-   [Application Insights](APPLICATION-INSIGHTS.md) for endpoint execution. Use the provider's
-   delivery and billing reports for recipient delivery and charges. Evaluation and live
-   Function requests can both return HTTP 200; neither proves handset receipt.
+Counts are **stored records**, not unique customers, sessions, or sends. One authentication can
+produce several records or succeed from an existing token claim without a phone challenge.
+Non-success can mean an invalid password, interruption, cancellation, or policy rejection.
+SMS/Voice/MFA labels do not identify the provider; `SigninLogs` guarantees no EPP mode,
+provider-attribution, delivery, or cost field.
+
+Use [Function queries](MONITORING.md#2-single-region-function-queries) for execution, and provider
+reports for delivery/billing. Evaluation and live requests can both return HTTP 200; neither proves receipt.
 
 <a id="1-choose-the-tenant-and-permissions"></a>
 
 ### Tenant setup, access, and licensing
 
-1. Entra roles and Azure RBAC are separate. **Reports Reader** lets you view portal activity;
-   **Security Administrator** is needed for general diagnostic settings. Review
+1. Microsoft Entra ID roles and Azure RBAC are separate. Use the roles in
+   [portal access](#1-choose-your-tenant-and-access) and [export setup](#3-export-logs-for-ongoing-monitoring).
+   Review
    [workspace/table access](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/manage-access)
    separately for queries. An external-tenant delegation does not grant every alert-management
    or role-assignment operation in the subscription-owning workforce tenant.
@@ -322,22 +322,19 @@ and [triage, retention, and costs](#7-triage-privacy-retention-and-costs).
 
 ### Inspect schema and arrival delays
 
-1. Check your workspace [query scope](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#open-log-analytics),
-   not the tutorial's demo environment or Application Insights `requests`/`traces` context.
-   Use [Simple mode's table selector](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-simple-mode#get-started-in-simple-mode)
-   if you prefer a point-and-click preview.
-2. Expand a row using its [chevron](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#expand-and-sort-records).
-   `AADTenantId` is the source directory; standard `TenantId` is the **workspace ID**.
-   `AppId` is the app client ID, not an Object ID or provider API ID.
-3. In **SigninLogs**, `ResultType` is a **string**: zero indicates success; populated
-   nonzero values are authentication codes. Keep empty values as unknown.
-   `CreatedDateTime` is sign-in initiation in UTC; `TimeGenerated` is the workspace log
-   timestamp. Use the ingestion-time guidance below rather than assuming their difference
-   measures collection delay.
-4. Adapt the [ingestion-latency reference](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-ingestion-time)
+1. Check the [workspace scope](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#open-log-analytics),
+   not a demo workspace or Application Insights `requests`/`traces` context.
+   Preview with [Simple mode](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-simple-mode#get-started-in-simple-mode)
+   and [expand a row](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#expand-and-sort-records).
+2. Verify IDs and result types with the [field checks below](#field-checks-for-the-recommended-monitors).
+   In `SigninLogs`, `ResultType` is a **string**: zero is success, populated nonzero values are
+   authentication codes, and empty values remain unknown.
+3. `CreatedDateTime` is sign-in initiation in UTC; `TimeGenerated` is the workspace timestamp,
+   not an ingestion-delay measurement. Adapt the
+   [ingestion-latency reference](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-ingestion-time)
    and [standard-column timing guidance](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-standard-columns#_timereceived-column)
    to your `SigninLogs` scope to measure delay, including missing timestamps.
-   These generic examples are not a ready-made Entra monitor or delivery-latency measure.
+   These are not ready-made identity monitors or delivery-latency measures.
 
 ### Field checks for the recommended monitors
 

@@ -1,20 +1,18 @@
 # Customer configuration and validation
 
-Start with the [five-step setup guide](GETTING-STARTED.md). Come here when you need exact IDs,
-provider credential names, or the checks to complete before activation.
+[Documentation](README.md) | [First deployment](GETTING-STARTED.md) | [Troubleshooting](../setup/docs/Troubleshooting.md)
 
-**After successful guided setup, go straight to [provider authentication](#complete-provider-authentication),
-then [validate the endpoint](#validate-the-deployed-endpoint).** The script has already published
-the code and configured Azure. You do not need local settings, Core Tools, or a second deployment.
+**After guided setup:** complete [provider authentication](#complete-provider-authentication),
+then [endpoint validation](#validate-the-deployed-endpoint). Azure and code are already deployed;
+no local settings, Core Tools, or second deployment is needed.
 
-For earlier steps, use [access requirements](#before-purchasing-or-deploying),
-the [values worksheet](#values-and-ownership), or the [setup reference](../setup/docs/README.md).
-[Local development and manual deployment](#optional-local-development-and-manual-deployment)
-are separate, optional paths.
-
-For operational handover, use [Function monitoring](MONITORING.md) and, separately,
-[Microsoft Entra sign-in monitoring](SIGN-IN-MONITORING.md) for authentication outcomes
-and potential abuse investigations. Endpoint setup does not enable tenant log export or alerts.
+| Task | Go to |
+| --- | --- |
+| Confirm access before spending | [Eligibility and approved procedures](#before-purchasing-or-deploying) |
+| Find or check setup values | [Inputs](#inputs-you-supply-to-setup), [setup-managed values](#values-setup-configures-for-you) |
+| Connect the provider | [Credential names and handoff](#complete-provider-authentication) |
+| Test and activate | [Acceptance checks](#validate-the-deployed-endpoint), [operations handover](#activate-operate-and-retire) |
+| Build a custom package | [Optional local/manual path](#optional-local-development-and-manual-deployment) |
 
 ## Before purchasing or deploying
 
@@ -38,15 +36,13 @@ offer, preview, authorized test caller, or activation procedure is unavailable, 
 and use the offer's available support route or your organization's Microsoft support channel.
 Do not assume that being an Azure subscription owner grants access to these features.
 
-In these docs, **onboarding owner** means the customer-designated person coordinating the
-tenant/policy administrator, Azure operator, provider administrator, and Microsoft support.
-It is not the name of a contact supplied by this repository. Identify those owners and obtain
-the approved test and policy-change procedures before deployment.
+Assign an **onboarding owner** in your organization to coordinate tenant/policy, Azure, and
+provider administrators with Microsoft support. Obtain approved test and policy-change procedures
+before deployment; the repository supplies no named onboarding contact.
 
-Read the [production limitations](CONTRACT.md#production-limitations): this sample waits for
-provider acceptance, has no durable delivery queue, automatic send retries, deduplication, or
-whole-invocation deadline, and uses one manually renewed decryption key. Caller fallback after
-a timeout can duplicate an already accepted send. Passing setup is not production certification.
+Review [production limitations](CONTRACT.md#production-limitations): no durable queue, automatic
+send retries, deduplication, or whole-invocation deadline; one manually renewed decryption key.
+Acceptance is not delivery, timeout fallback can duplicate sends, and setup is not certification.
 
 ## Values and ownership
 
@@ -70,12 +66,10 @@ same parameters. No parameter accepts a provider API key or private key.
 | Existing certificate location | Azure portal > Key Vault > Certificates > certificate > exact version > Certificate Identifier. Use the `/certificates/` URL, not Show Secret Value. | `-KeyVaultCertificateId`; reuse only. Add `-KeyVaultSubscriptionId` when that vault is in a different subscription in the same customer tenant. |
 | Output directory / versions | A private local folder; optionally a reviewed source commit and published release tag. | `-OutputDirectory`, `-SourceRef`, `-PackageReleaseTag`; optional. Keep launcher and support source aligned. |
 
-**Global/EU is provider-routing metadata, not Azure placement or a data-residency guarantee.**
-The checked-in [Telesign](../setup/providers/telesign.json) and
-[Soprano](../setup/providers/soprano.json) profiles currently use the same URL for Global and EU;
-Soprano also uses the same API app ID/scope. The label alone does not establish where messages,
-credentials, logs, or personal data are processed. Obtain account-level routing and residency
-assurances from the provider and separately choose Azure resource/telemetry locations.
+**Global/EU is routing metadata, not Azure placement or a residency guarantee.**
+[Telesign](../setup/providers/telesign.json) and [Soprano](../setup/providers/soprano.json) currently
+use identical Global/EU URLs; Soprano also shares its app ID/scope. Confirm provider processing
+locations for messages, credentials, logs, and personal data; choose Azure/telemetry locations separately.
 
 **One guided deployment has one provider and accepts both SMS and voice.** Enabling the second
 channel does not require another setup run; validate and activate each intended channel separately.
@@ -175,26 +169,20 @@ checks in the provider-specific steps below.
 
 ### Telesign: enter and verify the two vault secrets
 
-1. Obtain the raw API key and matching Customer ID from your Telesign account's approved secure
-   credential process. Confirm that this account can call the configured EPP URL for each channel you intend to enable.
-2. Open the **exact Key Vault in `resources.keyVault`** in the deployment summary. In
-   **Objects > Secrets > Generate/Import**, choose manual entry. Create `telesign-api-key` with
-   the raw API key, then `telesign-customer-id` with the matching raw Customer ID.
-   Do not base64-encode the pair, decode the key, or enter an Authorization header; the adapter
-   constructs Basic authentication. Keep both secrets enabled with validity dates appropriate
-   to your provider agreement.
-3. Verify names, enabled state, and version metadata without selecting **Show Secret Value**.
-   In **Access control (IAM)** confirm the Function's **system-assigned identity** has Key Vault
-   Secrets User at this vault. Setup already assigns this and gives its Azure operator Key Vault
-   Secrets Officer. A different credential administrator needs separately approved vault access;
-   Entra administrator status alone does not grant vault data access.
-4. Allow RBAC propagation and check vault network access if writes/reads fail. Do not replace
-   the encryption certificate secret, grant broad access, or put credentials into Function
-   settings to bypass a vault failure.
-5. Follow the authorized evaluation and controlled live checks below. Evaluation cannot validate
-   these secrets. Credential caching depends on your settings: setup disables it for FC1 and
-   enables it for EP1. Use the [runtime cache behavior](CONTRACT.md#credential-caching-and-refresh)
-   to plan first-use and rotation checks. Absence of a warning does not prove account authorization.
+1. Confirm account access to each intended channel's EPP URL. Use the
+   [vault steps above](#where-to-enter-api-key-credentials-in-key-vault) to store the raw API key as
+   `telesign-api-key` and matching raw Customer ID as `telesign-customer-id`.
+   Do not encode the pair, decode the key, or enter an Authorization header; the adapter builds Basic auth.
+2. Verify enabled state, validity, and version metadata without **Show Secret Value**.
+   In **Access control (IAM)**, confirm the Function's **system-assigned identity** has
+   **Key Vault Secrets User**. Setup gives its Azure operator **Key Vault Secrets Officer**;
+   another credential administrator needs separate vault access, regardless of directory role.
+   For failures, allow RBAC propagation and check networking; never replace the encryption secret,
+   grant broad access, or copy credentials into app settings to bypass a denial.
+3. Complete the [authorized evaluation and live checks](#validate-the-deployed-endpoint).
+   Evaluation does not validate these secrets. Setup disables provider caching for FC1 and enables
+   it for EP1; plan first-use/rotation checks from the [cache contract](CONTRACT.md#credential-caching-and-refresh).
+   No warning is not proof of account authorization.
 
 Use portal secret entry rather than command-line literal values, transcripts, source files,
 screenshots, or chat. During rotation, coordinate the matching pair and provider validity window;
@@ -203,10 +191,8 @@ where the provider supports it, and verify live delivery before retiring them.
 
 ### Soprano: provider-administrator handoff
 
-Setup configures the customer-side multitenant app and a federated identity credential trusting
-the outbound managed identity. It does **not** provision your commercial account or grant
-application access in Soprano's tenant. A successful Azure deployment is therefore not evidence
-that Soprano OAuth is ready.
+Setup creates customer-side federation, **not** the commercial account or access in Soprano's
+tenant. Complete this handoff before treating OAuth as ready.
 
 Send the following **identifiers only** through the provider's approved onboarding channel:
 customer tenant ID; `applicationId` / `EPP_OUTBOUND_CLIENT_ID`; intended channels and their full provider URLs;
@@ -284,18 +270,14 @@ Only after the acceptance checks pass, have the policy administrator follow
 Public Graph SMS/voice schemas do not document the EPP `url`/`appId` update. Obtain the
 product-approved procedure; no guessed PATCH body is supplied here.
 
-Open **Function App > Application Insights** to locate the associated component, then its linked
-**Log Analytics workspace > Logs** for the workspace-schema queries in
-[MONITORING.md](MONITORING.md). Start with request discovery, then inspect the runtime-specific
-events; do not search every language for `logType: "request"`. Current implementations use
-`request_completed` service/log events, not a universal JSON summary.
+For handover, [find the linked monitoring resources](MONITORING.md#find-the-linked-resources-in-the-portal),
+discover requests, then use [your runtime's event schema](MONITORING.md#runtime-specific-log-discovery).
+There is no universal JSON request summary; operation, invocation, and application IDs differ.
+Easy Auth can reject before application logs exist; `response_prepared` does not prove caller receipt.
 
-Use the [Application Insights guide](APPLICATION-INSIGHTS.md) for collection/identity/sampling,
-[runtime log queries](MONITORING.md#runtime-specific-log-discovery) for Python/.NET as well as
-JavaScript, and [troubleshooting](../setup/docs/Troubleshooting.md#after-deployment-triage) when
-data or delivery is missing. Correlate the host operation/invocation and application request IDs
-without treating them as interchangeable. Easy Auth can reject a call before application logs
-exist. A `response_prepared` event does not prove the caller received the response.
+Use [collection diagnostics](APPLICATION-INSIGHTS.md) for missing data and
+[endpoint triage](../setup/docs/Troubleshooting.md#after-deployment-triage) for failures.
+[Identity monitoring](SIGN-IN-MONITORING.md) is separate; setup does not export tenant logs or create alerts.
 
 Assign ongoing owners for request failures/latency, provider account and credential rotation,
 certificate expiry/renewal, alert routing, telemetry gaps, retention/cost, and policy rollback.
@@ -307,11 +289,10 @@ package/source version, and renewal dates in restricted operational storage.
 ## Optional local development and manual deployment
 
 <a id="local-settings-and-cloud-secrets"></a>
-**Skip this section after guided setup unless developing a custom package.** Follow the selected
+**Skip after guided setup unless customizing code.** Follow the
 [JavaScript](../javascript/README.md), [Python](../python/README.md), or [.NET](../dotnet/README.md)
-guide. Copy [local.settings.sample.json](local.settings.sample.json) to `local.settings.json`
-beside that runtime's `host.json`, replace placeholders, and keep every `Values` entry a string.
-Use `node`, `python`, or `dotnet-isolated` for `FUNCTIONS_WORKER_RUNTIME`.
+local setup. Copy [sample settings](local.settings.sample.json) beside that runtime's `host.json`;
+replace placeholders, use string `Values`, and select `node`, `python`, or `dotnet-isolated`.
 
 `UseDevelopmentStorage=true` needs local Azurite. Use a local **test** PEM/base64 PEM for
 `EPP_DECRYPTION_KEY_PEM`; Core Tools cannot resolve Azure Key Vault references. For evaluation-only
