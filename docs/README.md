@@ -8,11 +8,19 @@ nonproduction environment; deployment does not activate policy.
 
 ## Table of Contents
 
+- [Understand the sample](#understand-the-sample)
 - [Deploy and validate](#deploy-and-validate)
 - [Operate](#operate)
 - [Develop](#develop)
 - [Optional designs](#optional-designs)
 - [Get help](#get-help)
+
+## Understand the sample
+
+- **Architecture and implementation choices:** [Technical reference](../TECHNICAL.md)
+- **Requests, responses, settings, and required behavior:** [HTTP contract](CONTRACT.md)
+- **Runtime events and safe diagnostic fields:** [Application log reference](LOGGING.md)
+- **Security and production boundaries:** [Production limitations](CONTRACT.md#production-limitations)
 
 ## Deploy and validate
 

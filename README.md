@@ -4,16 +4,42 @@ Connect Microsoft Entra ID to your phone provider for SMS and voice one-time pas
 Deploy **one endpoint in one Azure region**, using JavaScript, C#, or Python.
 Guided setup handles Azure resources and code publication; no repository clone is needed.
 
-**Start in a dedicated nonproduction tenant and subscription.** This is a sample, not
-production certification. Before deploying, [confirm supported provider access and Microsoft's
-approved testing and activation procedure](docs/GETTING-STARTED.md#1-get-ready).
-If either is unavailable, stop. Azure resources and provider services can incur charges.
+**Start in a dedicated nonproduction tenant and subscription.** This sample is not production
+certification. Review [requirements](#requirements) before purchasing or deploying.
 
 ## Table of Contents
 
+- [Features](#features)
+- [Requirements](#requirements)
 - [Architecture](#architecture)
 - [Get started](#get-started)
 - [Guidance](#guidance)
+  - [Deploy and configure](#deploy-and-configure)
+  - [Operate](#operate)
+  - [Develop](#develop)
+  - [Optional designs](#optional-designs)
+- [Getting help](#getting-help)
+
+## Features
+
+- One Azure Function endpoint that accepts Microsoft Entra ID SMS and voice requests and calls the configured provider.
+- JavaScript, C#, and Python implementations of the same [HTTP and trust contract](docs/CONTRACT.md).
+- Guided setup for Azure resources, package verification, publication, and Easy Auth configuration.
+- Evaluation requests that authenticate and decrypt without sending a message to the provider.
+- Monitoring guidance for Function requests, runtime events, Microsoft Entra ID sign-ins, and telemetry collection.
+- A provider-neutral [bring-your-own-telephony integration path](docs/BRING-YOUR-OWN-PROVIDER.md).
+
+## Requirements
+
+Before deploying:
+
+- Confirm [supported provider access and Microsoft's approved testing and activation procedure](docs/GETTING-STARTED.md#1-get-ready).
+  If either is unavailable, stop.
+- Use a dedicated nonproduction tenant, subscription, application registration, and resource prefix.
+- Check the required [administrator roles, Azure permissions, tools, regional availability, and quota](setup/docs/README.md#prerequisites-for-step-2).
+- Plan for Azure resource, telemetry, and provider charges. Use the [provider cost estimate](docs/COST-CALCULATOR.md) as planning input, not a billing report.
+
+Deployment does not activate policy. Keep Easy Auth enabled; never bypass caller validation to test.
 
 ## Architecture
 
@@ -40,11 +66,43 @@ See the [sample's production limitations](docs/CONTRACT.md#production-limitation
 <a id="find-more-detail"></a>
 ## Guidance
 
-- **Deploy and validate:** [Five-step setup](docs/GETTING-STARTED.md)
-- **Configure:** [Setup reference](setup/docs/README.md) and [provider configuration](docs/ONBOARDING.md)
-- **Troubleshoot:** [Setup and endpoint failures](setup/docs/Troubleshooting.md)
-- **Operate:** [Monitoring, identity, renewal, rollback, and costs](docs/README.md#operate)
-- **Develop:** [Runtimes, contract, logging, and provider integration](docs/README.md#develop)
-- **Extend:** [Optional multi-region and fallback designs](docs/README.md#optional-designs)
+### Deploy and configure
 
-See the [documentation index](docs/README.md) for all guides.
+- [Five-step setup](docs/GETTING-STARTED.md) for a first deployment.
+- [Customer configuration and validation](docs/ONBOARDING.md) for IDs, provider authentication, testing, and activation.
+- [Setup reference](setup/docs/README.md) for permissions, hosting plans, certificate choices, unattended use, renewal, and rollback.
+- [Troubleshooting](setup/docs/Troubleshooting.md) for symptom-led checks and safe recovery.
+
+### Operate
+
+- [Function monitoring and alerts](docs/MONITORING.md)
+- [Application Insights collection diagnostics](docs/APPLICATION-INSIGHTS.md)
+- [Microsoft Entra ID sign-in monitoring](docs/SIGN-IN-MONITORING.md)
+- [Certificate renewal](setup/docs/README.md#encryption-certificate-lifecycle) and [rollback](setup/docs/README.md#rollback-and-decommissioning)
+- [SMS and voice cost estimation](docs/COST-CALCULATOR.md)
+
+### Develop
+
+- Runtime guides: [JavaScript](javascript/README.md), [C#](dotnet/README.md), and [Python](python/README.md)
+- [Architecture, settings, and packages](TECHNICAL.md)
+- [HTTP, status, configuration, and runtime contract](docs/CONTRACT.md)
+- [Application log events and safe fields](docs/LOGGING.md)
+- [Provider-neutral BYOT integration](docs/BRING-YOUR-OWN-PROVIDER.md)
+
+### Optional designs
+
+- [Multi-region routing with Azure Front Door](docs/FRONTDOOR.md)
+- [Conservative primary-to-secondary provider fallback](docs/MULTI-PROVIDER-IMPLEMENTATION.md)
+
+Guided setup enables neither optional design. Each requires separate implementation, capacity
+planning, validation, operations, and rollback.
+
+## Getting help
+
+- For provider access, approved testing, or activation, use the
+  [provider and Microsoft support route](docs/ONBOARDING.md#before-purchasing-or-deploying).
+- For setup or endpoint failures, start with [troubleshooting](setup/docs/Troubleshooting.md).
+- For repository problems, use [GitHub issues](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/issues).
+
+Keep credentials, phone data, OTPs, encrypted bodies, and raw provider responses out of issues
+and support requests. See the [complete documentation index](docs/README.md).
