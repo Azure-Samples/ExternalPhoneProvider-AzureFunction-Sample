@@ -11,17 +11,34 @@ Deploying the endpoint alone does not enable tenant policy.
 
 ## End-to-end endpoint request
 
-![UML sequence showing Microsoft Entra ID calling Easy Auth, the Function validating and decrypting, and alternative evaluation and live paths. Only live calls reach the provider; success returns through Easy Auth after evaluation or recognized acceptance.](images/request-sequence.png)
+This is a browser-based **SMS sign-in example after approved endpoint activation**. Your
+application is the user's existing sign-in app, **not** the dedicated endpoint app registration
+created during setup. Do not add a redirect URI to that endpoint registration to copy this flow.
+
+![End-user SMS sign-in sequence: a person opens an app, follows the redirect to Microsoft Entra ID, receives a provider-delivered SMS after an authorized SendOtp call, enters the code on the sign-in page, and accesses the app only after identity and application checks succeed. Provider acceptance and phone delivery are separate observations.](images/request-sequence.png)
 
 *Original UML sequence; [open the scalable diagram](images/request-sequence.svg).
-Solid arrows are calls; dashed arrows are replies. The two successful branches are alternatives.
-Rejected callers, invalid payloads, and provider failures stop the success path; use the
-[error response reference](CONTRACT.md#epp-response-json) for those cases.
-This illustrates the [shared contract](CONTRACT.md#1-http-api), not a completed live test.*
+Solid arrows are requests/delivery; dashed arrows are replies. The `par` frame separates
+provider acceptance from recipient delivery; it does not promise their order or successful delivery.
+This is a successful example, not a completed live test. Use the
+[endpoint error reference](CONTRACT.md#epp-response-json) for rejected or failed endpoint requests.*
 
-The success response acknowledges evaluation or provider acceptance, **not recipient delivery**.
-The steps below explain each interaction; the
-[architecture view](../TECHNICAL.md#single-region-architecture) shows the separate key and credential paths.
+The person reads the SMS on their phone and enters its code in the **Microsoft Entra ID sign-in
+page**, as described in Microsoft's [text-message verification instructions](https://learn.microsoft.com/en-us/entra/identity/authentication/concept-authentication-phone-options#text-message-verification).
+Microsoft Entra ID checks the code and remaining sign-in requirements; the application validates
+the sign-in result and applies its access rules. The
+[browser redirect/token exchange](https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc#protocol-flow-sign-in)
+belongs to that application, not this Function.
+
+The Function only delivers the supplied message. For live requests, its `200` response means provider acceptance,
+**not phone receipt, a correct user-entered code, or application access**. Evaluation (`mode: 2`)
+tests the endpoint without sending a message; it is not an end-user sign-in.
+Voice and other sign-in flows can have different prompts; confirm their experience through the
+[approved validation procedure](ONBOARDING.md#validate-the-deployed-endpoint), rather than assuming
+they use this SMS screen or a generic voice-MFA gesture.
+
+The steps below explain the endpoint's part of the sequence. The
+[architecture view](../TECHNICAL.md#single-region-architecture) shows its separate key and credential paths.
 
 <a id="1-establish-caller-authentication"></a>
 

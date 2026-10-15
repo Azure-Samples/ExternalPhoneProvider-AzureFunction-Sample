@@ -292,13 +292,6 @@ Setup reads `keyCredentials` before deployment and identifies **`type=Asymmetric
 It displays each key ID, certificate thumbprint, name, and validity. Signing/verification
 certificates are not encryption candidates, and unsupported encryption credential types stop setup.
 
-![Certificate reuse identifier map: match the app encryption credential key ID to the exact Key Vault certificate version; setup resolves its backing secret for the Function without downloading the private key.](../../docs/images/onboarding/certificate-reuse.png)
-
-*Original identifier map; [open the scalable illustration](../../docs/images/onboarding/certificate-reuse.svg).
-**Reuse path only:** choose **Reuse** interactively or pass `-CertificateAction Reuse`. Select the app encryption key
-and provide its certificate version; unattended reuse requires both named ID parameters.
-The Function's secret reference is an output, not a secret value to copy. Follow the checks below.*
-
 | Existing encryption credentials | Choice | Result after successful deployment |
 |---|---|---|
 | None | Creation is automatic; optional `-CertificateAction Create`. | Register one certificate from the setup vault. |
@@ -309,12 +302,34 @@ Interactive selection never defaults to the newest certificate or to cleanup. En
 stops before deployment; invalid locations can be corrected or followed by another choice.
 Selecting an action does not apply it: the complete deployment approval lists the exact removals.
 
-For reuse, open **Azure portal > Key Vault > Certificates > certificate > version** and copy
-**Certificate Identifier**, of the form
-`https://<vault>.vault.azure.net/certificates/<name>/<version>`. A version is required.
-Do not supply a vault-only URL, `/keys/` URL, public `.cer` file, secret value, or a versionless
-reference. Setup reads the public certificate and resolves the corresponding **versioned backing
-secret**; the certificate and secret version identifiers need not be identical.
+**Reuse path only:** choose **Reuse** interactively or pass `-CertificateAction Reuse`. Unattended
+reuse requires both `-EncryptionKeyId` and `-KeyVaultCertificateId`.
+
+1. Select the application's encryption credential key ID from setup's list or the app manifest's
+   `keyCredentials[].keyId`. This is the saved `encryptionKeyId`, not the application client ID.
+2. In **Azure portal > Key vaults**, open the certificate's source vault. The saved `certificateId`
+   identifies its vault, certificate name, and version; this can differ from the provider-credential
+   vault in `resources.keyVault`. Open **Objects > Certificates**, select that certificate, then
+   select the exact version matching the app credential, not automatically **Current version**.
+   Without a saved summary, ask the certificate owner for the vault and version matching the
+   selected public thumbprint.
+3. On **Certificate Version**, copy **Certificate Identifier** using the copy icon at the end of
+   that row. Use the complete HTTPS URL for `-KeyVaultCertificateId`; it must include the
+   `/certificates/<name>/<version>` path. Do not copy **Key Identifier** or **Secret Identifier**,
+   and do not select **Download in PFX/PEM format**.
+
+[![Official Key Vault Certificate Version page showing Certificate Identifier above the separate Key Identifier and Secret Identifier fields, using Microsoft's AKV-Contoso and ExampleCertificate demo.](../../docs/images/onboarding/certificate-version.png)](../../docs/images/onboarding/certificate-version.png)
+
+*Field-location example from [Microsoft's certificate instructions](https://learn.microsoft.com/en-us/azure/key-vault/certificates/quick-create-portal#add-a-certificate-to-key-vault);
+do not follow its certificate-creation or private-key-export steps for this sample.
+The demo names, IDs, and expired dates are not reuse inputs; use your own valid, matching version.
+[Unmodified source](https://github.com/MicrosoftDocs/azure-docs/blob/22e0ade52c247e5d306a78dc9e392d901eb9c198/articles/key-vault/media/certificates/quick-create-portal/current-version-hidden.png),
+Copyright (c) Microsoft Corporation, [CC BY 4.0](https://github.com/MicrosoftDocs/azure-docs/blob/22e0ade52c247e5d306a78dc9e392d901eb9c198/LICENSE).*
+
+A version is required. Do not supply a vault-only URL, `/keys/` URL, public `.cer` file, secret value,
+or a versionless reference. Setup reads the public certificate and resolves the corresponding
+**versioned backing secret** for `EPP_DECRYPTION_KEY_PEM`; certificate and secret version identifiers
+need not be identical. The Function's private-key reference is an output, not a value to download.
 
 The certificate must exactly match the selected registered certificate, not just its display
 name or RSA key. It must use exportable RSA of at least 2048 bits with an enabled,

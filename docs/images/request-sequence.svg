@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1100" viewBox="0 0 960 1100" role="img" aria-labelledby="title description">
-  <title id="title">UML sequence: one endpoint request</title>
-  <desc id="description">Microsoft Entra ID sends a bearer token and encrypted request to Easy Auth. Authorized requests reach the Function, which validates and decrypts. In the evaluation branch, the Function returns success without contacting the provider. In the live branch, the Function sends with its own provider credentials and returns success only after recognized provider acceptance. Delivery to the recipient is separate, and failed requests omit the success nonce.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1320" viewBox="0 0 1200 1320" role="img" aria-labelledby="title description">
+  <title id="title">End-user sign-in: an SMS challenge</title>
+  <desc id="description">Successful browser sign-in example after approved endpoint activation. A person opens an existing application, follows its redirect to Microsoft Entra ID, and reaches an SMS challenge. Microsoft Entra ID calls the protected SendOtp endpoint with its own caller token and encrypted payload. The endpoint validates, decrypts, and sends through the configured provider. The acceptance response and delivery to the person's phone are separate observations with no guaranteed ordering. The person enters the received code into the Microsoft Entra ID sign-in page. Microsoft Entra ID checks it and remaining policy requirements; the application validates the sign-in result and its own access rules. The endpoint does not verify the user's code or sign the user in.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#245b91"/></marker>
     <marker id="reply" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10" fill="none" stroke="#21704d" stroke-width="1.5"/></marker>
     <style>
-      text { font-family: "Segoe UI", Arial, sans-serif; fill: #172b40; font-size: 19px; }
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #172b40; font-size: 20px; }
       .title { font-size: 30px; font-weight: 700; }
       .heading { font-size: 21px; font-weight: 650; }
       .small { font-size: 18px; }
@@ -14,55 +14,75 @@
       .lifeline { stroke: #9aaabc; stroke-width: 1.5; stroke-dasharray: 6 6; }
     </style>
   </defs>
-  <rect width="960" height="1100" fill="white"/>
-  <text x="32" y="43" class="title">UML sequence: one endpoint request</text>
-  <text x="32" y="76" class="small">Read downward. Evaluation and live are alternatives, not consecutive sends.</text>
+  <rect width="1200" height="1320" fill="white"/>
+  <text x="32" y="43" class="title">End-user sign-in: an SMS challenge</text>
+  <text x="32" y="76" class="small">Successful example after approved activation, not a live-run trace. Not every sign-in requires SMS.</text>
 
-  <path d="M120 174V972M360 174V972M600 174V972M850 174V972" class="lifeline"/>
-  <rect x="20" y="110" width="200" height="64" rx="8" fill="#e4f1ff" stroke="#7595b7"/>
-  <rect x="260" y="110" width="200" height="64" rx="8" fill="#e4f1ff" stroke="#7595b7"/>
-  <rect x="520" y="110" width="160" height="64" rx="8" fill="#edf7f1" stroke="#54856d"/>
-  <rect x="760" y="110" width="180" height="64" rx="8" fill="#f3effa" stroke="#8d75b0"/>
-  <text x="120" y="148" text-anchor="middle" class="heading">Microsoft Entra ID</text>
-  <text x="360" y="148" text-anchor="middle" class="heading">Easy Auth</text>
-  <text x="600" y="148" text-anchor="middle" class="heading">Function</text>
-  <text x="850" y="148" text-anchor="middle" class="heading">Phone provider</text>
+  <path d="M110 180V1170M350 180V1170M600 180V1170M850 180V1170M1090 180V1170" class="lifeline"/>
+  <rect x="20" y="110" width="180" height="70" rx="8" fill="#fff7e8" stroke="#ae8741"/>
+  <rect x="250" y="110" width="200" height="70" rx="8" fill="#f3effa" stroke="#8d75b0"/>
+  <rect x="500" y="110" width="200" height="70" rx="8" fill="#e4f1ff" stroke="#7595b7"/>
+  <rect x="750" y="110" width="200" height="70" rx="8" fill="#edf7f1" stroke="#54856d"/>
+  <rect x="1000" y="110" width="180" height="70" rx="8" fill="#f3effa" stroke="#8d75b0"/>
+  <text x="110" y="140" text-anchor="middle" class="heading">End user</text>
+  <text x="110" y="166" text-anchor="middle" class="small">Browser + phone</text>
+  <text x="350" y="140" text-anchor="middle" class="heading">Your application</text>
+  <text x="350" y="166" text-anchor="middle" class="small">Existing sign-in app</text>
+  <text x="600" y="151" text-anchor="middle" class="heading">Microsoft Entra ID</text>
+  <text x="850" y="140" text-anchor="middle" class="heading">Your endpoint</text>
+  <text x="850" y="166" text-anchor="middle" class="small">Easy Auth + Function</text>
+  <text x="1090" y="151" text-anchor="middle" class="heading">Phone provider</text>
 
-  <text x="240" y="222" text-anchor="middle" class="small">POST + token + JWE</text>
-  <path d="M120 238H358" class="message"/>
-  <rect x="32" y="268" width="896" height="45" rx="6" fill="#fff7e8" stroke="#ae8741"/>
-  <text x="480" y="297" text-anchor="middle" class="small">Easy Auth verifies the token and caller. Rejected callers never reach the Function.</text>
-  <text x="480" y="349" text-anchor="middle" class="small">Authorized request</text>
-  <path d="M360 365H598" class="message"/>
-  <path d="M600 405H644V447H602" class="message"/>
-  <text x="666" y="417" class="small">Validate + decrypt</text>
-  <text x="666" y="445" class="small">using the private key</text>
+  <text x="230" y="218" text-anchor="middle" class="small">Open app / select Sign in</text>
+  <path d="M110 234H348" class="message"/>
+  <text x="230" y="270" text-anchor="middle" class="small">Redirect browser to sign-in</text>
+  <path d="M350 286H112" class="reply"/>
+  <rect x="140" y="300" width="430" height="27" fill="white"/>
+  <text x="355" y="322" text-anchor="middle" class="small">Start sign-in and complete earlier prompts</text>
+  <path d="M110 338H598" class="message"/>
+  <rect x="130" y="352" width="450" height="27" fill="white"/>
+  <text x="355" y="374" text-anchor="middle" class="small">Show SMS verification page when policy requires it</text>
+  <path d="M600 390H112" class="reply"/>
 
-  <rect x="32" y="490" width="896" height="470" fill="none" stroke="#7595b7" stroke-width="1.5"/>
-  <path d="M32 490H95V512L83 524H32Z" fill="#edf1f5" stroke="#7595b7"/>
-  <text x="49" y="514" class="heading">alt</text>
-  <rect x="112" y="497" width="254" height="32" fill="white"/>
-  <text x="120" y="521" class="heading">[evaluation: mode 2]</text>
-  <text x="480" y="563" text-anchor="middle" class="small">200 + original nonce</text>
-  <path d="M600 579H362" class="reply"/>
-  <text x="240" y="617" text-anchor="middle" class="small">200 + original nonce</text>
-  <path d="M360 633H122" class="reply"/>
-  <rect x="758" y="548" width="162" height="58" rx="6" fill="#edf7f1" stroke="#54856d"/>
-  <text x="839" y="581" text-anchor="middle" class="small">No provider call</text>
+  <text x="725" y="427" text-anchor="middle" class="small">POST /api/SendOtp</text>
+  <text x="725" y="452" text-anchor="middle" class="small">channel: 1, mode: 1</text>
+  <path d="M600 468H848" class="message"/>
+  <rect x="664" y="488" width="516" height="68" rx="6" fill="#edf7f1" stroke="#54856d"/>
+  <text x="688" y="516" class="small">Verify the Microsoft caller token, then validate and decrypt.</text>
+  <text x="688" y="542" class="small">This is not the end user's token or a browser call.</text>
+  <text x="970" y="591" text-anchor="middle" class="small">Send SMS (own credentials)</text>
+  <path d="M850 607H1088" class="message"/>
 
-  <path d="M32 665H928" stroke="#7595b7" stroke-dasharray="7 5"/>
-  <rect x="112" y="675" width="180" height="32" fill="white"/>
-  <text x="120" y="699" class="heading">[live: mode 1]</text>
-  <text x="725" y="737" text-anchor="middle" class="small">Send SMS or voice</text>
-  <path d="M600 753H848" class="message"/>
-  <text x="725" y="797" text-anchor="middle" class="small">Recognized acceptance</text>
-  <path d="M850 813H602" class="reply"/>
-  <text x="480" y="857" text-anchor="middle" class="small">200 + original nonce</text>
-  <path d="M600 873H362" class="reply"/>
-  <text x="240" y="917" text-anchor="middle" class="small">200 + original nonce</text>
-  <path d="M360 933H122" class="reply"/>
+  <rect x="32" y="633" width="1136" height="263" fill="none" stroke="#7595b7" stroke-width="1.5"/>
+  <path d="M32 633H95V655L83 667H32Z" fill="#edf1f5" stroke="#7595b7"/>
+  <text x="44" y="657" class="heading">par</text>
+  <rect x="120" y="640" width="416" height="29" fill="white"/>
+  <text x="132" y="661" class="small">[acceptance response; not a delivery receipt]</text>
+  <text x="970" y="695" text-anchor="middle" class="small">Recognized acceptance</text>
+  <path d="M1090 711H852" class="reply"/>
+  <text x="725" y="749" text-anchor="middle" class="small">HTTP 200 + original nonce</text>
+  <path d="M850 765H602" class="reply"/>
+  <path d="M32 790H1168" stroke="#7595b7" stroke-dasharray="7 5"/>
+  <rect x="120" y="798" width="602" height="29" fill="white"/>
+  <text x="132" y="819" class="small">[separate recipient delivery; no guaranteed order with the response]</text>
+  <rect x="326" y="839" width="548" height="26" fill="white"/>
+  <text x="600" y="858" text-anchor="middle" class="small">SMS reaches the person's phone, if delivery succeeds</text>
+  <path d="M1090 876H112" class="message"/>
 
-  <text x="32" y="1005" class="small">Success also includes correlationId and providerStatus: "accepted". Failures omit the nonce.</text>
-  <text x="32" y="1036" class="small">Live sends use provider credentials, never the incoming bearer token.</text>
-  <text x="32" y="1067" class="small">Recipient delivery is checked separately, not awaited. A timeout is not permission to resend.</text>
+  <rect x="112" y="917" width="486" height="27" fill="white"/>
+  <text x="355" y="939" text-anchor="middle" class="small">Read SMS; enter code on the Microsoft Entra ID sign-in page</text>
+  <path d="M110 955H598" class="message"/>
+  <path d="M600 980H638V1020H602" class="message"/>
+  <rect x="648" y="973" width="520" height="30" fill="white"/>
+  <text x="658" y="995" class="small">Check the code and remaining sign-in requirements</text>
+  <text x="475" y="1059" text-anchor="middle" class="small">Return sign-in result</text>
+  <path d="M600 1075H352" class="reply"/>
+  <text x="230" y="1114" text-anchor="middle" class="small">App checks result + access</text>
+  <text x="230" y="1139" text-anchor="middle" class="small">Open app only if authorized</text>
+  <path d="M350 1155H112" class="reply"/>
+
+  <path d="M32 1192H1168" stroke="#c6d3df"/>
+  <text x="32" y="1225" class="small">The Function delivers the supplied message; it does not verify the user's code or sign the user in.</text>
+  <text x="32" y="1256" class="small">Evaluation (mode 2) stops after endpoint validation/decryption: no provider send and no user SMS.</text>
+  <text x="32" y="1287" class="small">Earlier prompts, full token exchange, error paths and caller fallback are not expanded. Never blindly resend after a timeout.</text>
 </svg>

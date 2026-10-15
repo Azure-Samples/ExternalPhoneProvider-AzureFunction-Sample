@@ -98,10 +98,29 @@ Review the deployment plan, then retain `deployment-*.json` and the public certi
 The [setup output guide](../setup/docs/README.md#read-the-deployment-summary) explains the remaining
 fields. `policyChanged: false` is expected, not a failed deployment.
 
-Inspect cloud settings in **Azure portal > Function App > Settings > Environment variables**.
-They are setup-managed; do not recreate them from the local sample or bulk-copy another app's
-settings. Do not export all settings into a ticket. Changes can restart the worker, and reruns
-can restore setup-managed values.
+To find your endpoint's cloud settings:
+
+1. In **Azure portal > Function Apps**, open the name in `resources.functionApp` in your saved
+   deployment summary. Check its subscription and resource group against `subscriptionId` and
+   `resources.resourceGroup`; do not select an app just because its display name looks similar.
+2. Open **Settings > Environment variables > App settings**. Use the **Search** box to find
+   `EPP_PROVIDER_NAME`, `EPP_PROVIDER_SMS_ENDPOINT`, or `EPP_PROVIDER_VOICE_ENDPOINT`, then use
+   the table below to compare the approved routing configuration privately.
+3. Find `EPP_DECRYPTION_KEY_PEM` by **Name**, but keep its value hidden. It is the private-key
+   reference, not a provider API key. Do not select **Show values** to export settings or include
+   them in a screenshot. Use the [key-reference checks](../setup/docs/Troubleshooting.md#certificate-selection-reuse-or-cleanup-fails)
+   if resolution fails.
+
+[![Official Azure portal example with Settings, Environment variables, and the App settings tab highlighted; all setting values remain hidden.](images/onboarding/function-app-settings.png)](images/onboarding/function-app-settings.png)
+
+*Navigation example from [Microsoft's Function settings instructions](https://learn.microsoft.com/en-us/azure/azure-functions/functions-how-to-use-azure-function-app-settings#get-started-in-the-azure-portal).
+`function-app-1` is a demo name; use `resources.functionApp`. The generic host settings shown
+are not an EPP checklist, and FC1/EP1 settings differ.
+[Unmodified source](https://github.com/MicrosoftDocs/azure-docs/blob/1067858212cfae5f69de14fe53a3432eb461b052/articles/azure-functions/media/functions-how-to-use-azure-function-app-settings/azure-function-app-main.png),
+Copyright (c) Microsoft Corporation, [CC BY 4.0](https://github.com/MicrosoftDocs/azure-docs/blob/1067858212cfae5f69de14fe53a3432eb461b052/LICENSE).*
+
+These settings are setup-managed; do not recreate them from the local sample or bulk-copy another
+app's settings. Changes can restart the worker, and reruns can restore setup-managed values.
 
 | Value or setting | Source / verification | Customer action |
 |---|---|---|
@@ -125,7 +144,7 @@ a missing, empty, or invalid selected endpoint fails closed.
 There are **three separate trust paths**: Easy Auth admits the Microsoft caller; the Key Vault
 certificate decrypts its JWE; provider credentials authorize outbound delivery. The HTTPS
 certificate is separate again. Use the [request sequence](BRING-YOUR-OWN-PROVIDER.md#end-to-end-endpoint-request)
-to see where evaluation stops and live delivery continues. Fix the failing path rather than
+to distinguish provider acceptance, phone receipt, and the user's code verification. Fix the failing path rather than
 replacing unrelated IDs or keys.
 
 ## Complete provider authentication

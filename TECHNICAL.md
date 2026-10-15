@@ -17,7 +17,7 @@ and managed-identity access to credentials.
 
 *Component overview, not a delivery timeline. The numbered delivery arrow does not mean
 the Function waits for handset receipt; see the [request sequence](docs/BRING-YOUR-OWN-PROVIDER.md#end-to-end-endpoint-request)
-for evaluation and live response ordering.*
+for live SMS response ordering and the end user's verification steps.*
 
 Microsoft Entra ID sends an authenticated, encrypted request. Easy Auth checks the caller,
 then the Function decrypts the request using its Key Vault-backed key. For a live request, the
