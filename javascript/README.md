@@ -27,8 +27,9 @@ is narrower than the bundled adapter set.
    Then run [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint);
    offline tests do not verify platform authentication.
 
-**Optional:** [Front Door](../docs/FRONTDOOR.md) uses multiple regional origins behind one URL.
-The JavaScript trials' readiness handler is not released, and no Front Door deployment script is supplied.
+**Regional continuity:** [Front Door](../docs/FRONTDOOR.md) uses multiple regional origins behind
+one URL. Its JavaScript trials and readiness contract provide the starting point for implementing
+and validating your regional package and provisioning process.
 
 ## Environment configuration
 

@@ -6,11 +6,8 @@ Use this page for implementation choices, settings, and packages.
 Jump to [implementations](#implementations), [guided setup](#guided-epp-setup),
 [download](#download-a-function-zip), [build](#build-zips-locally),
 [settings](#configure-environment-variables), [provider details](#provider-specific-integration-details),
-or [security](#security).
-
-Azure Front Door is an [optional manual multi-region design](docs/FRONTDOOR.md), not a feature
-enabled by the single-region setup script. Its additional readiness endpoint is not shipped in
-the release packages, and regional failover does not change the SendOtp contract.
+or [security](#security). For regional continuity, see
+[resiliency and business continuity](#resiliency-and-business-continuity).
 
 ## Single-region architecture
 
@@ -32,6 +29,17 @@ without submitting a message to the provider. When caching is enabled, credentia
 can run independently; it never sends an OTP. Authentication failures can return **401 or 403**,
 neither of which is a successful evaluation.
 
+## Resiliency and business continuity
+
+Start with a validated single-region deployment. When regional continuity is required, the
+[Azure Front Door design](docs/FRONTDOOR.md) describes one public URL across independently
+provisioned regional origins while preserving the SendOtp contract.
+
+The guide covers survivor capacity, shared encryption-key coordination, regional dependencies,
+safe failover drills, and rollback. It also defines a dedicated non-delivering readiness endpoint
+to implement and validate with each regional package. Build regional provisioning and readiness
+into your approved BCDR process, then activate only after both directions pass the documented checks.
+
 ## Implementations
 
 | Language | Status | Folder |
@@ -46,8 +54,8 @@ but provider APIs, binding errors, credential caching, and telemetry can differ 
 
 For [local development or manual deployment](docs/ONBOARDING.md#optional-local-development-and-manual-deployment),
 follow the selected runtime guide. For a custom service integration, start with the
-[provider-neutral BYOT interface](docs/BRING-YOUR-OWN-PROVIDER.md). Your team owns the outbound
-integration; that guide adds neither an adapter nor guided setup support.
+[provider-neutral BYOT interface](docs/BRING-YOUR-OWN-PROVIDER.md), then implement and validate
+the outbound adapter through the selected runtime.
 
 ## Guided EPP setup
 
@@ -69,8 +77,8 @@ One deployment accepts SMS and voice; each request's `channel` selects its confi
 
 **Optional developer/manual deployment path:** guided setup already selects, verifies, builds as
 needed, and publishes the package. Customers using it should continue with
-[provider authentication and validation](docs/ONBOARDING.md#complete-provider-authentication),
-not deploy a second ZIP.
+[provider authentication and validation](docs/ONBOARDING.md#complete-provider-authentication);
+the deployed package is ready for that handoff.
 
 Download the latest successful CI ZIP for your chosen language:
 

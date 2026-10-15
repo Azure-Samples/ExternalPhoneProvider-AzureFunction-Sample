@@ -29,8 +29,9 @@ not a local host or second deployment.
    Run [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint);
    offline tests do not verify platform authentication.
 
-**Optional:** [Front Door](../docs/FRONTDOOR.md) has no supplied deployment script/readiness handler.
-Trials used JavaScript; independently implement and validate .NET readiness and regional deployment.
+**Regional continuity:** use the [Front Door guide](../docs/FRONTDOOR.md) to implement and validate
+the readiness route and regional deployment for .NET. The recorded trials used JavaScript, so
+include .NET-specific package, startup, dependency, and telemetry checks.
 
 ## Environment configuration
 

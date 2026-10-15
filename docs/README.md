@@ -51,7 +51,8 @@ nonproduction environment; deployment does not activate policy.
 
 ## Optional designs
 
-These designs require separate implementation and validation; guided setup enables neither.
+Build these designs from a validated single-region endpoint and follow their dedicated
+implementation, validation, operations, and rollback guidance.
 
 - **Route across regions:** [Multi-region Front Door design](FRONTDOOR.md)
 - **Add provider fallback:** [Multi-provider implementation](MULTI-PROVIDER-IMPLEMENTATION.md)

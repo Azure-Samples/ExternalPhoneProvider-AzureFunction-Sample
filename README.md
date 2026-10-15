@@ -94,8 +94,8 @@ See the [sample's production limitations](docs/CONTRACT.md#production-limitation
 - [Multi-region routing with Azure Front Door](docs/FRONTDOOR.md)
 - [Conservative primary-to-secondary provider fallback](docs/MULTI-PROVIDER-IMPLEMENTATION.md)
 
-Guided setup enables neither optional design. Each requires separate implementation, capacity
-planning, validation, operations, and rollback.
+Start with the validated single-region endpoint, then implement either design through its
+capacity, validation, operations, and rollback guidance.
 
 ## Getting help
 

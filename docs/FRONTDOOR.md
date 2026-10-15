@@ -3,11 +3,9 @@
 [Documentation](README.md) | [Single-region setup](GETTING-STARTED.md) | [Routing troubleshooting](../setup/docs/Troubleshooting.md#optional-front-door-deployments)
 
 Use Azure Front Door when you want **one public EPP URL backed by Function Apps in multiple regions**.
-You configure this option manually. For a single region, start with the
-[five-step setup guide](GETTING-STARTED.md).
-
-**No Front Door deployment script is supplied.** This manual design is not guided setup,
-and failover can interrupt requests.
+Start with a validated [single-region deployment](GETTING-STARTED.md), then use this guide to
+plan and implement the regional origins, readiness route, Front Door configuration, validation,
+failover drills, and rollback. Treat transition errors as part of the acceptance criteria.
 
 Follow [scope](#scope-and-observed-behavior), [architecture](#architecture-one-url-multiple-origins),
 [plan/capacity](#1-plan-the-regional-deployment), [origins/keys](#2-prepare-equivalent-independently-provisioned-origins),
@@ -22,25 +20,26 @@ Testing used isolated JavaScript origins, Front Door Standard, two/three regions
 and a separate non-delivering readiness handler. It covered encrypted evaluation, invalid callers,
 direct-origin restrictions, and individual Function stop/restart.
 
-**The readiness handler is not released.** Implement and validate the
-[readiness contract](#3-provide-a-non-delivering-readiness-endpoint) before enabling probes;
-no setting adds it to a ZIP. .NET/Python adaptations are untested.
+Implement the [readiness contract](#3-provide-a-non-delivering-readiness-endpoint) as part of each
+regional package and validate it before enabling probes. The released packages remain the
+single-region baseline; include runtime-specific validation for .NET or Python.
 
-We **did not test** live SMS/voice delivery, calls and retries from the real Entra service, a full
-Azure regional outage, custom domains, WAF, Private Link, or production load. Test the features your
-deployment needs before activating policy.
+The recorded trials cover encrypted evaluation, caller and origin restrictions, and controlled
+Function stop/restart. Extend your acceptance plan to the features you will use: approved live
+SMS/voice checks, real Microsoft Entra caller behavior, regional dependency loss, custom domains,
+WAF or Private Link, and production-representative load.
 
 ### Regional resiliency responsibility
 
-Microsoft owns defining, configuring, documenting, and validating its standard regional-failover
-baseline and exercise procedure; customers using it should not design regional DR themselves.
-Customers operate the deployed baseline: ownership, capacity, credentials/keys, monitoring, and
-approved drills. Replacing the topology makes its alternate design/validation customer-owned;
-operating the standard baseline does not transfer its design responsibility.
+Microsoft defines, configures, documents, and validates its standard regional-failover baseline
+and exercise procedure. Customers operate that baseline: ownership, capacity, credentials and
+keys, monitoring, and approved drills. An alternate topology becomes a customer-owned design
+with its own validation plan.
 
-Onboarding remains single-region and Front Door manual. Readiness, dependency isolation, capacity,
-real-caller behavior, and regional-outage validation remain gaps. Deployment owners must approve
-RTO/RPO, tolerable failures, latency, and required evidence; historical results do not set those targets.
+Use single-region onboarding as the foundation, then add Front Door, readiness, dependency
+isolation, survivor capacity, real-caller checks, and regional-outage evidence. Deployment owners
+set RTO/RPO, tolerable failures, latency, and evidence requirements; historical results provide
+test context rather than those targets.
 
 ## Architecture: one URL, multiple origins
 
