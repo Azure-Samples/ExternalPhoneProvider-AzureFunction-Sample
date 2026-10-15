@@ -2,7 +2,7 @@
 
 <a id="add-conservative-primary-to-secondary-provider-fallback"></a>
 
-[Documentation](README.md) | [Normal deployment](GETTING-STARTED.md) | [Provider interface](BRING-YOUR-OWN-PROVIDER.md)
+[Documentation](README.md) | [Normal deployment](GETTING-STARTED.md) | [Provider interface](../TECHNICAL.md#provider-result-mapping)
 
 Add controlled primary-to-secondary fallback around `/api/SendOtp`. Keep one server-owned SMS
 provider order with durable state and provider-specific approval.
@@ -153,7 +153,7 @@ module.exports = { stopProviderCredentialRefresh };
 Remove the singleton import only after replacing its request/lifecycle uses. With its selected
 cache enabled, each service begins periodic refresh when first used. With caching disabled,
 each live attempt acquires credentials without a poller or cross-request reuse. Preserve
-the [cache switches](BRING-YOUR-OWN-PROVIDER.md#credential-caching) in each account's configuration.
+the [cache switches](../TECHNICAL.md#provider-settings-and-credential-caching) in each account's configuration.
 Setup sets them to `false` for FC1 and `true` for EP1. Omitted values default to `true`.
 An evaluation request must not start credential acquisition. Already-running refresh is independent.
 Rebuild contexts on controlled restart when configuration changes. Never repurpose a live service

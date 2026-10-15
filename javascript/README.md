@@ -69,27 +69,24 @@ Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-sen
 authentication and decryption without a provider send. Live success confirms acceptance,
 **not handset receipt**. Check a timeout before retrying.
 
-For message/voice mapping and credential rules, see the
-[Soprano integration](../docs/BRING-YOUR-OWN-PROVIDER.md#soprano-integration) and
-[Telesign integration](../docs/BRING-YOUR-OWN-PROVIDER.md#telesign-integration).
+For built-in message and voice mapping, see
+[Soprano and Telesign](../TECHNICAL.md#built-in-providers).
 
 ## Source and extension points
 
-Use the provider-neutral
-[BYOT request and response guide](../docs/BRING-YOUR-OWN-PROVIDER.md) for the Microsoft Entra ID payload,
-caller authentication, and response rules. Customers can connect the outbound phone service
-that meets their requirements.
+To add Twilio, follow the [Twilio integration guide](../docs/BRING-YOUR-OWN-PROVIDER.md).
+Keep caller authentication and public responses in the shared handler.
 
 For diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and the
 [JavaScript event queries](../docs/MONITORING.md#4-javascript-service-event-queries).
 
-The [cache switches and defaults](../docs/BRING-YOUR-OWN-PROVIDER.md#credential-caching) apply here.
+The [cache switches and defaults](../TECHNICAL.md#provider-settings-and-credential-caching) apply here.
 Disabling the selected cache removes startup preparation, polling, and cross-request reuse,
 not live credential acquisition.
 
 With caching enabled, API keys use Key Vault and `lru-cache`; OAuth uses the managed-identity/Entra
 SDKs. A 30-second refresh loop and one in-flight acquisition support warm reads. See the
-[credential caching guide](../docs/BRING-YOUR-OWN-PROVIDER.md#credential-caching).
+[credential caching guide](../TECHNICAL.md#provider-settings-and-credential-caching).
 
 | Source | Purpose |
 |---|---|
@@ -110,4 +107,4 @@ To add a provider, implement its fixed `name`, `authenticationMode`, `credential
 [providers/index.js](src/functions/providers/index.js). `interpretResponse` returns a
 `ProviderResult` containing the provider-owned outcome, endpoint HTTP status and one safe fixed
 failure classification. Raw API JSON stays inside the provider. See
-[production readiness](../docs/BRING-YOUR-OWN-PROVIDER.md#production-readiness) when planning a live service.
+[production readiness](../TECHNICAL.md#production-readiness) when planning a live service.

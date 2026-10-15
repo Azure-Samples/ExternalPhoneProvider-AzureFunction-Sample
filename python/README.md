@@ -69,27 +69,25 @@ Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-sen
 authentication and decryption without a provider send. Live success confirms acceptance,
 **not handset receipt**. Check a timeout before retrying.
 
-For message/voice mapping, see the [Soprano integration](../docs/BRING-YOUR-OWN-PROVIDER.md#soprano-integration)
-and [Telesign integration](../docs/BRING-YOUR-OWN-PROVIDER.md#telesign-integration).
+For built-in message and voice mapping, see
+[Soprano and Telesign](../TECHNICAL.md#built-in-providers).
 
 ## Source
 
-Use the provider-neutral
-[BYOT request and response guide](../docs/BRING-YOUR-OWN-PROVIDER.md) for the Microsoft Entra ID payload,
-caller authentication, and response rules. Customers can connect the outbound phone service
-that meets their requirements.
+To add Twilio, follow the [Twilio integration guide](../docs/BRING-YOUR-OWN-PROVIDER.md).
+Keep caller authentication and public responses in the shared handler.
 
 For diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
 [runtime-specific log discovery](../docs/MONITORING.md#runtime-specific-log-discovery).
 Verify which Python logging properties the host/export pipeline preserves.
 
-The [cache switches and defaults](../docs/BRING-YOUR-OWN-PROVIDER.md#credential-caching) apply here.
+The [cache switches and defaults](../TECHNICAL.md#provider-settings-and-credential-caching) apply here.
 Disabling the selected cache removes startup preparation, polling, and cross-request reuse,
 not live credential acquisition.
 
 With caching enabled, API keys use Key Vault and `cachetools.TTLCache`; OAuth uses the
 managed-identity/Entra SDKs. A daemon polls every 30 seconds. See the
-[credential caching guide](../docs/BRING-YOUR-OWN-PROVIDER.md#credential-caching).
+[credential caching guide](../TECHNICAL.md#provider-settings-and-credential-caching).
 
 | Source | Purpose |
 |---|---|
@@ -106,4 +104,4 @@ managed-identity/Entra SDKs. A daemon polls every 30 seconds. See the
 Add a provider by subclassing `PhoneProviderBase`, declaring its credential specification, and
 implementing `build_request` and `map_response`. Return `ProviderResult` with the coarse endpoint
 outcome and a fixed safe failure classification. Raw provider JSON remains local to the provider.
-See [production readiness](../docs/BRING-YOUR-OWN-PROVIDER.md#production-readiness) when planning a live service.
+See [production readiness](../TECHNICAL.md#production-readiness) when planning a live service.

@@ -1,51 +1,39 @@
-# Documentation by task
+# Documentation
 
-[Sample overview and architecture](../README.md)
+<a id="documentation-by-task"></a>
 
-**First deployment:** follow [Get started](GETTING-STARTED.md). Confirm access and Microsoft's
-approved test and activation process before deploying in a nonproduction environment.
+[Sample overview](../README.md) | [Get started](GETTING-STARTED.md)
 
-## Table of Contents
+Use the guide that matches your task.
 
-- [Understand the sample](#understand-the-sample)
-- [Deploy and validate](#deploy-and-validate)
-- [Operate](#operate)
-- [Develop](#develop)
-- [Advanced topics](#advanced-topics)
-- [Get help](#get-help)
+<a id="table-of-contents"></a>
+<a id="deploy-and-validate"></a>
+## Deploy
 
-## Understand the sample
+- [Five-step setup](GETTING-STARTED.md)
+- [Configuration and validation](ONBOARDING.md)
+- [Setup reference](../setup/docs/README.md)
+- [Troubleshooting](../setup/docs/Troubleshooting.md)
+- [Cost estimate](COST-CALCULATOR.md)
 
-- [Architecture and implementation](../TECHNICAL.md)
-- [HTTP contract](CONTRACT.md)
-- [Log schema](LOGGING.md)
-- [Production readiness](BRING-YOUR-OWN-PROVIDER.md#production-readiness)
+<a id="understand-the-sample"></a>
+<a id="develop"></a>
+## Understand and develop
 
-## Deploy and validate
-
-| Task | Guide |
-| --- | --- |
-| Register an app, deploy, test, and hand over | [Five-step setup](GETTING-STARTED.md) |
-| Find IDs and complete provider authentication | [Configuration and validation](ONBOARDING.md) |
-| Check permissions, script choices, or deployment output | [Setup reference](../setup/docs/README.md) |
-| Resolve a setup or endpoint failure | [Troubleshooting](../setup/docs/Troubleshooting.md) |
-| Estimate SMS/voice provider charges | [Cost estimate](COST-CALCULATOR.md); not a billing report |
+- [Architecture, settings, and built-in providers](../TECHNICAL.md)
+- [Send OTP API](CONTRACT.md)
+- Runtime guides: [JavaScript](../javascript/README.md), [C#](../dotnet/README.md), and
+  [Python](../python/README.md)
+- [Add Twilio](BRING-YOUR-OWN-PROVIDER.md)
+- [Application log fields](LOGGING.md)
 
 ## Operate
 
-- [Function logs and alerts](MONITORING.md)
+- [Function monitoring and alerts](MONITORING.md)
 - [Application Insights collection](APPLICATION-INSIGHTS.md)
 - [Microsoft Entra ID monitoring](SIGN-IN-MONITORING.md)
 - [Certificate renewal](../setup/docs/README.md#encryption-certificate-lifecycle)
 - [Rollback and decommissioning](../setup/docs/README.md#rollback-and-decommissioning)
-
-## Develop
-
-- Runtimes: [JavaScript](../javascript/README.md), [C#](../dotnet/README.md), [Python](../python/README.md)
-- [Settings and packages](../TECHNICAL.md)
-- [HTTP contract](CONTRACT.md)
-- [Log schema](LOGGING.md)
-- [Phone-service integration](BRING-YOUR-OWN-PROVIDER.md)
 
 <a id="optional-designs"></a>
 ## Advanced topics
@@ -53,8 +41,8 @@ approved test and activation process before deploying in a nonproduction environ
 - [Multi-region routing](FRONTDOOR.md)
 - [Provider fallback](MULTI-PROVIDER-IMPLEMENTATION.md)
 
-## Get help
+<a id="get-help"></a>
+## Support
 
 - [Provider access, testing, and activation](ONBOARDING.md#before-purchasing-or-deploying)
-- [Troubleshooting](../setup/docs/Troubleshooting.md)
 - [Safe diagnostic evidence](../setup/docs/Troubleshooting.md#after-deployment-triage)

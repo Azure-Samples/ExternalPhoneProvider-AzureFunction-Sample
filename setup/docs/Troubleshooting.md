@@ -141,7 +141,7 @@ It does not verify publication, startup, Easy Auth, or delivery.
 **Check:** serving-app `EPP_KEY_VAULT_CACHE_ENABLED` and `EPP_ACCESS_TOKEN_CACHE_ENABLED`.
 Setup writes both as `"false"` for FC1 or `"true"` for EP1 and restores them on rerun.
 **Fix:** deploy a supporting release and restart after edits; older packages ignore the switches.
-The [credential caching guide](../../docs/BRING-YOUR-OWN-PROVIDER.md#credential-caching) defines accepted values,
+The [credential caching guide](../../TECHNICAL.md#provider-settings-and-credential-caching) defines accepted values,
 fail-closed invalid settings, and runtime differences. Disabling a cache does not eliminate live
 credential acquisition or affect the platform's decryption-key reference.
 

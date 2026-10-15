@@ -69,21 +69,20 @@ does not echo it.
 **.NET binding runs first:** `[FromBody]` creates `EntraSendOtpPayload`. Malformed JSON, invalid
 enum tokens, or other deserialization errors can fail before `SendOtp`, its `ILogger` events,
 or its custom error response. Successfully bound requests retain application validation,
-privacy-safe logging, and response behavior. See [binding differences](../docs/CONTRACT.md#runtime-binding-differences).
+privacy-safe logging, and response behavior. See
+[binding differences](../TECHNICAL.md#request-validation-and-runtime-differences).
 
 Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) to validate
 authentication and decryption without a provider send. Live success confirms acceptance,
 **not handset receipt**. Check a timeout before retrying.
 
-For message/voice mapping, see the [Soprano integration](../docs/BRING-YOUR-OWN-PROVIDER.md#soprano-integration)
-and [Telesign integration](../docs/BRING-YOUR-OWN-PROVIDER.md#telesign-integration).
+For built-in message and voice mapping, see
+[Soprano and Telesign](../TECHNICAL.md#built-in-providers).
 
 ## Source
 
-Use the provider-neutral
-[BYOT request and response guide](../docs/BRING-YOUR-OWN-PROVIDER.md) for the Microsoft Entra ID payload,
-caller authentication, and response rules. Customers can connect the outbound phone service
-that meets their requirements.
+To add Twilio, follow the [Twilio integration guide](../docs/BRING-YOUR-OWN-PROVIDER.md).
+Keep caller authentication and public responses in the shared handler.
 
 For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
 [runtime-specific log discovery](../docs/MONITORING.md#runtime-specific-log-discovery).
@@ -99,7 +98,7 @@ accounts require a separate trust, configuration, credential, and test design.
 switches default to `true`; disabling the selected switch skips warmup and fetches on every live
 request. Enabled credentials remain in `MemoryCache` until absolute expiry. There is no polling
 timer, and concurrent misses can fetch more than once. The fetch has a 2.5-second cancellation
-budget. See [credential caching](../docs/BRING-YOUR-OWN-PROVIDER.md#credential-caching).
+budget. See [credential caching](../TECHNICAL.md#provider-settings-and-credential-caching).
 
 | Source | Purpose |
 |---|---|
@@ -122,4 +121,4 @@ method delegates to the base `SendJsonAsync<TResponse>` transport and maps the t
 `ProviderResult`; provider mapping code never handles `HttpResponseMessage` or raw JSON DOM types.
 Each provider keeps its own response rules. Common async HTTP transport lives in
 `PhoneProviderBase`. See
-[production readiness](../docs/BRING-YOUR-OWN-PROVIDER.md#production-readiness) when planning a live service.
+[production readiness](../TECHNICAL.md#production-readiness) when planning a live service.

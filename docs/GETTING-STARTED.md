@@ -44,7 +44,7 @@ Prepare:
 Check the [full prerequisites](../setup/docs/README.md#prerequisites-for-step-2), including the
 Microsoft Entra ID allowed-tenants preview. Setup can install Bicep, but not Azure CLI.
 
-Assign an **onboarding owner** and review [production readiness](BRING-YOUR-OWN-PROVIDER.md#production-readiness).
+Assign an **onboarding owner** and review [production readiness](../TECHNICAL.md#production-readiness).
 
 ## 2. Register your application
 
