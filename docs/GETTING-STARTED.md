@@ -14,14 +14,16 @@ Portal screenshots hide identifying details; labels and layout may differ.
 
 ## 1. Get ready
 
-Start in a **dedicated nonproduction tenant and subscription**.
+Create an **isolated test environment** in a nonproduction tenant and subscription. Use a new
+application registration and a unique resource prefix so the endpoint is easy to identify and
+remains separate from production and other deployments.
 
 Before purchasing or deploying, confirm access to a supported provider's EPP integration through
 [Microsoft Security Store](https://securitystore.microsoft.com/private-solutions). Arrange
 Microsoft's approved testing and activation procedure with your tenant administrator.
-Buying an offer does not enable the tenant feature or deploy this sample. If access or the
-approved procedure is unavailable, **stop here** and follow the
-[access and support guidance](ONBOARDING.md#before-purchasing-or-deploying).
+Buying an offer is one part of onboarding; tenant access, the approved procedure, and deployment
+are completed separately. Confirm those paths before continuing, or use the
+[access and support guidance](ONBOARDING.md#before-purchasing-or-deploying) to get them in place.
 
 In Security Store, open **Private solutions** and select your approved subscription.
 A listing does not guarantee [guided provider support](ONBOARDING.md#provider-credential-names).
@@ -48,8 +50,9 @@ Microsoft Entra ID allowed-tenants preview. Graph reuses the Azure CLI login; no
 separate sign-in is needed. Setup can install Bicep after confirmation, but not Azure CLI.
 
 Assign an **onboarding owner** to coordinate administrators, provider, and Microsoft support.
-Review the [sample limitations](CONTRACT.md#production-limitations): no production certification,
-automatic send retries, duplicate-send protection, or automatic certificate renewal.
+Review the [production-readiness considerations](CONTRACT.md#production-limitations) and plan any
+capabilities your live design requires, including certification, durable delivery workflows,
+duplicate-send protection, and certificate-renewal automation.
 
 ## 2. Register your application
 
@@ -79,7 +82,7 @@ configuration. See [application registration details](../setup/docs/README.md#st
 
 Also keep your Azure subscription ID handy. The
 [setup values worksheet](ONBOARDING.md#inputs-you-supply-to-setup) explains where to find
-each value. Use a new dedicated application and resource prefix for another independent endpoint;
+each value. Use a new application and unique resource prefix for another independent endpoint;
 changing the provider or region on a rerun does not create a separate deployment.
 
 ## 3. Run guided setup
@@ -101,7 +104,8 @@ Review the downloaded script, then run it:
 On a shared or multi-account workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` to request
 an explicit Azure CLI device-code sign-in. Microsoft Graph reuses that CLI session.
 
-Select the customer tenant/subscription, dedicated application **client ID**, and Azure region.
+Select the customer tenant/subscription, the application **client ID** created for this endpoint,
+and the Azure region.
 Refresh or sign in if the expected account is missing. Then choose:
 
 - **Provider and route:** enter or confirm the provider by name. **Tenant scope** means Global/EU
@@ -181,18 +185,18 @@ Ask your onboarding owner to arrange the
 The [illustrated monitoring steps](MONITORING.md#find-the-linked-resources-in-the-portal)
 show where to open Application Insights and its Logs workspace.
 
-This repository does not supply a self-service token tool for the authorized Microsoft caller.
-An ordinary Azure CLI token is not a substitute. If the approved test procedure is unavailable
-or any check fails, **do not activate the endpoint**. Do not blindly retry a timed-out live send:
-the provider may already have accepted it.
+Use Microsoft's approved caller and test procedure for these checks; an ordinary Azure CLI token
+cannot represent that caller. Activate the endpoint after every required check passes. If a live
+send times out, investigate its outcome before trying again because the provider may already have
+accepted it.
 
 ## 5. Activate and hand over
 
 Have an **Authentication Policy Administrator** follow the
 [supported activation procedure](../setup/docs/README.md#step-3---manually-validate-and-activate-policy).
-They must save the existing policy, apply the approved endpoint URL and application client ID,
-preserve other settings, and read back and validate the change. **Setup does not activate policy.**
-The EPP policy fields require Microsoft's assisted procedure; do not guess a Graph update.
+They save the existing policy, apply the approved endpoint URL and application client ID,
+preserve other settings, and read back and validate the change. Guided setup prepares the endpoint;
+the policy administrator completes activation through Microsoft's assisted procedure.
 
 Repeat for each authentication method you intend to enable. SMS and voice can share the same
 Function endpoint URL and application client ID; no additional setup run is needed for the second channel.
@@ -212,4 +216,4 @@ Deleting Azure resources does not undo an authentication policy change.
 ## Find more detail
 
 Use the [task-based documentation index](README.md) for operations, developer references,
-and optional designs. For a failed step, go directly to [troubleshooting](../setup/docs/Troubleshooting.md).
+and advanced topics. For a failed step, go directly to [troubleshooting](../setup/docs/Troubleshooting.md).

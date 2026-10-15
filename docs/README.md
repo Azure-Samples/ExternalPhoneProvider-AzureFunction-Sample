@@ -3,8 +3,8 @@
 [Sample overview and architecture](../README.md)
 
 **New deployment? Start with [Get started](GETTING-STARTED.md).** Before spending or deploying,
-confirm supported access and Microsoft's approved testing and activation process. Use a dedicated
-nonproduction environment. You will activate policy separately after validation.
+confirm supported access and Microsoft's approved testing and activation process. Build the first
+endpoint in an isolated nonproduction environment, validate it, and then complete policy activation.
 
 ## Table of Contents
 
@@ -12,7 +12,7 @@ nonproduction environment. You will activate policy separately after validation.
 - [Deploy and validate](#deploy-and-validate)
 - [Operate](#operate)
 - [Develop](#develop)
-- [Optional designs](#optional-designs)
+- [Advanced topics](#advanced-topics)
 - [Get help](#get-help)
 
 ## Understand the sample
@@ -20,7 +20,7 @@ nonproduction environment. You will activate policy separately after validation.
 - **Architecture and implementation choices:** [Technical reference](../TECHNICAL.md)
 - **Requests, responses, settings, and required behavior:** [HTTP contract](CONTRACT.md)
 - **Runtime events and safe diagnostic fields:** [Application log reference](LOGGING.md)
-- **Security and production boundaries:** [Production limitations](CONTRACT.md#production-limitations)
+- **Security and production planning:** [Production-readiness considerations](CONTRACT.md#production-limitations)
 
 ## Deploy and validate
 
@@ -47,12 +47,13 @@ nonproduction environment. You will activate policy separately after validation.
 - **Requests and responses:** [HTTP contract](CONTRACT.md)
 - **Runtime events:** [Application log schema](LOGGING.md)
 - **Provider integration:** [Provider-neutral BYOT interface](BRING-YOUR-OWN-PROVIDER.md)
-- **Production gaps:** [Sample limitations](CONTRACT.md#production-limitations)
+- **Production planning:** [Readiness considerations](CONTRACT.md#production-limitations)
 
-## Optional designs
+<a id="optional-designs"></a>
+## Advanced topics
 
-Build these designs from a validated single-region endpoint and follow their dedicated
-implementation, validation, operations, and rollback guidance.
+Extend a validated single-region endpoint with the design that fits your resiliency and provider
+strategy. Each guide includes implementation, validation, operations, and rollback guidance.
 
 - **Route across regions:** [Multi-region Front Door design](FRONTDOOR.md)
 - **Add provider fallback:** [Multi-provider implementation](MULTI-PROVIDER-IMPLEMENTATION.md)

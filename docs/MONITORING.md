@@ -39,7 +39,7 @@ Keep a private inventory with one row per expected regional endpoint:
 | Observed `AppRoleName` and `AppRequests.Name` | Filter this Function and its `SendOtp` request operation without mixing other apps or readiness probes. |
 | Runtime, hosting plan, deployment version, and owner | Explain schema differences, cold starts, releases, and escalation. |
 | Expected traffic or authorized synthetic-test cadence | Decide whether missing data is actionable, including standby origins. |
-| Optional Front Door profile, endpoint, origin group, and origin | Associate routing and health with the regional Function. |
+| Front Door profile, endpoint, origin group, and origin | Associate regional routing and health with the Function. |
 
 Do not derive the expected inventory solely from recent telemetry: an origin that
 never reports would be absent from that list.
@@ -529,7 +529,7 @@ Keep identifiers, exports, and screenshots private. See [Workbook authoring][wor
 
 ## 7. Availability, authenticated Functions, and FC1
 
-**Never exempt `SendOtp` from Easy Auth or make it publicly anonymous for probes.**
+Keep `SendOtp` protected by Easy Auth for every probe and test.
 An unauthenticated 401/403 demonstrates rejection, not a successful authorized
 evaluation or provider call. Standard availability tests do not perform the
 complete EPP token acquisition, encrypted-request creation, and nonce-validation
@@ -545,8 +545,8 @@ For the actual authentication/decryption path, use the supported EPP test
 procedure and an authorized caller. An independently operated synthetic runner
 must be able to satisfy existing caller restrictions, acquire fresh credentials,
 construct a valid encrypted evaluation request, and verify the nonce without
-recording it. If that caller capability is unavailable, record the monitoring
-gap; do not broaden Easy Auth allowlists just to make testing convenient.
+recording it. If the runner cannot meet those caller requirements, document the
+monitoring gap and retain the approved Easy Auth allowlist.
 Record sanitized success/duration results through your approved monitoring
 pipeline and monitor the runner's schedule/failures separately.
 
@@ -570,9 +570,10 @@ healthy but unused. Do not open origin ingress to bypass its access restrictions
 Review the current [availability test capabilities][availability] before choosing
 Standard tests or a custom authenticated runner.
 
-## 8. Optional Azure Front Door layer
+<a id="8-optional-azure-front-door-layer"></a>
+## 8. Regional edge monitoring with Azure Front Door
 
-Only add this layer if using [manual Front Door onboarding](FRONTDOOR.md).
+Use this layer with the [Front Door multi-region design](FRONTDOOR.md).
 For Standard/Premium, inspect the profile's Metrics for **Origin Health Percentage**,
 **Origin Latency**, **Request Count**, and response/error signals supported by the
 selected metric namespace. Confirm units and available origin/origin-group

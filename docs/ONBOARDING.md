@@ -12,7 +12,7 @@ Guided setup has already deployed Azure resources and code. Next, complete
 | Find or check setup values | [Inputs](#inputs-you-supply-to-setup), [setup-managed values](#values-setup-configures-for-you) |
 | Connect the provider | [Credential names and handoff](#complete-provider-authentication) |
 | Test and activate | [Acceptance checks](#validate-the-deployed-endpoint), [operations handover](#activate-operate-and-retire) |
-| Build a custom package | [Optional local/manual path](#optional-local-development-and-manual-deployment) |
+| Build a custom package | [Custom development and deployment](#custom-development-and-manual-deployment) |
 
 ## Before purchasing or deploying
 
@@ -40,9 +40,9 @@ Assign an **onboarding owner** in your organization to coordinate tenant/policy,
 provider administrators with Microsoft support. Obtain approved test and policy-change procedures
 before deployment; the repository supplies no named onboarding contact.
 
-Review [production limitations](CONTRACT.md#production-limitations): no durable queue, automatic
-send retries, deduplication, or whole-invocation deadline; one manually renewed decryption key.
-Acceptance is not delivery, timeout fallback can duplicate sends, and setup is not certification.
+Use the [production-readiness considerations](CONTRACT.md#production-limitations) to plan the
+capabilities your live service needs, such as durable delivery, retry and deduplication strategy,
+an end-to-end deadline, certificate renewal, and delivery confirmation.
 
 ## Values and ownership
 
@@ -282,7 +282,8 @@ certificate contacts, or provider delivery receipts. Complete those manual opera
 relying on alerts. Keep the saved summary, approved policy snapshots, validation evidence,
 package/source version, and renewal dates in restricted operational storage.
 
-## Optional local development and manual deployment
+<a id="optional-local-development-and-manual-deployment"></a>
+## Custom development and manual deployment
 
 <a id="local-settings-and-cloud-secrets"></a>
 **Skip after guided setup unless customizing code.** Follow the

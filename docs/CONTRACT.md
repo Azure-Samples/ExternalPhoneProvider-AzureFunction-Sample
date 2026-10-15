@@ -3,7 +3,8 @@
 [Documentation](README.md) | [Implementation walkthrough](BRING-YOUR-OWN-PROVIDER.md) | [Settings and packages](../TECHNICAL.md)
 
 This page defines the shared contract for [JavaScript](../javascript/), [Python](../python/) and
-[.NET](../dotnet/). See [production limitations](#production-limitations) before production use.
+[.NET](../dotnet/). Use the [production-readiness considerations](#production-limitations) when
+planning a live service.
 
 Go to [request/response](#1-http-api), [HTTP outcomes](#2-outcome--http-status-mapping),
 [provider contract](#3-provider-contract), [settings](#4-configuration-app-settings--env),
@@ -517,28 +518,31 @@ wrong issuer or audience, unauthorized caller, HTTPS enforcement and SendOtp rou
 An authorized evaluation must succeed without provider I/O. These checks do not replace provider
 integration or handset-delivery checks. See [deployment verification](ONBOARDING.md#4-package-deploy-and-verify).
 
-## Production limitations
+<a id="production-limitations"></a>
+## Production-readiness considerations
 
-This is a sample, not production certification. Successful provider acceptance and nonce checks do
-not prove handset delivery or support for every provider feature.
+Use this checklist to plan the capabilities your production design may need beyond the sample.
+Provider acceptance and nonce checks confirm important stages of the request, while handset
+delivery and provider-specific features need their own validation.
 
-- The Function imports one private PEM through a Key Vault secret reference and decrypts in-process;
-  vault-resident cryptographic operations and overlapping key rotation are not implemented.
-- The sample waits for provider acceptance before replying. It has no durable queue, early
-  acknowledgement/background delivery handoff, or automatic send retries. Confirm the current
-  product-approved timing/activation requirements with Microsoft; deployment alone does not
-  establish that the sample meets them.
-- The outbound timeout is not an end-to-end deadline. Cold starts, platform authentication and Key
-  Vault access can exceed the caller's budget; Python uses connect/read inactivity timeouts.
-- Credential caches are process-local and proactive preparation is best-effort, not an Azure
-  traffic-readiness guarantee. Provider delivery still waits for acceptance; background refresh
-  is not background OTP delivery, a queue, or protection against duplicate sends.
-- Voice is provider-specific: Soprano extracts the first six consecutive digits; Telesign paces
-  standalone six-digit numeric runs and repeats the full message. Test supported locales,
-  passcode format, and actual audio; these transforms do not guarantee spoken clarity.
-- Full body-size/content-type and E.164 validation, subscription provisioning, certification,
-  least-cost routing and voice-callback workflows are outside this sample. Native fallback belongs
-  to the caller, not this Function.
+- **Encryption and rotation:** the Function imports one private PEM through a Key Vault secret
+  reference and decrypts in-process. A production design can add vault-resident cryptographic
+  operations and overlapping key rotation when required.
+- **Delivery workflow:** the sample waits for provider acceptance before replying. Add a durable
+  queue, early acknowledgement/background handoff, or automated retry strategy only when the
+  approved product design defines their timing and duplicate-send behavior.
+- **End-to-end timing:** size the caller budget for cold starts, platform authentication, Key Vault
+  access, and the provider request. The outbound timeout covers the provider call rather than the
+  full invocation; Python uses connect/read inactivity timeouts.
+- **Credential readiness:** caches are process-local and proactive preparation is best-effort.
+  Provider delivery still waits for acceptance; background credential refresh is separate from
+  OTP delivery, queuing, and duplicate-send protection.
+- **Voice experience:** Soprano extracts the first six consecutive digits; Telesign paces
+  standalone six-digit numeric runs and repeats the full message. Validate supported locales,
+  passcode formats, and actual audio for the intended experience.
+- **Additional production capabilities:** add the body-size/content-type and E.164 validation,
+  subscription provisioning, certification, least-cost routing, or voice-callback workflows your
+  design requires. Native caller fallback remains with the caller rather than this Function.
 
 See [setup compatibility](ONBOARDING.md#setup-script-compatibility) for credential provisioning,
 endpoint format and unsupported setup options.

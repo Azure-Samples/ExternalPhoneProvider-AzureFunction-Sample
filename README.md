@@ -2,11 +2,11 @@
 
 Connect Microsoft Entra ID to your phone provider for SMS and voice one-time passwords.
 Deploy **one endpoint in one Azure region**, using JavaScript, C#, or Python.
-Guided setup handles Azure resources and code publication; no repository clone is needed.
+Guided setup handles the Azure resources and publishes your selected runtime package.
 
-**Start in a dedicated nonproduction tenant and subscription.** This sample demonstrates the
-integration pattern; it is not a production certification. Review [requirements](#requirements)
-before purchasing or deploying.
+**Explore the integration in an isolated test environment.** Use the sample to shape your
+implementation and prepare for your organization's production-readiness review. Review
+[requirements](#requirements) before deploying.
 
 ## Table of Contents
 
@@ -18,7 +18,7 @@ before purchasing or deploying.
   - [Deploy and configure](#deploy-and-configure)
   - [Operate](#operate)
   - [Develop](#develop)
-  - [Optional designs](#optional-designs)
+  - [Advanced topics](#advanced-topics)
 - [Getting help](#getting-help)
 
 ## Features
@@ -35,12 +35,14 @@ before purchasing or deploying.
 Before deploying:
 
 - Confirm [supported provider access and Microsoft's approved testing and activation procedure](docs/GETTING-STARTED.md#1-get-ready).
-  If either is unavailable, stop.
-- Use a dedicated nonproduction tenant, subscription, application registration, and resource prefix.
+  These give your team the supported path for setup, validation, and activation.
+- Create an isolated test environment: use a nonproduction tenant and subscription, register a
+  new application, and choose a unique resource prefix so this endpoint stays separate from
+  production and other deployments.
 - Check the required [administrator roles, Azure permissions, tools, regional availability, and quota](setup/docs/README.md#prerequisites-for-step-2).
 - Plan for Azure resource, telemetry, and provider charges. Use the [provider cost estimate](docs/COST-CALCULATOR.md) as planning input, not a billing report.
-
-Deployment does not activate policy. Keep Easy Auth enabled; never bypass caller validation to test.
+- Keep Easy Auth enabled from deployment through live operation so every request is checked
+  against the approved Microsoft caller.
 
 ## Architecture
 
@@ -61,8 +63,9 @@ Follow the **[five-step setup guide](docs/GETTING-STARTED.md)** in order:
 4. <a id="4-connect-your-provider-and-test"></a>[Connect and test](docs/GETTING-STARTED.md#4-connect-your-provider-and-test): configure provider authentication, then complete approved evaluation and live checks for each intended channel.
 5. <a id="5-activate-and-hand-over"></a>[Activate and hand over](docs/GETTING-STARTED.md#5-activate-and-hand-over): have the policy administrator activate only after validation; assign monitoring, renewal, and rollback owners.
 
-**Deployment does not activate policy. Keep Easy Auth enabled**; never bypass it to test.
-See the [sample's production limitations](docs/CONTRACT.md#production-limitations).
+After validation, your policy administrator can activate the endpoint through the approved
+procedure. Review the [production-readiness considerations](docs/CONTRACT.md#production-limitations)
+as you plan the live service.
 
 <a id="find-more-detail"></a>
 ## Guidance
@@ -90,13 +93,14 @@ See the [sample's production limitations](docs/CONTRACT.md#production-limitation
 - [Application log events and safe fields](docs/LOGGING.md)
 - [Provider-neutral BYOT integration](docs/BRING-YOUR-OWN-PROVIDER.md)
 
-### Optional designs
+<a id="optional-designs"></a>
+### Advanced topics
 
 - [Multi-region routing with Azure Front Door](docs/FRONTDOOR.md)
 - [Conservative primary-to-secondary provider fallback](docs/MULTI-PROVIDER-IMPLEMENTATION.md)
 
-Start with the validated single-region endpoint, then implement either design through its
-capacity, validation, operations, and rollback guidance.
+Build on the validated single-region endpoint with regional routing or a carefully controlled
+provider-fallback strategy. Each guide covers capacity, validation, operations, and rollback.
 
 ## Getting help
 

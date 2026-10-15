@@ -87,7 +87,7 @@ different sampling behavior and dimensions; a chart and a raw row count need not
 **Azure resource metrics** come from the platform and are queried under the relevant resource
 in Azure Monitor Metrics. Function execution/instance/memory metrics depend on the hosting plan;
 FC1 and EP1 do not expose identical sets. Key Vault has its own request/latency signals, Storage
-has transaction/availability/latency signals, and optional Front Door has edge/origin signals.
+has transaction/availability/latency signals, and Front Door adds edge/origin signals.
 These are not automatically Application Insights dependencies or custom metrics.
 
 Resource logs are another independent source. Depending on the resource and diagnostic setting's
@@ -124,8 +124,9 @@ Review the following in the portal without assuming that resource creation prove
    controlled live test. Evaluation skips the provider send; it cannot validate that dependency
    path. Background credential refresh may run independently during either test.
 
-Do not weaken Easy Auth or send periodic OTPs just to populate telemetry. A generic unauthenticated
-URL probe does not validate the endpoint's authenticated, encrypted EPP contract.
+Keep Easy Auth and the approved delivery flow intact while validating telemetry. Use an authorized
+evaluation request for the authenticated, encrypted EPP path rather than generating periodic OTPs
+or relying on a generic unauthenticated URL probe.
 
 ### Identity and ingestion
 
@@ -177,7 +178,7 @@ Use the [cross-workspace queries and missing-origin check](MONITORING.md#3-multi
 with explicit sources, authorized access to each, and per-origin grouping. Check idle/standby
 origins too: no traffic and broken collection can both look empty.
 
-For [optional Front Door](FRONTDOOR.md), inspect
+For the [Front Door multi-region design](FRONTDOOR.md), inspect
 [edge metrics and logs separately](MONITORING.md#8-optional-azure-front-door-layer).
 Edge/WAF rejections, origin-connectivity failures, and probes need not appear as Function requests.
 Origin health does not prove provider authentication or delivery.

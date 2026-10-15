@@ -1,4 +1,6 @@
-# Optional multi-region onboarding with Azure Front Door
+# Multi-region onboarding with Azure Front Door
+
+<a id="optional-multi-region-onboarding-with-azure-front-door"></a>
 
 [Documentation](README.md) | [Single-region setup](GETTING-STARTED.md) | [Routing troubleshooting](../setup/docs/Troubleshooting.md#optional-front-door-deployments)
 
@@ -86,7 +88,8 @@ duplication does not add provider failover or remove those dependencies.
 
 ## 1. Plan the regional deployment
 
-Start in a dedicated nonproduction tenant and subscription. Review the
+Build the regional design in an isolated nonproduction tenant and subscription, separate from
+live traffic. Review the
 [setup prerequisites](../setup/docs/README.md#prerequisites-for-step-2) and
 [regional quota guidance](../setup/docs/Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku).
 
@@ -103,10 +106,10 @@ Start in a dedicated nonproduction tenant and subscription. Review the
   caller application ID, certificate/public-key identity, selected provider route, and regional owners.
 - Plan manual rollout, validation, certificate renewal, monitoring, and rollback before activation.
 
-**Do not simply rerun `Setup-Epp.ps1` in another region against the same application.** It is a
-single-region setup flow and does not coordinate Front Door, shared key material, regional
-registrations, or failover. Independent certificate issuance or a setup rerun can change app
-configuration or disable incoming access to an existing endpoint.
+Use the regional procedure in this guide rather than rerunning `Setup-Epp.ps1` against the same
+application. The setup script creates one region; the steps below coordinate Front Door, shared
+key material, regional registrations, and failover without replacing an existing endpoint's
+application configuration or certificate unexpectedly.
 
 ### Capacity gate: each region must support the combined peak load
 
@@ -315,10 +318,10 @@ but is not a substitute for the separate capacity and dependency tests.
 
 ## 6. Regional failover fire-drill
 
-This runbook is for an approved, dedicated nonproduction deployment. It exercises health-based
-rerouting; it is not permission to disrupt production or a claim of a full Azure regional-outage
-test. Define numeric pass/abort thresholds and durations before starting, rather than adopting the
-observed failover timings below as an SLA.
+Run this drill in an approved nonproduction environment built for failover testing. It exercises
+health-based rerouting without affecting production and covers the documented scenario rather than
+every possible regional outage. Define numeric pass/abort thresholds and durations before starting
+instead of treating the observed timings below as an SLA.
 
 1. **Approve the boundary.** Name the drill, change, telemetry, and restoration owners plus a
    backup. Record the exact test resources, window, isolation deadline, and restoration steps.

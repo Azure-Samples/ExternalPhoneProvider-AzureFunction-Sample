@@ -72,7 +72,7 @@ The handler never parses or echoes incoming `Authorization`.
 Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) for no-send validation:
 authentication and decryption still run, but request-path provider lookup, credentials, and HTTP do not.
 Live success waits for acceptance, **not handset receipt**; failures omit the nonce.
-Never blindly retry a timeout.
+Treat a timeout as uncertain; check the provider outcome before deciding whether to retry.
 
 For message/voice mapping, see the [Soprano delivery contract](../docs/CONTRACT.md#encrypteddeliverycontext-jwe)
 and [Telesign integration](../TECHNICAL.md#telesign-epp).
@@ -113,4 +113,4 @@ unset for local evaluation without background credential acquisition.
 Add a provider by subclassing `PhoneProviderBase`, declaring its credential specification, and
 implementing `build_request` and `map_response`. Return `ProviderResult` with the coarse endpoint
 outcome and a fixed safe failure classification. Raw provider JSON remains local to the provider.
-See [production limitations](../docs/CONTRACT.md#production-limitations) before production use.
+See [production-readiness considerations](../docs/CONTRACT.md#production-limitations) when planning a live service.

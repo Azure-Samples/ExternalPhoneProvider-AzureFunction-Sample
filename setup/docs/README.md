@@ -83,10 +83,11 @@ application. Setup does not automatically migrate keys or activate the replaceme
 
 ## Step 1 - manually create the application
 
-Use a dedicated nonproduction tenant/subscription for the first deployment.
+For the first deployment, choose a nonproduction tenant and subscription where testing is isolated
+from production.
 
 1. In the customer tenant's **Microsoft Entra admin center > App registrations**, register a
-   dedicated application with **Accounts in this organizational directory only** as its initial
+   new application for this endpoint with **Accounts in this organizational directory only** as its initial
    supported account type; setup changes it to organizational multi-tenant after approval.
    No redirect URI, client secret, API permission, app role,
    or enterprise-application configuration is required manually.

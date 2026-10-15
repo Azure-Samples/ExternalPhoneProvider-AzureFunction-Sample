@@ -7,7 +7,7 @@
 | Investigate one sign-in without creating resources | [Choose tenant/access](#1-choose-your-tenant-and-access), then [find the sign-in](#2-find-one-sign-in) |
 | Set up ongoing identity alerts | [Recommended monitors](#recommended-monitors), then [export](#3-export-logs-for-ongoing-monitoring) and follow Steps 4-6 |
 | Diagnose missing records or quiet alerts | [Check data](#4-check-your-data-and-choose-a-query), [monitor ingestion](#monitor-ingestion-separately) |
-| Adapt a query or add advanced alerts | [Optional reference](#optional-reference) |
+| Adapt a query or add advanced alerts | [Advanced monitoring reference](#advanced-monitoring-reference) |
 
 The six-step walkthrough builds one user sign-in alert. Treat it as a worked example: each
 additional monitor needs its own scope, baseline, and query.
@@ -112,8 +112,8 @@ Choose each monitor's threshold from representative traffic, not a small export 
    If the issue points to the endpoint or provider, follow the
    [Function monitoring guide](MONITORING.md#runtime-specific-log-discovery) separately.
 
-**For a single investigation, stop here.** This portal-only path needs no workspace/export
-or additional Azure Monitor collection costs. Continue for ongoing alerts or longer-term analysis.
+For a single investigation, this portal view may be all you need. Continue when you want ongoing
+alerts, longer-term analysis, or a shared monitoring view.
 
 ## 3. Export logs for ongoing monitoring
 
@@ -241,7 +241,8 @@ IP-based detection for [later](#more-alert-types), once you understand this base
 
 Enable the ongoing alert only after these checks pass. Advanced options follow below.
 
-## Optional reference
+<a id="optional-reference"></a>
+## Advanced monitoring reference
 
 For query maintainers: [access/licensing](#tenant-setup-access-and-licensing),
 [external tenants](#prepare-the-external-tenant-access-path), [categories](#choose-additional-export-categories),

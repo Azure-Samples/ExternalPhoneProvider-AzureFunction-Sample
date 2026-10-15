@@ -81,10 +81,11 @@ with the printed certificate ID and the same prefix; another **Replace** request
 Coordinate maintenance and evaluation for every endpoint sharing the app; cached/in-flight
 requests can still use a retired key.
 
-## Optional Front Door deployments
+<a id="optional-front-door-deployments"></a>
+## Multi-region Front Door deployments
 
-The single-region setup script does not provision Front Door or a multi-region readiness endpoint.
-Use the [manual Front Door guide](../../docs/FRONTDOOR.md) for that option.
+Build regional routing on top of a validated single-region endpoint by following the
+[Front Door guide](../../docs/FRONTDOOR.md), including its readiness endpoint and origin checks.
 
 - A 401/403/404 probe is unhealthy. Check the readiness path, origin host header, and profile-pinned
   network restriction. Never exempt SendOtp or disable Easy Auth.

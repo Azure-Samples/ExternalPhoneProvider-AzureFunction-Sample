@@ -78,7 +78,7 @@ privacy-safe logging, and response behavior. See [binding differences](../docs/C
 Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) for no-send validation:
 authentication and decryption still run, but request-path provider lookup, credentials, and HTTP do not.
 Live success waits for acceptance, **not handset receipt**; failures omit the nonce.
-Never blindly retry a timeout.
+Treat a timeout as uncertain; check the provider outcome before deciding whether to retry.
 
 For message/voice mapping, see the [Soprano delivery contract](../docs/CONTRACT.md#encrypteddeliverycontext-jwe)
 and [Telesign integration](../TECHNICAL.md#telesign-epp).
@@ -126,4 +126,4 @@ method delegates to the base `SendJsonAsync<TResponse>` transport and maps the t
 `ProviderResult`; provider mapping code never handles `HttpResponseMessage` or raw JSON DOM types.
 Provider-specific response semantics stay in each provider; no shared response-mapping
 registry is used. Common async HTTP transport lives in `PhoneProviderBase`. See
-[production limitations](../docs/CONTRACT.md#production-limitations) before production use.
+[production-readiness considerations](../docs/CONTRACT.md#production-limitations) when planning a live service.

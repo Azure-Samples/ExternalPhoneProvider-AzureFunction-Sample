@@ -212,10 +212,11 @@ invalid or tampered payloads, evaluation without a send, and controlled live tes
 Check handset receipt or voice audio separately from acceptance. For local tests, use test keys
 and fake service responses on loopback only, without tunnels; Core Tools has no Easy Auth.
 
-The sample has **no early acknowledgement/background delivery, durable queue, automatic send
-retry, or deduplication**. Its outbound timeout is not a whole-request deadline. A timed-out send
-may already have been accepted, so retries or caller fallback can cause duplicates.
+The sample completes the request after provider acceptance. If your live design adds early
+acknowledgement, background delivery, a durable queue, retries, or deduplication, define their
+timing and ownership explicitly. The outbound timeout covers the provider call rather than the
+whole request; investigate a timed-out send before retrying because it may already be accepted.
 
 Keep phone numbers, messages, passcodes, nonces, tokens, keys, JWE contents, and raw service
 responses out of logs. Disable body tracing in the application, platform, and proxies.
-Review the remaining [production limitations](CONTRACT.md#production-limitations) before activation.
+Review the [production-readiness considerations](CONTRACT.md#production-limitations) before activation.
