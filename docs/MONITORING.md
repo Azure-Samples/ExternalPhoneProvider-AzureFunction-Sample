@@ -3,10 +3,9 @@
 Use this guide to find your endpoint's logs and set up alerts. Guided setup creates Application
 Insights and a Log Analytics workspace, but **you still need to configure and test notifications**.
 
-For **tenant authentication outcomes and potential abuse signals**, use the separate
-[Microsoft Entra sign-in monitoring guide](SIGN-IN-MONITORING.md). Entra log export and
-sign-in alerts are not configured by endpoint setup; sign-in failures are not automatically
-provider failures or evidence of OTP delivery.
+For **tenant authentication and potential abuse signals**, use
+[Microsoft Entra ID sign-in monitoring](SIGN-IN-MONITORING.md). Endpoint setup does not configure that pipeline;
+sign-in failures do not by themselves identify provider failures or prove OTP delivery.
 
 For your first single-region deployment:
 
@@ -41,12 +40,10 @@ Keep a private inventory with one row per expected regional endpoint:
 Do not derive the expected inventory solely from recent telemetry: an origin that
 never reports would be absent from that list.
 
-The [guided setup](../setup/docs/README.md) configures workspace-based Application
-Insights, an ingestion identity/role, and Function diagnostic settings. Inspect the
-actual deployment rather than assuming that configuration succeeded. Other deployment
-methods can differ. The current setup template requests 30-day retention; confirm
-effective workspace/table retention and organizational policy before changing it.
-It does not create the action groups, Workbooks, or alert rules described here.
+[Guided setup](../setup/docs/README.md) creates the collection resources, not action groups,
+Workbooks, or alerts. [Verify the deployed collection configuration](APPLICATION-INSIGHTS.md#single-region-configuration);
+resource creation alone does not prove ingestion, and other deployment methods can differ.
+The template requests 30-day retention; check effective workspace/table retention and policy before changes.
 
 ### Find the linked resources in the portal
 
@@ -65,13 +62,10 @@ These are real portal views of an existing test deployment, with identifying inf
 connection details permanently hidden. Resource names, regions, and portal layouts may differ.
 The links show where to navigate; they do not prove that test traffic or delivery succeeded.
 
-In the Azure portal, inspect each Function's Application Insights association,
-monitoring settings, managed-identity ingestion authorization, and diagnostic
-destinations. Do not expose connection strings or credential values. Application
-Insights telemetry and resource diagnostic logs are different pipelines:
-`AppRequests`/`AppTraces` are not interchangeable with `FunctionAppLogs` or
-`AzureDiagnostics`. Enabling diagnostic logs alone does not prove request telemetry
-is arriving, and platform metrics do not require log export to appear in Metrics.
+Keep connection strings and credentials private.
+`AppRequests`/`AppTraces` are not interchangeable with `FunctionAppLogs` or `AzureDiagnostics`.
+Diagnostic export alone does not prove request collection; platform metrics need no log export.
+See [pipelines and table names](APPLICATION-INSIGHTS.md#signals-tables-and-metrics-are-different-things).
 
 Use **Log Analytics workspace > Logs** for all KQL below. Application Insights'
 application-context query experience can instead use names such as `requests`,
@@ -270,24 +264,14 @@ required; the request query is not a synthetic scheduler.
 
 ## 4. JavaScript service-event queries
 
-The JavaScript implementation emits JSON messages with `logType: "service"` and
-`eventName` through its invocation logger. The following examples assume those
-messages arrive as JSON in `AppTraces.Message`. They are **not portable event
-parsers for every runtime**:
+These queries require JavaScript invocation logs containing `logType: "service"` and `eventName`
+as JSON in `AppTraces.Message`. **Do not apply this parser to Python or .NET**; use
+[runtime-specific discovery](#runtime-specific-log-discovery).
 
-- JavaScript and Python `host.json` enable Application Insights sampling and exclude
-  `Request` telemetry from that host sampling. Trace events can still be sampled
-  or filtered. The setting is not a guarantee against ingestion loss.
-- Python uses logging messages plus `extra` fields such as `event_name`, not this
-  JavaScript JSON contract. Whether those fields reach custom properties depends
-  on the deployed logging pipeline.
-- .NET isolated uses `ILogger` events and declares OpenTelemetry in `host.json`.
-  Inspect the actual host/worker exporter configuration, tables, and properties;
-  do not assume JavaScript JSON or complete worker telemetry.
-
-Verify a controlled request appears in `AppRequests` and that its expected events
-appear in the deployed trace schema before relying on any service-event alert.
-An empty JSON-filtered result can mean a parser/pipeline mismatch.
+Verify a controlled request and its events before creating alerts. Traces can be sampled or
+filtered, and an empty JSON result can mean a parser/pipeline mismatch. Check
+[runtime collection defaults](APPLICATION-INSIGHTS.md#what-the-checked-in-sample-configures)
+and [sampling limits](APPLICATION-INSIGHTS.md#sampling-privacy-and-collection-limits).
 
 ### Separate evaluated, accepted, and failed completions
 
@@ -407,11 +391,10 @@ AppTraces
 | summarize StoredRows = count() by SchemaStatus, Result, HttpStatus
 ```
 
-These discovery counts are **stored rows**, not sampled traffic totals or delivery receipts.
-Do not turn them into alerts until the selected release's schema and collection are verified.
-In particular, the .NET host's OpenTelemetry declaration is not an initialized direct worker
-exporter. Missing worker events require a collection investigation, not a green application
-health result. Malformed .NET request binding can fail before the handler emits any events.
+These are **stored rows**, not traffic totals or delivery receipts. Verify the release's schema and
+collection before creating alerts. Missing events require investigation, not a healthy status:
+.NET host OpenTelemetry does not initialize a direct worker exporter, and malformed .NET binding
+can fail before handler events. See [collection configuration](APPLICATION-INSIGHTS.md#what-the-checked-in-sample-configures).
 
 For an incident, use the host `OperationId`/invocation ID and whichever application request ID
 is actually exported. Keep raw Microsoft/provider support IDs distinct; not every runtime
@@ -470,18 +453,14 @@ not validate those dependencies' future readiness.
 
 ### Certificate, credential, and cost ownership
 
-Keep the setup summary's `certificateExpiresUtc`, vault certificate/secret versions, and Entra
-encryption credential expiry in a restricted inventory with a renewal owner and escalation backup.
-For certificates issued by setup, configure vault-wide certificate contacts and retain the
-`EmailContacts` lifetime action. For a reused certificate, coordinate its existing issuance policy
-and notifications with the source-vault owner. Follow the
-[renewal runbook](../setup/docs/README.md#encryption-certificate-lifecycle).
-Contacts alone are not automatic renewal, and a new vault certificate version does not update
-the Function's version-pinned reference or Entra by itself.
+Keep `certificateExpiresUtc`, vault certificate/secret versions, and Entra encryption credential
+expiry in a restricted inventory with a renewal owner and backup. Follow the
+[renewal runbook](../setup/docs/README.md#encryption-certificate-lifecycle) for vault-wide contacts,
+`EmailContacts`, and reused-certificate policies. **Contacts do not renew certificates; a new vault
+version does not update the Function's pinned reference or Entra.**
 
-Create an independent reminder before the certificate's 30-day near-expiry window and rehearse
-the approved single-certificate renewal/replacement procedure in nonproduction. If your operations
-process uses Key Vault near-expiry/new-version events, an operator must configure an
+Set an independent reminder before the 30-day near-expiry window and rehearse approved renewal
+in nonproduction. For Key Vault near-expiry/new-version events, configure an
 [Event Grid subscription and handler](https://learn.microsoft.com/azure/key-vault/general/event-grid-overview)
 and test its notification path. Diagnostic settings alone do not create these alerts, and those
 events do not automatically become Application Insights traces.

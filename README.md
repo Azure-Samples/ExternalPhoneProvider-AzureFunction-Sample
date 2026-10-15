@@ -36,7 +36,7 @@ See the [sample's production limitations](docs/CONTRACT.md#production-limitation
 
 - [Setup reference](setup/docs/README.md) and [troubleshooting](setup/docs/Troubleshooting.md)
 - [Provider configuration and validation](docs/ONBOARDING.md)
-- [Monitoring](docs/MONITORING.md), [Entra sign-in alerts](docs/SIGN-IN-MONITORING.md#recommended-monitors), and [SMS cost estimation](docs/COST-CALCULATOR.md)
+- [Monitoring](docs/MONITORING.md), [Microsoft Entra ID sign-in alerts](docs/SIGN-IN-MONITORING.md#recommended-monitors), and [SMS cost estimation](docs/COST-CALCULATOR.md)
 - [Technical reference](TECHNICAL.md), [HTTP contract](docs/CONTRACT.md), and [BYOT integration](docs/BRING-YOUR-OWN-PROVIDER.md)
 
 Optional multi-region and custom-provider designs are in the [detailed reference index](docs/GETTING-STARTED.md#find-more-detail);

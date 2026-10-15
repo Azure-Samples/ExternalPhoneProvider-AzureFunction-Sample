@@ -39,44 +39,30 @@ neither of which is a successful evaluation.
 | C# (.NET isolated worker) | Available | [dotnet/](dotnet/) |
 | Python (v2 model) | Available | [python/](python/) |
 
-All implementations conform to the **language-agnostic contract** in
-[docs/CONTRACT.md](docs/CONTRACT.md): shared HTTP intent, config/env var names, Key Vault secret
-names, and fail-closed/managed-identity/privacy boundaries. Internal provider APIs, binding errors,
-credential caching, and telemetry differ by runtime; consult the documented differences rather
-than assuming identical internals.
+Choose **one language and one provider per Function App**; no provider is preferred or selected
+by default. All implementations share the [HTTP, configuration, and trust contract](docs/CONTRACT.md),
+but provider APIs, binding errors, credential caching, and telemetry can differ by runtime.
 
-Choose one language and configure the adapter for your provider. No provider is preferred or selected
-by default. Deploy each language separately, not all three to the same Function App. See the
-[shared configuration](docs/CONTRACT.md#default-provider-and-configuration-readers).
-
-For local development, manual configuration, and deployment checks, see the
-[detailed configuration and validation guide](docs/ONBOARDING.md).
-
-For the provider-neutral inbound interface, read the
-[BYOT request and response guide](docs/BRING-YOUR-OWN-PROVIDER.md). It covers the Entra ID envelope,
-caller authentication, encrypted delivery context, and endpoint responses. The outbound service
-integration remains customer-owned; the guide does not add an adapter or guided setup support.
+For [local development or manual deployment](docs/ONBOARDING.md#optional-local-development-and-manual-deployment),
+follow the selected runtime guide. For a custom service integration, start with the
+[provider-neutral BYOT interface](docs/BRING-YOUR-OWN-PROVIDER.md). Your team owns the outbound
+integration; that guide adds neither an adapter nor guided setup support.
 
 ## Guided EPP setup
 
-Use **[setup](setup/docs/README.md)** for **Step 2: endpoint deployment**. Download only
-`Setup-Epp.ps1`; it downloads its supporting PowerShell, Bicep, package catalog, and provider JSON
-from the same commit. Customers select a language, provider, Global or EU endpoint,
-a [service plan](setup/docs/README.md#service-plan-selection), and a resource prefix, then approve
-one complete plan. Manual Step 1 only creates the dedicated app
-registration; PowerShell configures its service principals, `Epp.Invoke`, Microsoft caller access,
-Graph `Application.Read.All`, the provider-tenant allowlist preview, encryption certificate, and
-Easy Auth. Read-only preflight discovers existing `AsymmetricX509Cert` / `Encrypt` credentials.
-Customers choose a matching Key Vault certificate version to reuse, with explicit cleanup of any
-other encryption credentials, or replacement with a new certificate. The approved deployment
-stages the private-key reference, verifies its resolution by the Function system identity, and
-registers exactly one public encryption certificate while preserving non-encryption credentials.
-Setup downloads only the public certificate and pins the Function to its PEM secret version.
-Reuse can reference another vault in the same tenant; provider credentials remain in the
-setup-created vault. Replacement is coordinated maintenance, not zero-downtime rotation.
-Each deployment accepts both SMS and voice. The request's `channel` selects its configured
-provider endpoint; the two URLs can be identical or different.
-Certificate synchronization and policy activation remain manual. The home tenant remains allowed by Entra.
+Follow the [five-step guide](docs/GETTING-STARTED.md), including its access and approval gates.
+Download only `Setup-Epp.ps1`; it retrieves its support files from one commit and deploys after
+you approve the complete plan. The [setup reference](setup/docs/README.md#step-2---download-and-run-one-script)
+explains provider, route, runtime, hosting, and resource choices.
+
+Review [application permissions and caller trust](setup/docs/README.md#step-1---manually-create-the-application),
+including tenant-wide Graph `Application.Read.All`, and the
+[certificate selection rules](setup/docs/README.md#encryption-certificate-selection).
+Setup pins one PEM secret version and verifies Function access before changing registered encryption
+credentials. Only the public certificate is downloaded. Replacement requires coordinated maintenance,
+not zero-downtime rotation; certificate synchronization and policy activation remain manual.
+
+One deployment accepts SMS and voice; each request's `channel` selects its configured provider URL.
 
 ## Download a Function ZIP
 
@@ -93,21 +79,17 @@ Download the latest successful CI ZIP for your chosen language:
 | .NET | [epp-dotnet-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-dotnet-source.zip) | C# Function source and project file; build/publish before deployment |
 | Python | [epp-python-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-python-source.zip) | Source for Azure remote build on Linux |
 
-Customers do not need PowerShell or a local build toolchain to download these files. Verify downloads
-against the corresponding release's `SHA256SUMS.txt`. Configure the target Function App's runtime, app settings,
-Key Vault access, and Easy Auth before deploying. .NET requires building/publishing the extracted
-project; Python requires remote build to install dependencies. Neither source ZIP can run directly
-as a run-from-package artifact. GitHub's **Code > Download ZIP**
-is the whole source repository, not a Function deployment package.
+Downloads need no PowerShell or build tools. Verify the release's `SHA256SUMS.txt`, then configure
+the target runtime, app settings, Key Vault access, and **Easy Auth before deployment**.
+Build/publish .NET source; use Azure remote build for Python dependencies. Neither source ZIP is
+directly runnable as a run-from-package artifact. **Code > Download ZIP** is the repository, not
+a deployment package.
 
-Each successful `main` build tests all three implementations, builds and inspects the ZIPs, and
-publishes a new versioned release marked as the latest release.
-The direct links above and guided setup therefore track the newest successful CI package build. Get builds from
-[Latest release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest).
-Older releases remain available; existing assets are not overwritten. Pull requests build downloadable
-workflow artifacts only and cannot publish releases. GitHub sign-in may be required for workflow
-artifacts, but public release downloads do not require a local build. Packaging does not deploy or
-verify live provider delivery.
+Each successful `main` build tests all three runtimes and inspects the ZIPs before publishing a
+versioned [latest release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest).
+These links and guided setup track that release; older assets remain available and are not overwritten.
+PR builds publish workflow artifacts only, which may require GitHub sign-in. Public releases do not.
+Packaging neither deploys nor verifies provider delivery.
 
 ## Build ZIPs Locally
 
@@ -191,10 +173,9 @@ is running**; do not copy `UseDevelopmentStorage=true` into Azure. Optional sett
 below rather than appearing as required placeholders in the sample. Keep explanatory comments outside
 `Values`, otherwise the host loads them as environment variables too.
 
-The local settings file is an environment-variable input for the Functions host, **not a serialized
-`AppConfig` or request model**. For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in
-JavaScript, `config.provider_name` in Python, and `config.ProviderName` in .NET. The refactor changed
-how code accesses configuration; request fields remain separate from deployment settings.
+Local settings supply environment variables, **not a serialized `AppConfig` or request model**.
+For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in JavaScript,
+`config.provider_name` in Python, and `config.ProviderName` in .NET.
 
 | Variable | When needed | Value |
 |---|---|---|
@@ -237,18 +218,14 @@ login; ordinary local machines have no managed-identity endpoint. Use offline te
 evaluation locally, or an explicitly injected test resolver for integration work. Never commit local
 settings, keys or test credentials.
 
-When their selected cache is enabled, configured providers are
-[prepared per worker](docs/CONTRACT.md#credential-caching-and-refresh).
-JavaScript/Python warm credentials and poll for refresh; .NET warms at startup and retrieves
-replacements on cache misses, without a periodic poller. Credential acquisition never sends an OTP.
-Evaluation skips provider work, but configured workers can independently acquire credentials at
-startup. Disabling the selected cache skips startup preparation, polling, and cross-request reuse,
-but live requests still acquire credentials. Each switch accepts trimmed, case-insensitive `true` or
-`false`; an invalid selected value fails live credential resolution closed without preventing evaluation.
-The other provider-auth mode's switch is ignored. Setup writes both as `false` for FC1 or `true` for
-EP1; older packages that do not read these settings still require a supporting release. Restart after
-changes. Leave `EPP_PROVIDER_NAME` unset or disable its cache for local evaluation-only work without
-credential acquisition. Platform-managed identity caching and decryption-key references are separate.
+For cache values, failure behavior, and runtime differences, use the
+[credential caching contract](docs/CONTRACT.md#credential-caching-and-refresh).
+JavaScript/Python poll; .NET refreshes on cache misses. Setup writes both switches as `false` for FC1
+or `true` for EP1; deploy a supporting package and restart after changes.
+Evaluation skips provider work, but cached workers can independently acquire credentials without
+sending an OTP. Leave `EPP_PROVIDER_NAME` unset or disable its cache for local evaluation without
+credential acquisition. Provider caching is separate from platform-managed identity caching and
+decryption-key references.
 
 Core Tools does not resolve Azure Key Vault reference expressions locally. Supply the local test PEM
 or base64 PEM directly; use a reference such as `@Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/<private-key-secret>/)`
