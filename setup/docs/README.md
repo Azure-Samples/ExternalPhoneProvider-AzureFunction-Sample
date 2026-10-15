@@ -396,8 +396,9 @@ subscription/app/prefix can reconfigure the existing endpoint. See
 The plan creates or updates a dedicated resource group, selected Linux FC1 or EP1 hosting plan, Function App,
 storage account/private package container, Key Vault, Log Analytics workspace, Application Insights,
 outbound managed identity, diagnostics, Easy Auth, and scoped role assignments. Storage/package
-access uses managed identity, not account keys or SAS. Telemetry uses the system identity; the
-outbound identity is selected explicitly, not through a global `AZURE_CLIENT_ID`.
+access uses managed identity, not account keys or Azure Storage shared access signatures.
+Telemetry uses the system identity; the outbound identity is selected explicitly, not through
+a global `AZURE_CLIENT_ID`.
 
 The Function starts with public ingress disabled. After Bicep creates the vault and permissions,
 setup applies the approved certificate action. New certificates are self-signed, exportable

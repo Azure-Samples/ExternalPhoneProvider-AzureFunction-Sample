@@ -404,7 +404,7 @@ saving an alert query. Portal JSON downloads are not Log Analytics rows.
    **Failed Signin reasons** groups by code/reason; **Failed login Count** counts failures by
    resource; **Signin Locations** groups success/failure by location. Pick the measure you need.
    Some examples contain personal fields or limit MFA failures to one code; none is a
-   complete CYOT/provider-failure detector.
+   complete endpoint/provider-failure detector.
 2. Add your source tenant/app filters **before aggregation**. Use the
    [filtering tutorial](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-tutorial#apply-multiple-query-filters)
    or [Simple mode column filters](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/log-analytics-simple-mode#filter-by-column),

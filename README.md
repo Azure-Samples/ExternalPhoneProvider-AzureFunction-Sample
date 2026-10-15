@@ -240,5 +240,5 @@ Deleting Azure resources does not undo an authentication policy change.
 | Understand the architecture, settings, or packages | [Technical reference](TECHNICAL.md) and [HTTP contract](docs/CONTRACT.md) |
 | Explore multiple Azure regions | [Manual Front Door guide](docs/FRONTDOOR.md); not included in guided setup |
 | Build a custom implementation | [JavaScript](javascript/README.md), [C#](dotnet/README.md), or [Python](python/README.md) |
-| Implement the SAS-facing BYOT interface | [BYOT request and response guide](docs/BRING-YOUR-OWN-PROVIDER.md); caller authentication, encrypted payload, and responses, with customer-owned service integration |
+| Implement the Entra ID-facing BYOT interface | [BYOT request and response guide](docs/BRING-YOUR-OWN-PROVIDER.md); caller authentication, encrypted payload, and responses, with customer-owned service integration |
 | Design primary-to-secondary provider fallback | [Developer walkthrough](docs/MULTI-PROVIDER-IMPLEMENTATION.md); not a built-in feature |

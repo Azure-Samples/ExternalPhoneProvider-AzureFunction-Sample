@@ -1,7 +1,7 @@
 # Add conservative primary-to-secondary provider fallback
 
 You can adapt this application to try a secondary provider **only when the primary is known
-not to have accepted the message**. Keep one SAS-facing URL, `/api/SendOtp`, with a primary
+not to have accepted the message**. Keep one URL for Microsoft Entra ID, `/api/SendOtp`, with a primary
 account and a secondary account for the same SMS channel. You choose their order according to
 your approved account policy; these roles do not imply a vendor ranking or recommendation.
 The caller does not select an account or supply a provider header.
@@ -192,7 +192,7 @@ Record operation state, safe provider context ID and per-attempt classifications
 request logs. Do not store/log bodies, OTPs or credentials as attempt evidence. Retention and key
 reuse rules must cover the caller's replay window. A store guard cannot atomically commit an
 external provider send: it is **not provider-side idempotency or true exactly-once delivery**.
-Real SAS/native fallback outside this endpoint can still produce duplicates; coordinate that
+Entra ID retries or native fallback outside this endpoint can still produce duplicates; confirm that
 behavior with the owner rather than promising the local guard prevents it.
 
 ## 5. Integrate one guarded fallback into the handler
@@ -309,7 +309,7 @@ store faults; block external network. Verify:
 
 An offline policy-model experiment can check those branches, but a fake classifier does not
 prove any real provider's nonacceptance semantics, and a fake store does not prove distributed
-durability. Earlier routing/isolation tests are **not fallback tests**. No production
+durability. Routing/isolation tests alone are **not fallback tests**. No production
 nonacceptance classifier is supplied here; keep response-based fallback disabled until reviewed.
 
 Use one Function App/package and the existing `/api/SendOtp` entry point. Deploy new code for the
@@ -321,10 +321,10 @@ or editing Markdown needs no redeployment.
 Preserve inbound authentication and origin/network restrictions, including any Front Door
 forwarding. Regional failover is separate from provider fallback. Before live use, review
 account permissions/consent, sender/recipient entitlement, durable-store guarantees and caller
-retry/native-fallback behavior. Resolve exposed-credential rotation first. Any real SAS or
+retry/native-fallback behavior. Rotate any exposed credentials before testing. Any Entra ID sign-in or
 provider test needs separate authorization, an approved recipient, explicit attempt limits and
 stop conditions for uncertainty. HTTP 200/`PENDING` is not handset receipt. Nothing here authorizes
-a send or proves real SAS integration, capacity, regional resilience or live delivery.
+a send or proves Entra ID integration, capacity, regional resilience or live delivery.
 
 ## .NET and Python integration pointers
 

@@ -1,9 +1,9 @@
-# BYOT integration: the SAS request and response
+# BYOT integration: the Entra ID request and response
 
-**SAS (Strong Authentication Service)** sends your **External Phone Provider (EPP)** endpoint
+**Microsoft Entra ID** sends your **External Phone Provider (EPP)** endpoint
 an encrypted phone number and one-time passcode message. Your endpoint verifies the caller,
 decrypts the details, and either evaluates the request without sending or uses your phone service.
-It then responds to SAS. **Your team owns the connection to that service.**
+It then responds to Entra ID. **Your team owns the connection to that service.**
 
 Before deploying, ask your tenant administrator to confirm
 [eligibility, testing, and activation with Microsoft](ONBOARDING.md#before-purchasing-or-deploying).
@@ -13,13 +13,13 @@ Deploying the endpoint alone does not enable tenant policy.
 
 ## 1. Verify the caller
 
-SAS sends **`POST /api/SendOtp` over HTTPS**, with a signed Entra bearer token in `Authorization`.
+Entra ID sends **`POST /api/SendOtp` over HTTPS**, with a signed bearer token in `Authorization`.
 In this sample, **Easy Auth** (Azure App Service Authentication) checks the token and authorizes
 the caller before the Function runs. The Function's trigger is anonymous and has no backup
 authentication check, so do not expose it with Easy Auth disabled or bypassed.
 
 Require HTTPS and authentication, return `401` for unauthenticated requests, and restrict access
-to the trusted tenant issuer, endpoint-app audience, and authorized SAS caller application ID.
+to the trusted tenant issuer, endpoint-app audience, and authorized Microsoft caller application ID.
 Your Azure operator should use the endpoint app registration and
 [approved setup configuration](../setup/support/Epp.Setup.psm1) for these values, then verify
 **Function App > Authentication**. Follow the
@@ -28,9 +28,7 @@ caller-ID guidance, and token-version details.
 
 **Encryption is not caller authentication.** Anyone with the public key can create a JWE
 (JSON Web Encryption) payload. Neither its nonce, the body's `tenantId`, nor tracing or
-forwarded principal headers prove that SAS sent it.
-
-<a id="2-read-the-sas-envelope"></a>
+forwarded principal headers prove that Entra ID sent it.
 
 ## 2. Read and decrypt the request
 
@@ -93,7 +91,7 @@ Configured workers may independently prepare or refresh credentials, but that do
 **Live (`mode: 1` or `"live"`):** your team implements and maintains the service integration.
 Map the requested SMS or voice delivery to your service, preserving the destination, message,
 and passcode. Handle voice rendering and locales as needed. Authenticate with your own service
-credentials; **never forward SAS's bearer token**.
+credentials; **never forward the incoming bearer token**.
 
 Wait for recognized acceptance before returning success. A queued or pending result counts
 only if your integration recognizes it as acceptance. Unknown or incomplete responses must fail,
@@ -104,9 +102,7 @@ The sample uses one configured service per deployment. A custom integration does
 guided setup support. Follow [Where to add your integration](#where-to-add-your-integration)
 for the files to create, registration, settings, and packaging.
 
-<a id="5-respond-to-sas"></a>
-
-## 4. Respond to SAS
+## 4. Respond to Entra ID
 
 Return **HTTP `200` with a JSON object containing exactly these fields** after a successful
 evaluation or recognized live acceptance:
@@ -122,9 +118,9 @@ Correlation header sanitization and empty-value handling differ by runtime; see 
 the internal attempt `messageId`, with a generated fallback. These IDs do not provide deduplication.
 
 **For live requests, echo the nonce only after acceptance, not before sending.**
-Acceptance is not proof of handset receipt. The sample's integration contract expects SAS to
+Acceptance is not proof of handset receipt. The sample's integration contract expects Entra ID to
 recognize a `2xx` response with a matching nonce; failures or timeouts can lead to native fallback.
-This repository does not implement or verify the current SAS caller's fallback or retry policy.
+This repository does not implement or verify the Entra ID caller's current fallback or retry policy.
 Confirm that behavior through the [approved test procedure](ONBOARDING.md#validate-the-deployed-endpoint),
 including whether a lost response can lead to another send.
 
@@ -139,8 +135,8 @@ errors can occur before the handler and need not use this JSON shape. Use the
 
 Choose **one runtime** and work in its source directory. Keep Easy Auth and the shared handler's
 envelope validation, JWE decryption, evaluation branch, and nonce responses. Your provider code
-builds the outbound request and interprets the service result; it does not authenticate SAS or
-write the HTTP response to SAS.
+builds the outbound request and interprets the service result; it does not authenticate the
+incoming caller or write the HTTP response to Entra ID.
 
 ### Add and register the provider
 

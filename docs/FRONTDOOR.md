@@ -298,10 +298,10 @@ double-load capacity, complete dependency isolation, or a full regional outage.
 
 Run only in an approved, isolated nonproduction environment, with synthetic data, bounded load,
 and the [fire-drill's approval, abort, and restoration safeguards](#6-regional-failover-fire-drill).
-Use an authorized test harness calling the Front Door endpoint, not a real Entra/SAS sign-in flow.
-**Function evaluation suppresses sends only inside this endpoint.** Confirm real-SAS fallback
+Use an authorized test harness calling the Front Door endpoint, not an actual Entra ID sign-in flow.
+**Function evaluation suppresses sends only inside this endpoint.** Confirm Entra ID fallback
 and retry behavior with Microsoft rather than assuming a whole sign-in flow is non-delivering.
-Real-SAS and delivery testing require separate safety approval and are not part of this checklist.
+Entra ID sign-in and delivery testing require separate safety approval and are not part of this checklist.
 Agree load, headroom, recovery time, error/latency limits, soak duration, and restoration deadlines
 before starting; do not substitute the historical measurements for your acceptance targets.
 
