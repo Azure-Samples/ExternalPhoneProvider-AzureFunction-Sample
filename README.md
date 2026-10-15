@@ -7,11 +7,6 @@ You register an application, run a guided setup script, then connect and test yo
 An administrator activates the endpoint only after those checks pass. You do not need to clone
 this repository, build a package yourself, or follow all three language guides.
 
-![Five onboarding stages: get ready, register the app, run setup, connect and test, then activate and hand over.](docs/images/onboarding/onboarding-journey.png)
-
-*Original roadmap; [open the scalable illustration](docs/images/onboarding/onboarding-journey.svg).
-The numbered sections below explain each stage. Deployment alone does not activate policy.*
-
 The same Function endpoint supports both SMS and voice. Each request's `channel` selects its
 configured provider URL, and the SMS and voice URLs can differ. Validate every channel you intend
 to activate.

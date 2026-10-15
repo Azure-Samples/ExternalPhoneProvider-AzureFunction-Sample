@@ -14,7 +14,9 @@ Deploying the endpoint alone does not enable tenant policy.
 ![UML sequence showing Microsoft Entra ID calling Easy Auth, the Function validating and decrypting, and alternative evaluation and live paths. Only live calls reach the provider; success returns through Easy Auth after evaluation or recognized acceptance.](images/request-sequence.png)
 
 *Original UML sequence; [open the scalable diagram](images/request-sequence.svg).
-Solid arrows are calls; dashed arrows are replies. The two branches are alternatives.
+Solid arrows are calls; dashed arrows are replies. The two successful branches are alternatives.
+Rejected callers, invalid payloads, and provider failures stop the success path; use the
+[error response reference](CONTRACT.md#epp-response-json) for those cases.
 This illustrates the [shared contract](CONTRACT.md#1-http-api), not a completed live test.*
 
 The success response acknowledges evaluation or provider acceptance, **not recipient delivery**.

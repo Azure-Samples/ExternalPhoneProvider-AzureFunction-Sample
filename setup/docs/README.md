@@ -295,8 +295,9 @@ certificates are not encryption candidates, and unsupported encryption credentia
 ![Certificate reuse identifier map: match the app encryption credential key ID to the exact Key Vault certificate version; setup resolves its backing secret for the Function without downloading the private key.](../../docs/images/onboarding/certificate-reuse.png)
 
 *Original identifier map; [open the scalable illustration](../../docs/images/onboarding/certificate-reuse.svg).
-For **Reuse**, supply the two top inputs. The Function's secret reference is an output,
-not a secret value to copy. Follow the selection and validity checks below.*
+**Reuse path only:** choose **Reuse** interactively or pass `-CertificateAction Reuse`. Select the app encryption key
+and provide its certificate version; unattended reuse requires both named ID parameters.
+The Function's secret reference is an output, not a secret value to copy. Follow the checks below.*
 
 | Existing encryption credentials | Choice | Result after successful deployment |
 |---|---|---|

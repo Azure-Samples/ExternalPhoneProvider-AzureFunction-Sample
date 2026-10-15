@@ -8,13 +8,6 @@ For **tenant authentication outcomes and potential abuse signals**, use the sepa
 sign-in alerts are not configured by endpoint setup; sign-in failures are not automatically
 provider failures or evidence of OTP delivery.
 
-![Three monitoring questions and their evidence: Microsoft Entra ID sign-in and audit logs for authentication, Application Insights for Function execution, and provider records plus recipient checks for delivery.](images/monitoring-evidence.png)
-
-*Original evidence map; [open the scalable illustration](images/monitoring-evidence.svg).
-Start with [identity logs](SIGN-IN-MONITORING.md#2-find-one-sign-in),
-[Function logs](#find-the-linked-resources-in-the-portal), or
-[provider and recipient checks](ONBOARDING.md#validate-the-deployed-endpoint), depending on the question.*
-
 For your first single-region deployment:
 
 1. [Find the monitoring resources and confirm data is arriving](#1-record-the-deployment-and-confirm-telemetry)

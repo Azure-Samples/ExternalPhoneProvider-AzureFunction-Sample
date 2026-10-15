@@ -124,7 +124,7 @@ a missing, empty, or invalid selected endpoint fails closed.
 
 There are **three separate trust paths**: Easy Auth admits the Microsoft caller; the Key Vault
 certificate decrypts its JWE; provider credentials authorize outbound delivery. The HTTPS
-certificate is separate again. Use the [request-path illustration](../TECHNICAL.md#single-region-architecture)
+certificate is separate again. Use the [request sequence](BRING-YOUR-OWN-PROVIDER.md#end-to-end-endpoint-request)
 to see where evaluation stops and live delivery continues. Fix the failing path rather than
 replacing unrelated IDs or keys.
 

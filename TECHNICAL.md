@@ -13,22 +13,24 @@ and managed-identity access to credentials.
 
 ## Single-region architecture
 
-![Microsoft Entra ID calls Easy Auth and the Function; evaluation skips the provider, while live requests wait for provider acceptance before returning the nonce. Recipient delivery is checked separately.](docs/images/single-region-architecture.png)
+![Single-region component overview showing Microsoft Entra ID, Easy Auth, the Function and adapter, Key Vault, Application Insights, and the phone provider](docs/images/single-region-architecture.png)
 
-*Original illustration; [scalable diagram and editable source](docs/images/single-region-architecture.svg).
-Follow the left branch for evaluation and the right branch for a live send.*
+*Component overview, not a delivery timeline. The numbered delivery arrow does not mean
+the Function waits for handset receipt; see the [request sequence](docs/BRING-YOUR-OWN-PROVIDER.md#end-to-end-endpoint-request)
+for evaluation and live response ordering.*
 
 Microsoft Entra ID sends an authenticated, encrypted request. Easy Auth checks the caller,
 then the Function decrypts the request using its Key Vault-backed key. For a live request, the
 selected adapter submits the message and returns success after provider acceptance, not after
 confirmed recipient delivery. Application Insights collects the available request and log telemetry.
 
-The diagram is an overview, not a portal screenshot or a complete resource inventory. Select a
-region with capacity and quota for your hosting plan. Provider API keys come from Key Vault;
-OAuth integrations use managed-identity token exchange instead. Both are separate from the
-decryption key and the incoming caller token. Credential caching
+The diagram is an overview, not a portal screenshot. East US is illustrative; select a region
+with capacity and quota for your hosting plan. The provider-secret path applies to API-key
+integrations; OAuth integrations use managed-identity token exchange instead. Credential caching
 depends on the [selected cache settings](docs/CONTRACT.md#credential-caching-and-refresh), and
 [log formats vary by runtime](docs/MONITORING.md#runtime-specific-log-discovery).
+Telemetry comes from the Function host/worker; the schematic telemetry arrow does not mean
+Easy Auth rejections produce Function request logs.
 
 An authorized, valid encrypted **evaluation request (`mode: 2`)** returns the matching nonce
 without submitting a message to the provider. When caching is enabled, credential preparation

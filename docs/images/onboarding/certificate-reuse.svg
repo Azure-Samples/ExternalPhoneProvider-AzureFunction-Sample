@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="700" viewBox="0 0 960 700" role="img" aria-labelledby="title description">
   <title id="title">Certificate reuse: match the ID and the version</title>
-  <desc id="description">Reuse takes the encryption credential key ID from the application registration and the exact versioned certificate identifier from Key Vault. Setup checks the public certificate match and validity, then resolves the certificate's backing secret for the Function's pinned private-key reference. A certificate identifier is not a secret value, and certificate and secret version IDs need not match.</desc>
+  <desc id="description">After choosing Reuse, supply the encryption credential key ID from the application registration and the exact versioned certificate identifier from Key Vault. Setup checks the public certificate match and validity, then configures the Function's EPP_DECRYPTION_KEY_PEM setting with a pinned reference to the backing secret after approval. A certificate identifier is not a secret value, and certificate and secret version IDs need not match.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#245b91"/></marker>
     <style>
@@ -14,7 +14,7 @@
   </defs>
   <rect width="960" height="700" fill="white"/>
   <text x="32" y="43" class="title">Certificate reuse: match the ID and the version</text>
-  <text x="32" y="77" class="small">Use your own application and vault. This is an identifier map, not a portal screenshot.</text>
+  <text x="32" y="77" class="small">Choose Reuse first (-CertificateAction Reuse). Use your own application's key ID and vault version.</text>
 
   <rect x="32" y="112" width="420" height="205" rx="12" fill="#f1f6fc" stroke="#7595b7" stroke-width="1.5"/>
   <text x="56" y="150" class="heading">App registration</text>
@@ -39,7 +39,7 @@
   <path d="M480 455V501" class="line"/>
   <text x="506" y="487" class="small">After plan approval</text>
   <rect x="32" y="503" width="896" height="120" rx="12" fill="#f1f6fc" stroke="#7595b7" stroke-width="1.5"/>
-  <text x="56" y="539" class="heading">Function: pinned private-key reference</text>
+  <text x="56" y="539" class="heading">Function app setting: EPP_DECRYPTION_KEY_PEM</text>
   <text x="56" y="572">Setup resolves the backing secret; do not construct its URL yourself.</text>
   <text x="56" y="604" class="code">certificateSecretId: .../secrets/&lt;name&gt;/&lt;version&gt;</text>
 
