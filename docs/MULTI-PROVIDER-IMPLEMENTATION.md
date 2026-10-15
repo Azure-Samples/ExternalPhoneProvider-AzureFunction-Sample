@@ -1,23 +1,27 @@
-# Add conservative primary-to-secondary provider fallback
+# Provider fallback
 
-You can adapt this application to try a secondary provider **only when the primary is known
-not to have accepted the message**. Keep one URL for Microsoft Entra ID, `/api/SendOtp`, with a primary
-account and a secondary account for the same SMS channel. You choose their order according to
-your approved account policy; these roles do not imply a vendor ranking or recommendation.
-The caller does not select an account or supply a provider header.
+<a id="add-conservative-primary-to-secondary-provider-fallback"></a>
 
-The sample still ships with one provider per deployment and **no provider fallback**. This guide
-describes customer code you must implement and review. A timeout, lost response or generic
-provider error is not proof of nonacceptance: in those cases, do not automatically send again.
+[Documentation](README.md) | [Normal deployment](GETTING-STARTED.md) | [Provider interface](BRING-YOUR-OWN-PROVIDER.md)
 
-For a normal deployment, follow the [main setup guide](../README.md) instead. This is an advanced
-developer walkthrough: it requires custom code, durable operation state, provider-specific
-approval, and separate testing. It is not another step in guided onboarding.
+Add controlled primary-to-secondary fallback around `/api/SendOtp`. Keep one server-owned SMS
+provider order with durable state and provider-specific approval.
 
-## 1. Set a fixed provider order and a deny-by-default policy
+Use the secondary **only after proof that the primary did not accept the request**. Timeouts,
+lost responses, and generic errors are uncertain and must not trigger an automatic resend.
 
-Keep the existing HTTP registration in [SendOtp.js](../javascript/src/functions/SendOtp.js).
-Define the provider order in server-owned startup configuration:
+Follow [policy](#1-set-a-fixed-provider-order-and-a-deny-by-default-policy),
+[account configuration](#2-configure-and-prevalidate-both-accounts),
+[credential isolation](#3-give-each-context-its-own-credential-service-and-lifecycle),
+[durable state](#4-add-durable-operation-state-before-enabling-fallback),
+[fallback flow](#5-integrate-one-guarded-fallback-into-the-handler),
+[end-to-end deadline](#6-enforce-one-aggregate-deadline), and [validation](#7-validate-offline-then-deploy-only-after-separate-approval).
+[.NET/Python pointers](#net-and-python-integration-pointers) are not implemented fallback.
+
+<a id="1-set-a-fixed-provider-order-and-a-deny-by-default-policy"></a>
+## 1. Provider order
+
+Keep [SendOtp.js](../javascript/src/functions/SendOtp.js) and define the order at startup:
 
 ```javascript
 const providerOrder = Object.freeze({
@@ -27,9 +31,8 @@ const providerOrder = Object.freeze({
 });
 ```
 
-Reject unsupported channels and invalid configuration. Do not accept provider IDs, endpoints,
-vaults or scopes from request headers or bodies. There is no round-robin selection, fan-out,
-recursive fallback or primary retry. The secondary can be attempted at most once.
+Reject unsupported channels and request-supplied provider configuration. Do not use round-robin,
+fan-out, recursive fallback, or primary retries. Attempt the secondary at most once.
 
 Keep **routing order** separate from **fallback eligibility**. Use this policy:
 
@@ -42,20 +45,15 @@ Keep **routing order** separate from **fallback eligibility**. Use this policy:
 | Primary-only credential acquisition fails before transport is entered | Eligible only if this pre-dispatch fact is recorded, the account policy explicitly permits it, the durable operation guard allows the transition, and the request budget is sufficient. |
 | Provider-specific, documented proof that the primary did not accept the operation | Eligible only through a reviewed nonacceptance classifier, explicit account policy, the durable guard and sufficient budget. |
 
-**Default to no fallback.** No real provider response is designated safe to fall back
-from by this guide. Obtain and review provider-specific semantics before enabling that path.
-An expired/rejected inbound token never reaches it. A provider credential failure must not bypass
-account suspension, consent requirements, entitlement restrictions or a provider block.
+**Enable fallback only after the provider confirms a safe nonacceptance signal.** Caller
+authentication and provider account controls still apply.
 
 ## 2. Configure and prevalidate both accounts
 
 [config.js](../javascript/src/functions/config.js) accepts `readConfig(settings)`, so each
 account can use its own immutable settings without changing `process.env` per request.
-The following is a **customer-owned configuration format**, not a file the sample loads.
-The account IDs are role labels. Replace each `<supported-adapter-name>` with the adapter selected
-for that account from the [existing lookup](../javascript/src/functions/providers/index.js);
-placeholders are not valid runtime provider names. This example uses API-key authentication;
-each account's settings must match its selected adapter's actual credential requirements.
+The following **customer-owned format** is not loaded by the sample. Replace each
+`<supported-adapter-name>` with a registered adapter and match its credential requirements.
 
 ```json
 [
@@ -87,9 +85,9 @@ This SMS-only policy requires `EPP_PROVIDER_SMS_ENDPOINT` for each account. A vo
 `EPP_PROVIDER_VOICE_ENDPOINT` instead. The validated request channel selects the matching endpoint;
 there is no shared or other-channel endpoint fallback.
 
-Your startup loader must reject duplicate/missing IDs, missing endpoints for the policy's channel,
-mismatched authentication modes, unapproved endpoints, missing credential references and invalid
-deadline policy. Validate both contexts before enabling the endpoint, not only after the primary fails.
+At startup, validate both account configurations before enabling the endpoint. Check for unique
+IDs, the required channel endpoint, matching authentication mode, approved URLs, credential
+references, and a valid deadline policy.
 
 For each selected [adapter](../javascript/src/functions/providers), inspect `credentialSpec`
 for the required secret names and any account identifier, and `createRequest` for endpoint and
@@ -101,13 +99,14 @@ Set an account/destination-approved sender where required; an adapter's default 
 proof of approval. These requirements apply equally to primary and secondary roles.
 
 Store no credential values in the configuration. Attach each referenced user-assigned managed
-identity to the Function App and grant the vault-reading identity scoped secret-read access,
-such as Key Vault Secrets User under RBAC or the approved access-policy equivalent. If using
+identity to the Function App. Grant the vault-reading identity scoped secret-read access, such
+as Key Vault Secrets User under RBAC or the approved access-policy equivalent. If using
 the system-assigned identity, grant that identity instead. Client-ID settings do not attach
 identities or grant access. Complete provider account, recipient, sender and consent prerequisites;
 see [provider onboarding](ONBOARDING.md#complete-provider-authentication).
 
-## 3. Give each context its own credential service and lifecycle
+<a id="3-give-each-context-its-own-credential-service-and-lifecycle"></a>
+## 3. Credential isolation
 
 Open [credentials.js](../javascript/src/functions/credentials.js). When caching is enabled, its
 singleton retains the first selected configuration; passing another account does not switch that cache.
@@ -160,13 +159,13 @@ An evaluation request must not start credential acquisition;
 already-running refresh is independent. Rebuild contexts on controlled restart when configuration
 changes; never repurpose a live service for another account.
 
-## 4. Add durable operation state before enabling fallback
+<a id="4-add-durable-operation-state-before-enabling-fallback"></a>
+## 4. Operation state
 
-The repository has **no durable attempt store or idempotency contract**. Implement these before
-adding a second possible submission. Agree on a stable, authorized logical-operation key with
-the caller/test contract. Do not assume a generated invocation ID, correlation GUID or nonce is
-an idempotency key. Bind the key to the authorized caller, operation and immutable request/policy
-identity so another request cannot reuse it to obtain a different delivery.
+Add a **durable attempt store and idempotency contract** before allowing a second submission.
+Agree on a stable, authorized operation key with the caller and test owner. Generated invocation
+IDs, correlation GUIDs, and nonces serve other purposes. Bind the operation key to the authorized
+caller, request, and fixed policy so another request cannot reuse it for a different delivery.
 
 Use transactional/conditional writes in a durable shared store, not an in-memory map or lock.
 Atomically claim an operation across concurrent invocations and worker restarts. Persist intent
@@ -195,7 +194,9 @@ external provider send: it is **not provider-side idempotency or true exactly-on
 Entra ID retries or native fallback outside this endpoint can still produce duplicates; confirm that
 behavior with the owner rather than promising the local guard prevents it.
 
-## 5. Integrate one guarded fallback into the handler
+<a id="5-integrate-one-guarded-fallback-into-the-handler"></a>
+<a id="5-fallback-orchestration"></a>
+## 5. Fallback flow
 
 In [SendOtp.js](../javascript/src/functions/SendOtp.js), preserve authentication at the platform
 boundary, [envelope validation](../javascript/src/functions/entraPayload.js),
@@ -211,7 +212,7 @@ returns a structured category. Use `providerConfig` for outbound settings and th
 [OtpDelivery](../javascript/src/functions/delivery.js) construction and content handling intact.
 
 The existing credential catch immediately returns 502, and transport/result failures immediately
-return errors. Your attempt helper must report the stage to the orchestrator instead of hiding
+return errors. The attempt helper reports the stage to the main flow instead of hiding
 it in a catch that calls the secondary. Preserve their final HTTP classifications when fallback
 is denied. This is **policy pseudocode**, not executable glue or a complete handler:
 
@@ -254,9 +255,9 @@ reinterpret generic `Fail` or a broad status range as proof.
 [providerTransport.js](../javascript/src/functions/providerTransport.js) collapses fetch and
 response-body failures into `provider_timeout`/`provider_network_error`. Those errors do **not**
 expose whether the request was transmitted. Treat them as uncertain after intent, including
-connection errors; do not guess they happened before send. A primary credential failure can
-be pre-dispatch only when control flow and operation state prove transport was never entered,
-the failure is isolated to that primary, and account policy still permits the secondary.
+connection errors; do not guess they happened before send. Treat a primary credential failure
+as pre-dispatch only when the flow and operation state prove transport was never entered.
+The failure must also be isolated to the primary, and account policy must still allow the secondary.
 
 Keep endpoint allowlists, HTTPS checks, manual redirects and per-provider response mapping.
 Never forward inbound authorization. Preserve the endpoint success nonce/correlation response
@@ -264,22 +265,24 @@ only for evaluation or an accepted delivery result; terminal/uncertain outcomes 
 nonce. Continue using [safe logging](../javascript/src/functions/logging.js), with an explicit
 per-attempt provider ID/classification and one final request outcome.
 
-## 6. Enforce one aggregate deadline
+<a id="6-enforce-one-aggregate-deadline"></a>
+## 6. Use one end-to-end deadline
 
-Define an end-to-end budget with the service/caller owner; this guide provides no SLA or magic
-timeout value. Include validation, durable-store waits, primary credential acquisition/transport,
-secondary credential acquisition/transport and final response work. An operation must not receive
-a fresh budget when a duplicate invocation arrives.
+Define one end-to-end time budget with the service and caller owners. Include validation,
+durable-store waits, both providers' credential and transport work, and the final response.
+A duplicate invocation continues to use the original operation budget.
 
 The current credential service has its own acquisition bound and the transport its own timeout.
 `parseProviderTimeout` normalizes a single provider timeout, **not** an aggregate deadline.
 Add explicit remaining-budget checks and cancellation propagation in your customer integration.
 Do not use `Promise.race` to return while a send continues in the background. If ownership,
 deadline or cancellation changes after dispatch, record uncertainty and never fall back.
-Reserve enough time for the whole secondary attempt and finalization, rechecking before intent;
-insufficient budget means no secondary even when nonacceptance is otherwise eligible.
+Reserve enough time for the complete secondary attempt and final response, and check the remaining
+time again before sending. Skip the secondary when the remaining time cannot cover that work,
+even when the primary result would otherwise allow fallback.
 
-## 7. Validate offline, then deploy only after separate approval
+<a id="7-validate-offline-then-deploy-only-after-separate-approval"></a>
+## 7. Validation and deployment
 
 Before editing, run the existing JavaScript tests from the repository root. Restore missing
 dependencies from the existing lockfile only when needed:
@@ -307,16 +310,13 @@ store faults; block external network. Verify:
 - Evaluation returns before operation claims/provider calls; incomplete/decryption failures remain
   errors. Credentials, endpoints and wire responses stay isolated between accounts.
 
-An offline policy-model experiment can check those branches, but a fake classifier does not
-prove any real provider's nonacceptance semantics, and a fake store does not prove distributed
-durability. Routing/isolation tests alone are **not fallback tests**. No production
-nonacceptance classifier is supplied here; keep response-based fallback disabled until reviewed.
+Fake classifiers/stores cannot prove provider nonacceptance or distributed durability.
+Routing/isolation tests alone are **not fallback tests**. No production classifier is supplied;
+keep response-based fallback disabled until reviewed.
 
-Use one Function App/package and the existing `/api/SendOtp` entry point. Deploy new code for the
-orchestrator, classifier, durable-store integration or code-owned policy changes. Validate
-startup-loaded configuration changes and perform a controlled restart. For secret rotation,
-verify cache refresh; update pinned references explicitly. Repeating an unchanged approved test
-or editing Markdown needs no redeployment.
+Deploy one app/package at `/api/SendOtp` for code-owned policy, orchestrator, classifier, or store changes.
+Validate startup configuration on controlled restart. Verify cache refresh for rotation and update
+pinned references explicitly. Unchanged approved tests or Markdown edits need no redeployment.
 
 Preserve inbound authentication and origin/network restrictions, including any Front Door
 forwarding. Regional failover is separate from provider fallback. Before live use, review

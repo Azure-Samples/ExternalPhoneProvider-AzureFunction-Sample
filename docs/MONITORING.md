@@ -1,14 +1,15 @@
-# Monitoring setup and sample queries
+# Monitoring
 
-Use this guide to find your endpoint's logs and set up alerts. Guided setup creates Application
-Insights and a Log Analytics workspace, but **you still need to configure and test notifications**.
+<a id="monitoring-setup-and-sample-queries"></a>
 
-For **tenant authentication outcomes and potential abuse signals**, use the separate
-[Microsoft Entra sign-in monitoring guide](SIGN-IN-MONITORING.md). Entra log export and
-sign-in alerts are not configured by endpoint setup; sign-in failures are not automatically
-provider failures or evidence of OTP delivery.
+[Documentation](README.md) | [Collection diagnostics](APPLICATION-INSIGHTS.md) | [Log schema](LOGGING.md) | [Endpoint troubleshooting](../setup/docs/Troubleshooting.md#after-deployment-triage)
 
-For your first single-region deployment:
+Guided setup creates Application Insights and Log Analytics. Use this guide to query them and
+configure alerts.
+
+For identity signals, use [Microsoft Entra ID sign-in monitoring](SIGN-IN-MONITORING.md).
+
+For a first single-region deployment:
 
 1. [Find the monitoring resources and confirm data is arriving](#1-record-the-deployment-and-confirm-telemetry)
    after an [authorized test](ONBOARDING.md#validate-the-deployed-endpoint).
@@ -17,15 +18,15 @@ For your first single-region deployment:
 3. [Set up and test alerts](#5-set-up-notifications-and-alert-rules), including certificate
    reminders and cost ownership.
 
-The multi-region queries, shared Workbook, and Front Door sections are optional.
-You do not need them to find single-region logs. For collection and identity details, see
-[Application Insights](APPLICATION-INSIGHTS.md).
+For missing data, use [collection checks](#9-sampling-ingestion-gaps-privacy-and-validation).
+See also [multiple regions](#3-multiple-regions-and-cross-workspace-queries),
+[Workbook](#6-build-a-shared-operations-workbook), [availability checks](#7-availability-authenticated-functions-and-fc1),
+and [Front Door](#8-optional-azure-front-door-layer).
 
-These examples do not create monitors automatically. Review permissions, privacy, and charges
-before applying them. Thresholds and intervals are **starting points, not SLAs**; tune them to
-your deployment.
+Review permissions, privacy, and charges. Tune sample thresholds to the deployment.
 
-## 1. Record the deployment and confirm telemetry
+<a id="1-record-the-deployment-and-confirm-telemetry"></a>
+## 1. Record the deployment
 
 Keep a private inventory with one row per expected regional endpoint:
 
@@ -36,23 +37,19 @@ Keep a private inventory with one row per expected regional endpoint:
 | Observed `AppRoleName` and `AppRequests.Name` | Filter this Function and its `SendOtp` request operation without mixing other apps or readiness probes. |
 | Runtime, hosting plan, deployment version, and owner | Explain schema differences, cold starts, releases, and escalation. |
 | Expected traffic or authorized synthetic-test cadence | Decide whether missing data is actionable, including standby origins. |
-| Optional Front Door profile, endpoint, origin group, and origin | Associate routing and health with the regional Function. |
+| Front Door profile, endpoint, origin group, and origin | Associate regional routing and health with the Function. |
 
-Do not derive the expected inventory solely from recent telemetry: an origin that
-never reports would be absent from that list.
+Build the inventory from the deployment record, not recent telemetry.
 
-The [guided setup](../setup/docs/README.md) configures workspace-based Application
-Insights, an ingestion identity/role, and Function diagnostic settings. Inspect the
-actual deployment rather than assuming that configuration succeeded. Other deployment
-methods can differ. The current setup template requests 30-day retention; confirm
-effective workspace/table retention and organizational policy before changing it.
-It does not create the action groups, Workbooks, or alert rules described here.
+Guided setup does not create action groups, Workbooks, or alerts. Verify
+[collection](APPLICATION-INSIGHTS.md#single-region-configuration) and effective retention.
 
-### Find the linked resources in the portal
+<a id="find-the-linked-resources-in-the-portal"></a>
+### Portal resources
 
 1. Open the Function App named in your deployment summary.
-2. Select **Monitoring > Application Insights**. Follow the linked resource name; do not
-   select **Change your resource** or **Apply** just to view your logs.
+2. Select **Monitoring > Application Insights** and follow the linked resource name.
+   Viewing logs does not require **Change your resource** or **Apply**.
 
 ![Function App Monitoring menu with Application Insights selected and its connected resource link](images/onboarding/monitoring-link.png)
 
@@ -61,24 +58,15 @@ It does not create the action groups, Workbooks, or alert rules described here.
 
 ![Application Insights Overview showing the Logs workspace link with account and connection details redacted](images/onboarding/monitoring-workspace.png)
 
-These are real portal views of an existing test deployment, with identifying information and
-connection details permanently hidden. Resource names, regions, and portal layouts may differ.
-The links show where to navigate; they do not prove that test traffic or delivery succeeded.
+Screenshots hide identifiers. Portal names and layout may differ.
 
-In the Azure portal, inspect each Function's Application Insights association,
-monitoring settings, managed-identity ingestion authorization, and diagnostic
-destinations. Do not expose connection strings or credential values. Application
-Insights telemetry and resource diagnostic logs are different pipelines:
-`AppRequests`/`AppTraces` are not interchangeable with `FunctionAppLogs` or
-`AzureDiagnostics`. Enabling diagnostic logs alone does not prove request telemetry
-is arriving, and platform metrics do not require log export to appear in Metrics.
+Keep connection strings private. `AppRequests`/`AppTraces` are not interchangeable with
+`FunctionAppLogs` or `AzureDiagnostics`.
+See [pipelines and table names](APPLICATION-INSIGHTS.md#signals-tables-and-metrics-are-different-things).
 
-Use **Log Analytics workspace > Logs** for all KQL below. Application Insights'
-application-context query experience can instead use names such as `requests`,
-`traces`, `timestamp`, and `cloud_RoleName`; do not mix that schema with these
-workspace examples. Replace every angle-bracket placeholder with your private
-inventory value before running. `_ResourceId` in these application tables identifies
-the **Application Insights component**, not the Function App.
+Run the KQL below in **Log Analytics workspace > Logs** and replace every placeholder.
+Application Insights uses a different table schema. `_ResourceId` identifies the Application
+Insights component, not the Function App.
 
 Run this discovery query after a controlled authorized test. The examples use
 `SendOtp` as the request name; replace that literal everywhere if your observed
@@ -92,12 +80,11 @@ AppRequests
 | order by LastSeen desc
 ```
 
-Read access is required on every workspace queried. Give operators only the
-necessary resource/workspace access; saving a Workbook does not grant its readers
-access to its data. Cross-workspace alert evaluation also needs access to each
-workspace under the rule's configured identity.
+Grant only required read access on **each workspace**. Workbook sharing does not grant data access;
+alert evaluation needs its own identity's access, not the author's.
 
-### Run a first query and read the results
+<a id="run-a-first-query-and-read-the-results"></a>
+### First query
 
 1. In your workspace's **Logs**, close any welcome or Queries hub dialog. If the portal opens
    in **Agent** mode, switch it off for this walkthrough, then choose **KQL mode**.
@@ -150,16 +137,10 @@ AppRequests
 | order by TimeGenerated asc
 ```
 
-`ItemCount` accounts for the telemetry items represented by a sampled record.
-Weighted counts and percentiles remain estimates when sampling is active; they
-cannot recover telemetry that was never ingested. Empty buckets are **no data**,
-not zero failures or 100% availability. `Success` is the instrumented request
-outcome, not evidence that a phone received an OTP.
-
-Both evaluation and live calls can return HTTP 200. These request-table statistics
-combine them unless your deployed instrumentation provides a verified classification.
-Use the JavaScript service-event query below for a separate view; do not infer
-live delivery from the HTTP status.
+`ItemCount` weights sampled records; counts/percentiles remain estimates, not recovery of lost data.
+Empty buckets mean **no data**, not zero failures or availability. `Success` is a request outcome,
+not handset receipt. HTTP 200 includes both evaluation and live calls; use
+[classified service events](#separate-evaluated-accepted-and-failed-completions) where verified.
 
 ### Failure status breakdown
 
@@ -270,26 +251,17 @@ required; the request query is not a synthetic scheduler.
 
 ## 4. JavaScript service-event queries
 
-The JavaScript implementation emits JSON messages with `logType: "service"` and
-`eventName` through its invocation logger. The following examples assume those
-messages arrive as JSON in `AppTraces.Message`. They are **not portable event
-parsers for every runtime**:
+These queries require JavaScript invocation logs containing `logType: "service"` and `eventName`
+as JSON in `AppTraces.Message`. **Do not apply this parser to Python or .NET**; use
+[runtime-specific discovery](#runtime-specific-log-discovery).
 
-- JavaScript and Python `host.json` enable Application Insights sampling and exclude
-  `Request` telemetry from that host sampling. Trace events can still be sampled
-  or filtered. The setting is not a guarantee against ingestion loss.
-- Python uses logging messages plus `extra` fields such as `event_name`, not this
-  JavaScript JSON contract. Whether those fields reach custom properties depends
-  on the deployed logging pipeline.
-- .NET isolated uses `ILogger` events and declares OpenTelemetry in `host.json`.
-  Inspect the actual host/worker exporter configuration, tables, and properties;
-  do not assume JavaScript JSON or complete worker telemetry.
+Verify a controlled request and its events before creating alerts. Traces can be sampled or
+filtered, and an empty JSON result can mean a parser/pipeline mismatch. Check
+[runtime collection defaults](APPLICATION-INSIGHTS.md#what-the-checked-in-sample-configures)
+and [sampling limits](APPLICATION-INSIGHTS.md#sampling-privacy-and-collection-limits).
 
-Verify a controlled request appears in `AppRequests` and that its expected events
-appear in the deployed trace schema before relying on any service-event alert.
-An empty JSON-filtered result can mean a parser/pipeline mismatch.
-
-### Separate evaluated, accepted, and failed completions
+<a id="separate-evaluated-accepted-and-failed-completions"></a>
+### Evaluation and delivery outcomes
 
 ```kusto
 AppTraces
@@ -407,18 +379,16 @@ AppTraces
 | summarize StoredRows = count() by SchemaStatus, Result, HttpStatus
 ```
 
-These discovery counts are **stored rows**, not sampled traffic totals or delivery receipts.
-Do not turn them into alerts until the selected release's schema and collection are verified.
-In particular, the .NET host's OpenTelemetry declaration is not an initialized direct worker
-exporter. Missing worker events require a collection investigation, not a green application
-health result. Malformed .NET request binding can fail before the handler emits any events.
+These are **stored rows**, not traffic totals or delivery receipts. Verify the release's schema and
+collection before creating alerts. Missing events require investigation, not a healthy status:
+.NET host OpenTelemetry does not initialize a direct worker exporter, and malformed .NET binding
+can fail before handler events. See [collection configuration](APPLICATION-INSIGHTS.md#what-the-checked-in-sample-configures).
 
-For an incident, use the host `OperationId`/invocation ID and whichever application request ID
-is actually exported. Keep raw Microsoft/provider support IDs distinct; not every runtime
-exports the provider reference. Never use OTPs/nonces or message bodies as correlation keys.
-Look for a correlated `request_failed` event's stage/reason and endpoint status, then the
-separate provider-response event's upstream status. A provider `200` can precede a body-read
-timeout and Function `504`; it is not necessarily a successful invocation.
+For incidents, correlate `request_failed` stage/reason/status with provider-response events.
+Use the exported host `OperationId`/invocation and application request IDs, not OTPs, nonces, or bodies.
+Keep Microsoft/provider IDs distinct; some runtimes omit provider references.
+An upstream `200` can precede a body-read timeout and Function `504`.
+See [event order and identifier provenance](LOGGING.md).
 
 `credential_refresh_failed` also differs operationally: JavaScript/Python have a polling
 refresh loop, while .NET emits this event on failed startup/cache-fill acquisition and has no
@@ -428,22 +398,17 @@ health check.
 
 ## 5. Set up notifications and alert rules
 
-Have an operator review and create these resources in a nonproduction environment
-first. Rule creation requires appropriate write permissions; data access alone is
-not enough. Agree on ownership, severity, escalation, and maintenance handling.
+Start in nonproduction with an operator who has rule-write permissions, not just data access.
+Agree ownership, severity, escalation, and maintenance handling.
 
 ### Action groups
 
-In **Azure Monitor > Alerts > Action groups > Create**, select the resource group,
-name, and processing region appropriate to your residency policy. Add an on-call
-email receiver and, if required, a secured incident-management integration. Prefer
-a notification path that does not depend on the OTP provider being monitored.
-Use the common alert schema where supported and send a test notification before
-attaching production rules. A test notification verifies routing, not that an
-alert condition actually evaluates correctly.
+In **Azure Monitor > Alerts > Action groups > Create**, choose the resource group, name, and
+residency-appropriate processing region. Add on-call email and any secured incident integration;
+avoid depending on the monitored OTP provider. Use the common alert schema where supported.
+Test notification routing before attaching production rules; that test does not verify the alert query.
 
-For multi-region deployments, decide whether the action group should use global
-or supported regional processing, and ensure an incident in one app region cannot
+For multiple regions, choose global/supported regional processing so one failed app region cannot
 disable the only response path. See [action group setup][action-groups].
 
 ### Metric alerts
@@ -457,7 +422,7 @@ aggregation, window, evaluation frequency, dimensions, and action group.
 As a starting point, where the selected resource exposes the HTTP 5xx metric,
 alert on **Total > 5 over 5 minutes**, evaluated every minute. Use Application
 Insights request failure rules below when that platform signal is unavailable or
-when you need the `SendOtp` operation filter. Add plan-appropriate execution,
+when the `SendOtp` operation filter is required. Add plan-appropriate execution,
 memory, or instance signals only after establishing a baseline; there is no
 single CPU/instance threshold appropriate to both FC1 and EP1.
 
@@ -468,20 +433,17 @@ throttling, storage availability/latency, and credential/certificate expiry thro
 their respective resource monitoring. A successful Function response alone does
 not validate those dependencies' future readiness.
 
-### Certificate, credential, and cost ownership
+<a id="certificate-credential-and-cost-ownership"></a>
+### Operational ownership
 
-Keep the setup summary's `certificateExpiresUtc`, vault certificate/secret versions, and Entra
-encryption credential expiry in a restricted inventory with a renewal owner and escalation backup.
-For certificates issued by setup, configure vault-wide certificate contacts and retain the
-`EmailContacts` lifetime action. For a reused certificate, coordinate its existing issuance policy
-and notifications with the source-vault owner. Follow the
-[renewal runbook](../setup/docs/README.md#encryption-certificate-lifecycle).
-Contacts alone are not automatic renewal, and a new vault certificate version does not update
-the Function's version-pinned reference or Entra by itself.
+Keep `certificateExpiresUtc`, vault certificate/secret versions, and Entra encryption credential
+expiry in a restricted inventory with a renewal owner and backup. Follow the
+[renewal runbook](../setup/docs/README.md#encryption-certificate-lifecycle) for vault-wide contacts,
+`EmailContacts`, and reused-certificate policies. **Contacts do not renew certificates; a new vault
+version does not update the Function's pinned reference or Entra.**
 
-Create an independent reminder before the certificate's 30-day near-expiry window and rehearse
-the approved single-certificate renewal/replacement procedure in nonproduction. If your operations
-process uses Key Vault near-expiry/new-version events, an operator must configure an
+Set an independent reminder before the 30-day near-expiry window and rehearse approved renewal
+in nonproduction. For Key Vault near-expiry/new-version events, configure an
 [Event Grid subscription and handler](https://learn.microsoft.com/azure/key-vault/general/event-grid-overview)
 and test its notification path. Diagnostic settings alone do not create these alerts, and those
 events do not automatically become Application Insights traces.
@@ -504,7 +466,7 @@ condition and action group, and save only after reviewing estimated charges.
 Use an explicit query lookback consistent with the query's time filter.
 
 For the request summary examples, change the filter to `ago(5m)` in every source
-and remove `bin(TimeGenerated, 5m)` from the grouping when you want **one summary
+and remove `bin(TimeGenerated, 5m)` from the grouping for **one summary
 row per origin over the whole rolling window**. This avoids evaluating a partial
 calendar bucket as if it were a complete five-minute interval. For the single
 region query, remove the grouping entirely. Remove the final time sort in both
@@ -551,21 +513,18 @@ Add query panels using the correct workspace scope:
    that parser is verified; otherwise show the runtime-specific validated view.
 5. Relevant Function/dependency metric charts, current alerts, and deployment context.
 
-For one region, select one workspace/component/role. For several regions, use
-explicit workspace sources or a carefully scoped shared workspace and retain the
-regional breakdown. Add time/resource parameters for interactive investigation;
-replace hardcoded query windows when wiring a time parameter so it actually
-controls every source. Keep scheduled-alert queries independent of Workbook-only
-parameters. Do not color an empty panel green.
+Scope to the chosen workspace/component/role; multiple regions need explicit sources or scoped
+shared-workspace queries with regional grouping. Bind time/resource parameters into every source,
+replacing hardcoded windows. Scheduled alerts cannot depend on Workbook-only parameters.
+**Do not color an empty panel green.**
 
-Save to an appropriate resource group, grant Workbook access to the operations
-team, and verify readers also have data access. Keep private resource identifiers,
-query exports, and screenshots out of public documentation. See
-[Workbook authoring][workbooks].
+Save to the approved resource group and verify both Workbook and data access for readers.
+Keep identifiers, exports, and screenshots private. See [Workbook authoring][workbooks].
 
-## 7. Availability, authenticated Functions, and FC1
+<a id="7-availability-authenticated-functions-and-fc1"></a>
+## 7. Availability monitoring
 
-**Never exempt `SendOtp` from Easy Auth or make it publicly anonymous for probes.**
+Keep `SendOtp` protected by Easy Auth for every probe and test.
 An unauthenticated 401/403 demonstrates rejection, not a successful authorized
 evaluation or provider call. Standard availability tests do not perform the
 complete EPP token acquisition, encrypted-request creation, and nonce-validation
@@ -581,8 +540,8 @@ For the actual authentication/decryption path, use the supported EPP test
 procedure and an authorized caller. An independently operated synthetic runner
 must be able to satisfy existing caller restrictions, acquire fresh credentials,
 construct a valid encrypted evaluation request, and verify the nonce without
-recording it. If that caller capability is unavailable, record the monitoring
-gap; do not broaden Easy Auth allowlists just to make testing convenient.
+recording it. If the runner cannot meet those caller requirements, document the
+monitoring gap and retain the approved Easy Auth allowlist.
 Record sanitized success/duration results through your approved monitoring
 pipeline and monitor the runner's schedule/failures separately.
 
@@ -606,9 +565,11 @@ healthy but unused. Do not open origin ingress to bypass its access restrictions
 Review the current [availability test capabilities][availability] before choosing
 Standard tests or a custom authenticated runner.
 
-## 8. Optional Azure Front Door layer
+<a id="8-optional-azure-front-door-layer"></a>
+<a id="8-regional-edge-monitoring-with-azure-front-door"></a>
+## 8. Front Door monitoring
 
-Only add this layer if using [manual Front Door onboarding](FRONTDOOR.md).
+Use this layer with the [Front Door multi-region design](FRONTDOOR.md).
 For Standard/Premium, inspect the profile's Metrics for **Origin Health Percentage**,
 **Origin Latency**, **Request Count**, and response/error signals supported by the
 selected metric namespace. Confirm units and available origin/origin-group
@@ -634,13 +595,14 @@ as edge observations. Front Door probes do not perform an authenticated encrypte
 `SendOtp` evaluation or prove provider delivery. A probe path must follow the
 separate readiness design described above. See [Front Door monitoring][front-door].
 
-## 9. Sampling, ingestion gaps, privacy, and validation
+<a id="9-sampling-ingestion-gaps-privacy-and-validation"></a>
+## 9. Sampling and data quality
 
-If data stops arriving, check the time range and workspace/component/role filters,
-actual traffic, deployment changes, log levels, host/worker exporter configuration,
-ingestion authorization/network access, sampling, throttling, and workspace daily
-caps. Retention and collection transformations can also affect query results.
-Never interpret an inaccessible workspace or missing table as a healthy empty window.
+If data stops arriving, first check the time range, workspace, component, role filters,
+and actual traffic. Then check recent deployments, log levels, host and worker exporters,
+ingestion access, network access, sampling, throttling, and workspace daily caps.
+Retention and collection transformations can also affect query results. Treat an
+inaccessible workspace or missing table as a collection issue, not a healthy empty window.
 
 This query estimates the event-to-ingestion gap for **received** requests:
 

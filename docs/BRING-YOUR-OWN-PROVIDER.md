@@ -1,34 +1,32 @@
-# BYOT integration: the Entra ID request and response
+# Bring your own provider
 
-**Microsoft Entra ID** sends your **External Phone Provider (EPP)** endpoint
-an encrypted phone number and one-time passcode message. Your endpoint verifies the caller,
-decrypts the details, and either evaluates the request without sending or uses your phone service.
-It then responds to Entra ID. **Your team owns the connection to that service.**
+<a id="byot-integration-the-entra-id-request-and-response"></a>
 
-Before deploying, ask your tenant administrator to confirm
-[eligibility, testing, and activation with Microsoft](ONBOARDING.md#before-purchasing-or-deploying).
-Deploying the endpoint alone does not enable tenant policy.
+[Documentation](README.md) | [Exact HTTP contract](CONTRACT.md) | [Runtime guides](README.md#develop)
+
+Connect a phone service to the **External Phone Provider (EPP)** contract. **Microsoft Entra ID**
+sends an encrypted delivery request; the endpoint verifies, decrypts, evaluates, or sends it.
+
+Confirm [eligibility, testing, and activation](ONBOARDING.md#before-purchasing-or-deploying)
+before deployment.
+
+Follow [caller verification](#1-verify-the-caller), [decryption](#2-read-and-decrypt-the-request),
+[evaluation/live handling](#3-evaluate-or-send), and [responses](#4-respond-to-entra-id).
+Then [register your integration](#where-to-add-your-integration) and [validate before activation](#before-activation).
 
 <a id="1-establish-caller-authentication"></a>
 
 ## 1. Verify the caller
 
-Entra ID sends **`POST /api/SendOtp` over HTTPS**, with a signed bearer token in `Authorization`.
-In this sample, **Easy Auth** (Azure App Service Authentication) checks the token and authorizes
-the caller before the Function runs. The Function's trigger is anonymous and has no backup
-authentication check, so do not expose it with Easy Auth disabled or bypassed.
+Entra ID sends **`POST /api/SendOtp` over HTTPS** with a signed bearer token. **Easy Auth**
+authorizes the caller before the anonymous Function trigger runs.
 
-Require HTTPS and authentication, return `401` for unauthenticated requests, and restrict access
-to the trusted tenant issuer, endpoint-app audience, and authorized Microsoft caller application ID.
-Your Azure operator should use the endpoint app registration and
-[approved setup configuration](../setup/support/Epp.Setup.psm1) for these values, then verify
-**Function App > Authentication**. Follow the
-[trust checklist](ONBOARDING.md#manual-deployment-trust-checklist) for exact settings,
-caller-ID guidance, and token-version details.
+Require HTTPS, return `401` for unauthenticated requests, and restrict access to the trusted
+issuer, audience, and Microsoft caller. Follow the
+[trust checklist](ONBOARDING.md#manual-deployment-trust-checklist).
 
-**Encryption is not caller authentication.** Anyone with the public key can create a JWE
-(JSON Web Encryption) payload. Neither its nonce, the body's `tenantId`, nor tracing or
-forwarded principal headers prove that Entra ID sent it.
+**Encryption is not caller authentication.** A JWE, nonce, `tenantId`, or tracing header does
+not prove that Entra ID sent the request.
 
 ## 2. Read and decrypt the request
 
@@ -44,8 +42,8 @@ The JSON body is an envelope with these fields. Use the forms below across all s
 | `correlationId` | No | Nonempty string for sign-in tracing. |
 | `ttlSeconds` | No | Positive JSON integer up to `2147483647`, or omit it. Use `60`, not `"60"`, `60.0`, `6e1`, or null. |
 
-Channel and mode names are case-insensitive. Reject unsupported versions, channels, or modes.
-TTL is only checked as a number; it does not enforce passcode expiry or a delivery deadline.
+Channel and mode names are case-insensitive. TTL validation does not enforce passcode expiry
+or a delivery deadline.
 
 <a id="3-decrypt-and-validate-the-delivery-context"></a>
 
@@ -54,15 +52,11 @@ for content encryption. Accept exactly five nonempty compact-JWE segments, at mo
 characters**. Pass the original JWE, including its protected-header bytes, to a JOSE library.
 Verify the authentication tag before using the decrypted UTF-8 JSON.
 
-The sample decrypts in-process with one RSA private key in `EPP_DECRYPTION_KEY_PEM`: a PEM key
-or certificate bundle containing it, as text or base64-encoded PEM. In Azure, use a
-managed-identity-resolved Key Vault secret reference. The matching public encryption credential
-belongs to the endpoint app registration.
+The sample uses one RSA private key in `EPP_DECRYPTION_KEY_PEM` as text or base64 PEM. In Azure,
+use a managed-identity-resolved Key Vault reference.
 
-The header's `kid` does not select a key in this sample. `EPP_ENCRYPTION_KEY_ID` only enables
-a warning on mismatch after successful decryption. Setup pins one certificate's secret version;
-renewal needs coordination because Key Vault renewal alone does not update the app registration
-or pinned reference. See the [certificate lifecycle](../setup/docs/README.md#encryption-certificate-lifecycle).
+The JWE `kid` does not select a key. `EPP_ENCRYPTION_KEY_ID` only warns after decryption.
+See the [certificate lifecycle](../setup/docs/README.md#encryption-certificate-lifecycle).
 
 The decrypted delivery context contains:
 
@@ -76,31 +70,27 @@ The decrypted delivery context contains:
 | `riskContext` | No | Contextual JSON data; no shared schema validation, risk evaluation, or forwarding. |
 | `textToVoice` | No | Legacy speech data; no portable schema or shared forwarding. |
 
-Do not assume an optional field is supported just because it appears in the request.
+Treat optional fields as available only when the selected integration supports them.
 For parser and wrong-type handling, see [runtime binding differences](CONTRACT.md#runtime-binding-differences).
 
 <a id="4-complete-the-customer-owned-service-integration"></a>
 
 ## 3. Evaluate or send
 
-**Evaluation (`mode: 2` or `"evaluation"`):** authenticate, validate, and decrypt, then return
-the success response below **without sending anything**. This request path skips service
-selection, credential lookup, and outbound HTTP; no service configuration is needed.
-Configured workers may independently prepare or refresh credentials, but that does not send a message.
+**Evaluation (`mode: 2` or `"evaluation"`):** authenticate, validate, decrypt, and return success
+without service selection, credential lookup, outbound HTTP, or delivery.
 
-**Live (`mode: 1` or `"live"`):** your team implements and maintains the service integration.
-Map the requested SMS or voice delivery to your service, preserving the destination, message,
-and passcode. Handle voice rendering and locales as needed. Authenticate with your own service
-credentials; **never forward the incoming bearer token**.
+**Live (`mode: 1` or `"live"`):** map SMS or voice to your service while preserving the
+destination, message, and passcode. **Never forward the incoming bearer token**.
 
-Wait for recognized acceptance before returning success. A queued or pending result counts
-only if your integration recognizes it as acceptance. Unknown or incomplete responses must fail,
-and a success-looking body on a failed HTTP response is not acceptance. Return the result through
-the shared response behavior below, not as raw service JSON.
+Return success after the integration recognizes provider acceptance. A queued or pending result
+counts only when the integration defines it as accepted. Map unknown, incomplete, or failed HTTP
+responses to an error, even when the response body looks successful. Use the shared response
+behavior below instead of returning raw service JSON.
 
-The sample uses one configured service per deployment. A custom integration does not add
-guided setup support. Follow [Where to add your integration](#where-to-add-your-integration)
-for the files to create, registration, settings, and packaging.
+The sample uses one configured service per deployment. Follow
+[Where to add your integration](#where-to-add-your-integration) for the source files,
+registration, settings, packaging, and custom deployment steps.
 
 ## 4. Respond to Entra ID
 
@@ -172,7 +162,8 @@ or failure. Keep credential caching in the existing services:
 credential specification; C# calls `FetchCredentialsAsync`. Do not add a separate credential cache
 or send-retry loop. Keep service secrets in Key Vault, not in settings or source.
 
-### Configure, test, and package
+<a id="configure-test-and-package"></a>
+### Implementation steps
 
 1. Start from [local.settings.sample.json](local.settings.sample.json). Copy it to an untracked
    `local.settings.json` beside your runtime's `host.json`, keep all `Values` entries as strings,
@@ -193,7 +184,7 @@ or send-retry loop. Keep service secrets in Key Vault, not in settings or source
    release. C# needs publish output; Python needs the documented Linux remote build.
    Follow [manual deployment](ONBOARDING.md#optional-local-development-and-manual-deployment)
    to deploy the custom package and apply cloud settings and vault permissions separately.
-   Retain the [Easy Auth trust checks](ONBOARDING.md#manual-deployment-trust-checklist), then
+   Keep the [Easy Auth trust checks](ONBOARDING.md#manual-deployment-trust-checklist), then
    complete the validation below.
 
 <a id="step-7-check-endpoints-timeouts-and-privacy"></a>
@@ -206,10 +197,12 @@ invalid or tampered payloads, evaluation without a send, and controlled live tes
 Check handset receipt or voice audio separately from acceptance. For local tests, use test keys
 and fake service responses on loopback only, without tunnels; Core Tools has no Easy Auth.
 
-The sample has **no early acknowledgement/background delivery, durable queue, automatic send
-retry, or deduplication**. Its outbound timeout is not a whole-request deadline. A timed-out send
-may already have been accepted, so retries or caller fallback can cause duplicates.
+The sample completes the request after provider acceptance. A live design can add early
+acknowledgement, background delivery, a durable queue, retries, or duplicate-send protection.
+Define the timing and owner for each feature. The outbound timeout covers the provider call,
+not the whole request. Check a timed-out send before retrying because the provider may already
+have accepted it.
 
 Keep phone numbers, messages, passcodes, nonces, tokens, keys, JWE contents, and raw service
 responses out of logs. Disable body tracing in the application, platform, and proxies.
-Review the remaining [production limitations](CONTRACT.md#production-limitations) before activation.
+Review the [production-readiness considerations](CONTRACT.md#production-limitations) before activation.

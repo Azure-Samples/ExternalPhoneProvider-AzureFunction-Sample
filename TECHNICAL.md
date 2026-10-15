@@ -1,35 +1,35 @@
-# External Phone Provider: Technical Reference
+# Technical reference
 
-For the single-region customer deployment flow, start with the
-[main onboarding guide](README.md).
+<a id="external-phone-provider-technical-reference"></a>
 
-Azure Front Door is an [optional manual multi-region design](docs/FRONTDOOR.md), not a feature
-enabled by the single-region setup script. Its additional readiness endpoint is not shipped in
-the release packages, and regional failover does not change the SendOtp contract.
+[Documentation](docs/README.md) | [First deployment](docs/GETTING-STARTED.md) | [HTTP contract](docs/CONTRACT.md)
 
-Use this reference when developing or customizing the endpoint. Each language folder implements
-the same [HTTP contract](docs/CONTRACT.md), with provider-specific adapters, environment settings,
-and managed-identity access to credentials.
+This reference covers implementation details, app settings, and packages.
+Sections: [implementations](#implementations), [guided setup](#guided-epp-setup),
+[download](#download-a-function-zip), [build](#build-zips-locally),
+[settings](#configure-environment-variables), [provider details](#provider-specific-integration-details),
+or [security](#security). For regional continuity, see
+[resiliency and business continuity](#resiliency-and-business-continuity).
 
 ## Single-region architecture
 
-![Single-region External Phone Provider architecture](docs/images/single-region-architecture.png)
+See the [single-region diagram in the sample overview](README.md#architecture).
 
-Microsoft Entra ID sends an authenticated, encrypted request. Easy Auth checks the caller,
-then the Function decrypts the request using its Key Vault-backed key. For a live request, the
-selected adapter submits the message and returns success after provider acceptance, not after
-confirmed recipient delivery. Application Insights collects the available request and log telemetry.
+Microsoft Entra ID sends an authenticated, encrypted request. Easy Auth checks the caller, the
+Function decrypts the request, and the selected adapter submits a live message. Success means
+provider acceptance, not confirmed delivery.
 
-The diagram is an overview, not a portal screenshot. East US is illustrative; select a region
-with capacity and quota for your hosting plan. The provider-secret path applies to API-key
-integrations; OAuth integrations use managed-identity token exchange instead. Credential caching
-depends on the [selected cache settings](docs/CONTRACT.md#credential-caching-and-refresh), and
-[log formats vary by runtime](docs/MONITORING.md#runtime-specific-log-discovery).
+East US is illustrative. API-key integrations use provider secrets; OAuth integrations use
+managed-identity token exchange. See [credential caching](docs/CONTRACT.md#credential-caching-and-refresh)
+and [runtime logs](docs/MONITORING.md#runtime-specific-log-discovery).
 
-An authorized, valid encrypted **evaluation request (`mode: 2`)** returns the matching nonce
-without submitting a message to the provider. When caching is enabled, credential preparation
-can run independently; it never sends an OTP. Authentication failures can return **401 or 403**,
-neither of which is a successful evaluation.
+An authorized **evaluation request (`mode: 2`)** returns the nonce without sending a message.
+Authentication failures return **401 or 403**.
+
+## Resiliency and business continuity
+
+The [Azure Front Door design](docs/FRONTDOOR.md) adds regional origins behind one public URL.
+It covers capacity, shared keys, dependencies, readiness, failover drills, and rollback.
 
 ## Implementations
 
@@ -39,51 +39,26 @@ neither of which is a successful evaluation.
 | C# (.NET isolated worker) | Available | [dotnet/](dotnet/) |
 | Python (v2 model) | Available | [python/](python/) |
 
-All implementations conform to the **language-agnostic contract** in
-[docs/CONTRACT.md](docs/CONTRACT.md): shared HTTP intent, config/env var names, Key Vault secret
-names, and fail-closed/managed-identity/privacy boundaries. Internal provider APIs, binding errors,
-credential caching, and telemetry differ by runtime; consult the documented differences rather
-than assuming identical internals.
+Choose **one language and one provider per Function App**. All implementations share the
+[HTTP, configuration, and trust contract](docs/CONTRACT.md); runtime behavior can differ.
 
-Choose one language and configure the adapter for your provider. No provider is preferred or selected
-by default. Deploy each language separately, not all three to the same Function App. See the
-[shared configuration](docs/CONTRACT.md#default-provider-and-configuration-readers).
-
-For local development, manual configuration, and deployment checks, see the
-[detailed configuration and validation guide](docs/ONBOARDING.md).
-
-For the provider-neutral inbound interface, read the
-[BYOT request and response guide](docs/BRING-YOUR-OWN-PROVIDER.md). It covers the Entra ID envelope,
-caller authentication, encrypted delivery context, and endpoint responses. The outbound service
-integration remains customer-owned; the guide does not add an adapter or guided setup support.
+For local work, use the selected runtime guide. For a custom integration, start with
+[Bring your own provider](docs/BRING-YOUR-OWN-PROVIDER.md).
 
 ## Guided EPP setup
 
-Use **[setup](setup/docs/README.md)** for **Step 2: endpoint deployment**. Download only
-`Setup-Epp.ps1`; it downloads its supporting PowerShell, Bicep, package catalog, and provider JSON
-from the same commit. Customers select a language, provider, Global or EU endpoint,
-a [service plan](setup/docs/README.md#service-plan-selection), and a resource prefix, then approve
-one complete plan. Manual Step 1 only creates the dedicated app
-registration; PowerShell configures its service principals, `Epp.Invoke`, Microsoft caller access,
-Graph `Application.Read.All`, the provider-tenant allowlist preview, encryption certificate, and
-Easy Auth. Read-only preflight discovers existing `AsymmetricX509Cert` / `Encrypt` credentials.
-Customers choose a matching Key Vault certificate version to reuse, with explicit cleanup of any
-other encryption credentials, or replacement with a new certificate. The approved deployment
-stages the private-key reference, verifies its resolution by the Function system identity, and
-registers exactly one public encryption certificate while preserving non-encryption credentials.
-Setup downloads only the public certificate and pins the Function to its PEM secret version.
-Reuse can reference another vault in the same tenant; provider credentials remain in the
-setup-created vault. Replacement is coordinated maintenance, not zero-downtime rotation.
-Each deployment accepts both SMS and voice. The request's `channel` selects its configured
-provider endpoint; the two URLs can be identical or different.
-Certificate synchronization and policy activation remain manual. The home tenant remains allowed by Entra.
+Follow the [five-step guide](docs/GETTING-STARTED.md). `Setup-Epp.ps1` retrieves its support files
+from one commit and deploys after plan approval. See the [setup reference](setup/docs/README.md#step-2---download-and-run-one-script).
+
+Review [application permissions](setup/docs/README.md#step-1---manually-create-the-application)
+and [certificate selection](setup/docs/README.md#encryption-certificate-selection). Setup pins one
+PEM secret version and downloads only the public certificate.
+
+One deployment accepts SMS and voice; each request's `channel` selects its configured provider URL.
 
 ## Download a Function ZIP
 
-**Optional developer/manual deployment path:** guided setup already selects, verifies, builds as
-needed, and publishes the package. Customers using it should continue with
-[provider authentication and validation](docs/ONBOARDING.md#complete-provider-authentication),
-not deploy a second ZIP.
+Guided setup already publishes the package. Use this section for manual deployment.
 
 Download the latest successful CI ZIP for your chosen language:
 
@@ -93,26 +68,15 @@ Download the latest successful CI ZIP for your chosen language:
 | .NET | [epp-dotnet-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-dotnet-source.zip) | C# Function source and project file; build/publish before deployment |
 | Python | [epp-python-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-python-source.zip) | Source for Azure remote build on Linux |
 
-Customers do not need PowerShell or a local build toolchain to download these files. Verify downloads
-against the corresponding release's `SHA256SUMS.txt`. Configure the target Function App's runtime, app settings,
-Key Vault access, and Easy Auth before deploying. .NET requires building/publishing the extracted
-project; Python requires remote build to install dependencies. Neither source ZIP can run directly
-as a run-from-package artifact. GitHub's **Code > Download ZIP**
-is the whole source repository, not a Function deployment package.
+Verify `SHA256SUMS.txt`, configure the runtime, settings, Key Vault, and **Easy Auth**, then build
+.NET or use Python remote build. Source ZIPs are not run-from-package artifacts.
 
-Each successful `main` build tests all three implementations, builds and inspects the ZIPs, and
-publishes a new versioned release marked as the latest release.
-The direct links above and guided setup therefore track the newest successful CI package build. Get builds from
-[Latest release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest).
-Older releases remain available; existing assets are not overwritten. Pull requests build downloadable
-workflow artifacts only and cannot publish releases. GitHub sign-in may be required for workflow
-artifacts, but public release downloads do not require a local build. Packaging does not deploy or
-verify live provider delivery.
+Successful `main` builds publish a versioned [release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest).
+PR builds publish workflow artifacts only. Packaging does not deploy or verify delivery.
 
 ## Build ZIPs Locally
 
-For custom builds, run the script for your chosen language from the repository root. These standalone scripts create
-ZIPs locally; they do not sign in to Azure, upload code, or change app settings.
+Run one packaging script from the repository root. It creates a local ZIP without changing Azure.
 
 | Language | Root-level script | Prerequisites | ZIP in `artifacts/` |
 |---|---|---|---|
@@ -126,28 +90,19 @@ pwsh -File ./package-dotnet.ps1
 pwsh -File ./package-python.ps1
 ```
 
-Choose one command; each packages only its language. The scripts locate source relative to their
-own location, so invoking an absolute script path also works from another directory. Each ZIP has
-`host.json` at its root, with no enclosing language folder. Local settings, credential files, and
-first-party tests are excluded. Generated ZIPs are ignored by Git.
+Choose one command. Each ZIP has `host.json` at its root and excludes local settings, credentials,
+and tests.
 
-JavaScript installs production dependencies from the lockfile in a temporary folder; your working
-`node_modules` is not copied or modified. Dependency lifecycle scripts are disabled for this sample's
-JavaScript dependencies. If you add native dependencies or packages requiring install scripts,
-review packaging and build them for the target Azure OS.
+JavaScript installs production dependencies from the lockfile in a temporary folder. Review
+packaging for native dependencies or required lifecycle scripts. It does not modify `node_modules`.
 
-**.NET is a source ZIP, not compiled output.** It contains `dotnet.csproj`, `host.json`, `Program.cs`,
-and the C# files under `Functions/` and `Src/`. Packaging does not run restore, build, or publish,
-and needs no .NET SDK. It excludes `bin/`, `obj/`, tests, local settings, and compiled dependencies.
-Customers extract it and run `dotnet publish dotnet.csproj --configuration Release --output ../publish`
-with the .NET 8 SDK, or use a deployment pipeline that builds the project. Deploy the resulting
-publish output with `host.json` at its root, not the source ZIP directly. CI tests this customer
-build from an extracted copy; that temporary publish output is not included in the download.
+**The .NET download contains source.** Run
+`dotnet publish dotnet.csproj --configuration Release --output ../publish` with .NET 8, then deploy
+the publish output with `host.json` at its root. The archive includes `dotnet.csproj`,
+`Program.cs`, `Functions/`, and `Src/`, and excludes `bin/` and `obj/`.
 
-**Python is a source ZIP, not a ready-to-run package.** Deploy to a Linux Function App with remote
-build enabled in the deployment tool for your hosting plan, so Azure installs `requirements.txt`.
-Do not use this source ZIP directly with run-from-package or copy Windows-installed Python dependencies
-to Azure. The script deliberately does not invoke pip or include a local virtual environment.
+**The Python download contains source.** Deploy it to Linux with remote build so Azure installs
+`requirements.txt`.
 
 Existing archives are never overwritten. For another build, specify a new path:
 
@@ -155,11 +110,8 @@ Existing archives are never overwritten. For another build, specify a new path:
 pwsh -File ./package-javascript.ps1 -OutputPath ./artifacts/epp-javascript-v2.zip
 ```
 
-The same `-OutputPath` option works for all three scripts. Configure the destination app's runtime,
-app settings, Key Vault access, and Easy Auth separately before deployment. See
-[deployment and validation](docs/ONBOARDING.md#4-package-deploy-and-verify). Packaging success does
-not verify cloud configuration or provider delivery. File selection is tailored to this sample;
-extend it deliberately if you add runtime assets, and never put secrets in application source.
+`-OutputPath` works for all three scripts. Configure the destination and follow
+[deployment and validation](docs/ONBOARDING.md#4-package-deploy-and-verify). Never include secrets.
 
 ## The design in one line
 
@@ -169,32 +121,23 @@ Only provider acceptance returns the nonce for live requests. Incoming `mode: 2`
 non-delivery path: after platform authentication, validate and decrypt, then echo the nonce without
 calling a provider.
 
-See [docs/CONTRACT.md](docs/CONTRACT.md) for the full specification every implementation follows.
-
 Request `tenantId`, `channel`, `mode` and `ttlSeconds` are request data, not extra environment settings.
 The trusted tenant issuer, endpoint-app audience and authorized Microsoft caller are configured in Easy Auth,
 not in application environment settings or incoming request data.
 
 ## Configure environment variables
 
-For guided deployment, use the [customer values and ownership table](docs/ONBOARDING.md#values-and-ownership)
-to inspect what setup already configured. The following sample/local instructions are for
-developers and manual deployments; they are not an extra guided-setup step.
+For guided deployment, inspect the [values and ownership table](docs/ONBOARDING.md#values-and-ownership).
+The following settings are for local or manual deployment.
 
-Use the [sample settings](docs/local.settings.sample.json) as the starting point for the chosen
-runtime. All entries in its `Values` object are **strings**. The application reads environment
-variables; Azure Functions Core Tools loads that `Values` object for local runs.
+Start from [sample settings](docs/local.settings.sample.json). Every `Values` entry is a string.
 
-The sample uses `node`; change it to `python` or `dotnet-isolated` for those runtimes. Replace the
-provider, endpoint, vault and test-key placeholders before use. Its storage value assumes **Azurite
-is running**; do not copy `UseDevelopmentStorage=true` into Azure. Optional settings stay in the table
-below rather than appearing as required placeholders in the sample. Keep explanatory comments outside
-`Values`, otherwise the host loads them as environment variables too.
+Change `node` to `python` or `dotnet-isolated` as needed. Replace placeholders. The sample storage
+value requires **Azurite** and must not be copied to Azure.
 
-The local settings file is an environment-variable input for the Functions host, **not a serialized
-`AppConfig` or request model**. For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in
-JavaScript, `config.provider_name` in Python, and `config.ProviderName` in .NET. The refactor changed
-how code accesses configuration; request fields remain separate from deployment settings.
+Local settings supply environment variables, **not a serialized `AppConfig` or request model**.
+For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in JavaScript,
+`config.provider_name` in Python, and `config.ProviderName` in .NET.
 
 | Variable | When needed | Value |
 |---|---|---|
@@ -237,18 +180,14 @@ login; ordinary local machines have no managed-identity endpoint. Use offline te
 evaluation locally, or an explicitly injected test resolver for integration work. Never commit local
 settings, keys or test credentials.
 
-When their selected cache is enabled, configured providers are
-[prepared per worker](docs/CONTRACT.md#credential-caching-and-refresh).
-JavaScript/Python warm credentials and poll for refresh; .NET warms at startup and retrieves
-replacements on cache misses, without a periodic poller. Credential acquisition never sends an OTP.
-Evaluation skips provider work, but configured workers can independently acquire credentials at
-startup. Disabling the selected cache skips startup preparation, polling, and cross-request reuse,
-but live requests still acquire credentials. Each switch accepts trimmed, case-insensitive `true` or
-`false`; an invalid selected value fails live credential resolution closed without preventing evaluation.
-The other provider-auth mode's switch is ignored. Setup writes both as `false` for FC1 or `true` for
-EP1; older packages that do not read these settings still require a supporting release. Restart after
-changes. Leave `EPP_PROVIDER_NAME` unset or disable its cache for local evaluation-only work without
-credential acquisition. Platform-managed identity caching and decryption-key references are separate.
+For cache values, failure behavior, and runtime differences, use the
+[credential caching contract](docs/CONTRACT.md#credential-caching-and-refresh).
+JavaScript/Python poll; .NET refreshes on cache misses. Setup writes both switches as `false` for FC1
+or `true` for EP1; deploy a supporting package and restart after changes.
+Evaluation skips provider work, but cached workers can independently acquire credentials without
+sending an OTP. Leave `EPP_PROVIDER_NAME` unset or disable its cache for local evaluation without
+credential acquisition. Provider caching is separate from platform-managed identity caching and
+decryption-key references.
 
 Core Tools does not resolve Azure Key Vault reference expressions locally. Supply the local test PEM
 or base64 PEM directly; use a reference such as `@Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/<private-key-secret>/)`
@@ -293,9 +232,9 @@ For an SMS request, the adapter builds the following JSON from the decrypted del
 ```
 
 `phoneNumber` must match `^\+[1-9][0-9]{1,14}$`; the leading `+` is preserved. SMS passes the complete
-`message` unchanged as `message.text`, including whitespace. For Voice, each six-digit numeric run
-that is not part of a longer number is rendered with comma-separated digits, and the complete paced
-message is sent twice with one separating space. Telesign performs text-to-speech for Voice; no
+`message` unchanged as `message.text`, including whitespace. For Voice, each standalone six-digit
+number is rendered with comma-separated digits. The complete paced message is sent twice with one
+separating space. Telesign performs text-to-speech for Voice; no
 separate speech object is needed.
 A nonblank string `locale` becomes `message.language`; otherwise language is omitted. The envelope
 channel selects the single `sms` or `voice` entry. `correlation_id` uses a nonempty string request
@@ -309,11 +248,13 @@ omits that header on live sends and does not forward it from incoming requests. 
 `mode: 2` evaluation path for Function tests without delivery: it skips provider HTTP and credential
 lookup entirely, rather than invoking Telesign shutter mode.
 
-Responses normalize `reference_id` and `status.code`/`status.description` internally; provider
-metadata is not exposed in the public nonce response. [Application logs](docs/CONTRACT.md#application-logs)
-include only the provider HTTP status, mapped status/outcome and the bounded raw provider reference
-ID as `providerMessageId` for support lookup, never the raw response or description. Existing numeric success codes
-are retained (SMS: 200, 203, 290-292; Voice: 100-103). EPP code `3001` ("Message in progress"),
+Responses normalize `reference_id` and `status.code`/`status.description` internally. Provider
+metadata is not exposed in the public nonce response. [Application logs](docs/LOGGING.md#safe-fields-and-identifiers)
+include the provider HTTP status and mapped status/outcome. They also include a length-limited
+provider reference ID as `providerMessageId` for support lookup. They exclude the raw response
+and description.
+Existing numeric success codes remain unchanged (SMS: 200, 203, 290-292; Voice: 100-103).
+EPP code `3001` ("Message in progress"),
 observed for both channels, is also accepted on successful HTTP responses. This acknowledges
 provider acceptance, not handset receipt or completed audio playback. The sample's recognized
 codes are not a complete provider status-code catalog. Missing, malformed, or
@@ -322,33 +263,20 @@ account access with Telesign before production.
 
 ## Security
 
-**Easy Auth (App Service Authentication) is the only caller-authentication gate, before the anonymous
-Function.** Enable it with `requireAuthentication=true`, `unauthenticatedClientAction=Return401` and
-`requireHttps=true`. Configure the trusted tenant issuer and `allowedAudiences` for the endpoint app,
-and a **nonempty `allowedApplications`** list pinned to the authorized Microsoft caller application ID.
-Do not exclude the SendOtp path. The handler does not parse or validate bearer tokens, and there is
-no backup application validation or function-key gate. **Never expose this endpoint to the public
-internet with Easy Auth disabled or bypassed.** See [platform setup](docs/ONBOARDING.md#2-provision-encryption-and-deployment-trust).
+**Easy Auth is the only caller-authentication gate before the anonymous Function.**
+Follow the [exact trust checklist](docs/ONBOARDING.md#manual-deployment-trust-checklist) for HTTPS,
+issuer, audience, caller allowlist, and unauthenticated rejection. Never disable it or exempt SendOtp;
+there is no handler token validator or function-key fallback.
 
-JWE decryption protects the payload but **does not authenticate the caller**: anyone with the public key can
-encrypt a request. A nonce echo, including a fixed nonce, is not caller authentication. Provider API
-keys are read from **Key Vault** via **managed identity**; they authenticate the outbound provider call,
-not the inbound request.
-
-Core Tools does not provide Easy Auth. Local execution is unauthenticated: bind only to loopback,
-with no tunnels or public forwarding. Offline tests cover application behavior, not platform
-authentication; [separate deployed security checks](docs/ONBOARDING.md#4-package-deploy-and-verify) are required.
+JWE and its nonce prove no caller identity: anyone with the public key can encrypt.
+Provider credentials authenticate outbound calls, not incoming requests; vault access uses managed identity.
+Core Tools has no Easy Auth: bind locally to loopback without tunnels.
+[Deployed checks](docs/ONBOARDING.md#validate-the-deployed-endpoint) remain required after offline tests.
 
 ## Docs
 
-- **[README.md](README.md)**: single-region customer onboarding.
-- **[docs/ONBOARDING.md](docs/ONBOARDING.md)**: customer value sources, provider handoffs, validation, and optional manual deployment.
-- **[docs/FRONTDOOR.md](docs/FRONTDOOR.md)**: optional manual multi-region onboarding and observed failover limitations.
-- **[docs/CONTRACT.md](docs/CONTRACT.md)**: the language-agnostic contract every implementation follows.
-- **[Application logs](docs/CONTRACT.md#application-logs)**: separate service and completion events,
-  and the meaning of Microsoft, Function and provider identifier fields.
-- **[Application Insights](docs/APPLICATION-INSIGHTS.md)** and **[monitoring](docs/MONITORING.md)**:
-  collection, runtime-aware queries, alert setup, and ongoing operations.
+Use the [documentation index](docs/README.md) for setup, troubleshooting, operations, and advanced designs.
+For code work, keep the [HTTP contract](docs/CONTRACT.md) and [log schema](docs/LOGGING.md) together.
 
 ## Contributing a language or provider
 
