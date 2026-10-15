@@ -46,14 +46,12 @@ Evaluation success, provider acceptance, and recipient delivery are different ev
 ## Recover without destructive cleanup
 
 1. **Locate the failure.** Before approval, checks do not mutate Azure resources, although sign-in
-   or Bicep installation may have occurred. After approval, partial Azure/Microsoft Entra ID changes
-   can remain without a summary. Inspect **Azure portal > subscription/resource group > Deployments**
-   and the original error.
+   or Bicep installation may occur. After approval, partial Azure or Microsoft Entra ID changes can
+   remain without a summary. Inspect the original error and **resource group > Deployments**.
 2. **Fix, then rerun with the same reviewed inputs:** tenant, subscription, app, runtime, plan,
-   prefix, provider/route, and source/package versions. Changed IDs can create resources or break
-   key continuity; a changed route can reconfigure the endpoint. There is no checkpoint resume or
-   automatic undo. Active endpoints need a change window because reruns can disable ingress and
-   change settings.
+   prefix, provider/route, and source/package versions. Changed IDs can create resources, break key
+   continuity, or reconfigure the endpoint. There is no checkpoint resume or automatic undo; use a
+   change window for active endpoints.
 3. **Verify the failed stage and complete acceptance checks.** Never use resource-group deletion,
    vault purge/recreation, encryption-credential removal, or shared-grant revocation as a retry.
    Retirement uses the separate [rollback procedure](README.md#rollback-and-decommissioning).
@@ -88,14 +86,10 @@ requests can still use a retired key.
 The single-region setup script does not provision Front Door or a multi-region readiness endpoint.
 Use the [manual Front Door guide](../../docs/FRONTDOOR.md) for that option.
 
-- A probe returning 401/403 or 404 is not healthy. Verify the dedicated readiness handler, its exact
-  path, the origin host header, and the profile-pinned network restrictions. Do not exempt SendOtp
-  or disable Easy Auth to make probes pass.
-- An authenticated SendOtp request returning 403 during an outage still failed. Check origin state,
-  access restrictions, and authentication diagnostics; do not assume every 403 is a normal failover
-  transition or that the caller retries it.
-- A successful request through the shared URL does not prove every origin works. Correlate safe
-  request identifiers with regional telemetry and verify each origin after recovery.
+- A 401/403/404 probe is unhealthy. Check the readiness path, origin host header, and profile-pinned
+  network restriction. Never exempt SendOtp or disable Easy Auth.
+- An authenticated SendOtp 403 is a failure, not proof of failover. Check origin, ingress, and auth.
+- A shared-URL success does not prove every origin works; verify each with safe regional telemetry.
 - Distinguish delayed aggregate metrics from event timestamps and client observations. See the
   [recorded test results and limitations](../../docs/FRONTDOOR.md#observed-failover-results-and-limitations).
 
@@ -104,16 +98,13 @@ Use the [manual Front Door guide](../../docs/FRONTDOOR.md) for that option.
 **Check:** the selected subscription's regional **EP1 VMs** quota, not authentication or resource
 registration. A supported Linux EP1 region can still have zero quota for your subscription.
 
-1. Confirm the tenant, subscription, region, and SKU in the deployment plan and Azure error.
-2. In the Azure portal, open **Quotas**, select **App Service**, and filter to the intended
-   subscription and region. Review **EP1 VMs**, its current usage, and the requested deployment's
-   requirements. This is an App Service quota, not a general-purpose Compute VM quota.
-3. Request an increase sufficient for the deployment and any planned scaling. Requesting an
-   increase does not mean it is approved; verify the effective limit after approval.
-4. If the quota is not adjustable in the portal or the request is rejected, create an Azure
-   support request under **Service and subscription limits (quotas)** for
-   **Function or Web App (Windows and Linux)**. Include the region, Linux deployment type, EP1
-   SKU, current limit, requested limit, and the error's tracking ID.
+1. Confirm the tenant, subscription, region, and SKU in the plan and Azure error.
+2. In **Quotas > App Service**, filter to that subscription/region and inspect **EP1 VMs** usage
+   and limit. This is not a general Compute VM quota.
+3. Request enough quota for deployment and scaling, then verify the effective approved limit.
+4. If the portal cannot adjust it, open a **Service and subscription limits (quotas)** request for
+   **Function or Web App (Windows and Linux)**. Include region, Linux/EP1, current/requested limits,
+   and the tracking ID.
 5. Alternatively, choose another region only after checking its quota, service availability,
    and your residency and provider requirements. Review the updated deployment plan before approval.
 

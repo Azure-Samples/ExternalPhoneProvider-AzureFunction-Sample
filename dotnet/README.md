@@ -55,17 +55,13 @@ Keep values as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"1500"
 Replace placeholders; credentials belong in the adapter's Key Vault secrets, not this file.
 A missing/invalid selected channel endpoint fails closed without fallback.
 
-Core Tools loads `Values` into environment variables. [AppConfig.Read](Src/AppConfig.cs) reads them
-through `IEnv`; direct worker execution and unit tests do not automatically load local settings.
-Restart the host after edits. Configure local host storage other than Azurite separately; do not copy
-the emulator connection into Azure. Core Tools does not resolve Key Vault references locally; supply
-the local test PEM or base64 PEM directly. The [project](dotnet.csproj) excludes private local settings
-from publish output.
+Core Tools loads `Values` into environment variables; direct worker execution and unit tests do not
+load local settings. [AppConfig.Read](Src/AppConfig.cs) reads them through `IEnv`. Restart after
+edits. Core Tools cannot resolve Key Vault references locally, so use only a local test PEM or
+base64 PEM. The [project](dotnet.csproj) excludes local settings from publish output.
 
-For Azure, configure the same application variables on the serving app/slot's **Environment variables
-→ App settings** page and resolve the private PEM through a Key Vault reference. Key Vault provider
-credentials use managed identity, not the developer's CLI login. Use loopback-only local evaluation
-or the offline tests' injected environment and secret resolver for local development.
+In Azure, configure the same app settings and use a Key Vault reference for the private PEM.
+Provider credentials use managed identity, not a developer CLI login. Keep local evaluation on loopback.
 
 ## Request behavior
 
@@ -97,28 +93,16 @@ For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHT
 The host's OpenTelemetry setting does not by itself initialize a direct worker exporter;
 verify actual `ILogger` collection before depending on event-based alerts.
 
-`SendOtp` validates and decrypts the request, selects the configured provider in its private
-`SelectProvider` method, resolves credentials, and calls the provider's `SendOtpAsync`.
-That method passes its request factory and typed response mapper to
-`PhoneProviderBase.SendJsonAsync<TResponse>`, which builds and sends the `HttpRequestMessage`,
-reads/deserializes the response, and returns a normalized `ProviderResult`.
-`SendOtp` maps that result to the endpoint HTTP response.
-The shared transport uses redirects disabled, `ResponseHeadersRead`, and a bounded timeout.
-Each provider maps its recognized statuses to an outcome; selection uses `EPP_PROVIDER_NAME`.
-Request-aware routing or multiple accounts require a separate design for trust, configuration,
-credentials, and testing, not just a change to `SelectProvider`.
+`SendOtp` validates and decrypts, selects `EPP_PROVIDER_NAME`, resolves credentials, and calls the
+provider. `PhoneProviderBase.SendJsonAsync<TResponse>` owns bounded HTTP transport and typed response
+mapping; each provider maps its statuses to `ProviderResult`. Request-aware routing or multiple
+accounts require a separate trust, configuration, credential, and test design.
 
-`CredentialTokenService` is the hosted startup warmer and runtime credential cache.
-`EPP_KEY_VAULT_CACHE_ENABLED` controls API-key caching; `EPP_ACCESS_TOKEN_CACHE_ENABLED` controls
-OAuth caching. Both default to `true`. Setting the selected switch to `false` skips startup warmup
-and fetches on every live request, using fresh SDK credentials for OAuth.
-When enabled, it asks the selected provider for credentials at startup and on cache misses.
-Each provider owns credential acquisition and its secret names. The service stores
-the result in .NET `MemoryCache` until the credential's absolute expiry; the next request fetches a
-replacement. There is no polling timer or separate cache implementation. The fetch has a
-2.5-second cancellation budget linked to its caller's token. `MemoryCache.GetOrCreateAsync`
-does not guarantee a single concurrent fetch on cache misses; do not assume the JavaScript/Python
-shared-acquisition behavior applies here. Evaluation remains independent.
+`CredentialTokenService` warms and caches the selected provider credential. The shared cache
+switches default to `true`; disabling the selected switch skips warmup and fetches on every live
+request. Enabled credentials remain in `MemoryCache` until absolute expiry. There is no polling
+timer, and concurrent misses can fetch more than once. The fetch has a 2.5-second cancellation
+budget. See the [shared cache contract](../docs/CONTRACT.md#credential-caching-and-refresh).
 
 | Source | Purpose |
 |---|---|

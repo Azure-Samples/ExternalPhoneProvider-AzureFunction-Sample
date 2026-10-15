@@ -321,66 +321,34 @@ rerouting; it is not permission to disrupt production or a claim of a full Azure
 test. Define numeric pass/abort thresholds and durations before starting, rather than adopting the
 observed failover timings below as an SLA.
 
-1. **Assign ownership and approve the boundary.** Name a drill lead, change approver, regional
-   resource owners, load/telemetry observer, and restoration owner with a backup. Record the exact
-   tenant, subscription, Front Door profile, origin group, Function Apps, target region, change
-   window, maximum isolation duration, and restoration actions. Confirm no production policy or
-   real users depend on these resources. Approve only one isolated test origin at a time.
-2. **Prepare bounded, non-delivering traffic and independent recovery.** Use an authorized test
-   caller to send synthetic encrypted `mode: 2` evaluation requests through the shared URL; never
-   use real OTPs, real recipient data, or live-send mode. Check nonce matches locally, not in shared
-   logs. Set hard rate, concurrency, request-timeout, total-duration, and cost limits. Place the
-   controller and evidence capture outside the target region. Test restoration access and arrange
-   an independent deadline-triggered restoration mechanism or backup operator; the load controller
-   must not be the only way to end the outage.
-3. **Establish the baseline and acceptance gates.** Save the approved origin/routing, authentication,
-   ingress, package, key-reference, and regional-dependency configuration. Complete the security and
-   evaluation checks in section 5. Confirm both origins are healthy and actually serving, using
-   origin-specific diagnostics rather than only the shared readiness URL. Agree the offered peak
-   rate plus headroom, minimum survivor soak duration, detection/recovery target, allowed failures
-   and timeouts, latency percentiles, resource/dependency limits, and failback observation window.
-   Include abort thresholds for an unhealthy survivor, unexpected delivery, security drift, lost
-   observability, or an approaching isolation deadline. Capture steady-state evidence from every
-   region and the client before injecting a fault.
-4. **Isolate ONE approved origin; leave it enabled in Front Door.** After confirming it is serving
-   traffic, apply the approved reversible fault, for example stopping that test Function App.
-   Timestamp the fault request and platform confirmation separately. Keep the other origin healthy
-   and unchanged. Do not disable the target in Front Door: manual disabling tests control-plane
-   removal, not health-probe outage detection. Never disable authentication, exempt SendOtp from
-   Easy Auth, or weaken ingress to make the drill pass. Front Door can route across all origins
-   when all probes fail; probe state is not a security boundary.
-5. **Observe detection and sustained survivor load.** Maintain the bounded combined-peak evaluation
-   load plus planned headroom through Front Door, without exceeding the approved test ceiling.
-   Capture client attempts, completed requests, every failed response and transport error, latency,
-   safe correlation IDs, and timestamps alongside Front Door probe/access diagnostics and every
-   region's routing, Function, storage, vault, identity, and telemetry signals. Do not treat missing
-   regional telemetry as zero errors or use delayed health-percentage graphs to time recovery.
-   Verify the surviving region sustains the required offered rate and agreed criteria for the
-   full soak period, not merely one successful request. Label this as evaluation-path capacity,
-   not full live-send capacity; the separate provider/credential evidence required by the capacity
-   gate remains necessary. Record failures during detection even if later requests succeed;
-   retries must not hide first-attempt errors.
-6. **Restore unconditionally, including on abort.** Stop fault injection and restore the target
-   at the deadline or any abort threshold, or when the soak completes. Stop synthetic load if
-   unsafe. Put restoration in the controller's guaranteed cleanup path and retain the independent
-   safeguard for controller interruption or loss. Restore the saved approved state even when
-   assertions fail; escalate immediately to the restoration owner if restoration cannot be
-   confirmed. Do not start another fault or declare success while an origin remains impaired.
-7. **Fail back conservatively, then reverse the direction.** Verify the restored origin's own
-   dependencies, key/credential resolution, readiness, and successful encrypted evaluations.
-   Expect Front Door to resume routing when its health criteria are met; watch both origins as
-   traffic returns and avoid immediately changing weights or driving a new surge. Require stable
-   health, latency, errors, and capacity through the agreed observation window. Confirm all
-   resources and routing are restored before repeating the same exercise with the other region
-   isolated. Both directions must meet the evaluation-drill criteria; the full survivor-capacity
-   gate additionally requires the separate production-representative live-path evidence above.
-8. **Record the outcome and gaps.** Retain sanitized configuration/package identifiers, approvals,
-   workload and limits, expected versus observed routing, fault/probe/client/recovery timestamps,
-   rates, latency/errors, capacity/dependency evidence, aborts, and restoration confirmation.
-   Record pass/fail against each agreed criterion, including unmet or unmeasured gates, with
-   follow-up owners and repeat-test dates. Never attach keys, bearer tokens, request bodies, OTPs,
-   or nonce values. Repeat after material topology, package, authentication, key, provider, or
-   capacity changes and at the operator-approved cadence.
+1. **Approve the boundary.** Name the drill, change, telemetry, and restoration owners plus a
+   backup. Record the exact test resources, window, isolation deadline, and restoration steps.
+   Confirm no production policy or real users depend on them; isolate only one origin at a time.
+2. **Prepare safe traffic and recovery.** Use an authorized caller with bounded encrypted
+   `mode: 2` evaluation traffic—never live sends or real recipient data. Set rate, concurrency,
+   timeout, duration, and cost limits. Keep the controller/evidence outside the target region and
+   verify an independent restoration mechanism or backup operator.
+3. **Set the baseline and gates.** Save the approved routing, authentication, ingress, package,
+   key, and dependency state. Confirm both origins are healthy and serving. Agree survivor load,
+   soak time, recovery target, allowed failures/timeouts, latency/resource limits, failback window,
+   and abort thresholds before injecting a fault.
+4. **Isolate one origin without disabling it in Front Door.** Apply an approved reversible fault,
+   such as stopping the test Function App, and timestamp request and confirmation separately.
+   Keep the survivor unchanged. Do not weaken Easy Auth or ingress; probe health is not a security boundary.
+5. **Measure detection and survivor behavior.** Maintain the bounded combined-peak evaluation load
+   plus headroom. Capture every attempt, failure, timeout, latency, safe correlation ID, probe,
+   routing, and regional dependency signal. Missing telemetry is not success. Meet the full soak
+   criteria; evaluation-path results do not replace the separate live-path capacity evidence.
+6. **Restore on completion or abort.** Stop unsafe load and restore the saved state at the deadline,
+   any abort threshold, or completion. Cleanup must run even if assertions or the controller fail.
+   Escalate immediately if restoration cannot be confirmed.
+7. **Verify failback, then reverse direction.** Check the restored origin's dependencies, key and
+   credential resolution, readiness, and evaluation responses. Wait through the agreed stable
+   observation window before testing the other origin. Both directions must pass.
+8. **Record results and gaps.** Keep sanitized approvals, configuration/package identifiers,
+   workload limits, timestamps, rates, latency/errors, dependency evidence, aborts, and restoration.
+   Mark each criterion pass/fail/not tested with an owner and retest date. Never attach secrets,
+   bearer tokens, request bodies, OTPs, or nonces.
 
 ### What this drill does not prove
 

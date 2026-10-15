@@ -112,22 +112,19 @@ After Step 2 approval, setup configures:
 
 ## Prerequisites for Step 2
 
-- **Azure Cloud Shell in PowerShell mode, or PowerShell 7+** with an Azure CLI user login.
-  Certificate issuance happens inside Key Vault without local certificate-store cmdlets.
-- Azure CLI **2.60.0+ for FC1** or **2.48.1+ for EP1** on `PATH`, with access to GitHub, Azure, Microsoft Graph, and Key Vault.
-  Setup installs the Azure CLI Bicep component after confirmation when it is missing. Azure CLI itself
-  must be installed before running the script. FC1 publication and EP1 Python builds also need
-  network access to SCM.
+- **Azure Cloud Shell in PowerShell mode, or PowerShell 7+**, with an Azure CLI user login.
+  Certificate issuance stays in Key Vault; no local certificate-store cmdlets are needed.
+- Azure CLI **2.60.0+ for FC1** or **2.48.1+ for EP1** on `PATH`, with GitHub, Azure,
+  Microsoft Graph, Key Vault, and required SCM access. Setup can install Bicep after confirmation,
+  but Azure CLI must already be installed.
 - An Azure **user** account permitted to deploy at subscription scope, create the listed resources,
   and create the scoped Azure role assignments. Bicep grants the operator **Key Vault Certificates
   Officer** for issuance and **Key Vault Secrets Officer** for provider credentials,
   scoped to this deployment's vault.
-- **Certificate reuse:** the operator needs ARM read access to the source vault, certificate-read
-  access, and secret-version metadata-read access before approval. For a different vault, the
-  approved plan also requires permission to grant the Function identity secret-read access:
-  role-assignment write for RBAC vaults, or access-policy write for access-policy vaults.
-  The source vault must be in the customer tenant; `-KeyVaultSubscriptionId` identifies a
-  different source subscription. Setup never fetches its private-key value locally.
+- **Certificate reuse:** the operator needs source-vault ARM read, certificate read, and
+  secret-version metadata read. A different vault also requires permission to grant the Function
+  secret read through RBAC or an access policy. The vault must be in the customer tenant;
+  use `-KeyVaultSubscriptionId` for another subscription. Setup never reads the private key locally.
 - A Microsoft Entra **Privileged Role Administrator** for granting the Microsoft first-party service
   principal Graph `Application.Read.All`. Microsoft Graph operations use the current Azure CLI
   user session through `az ad` and `az rest`; Azure subscription roles alone do not grant these
@@ -135,19 +132,15 @@ After Step 2 approval, setup configures:
 - Microsoft Graph **beta** access for the Entra `signInAudienceRestrictions` allowed-tenants preview.
   The selected provider tenant is allowed in addition to the app's home tenant, which Entra always allows.
   See the [allowed-tenants schema](https://learn.microsoft.com/en-us/graph/api/resources/allowedtenantsaudience?view=graph-rest-beta).
-- The selected **Linux Flex Consumption FC1 or Premium EP1** plan available in the chosen region,
-  with sufficient subscription quota. Availability is checked for that plan only; regional service
-  availability and resource-provider registration do not guarantee quota. If deployment reports
-  `SubscriptionIsOverQuotaForSku`, resolve the
-  [regional quota issue](Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku)
-  before retrying. Setup registers missing required Azure
-  resource providers automatically after the single approval. The Azure account needs the
-  providers' subscription-scoped `/register/action` permission (included in Contributor/Owner).
-- **.NET selection only:** install the .NET 8 SDK and allow NuGet access. Setup runs `dotnet publish`
-  automatically for `linux-x64`, packages the publish output, and deploys it. No manual build step
-  or upload is required. JavaScript and Python do not require this SDK.
-- **Python selection:** Azure performs the Linux dependency build. No local Python, pip, or Windows
-  dependency installation is needed. The source archive is never used directly as run-from-package.
+- The selected **Linux FC1 or EP1** plan available in the region, with sufficient subscription
+  quota. Service availability and provider registration do not guarantee quota. Resolve
+  [`SubscriptionIsOverQuotaForSku`](Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku)
+  before retrying. After approval, setup registers required providers; the operator needs their
+  subscription-scoped `/register/action` permission.
+- **.NET only:** install the .NET 8 SDK and allow NuGet access. Setup publishes for `linux-x64`,
+  packages, and deploys automatically.
+- **Python:** Azure builds Linux dependencies; no local Python/pip install is required. The source
+  archive is not a run-from-package artifact.
 
 ### Permissions are separate
 

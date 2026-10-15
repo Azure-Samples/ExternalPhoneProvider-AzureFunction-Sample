@@ -503,72 +503,42 @@ reviewed query, baseline, and response plan.
 
 ### Validate without generating provider sends
 
-1. Save the action group before **Test**. Keep the test page open until **Success** or
-   **Failed**; on failure use **View details**, fix, save, and retest. Check recipient
-   verification and spam filtering. Group read access alone doesn't grant test permission.
-2. Compare the saved query with existing portal records in healthy, qualifying, empty,
-   and delayed windows. Check output units against Measurement. For a temporary
-   nonproduction rule, use records inside its lookback and a restricted test action group.
-   Change the query time filter and portal override together, within the alert scan limit.
-3. Authorize the test rule identity, enable it, and observe a scheduled alert and notification
-   in **Monitor > Alerts**. Check resolution after the condition clears, allowing for stateful
-   timing. Remove the test rule/overrides and restore the intended production settings.
-4. Don't lower production thresholds for testing or route tests to production automation.
-   If needed, use an approved non-phone test sign-in flow. Don't bypass Easy Auth, send live
-   OTPs, induce repeated wrong codes, or alter production authentication policy.
+1. Test the saved action group and confirm the team receives it. Fix **View details** failures
+   before testing the rule; read access alone may not grant test permission.
+2. Run the saved query against healthy, qualifying, empty, and delayed windows. For a temporary
+   nonproduction rule, use existing records, a restricted action group, and an authorized rule identity.
+3. Observe one scheduled alert and its resolution, then remove temporary overrides and restore
+   the intended settings. Keep the query time filter and portal override aligned.
+4. Never lower production thresholds, trigger live OTPs, repeat wrong codes, bypass Easy Auth,
+   or change production policy for a monitoring test. Use an approved non-phone test sign-in if needed.
 
 <a id="6-build-a-sign-in-workbook"></a>
 
 ### Build a Workbook when you need a shared view
 
 1. Review the [Microsoft monitoring repository](https://github.com/microsoft/external-id-azure-monitor)
-   and its authentication, MFA, and user-behavior templates linked above. Inspect
-   **serializedData** query definitions with your query maintainer. These are ARM templates,
-   not text to paste wholesale into Logs. **Deploy to Azure** can create resources/delegation;
-   don't select it just to inspect a query.
-2. Check tables, tenant features, personal fields, units, filters, and time settings.
-   The [risk template](https://github.com/microsoft/external-id-azure-monitor/blob/main/templates/riskDetectionWorkbookDeployment.json)
-   doesn't make risk features available in your tenant.
-3. Open **Azure portal > Monitor > Workbooks > New**, enter **Edit**, then **Add > Add query**.
-   Select **Logs (Analytics)** and your workspace. Use the reviewed query and follow
-   [Workbook authoring](https://learn.microsoft.com/en-us/azure/azure-monitor/visualize/workbooks-create-workbook)
-   and [Add queries](https://learn.microsoft.com/en-us/azure/azure-monitor/visualize/workbooks-create-workbook#add-queries).
-   Choose a suitable **Visualization**, **Run Query**, then **Done editing**.
-4. Label record/step counts clearly, explain missing data and arrival delay, and include
-   freshness. Bind app/workspace/time parameters into every relevant query and test changes;
-   selectors don't automatically replace hard-coded filters. Restrict detailed user/IP views.
-5. **Save** to the agreed subscription/resource group/location and have a teammate check
-   access. Workbook sharing doesn't grant underlying log access, create alerts, or prove
-   they are enabled.
+   with the query maintainer. Its templates are deployable ARM resources, not text to paste into
+   Logs; inspecting them does not require selecting **Deploy to Azure**.
+2. In **Monitor > Workbooks > New**, add the reviewed workspace query using Microsoft's
+   [Workbook authoring guide](https://learn.microsoft.com/en-us/azure/azure-monitor/visualize/workbooks-create-workbook).
+   Verify tables, licensing, filters, units, time range, freshness, and personal-data exposure.
+3. Save to the approved location and have another authorized user test access. Workbook sharing
+   does not grant log access, create alerts, or enable tenant risk features.
 
 <a id="7-triage-privacy-retention-and-costs"></a>
 
 ### Investigate alerts and manage the data
 
-1. In **Monitor > Alerts > selected alert**, check the rule, workspace, app/tenant scope,
-   UTC window, measured value, and rule/collection health. Open the saved query for that
-   period, then the relevant Entra **Basic info**, **Authentication Details**, and policy results.
-2. Separate user mistakes/interruptions, releases, and policy changes from outages or abuse.
-   Escalate suspected compromise through your security response process; a heuristic isn't
-   a confirmed fraud verdict.
-3. For phone concerns, compare [runtime-specific Function logs](MONITORING.md#runtime-specific-log-discovery)
-   and restricted provider records. `SigninLogs.CorrelationId`, Function `OperationId`,
-   request IDs, and provider references are **not guaranteed equal**. Prove an association
-   before joining them. No match doesn't prove no Function call; fallback can complete
-   authentication through another path. Provider acceptance isn't handset receipt.
-4. Keep raw identity/device/IP/phone data in approved systems. Check workspace/table access,
-   Workbook sharing, and recipients. Don't put tokens, credentials, OTPs, or messages in
-   alerts/public issues. Query filters are **not an access-control boundary**.
-5. Review **Workspace > Tables** plan, analytics retention, and total retention using
-   [retention instructions](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-retention-configure).
-   Confirm saved settings cover your investigation period; Entra portal and workspace
-   retention are separate.
-6. Check **Usage and estimated costs** and **Cost Management > Cost analysis** with the
-   [cost guidance](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/cost-logs).
-   Export selects categories, not an app-only stream: query filters don't remove tenant-wide
-   ingestion charges. Include retention, queries, alert frequency/dimensions, notifications,
-   and separately enabled services. Provider billing is separate again.
-7. Review caps/transformations with the collection maintainer; they can remove evidence
-   the rules need. Keep setup notes, test results, contacts for support/security/privacy/
-   retention/costs, and escalation/maintenance arrangements together. Walk a teammate through
-   the query, Workbook, rule health, and test notification without sending OTPs or changing policy.
+1. In **Monitor > Alerts**, verify the rule, workspace, tenant/app scope, UTC window, measured
+   value, and collection health. Re-run the saved query, then inspect the matching Entra details.
+2. Separate user interruption and planned changes from outages or abuse. Escalate suspected
+   compromise through the security process; a heuristic is not a fraud verdict.
+3. For phone concerns, compare [Function logs](MONITORING.md#runtime-specific-log-discovery) and
+   restricted provider records. Their correlation IDs are not guaranteed to match. Prove any
+   association; provider acceptance still is not handset receipt.
+4. Keep identity, device, IP, and phone data in approved systems. Query filters are not access
+   control. Never put tokens, credentials, OTPs, messages, or raw personal data in alerts or issues.
+5. Review [retention](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-retention-configure),
+   [log costs](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/cost-logs), caps,
+   transformations, alert frequency, and recipients with their owners. Keep the query, tests,
+   contacts, and escalation procedure together and walk a teammate through them.

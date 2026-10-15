@@ -54,16 +54,13 @@ Keep `Values` as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"150
 Replace placeholders; API keys belong in Key Vault, not this file.
 A missing/invalid selected channel endpoint fails closed without fallback.
 
-Core Tools copies `Values` into the process environment; direct Node processes and the offline tests
-do **not** automatically load this file. [AppConfig](src/functions/config.js) reads `process.env`
-once per call to `readConfig()`. Restart the host after changing settings. Configure any local host
-storage other than Azurite separately; do not copy a local emulator connection into Azure. Core Tools
-does not resolve Key Vault references locally; supply the local test PEM or base64 PEM directly.
+Core Tools copies `Values` into the process environment; direct Node processes and offline tests do
+not load this file. [AppConfig](src/functions/config.js) reads `process.env` when `readConfig()` runs.
+Restart after edits. Core Tools cannot resolve Key Vault references locally, so use only a local
+test PEM or base64 PEM. Never copy Azurite settings into Azure.
 
-For Azure, set these application variables on the Function App/slot's **Environment variables → App
-settings** page and use a Key Vault reference for the private PEM. The provider-secret resolver uses
-managed identity; signing into the CLI locally does not supply that identity. Local evaluation avoids
-provider lookup, while tests inject mocked credentials and HTTP. Keep the local endpoint on loopback.
+In Azure, configure the same app settings and use a Key Vault reference for the private PEM.
+Provider secrets use managed identity, not a developer CLI login. Keep local evaluation on loopback.
 
 ## Request behavior
 
@@ -94,13 +91,11 @@ The [cache switches and defaults](../docs/CONTRACT.md#credential-caching-and-ref
 Disabling the selected cache removes startup preparation, polling, and cross-request reuse,
 not live credential acquisition.
 
-With caching enabled, the app-start hook selects `ApiKeyCache` or `AccessTokenCache` from the provider credential spec.
-Only that cache starts: API keys use Key Vault and `lru-cache`; access tokens use the MI/Entra SDKs,
-without Key Vault. One shared 30-second refresh loop and one in-flight acquisition keep warm reads
-nonblocking. Configuration changes require restart; failures never extend expiry. A small HTTP-client
-wrapper propagates cancellation to the installed identity SDK. Shutdown prevents late publication. See the
-[refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh). Leave the provider unset for
-local evaluation-only use without credential acquisition; prewarming never sends an OTP.
+With caching enabled, startup selects only the provider's API-key or OAuth cache. API keys use
+Key Vault and `lru-cache`; OAuth uses the managed-identity/Entra SDKs. A shared 30-second refresh
+loop and one in-flight acquisition keep warm reads nonblocking; failures never extend expiry.
+See the [refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh). Leave the provider
+unset for local evaluation without credential acquisition; prewarming never sends an OTP.
 
 | Source | Purpose |
 |---|---|

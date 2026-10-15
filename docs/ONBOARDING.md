@@ -71,16 +71,12 @@ same parameters. No parameter accepts a provider API key or private key.
 use identical Global/EU URLs; Soprano also shares its app ID/scope. Confirm provider processing
 locations for messages, credentials, logs, and personal data; choose Azure/telemetry locations separately.
 
-**One guided deployment has one provider and accepts both SMS and voice.** Enabling the second
-channel does not require another setup run; validate and activate each intended channel separately.
-The resource-name suffix uses the subscription ID, app client ID, and prefix, not the provider or
-Azure region. Changing provider/region with the same identifiers can reconfigure the existing
-endpoint rather than add another one. For an independent provider/region deployment, use a distinct
-prefix and a new dedicated app, then validate it before changing policy. Reusing an existing
-app requires an explicit certificate reuse/replacement decision before deployment. A different
-prefix does not authorize key rotation or isolate other endpoints sharing the same app registration.
-The [manual Front Door design](FRONTDOOR.md) requires coordinated same-key regional origins,
-not independent setup runs.
+**One guided deployment has one provider and both channels.** Validate and activate SMS and voice
+separately; a second channel needs no second setup run. The resource suffix uses subscription,
+app client ID, and prefix—not provider or region—so changing provider/region with the same IDs can
+reconfigure the endpoint. For an independent deployment, use a new app and prefix. Reusing an app
+requires an explicit certificate decision and does not isolate other endpoints sharing that app.
+The [Front Door design](FRONTDOOR.md) coordinates same-key origins instead of independent setup runs.
 
 ### Values setup configures for you
 

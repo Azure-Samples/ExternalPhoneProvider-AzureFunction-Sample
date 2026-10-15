@@ -53,17 +53,13 @@ Keep values as strings, including `EPP_PROVIDER_TIMEOUT_MS: "1500"`. Replace pla
 API keys belong in provider-named Key Vault secrets, not this file.
 A missing/invalid selected channel endpoint fails closed without fallback.
 
-Core Tools loads `Values` into `os.environ`. Direct Python execution and pytest do not automatically
-read local settings. [read_config](src/config.py) returns an `AppConfig` object; the handler/engine
-use attributes such as `config.provider_name`, not dictionary key lookups. Restart the host after
-settings change. Configure local host storage other than Azurite separately; do not copy the emulator
-connection into Azure. Core Tools does not resolve Key Vault references locally; supply the local test
-PEM or base64 PEM directly.
+Core Tools loads `Values` into `os.environ`; direct Python execution and pytest do not.
+[read_config](src/config.py) returns an `AppConfig`, and the handler reads its attributes.
+Restart after edits. Core Tools cannot resolve Key Vault references locally, so use only a local
+test PEM or base64 PEM. Never copy Azurite settings into Azure.
 
-For Azure, set the same application variables on the serving app/slot's **Environment variables → App
-settings** page. Use a Key Vault reference for the private PEM. Provider secrets require managed
-identity, which is not supplied by a developer's CLI login. Use local evaluation or the mocked offline
-tests on an ordinary workstation, and bind local hosts only to loopback.
+In Azure, configure the same app settings and use a Key Vault reference for the private PEM.
+Provider secrets use managed identity, not a developer CLI login. Keep local evaluation on loopback.
 
 ## Request behavior
 
@@ -94,14 +90,11 @@ The [cache switches and defaults](../docs/CONTRACT.md#credential-caching-and-ref
 Disabling the selected cache removes startup preparation, polling, and cross-request reuse,
 not live credential acquisition.
 
-With caching enabled, worker initialization selects `ApiKeyCache` or `AccessTokenCache` from the provider's credential specification.
-Only the selected cache starts: API keys use Key Vault and `cachetools.TTLCache`; access tokens use
-the MI/Entra SDKs without Key Vault. One daemon loop polls every 30 seconds. Configuration changes
-require restart. Callers can stop waiting without abandoning shared reads; synchronous SDK I/O uses connect/read
-timeouts, not a total transport deadline. `atexit` stops refresh and releases waiters; unfinished
-daemon reads cannot publish or block process exit. See the
-[refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh). Leave the provider unset for
-local evaluation without background credential acquisition.
+With caching enabled, startup selects only the provider's API-key or OAuth cache. API keys use
+Key Vault and `cachetools.TTLCache`; OAuth uses the managed-identity/Entra SDKs. A daemon polls
+every 30 seconds; synchronous SDK calls use connect/read timeouts rather than one total deadline.
+See the [refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh). Leave the provider
+unset for local evaluation without background credential acquisition.
 
 | Source | Purpose |
 |---|---|
