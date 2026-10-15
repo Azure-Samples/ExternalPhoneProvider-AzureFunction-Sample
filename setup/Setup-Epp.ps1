@@ -37,7 +37,7 @@
 .EXAMPLE
     .\Setup-Epp.ps1
 .EXAMPLE
-    .\Setup-Epp.ps1 -TenantId <tenant-id> -SubscriptionId <subscription-id> -ApplicationId <client-id>
+    .\Setup-Epp.ps1 -TenantId '<tenant-id>' -SubscriptionId '<subscription-id>' -ApplicationId '<client-id>'
 #>
 [CmdletBinding()]
 param(

@@ -11,7 +11,7 @@ The same Function endpoint supports both SMS and voice. Each request's `channel`
 configured provider URL, and the SMS and voice URLs can differ. Validate every channel you intend
 to activate.
 
-The screenshots show the Azure portal and the setup script. You can also register the application
+The screenshots show the Azure portal. You can also register the application
 in the Microsoft Entra admin center. Identifying details are hidden; your portal layout may differ.
 
 ## 1. Get ready
@@ -111,19 +111,10 @@ Setup first lists cached Azure CLI user subscriptions. Select the customer tenan
 then select or enter the dedicated application client ID and choose an Azure region. Refresh or
 sign in when the expected account is missing.
 
-Choose the provider route and provider, then **one** platform: Node.js (JavaScript), .NET (C#), or Python.
-When `-Provider` is omitted, setup reads the application's allowed-tenant configuration: no
-supported provider means enter a provider name, one means confirm it, and several means choose
-one by name. Provider choices are never numbered, and existing allowed provider tenants are preserved.
-Setup configures both SMS and voice provider URLs without asking you to select a channel.
-It downloads and verifies the package, builds it if needed, and deploys it for you.
-You do not need a separate ZIP upload or local settings file.
-
-![Earlier PowerShell setup prompts for tenant, subscription, application, region, and SMS or voice, with identifiers hidden](docs/images/onboarding/setup-identifiers.png)
-
-*Use the dedicated application created in Step 2 and your intended Azure region. This screenshot
-is from an earlier script version; current setup uses selection lists for the tenant, subscription,
-application, and region, and no longer has the channel prompt. It is an input screen, not a deployment result.*
+Choose the provider route and enter or confirm the provider **by name**, then choose **one**
+platform: Node.js (JavaScript), .NET (C#), or Python. Setup configures both SMS and voice URLs;
+there is no channel prompt. It downloads and verifies the package, builds it if needed, and
+deploys it for you. You do not need a separate ZIP upload or local settings file.
 
 Choose **FC1** for on-demand hosting that can scale to zero, or **EP1** for paid warm capacity.
 FC1 can cold-start, and its free usage grant does not make the whole deployment free.
@@ -132,24 +123,13 @@ In **Tenant scope**, choose Global or EU for your provider route. This does not 
 Azure region or guarantee data residency.
 For the resource prefix, use 2-8 lowercase letters or digits, starting with a letter.
 
-![Cropped setup choices for provider route, provider, language, and hosting plan, with provider names hidden](docs/images/onboarding/setup-choices.png)
+Complete any required CLI sign-in, MFA, or administrator consent yourself. Setup checks
+prerequisites and prepares the deployment plan; resolve any reported failure before continuing.
 
-*Choose the options approved for your deployment; do not copy the example selection numbers.
-The Global/EU choice is not the Azure region. The hosting-plan warning applies even when a
-plan has a free usage grant.*
-
-Next, setup checks prerequisites, revalidates the Azure CLI and Microsoft Graph context, verifies
-the selected package, and prepares the deployment plan. For C#, this includes an automatic local build.
-Complete any required CLI sign-in, MFA, or administrator consent yourself. If a permission or prerequisite check fails, resolve it
-before continuing.
-
-Setup also checks the application's existing **encryption certificates** before deployment.
-If one exists, choose to reuse it and supply its **versioned Key Vault certificate URL**, or
-replace it. If several exist, select one to keep and approve removal of the others, or replace
-them all with one new certificate. Reuse preserves the selected key ID rather than adding another
-credential. See [certificate selection](setup/docs/README.md#encryption-certificate-selection)
-for the URL, permissions, and unattended options. Coordinate maintenance before changing an
-active application's encryption credentials; every endpoint sharing that application is affected.
+For a new application, setup creates its encryption certificate. If encryption credentials
+already exist, follow [certificate selection](setup/docs/README.md#encryption-certificate-selection)
+to reuse one exact Key Vault certificate version or approve replacement. Coordinate maintenance
+first: changing these credentials affects every endpoint sharing the application.
 
 **Review the complete deployment plan before typing `Yes`.** Check the accounts, region,
 SMS and voice provider URLs, platform, plan, cache settings, resource names, permissions, and
@@ -159,17 +139,12 @@ application-read permission. `No` or Enter cancels deployment; sign-in and prere
 are separate from this approval.
 
 **Want to review without deploying?** Run interactively and choose **No** at that final prompt.
-There is no `-DryRun` or `-WhatIf` switch. This is not an offline dry run: sign-in, prerequisite
-checks, downloads, and template compilation happen first. Do not pass `-ApproveDeployment`
-when you only want to review the plan.
+This still performs online preflight and downloads. There is no `-DryRun` or `-WhatIf` switch;
+see [plan review](setup/docs/README.md#reviewing-the-plan-without-deploying) for details.
 
 After you approve, leave the script running while it configures the application, creates the
 Azure resources, and publishes the code. Wait for **Deployment completed** and the saved summary
-before moving to Step 4. The input screenshots do not show a completed deployment.
-
-Normal console output ends with **Next steps** after resource generation. Use
-`.\Setup-Epp.ps1 -PassThru` when you also need the structured deployment result in a variable
-or pipeline; the summary JSON is always saved.
+before moving to Step 4.
 
 Setup creates the Function App, storage, Key Vault, identities, and monitoring resources.
 **Do not create these resources manually first.**

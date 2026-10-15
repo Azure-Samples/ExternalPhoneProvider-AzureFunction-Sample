@@ -122,14 +122,15 @@ The host's OpenTelemetry setting does not by itself initialize a direct worker e
 verify actual `ILogger` collection before depending on event-based alerts.
 
 `SendOtp` validates and decrypts the request, selects the configured provider in its private
-`SelectProvider` method, resolves that provider's credentials, builds and sends the common bounded HTTP
-request, asks the provider to deserialize its typed response DTO and return the final outcome, then maps that
-outcome to the endpoint HTTP status. Providers
-return standard `HttpRequestMessage` instances with typed `JsonContent`; the shared transport sends those
-messages directly with redirects disabled, `ResponseHeadersRead`, and the bounded timeout. Each provider maps
-its own normalized response status to the final outcome and reports whether that status was recognized. The
-default method selects by `EPP_PROVIDER_NAME`; replace only its body if deployment policy later needs country,
-tenant or other request-aware selection. No router or routing configuration abstraction is required.
+`SelectProvider` method, resolves credentials, and calls the provider's `SendOtpAsync`.
+That method passes its request factory and typed response mapper to
+`PhoneProviderBase.SendJsonAsync<TResponse>`, which builds and sends the `HttpRequestMessage`,
+reads/deserializes the response, and returns a normalized `ProviderResult`.
+`SendOtp` maps that result to the endpoint HTTP response.
+The shared transport uses redirects disabled, `ResponseHeadersRead`, and a bounded timeout.
+Each provider maps its recognized statuses to an outcome; selection uses `EPP_PROVIDER_NAME`.
+Request-aware routing or multiple accounts require a separate design for trust, configuration,
+credentials, and testing, not just a change to `SelectProvider`.
 
 `CredentialTokenService` is the hosted startup warmer and runtime credential cache.
 `EPP_KEY_VAULT_CACHE_ENABLED` controls API-key caching; `EPP_ACCESS_TOKEN_CACHE_ENABLED` controls
@@ -146,7 +147,7 @@ shared-acquisition behavior applies here. Evaluation remains independent.
 | Source | Purpose |
 |---|---|
 | [Program.cs](Program.cs) | Host, provider, credential cache and HTTP client registration |
-| [Functions/SendOtp.cs](Functions/SendOtp.cs) | HTTP handler, provider selection, delivery orchestration and common HTTP transport |
+| [Functions/SendOtp.cs](Functions/SendOtp.cs) | HTTP handler, provider selection, credential resolution and delivery orchestration |
 | [Src/AppConfig.cs](Src/AppConfig.cs) | Shared deployment settings |
 | [Src/EntraSendOtpPayload.cs](Src/EntraSendOtpPayload.cs) | Bound request model, strict channel/mode converters and semantic validation |
 | [Src/JweDeliveryContext.cs](Src/JweDeliveryContext.cs) | Pinned JWE decryption and decrypted delivery context |
@@ -163,5 +164,5 @@ credential resolution, request construction and private typed response DTOs. The
 method delegates to the base `SendJsonAsync<TResponse>` transport and maps the typed response into
 `ProviderResult`; provider mapping code never handles `HttpResponseMessage` or raw JSON DOM types.
 Provider-specific response semantics stay in each provider; no shared response-mapping
-registry is used. Common async HTTP transport remains in `SendOtp`. See
+registry is used. Common async HTTP transport lives in `PhoneProviderBase`. See
 [production limitations](../docs/CONTRACT.md#production-limitations) before production use.

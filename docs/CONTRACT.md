@@ -178,10 +178,16 @@ credential or replay protection, and a fixed nonce cannot substitute for Easy Au
 { "nonce": "<echo of request nonce>", "correlationId": "<echo>", "providerStatus": "accepted" }
 ```
 
-`accepted`/`pending` are **not** failures (provider queued it; acceptance ≠ delivery to the handset).
-The endpoint returns **`200`** on acceptance (any `2xx` counts as transport acceptance). On `2xx` **with a
-matching nonce**, SAS treats the send as handled. **Nonce mismatch / non-2xx / timeout → SAS falls back
-to native CAPP delivery.** `Evaluation` mode returns `200` + nonce echo without delivering.
+The endpoint returns **`200`** only after the adapter recognizes acceptance on a successful
+provider HTTP response. A queued or pending status counts only when that adapter explicitly
+recognizes it; a provider `2xx` alone is insufficient. Acceptance is not handset delivery.
+`Evaluation` mode returns `200` + nonce echo without a provider send.
+
+The sample's integration contract expects the caller to treat `2xx` with a matching nonce as
+handled; a nonce mismatch, non-`2xx` response, or timeout can lead to native fallback. SAS itself
+is not implemented or tested by this repository. Confirm its current fallback, retry, and timing
+behavior through the [approved EPP procedure](ONBOARDING.md#validate-the-deployed-endpoint);
+do not rely on fallback as a guaranteed recovery mechanism.
 
 Live handlers await provider acceptance; they do not launch background delivery after replying.
 Handler failures omit the nonce and accepted status and return a sanitized error with a request ID
@@ -264,6 +270,7 @@ implemented `StepUp`/`409` mapping.
 | `Fail` | `401` | provider returned 401/403 (auth) |
 | `Fail` | `400` | other provider 4xx |
 | `Fail` | `502` | other provider error, or missing credential/endpoint |
+| N/A | `400` | configured provider name is missing or not registered |
 | N/A | `504` | request to the provider timed out |
 | N/A | `502` | network error to the provider (non-timeout) |
 
@@ -279,8 +286,9 @@ Each provider owns:
 - safe failure classification: `provider_http_error`, `provider_rejected`,
   `unrecognized_provider_status`, `missing_provider_message_id` or `invalid_provider_json`.
 
-The shared transport owns only final HTTPS validation, a capped timeout, manual redirects,
-`AbortController`/cancellation through response-body reading and one JSON parse. The provider receives
+The shared transport owns final HTTPS validation, timeout handling, disabled redirects, and
+response-body reading and decoding. JavaScript/.NET propagate cancellation through body reading;
+Python uses connect/read inactivity timeouts. The provider receives
 the transport result and returns a normalized provider result. Raw API-specific JSON is not inspected
 by the Function and never enters public responses or logs.
 
@@ -289,9 +297,9 @@ This model is internal: do not serialize it into the endpoint response or logs. 
 status, the mapped outcome and a bounded raw provider message ID; descriptions and raw
 metadata remain private. Public HTTP responses still expose only the existing
 nonce/correlation/status or sanitized error contract.
-Provider requests are serialized only when building the outbound HTTP body; incoming provider JSON
-is parsed once and normalized inside its provider. No serialization framework or provider-specific
-class hierarchy is required.
+Provider requests are serialized when building the outbound HTTP body. JavaScript/Python map
+parsed response objects; .NET deserializes provider-specific response types through
+`PhoneProviderBase.SendJsonAsync<TResponse>`. The handler uses only the normalized result.
 
 Consult the selected provider implementation for required credentials and options. The
 [onboarding credential naming table](ONBOARDING.md#provider-credential-names) lists exact secret

@@ -139,6 +139,7 @@ disclosed outbound managed-identity federated credential.
   directory permissions.
 - Microsoft Graph **beta** access for the Entra `signInAudienceRestrictions` allowed-tenants preview.
   The selected provider tenant is allowed in addition to the app's home tenant, which Entra always allows.
+  See the [allowed-tenants schema](https://learn.microsoft.com/en-us/graph/api/resources/allowedtenantsaudience?view=graph-rest-beta).
 - The selected **Linux Flex Consumption FC1 or Premium EP1** plan available in the chosen region,
   with sufficient subscription quota. Availability is checked for that plan only; regional service
   availability and resource-provider registration do not guarantee quota. If deployment reports
@@ -253,8 +254,8 @@ The flow is:
    name. Existing allowed provider tenants are preserved; provider options are never numbered.
    Setup downloads the provider JSON,
    resolves one complete regional route containing both SMS and voice endpoints, authentication, app-ID/scope
-   when applicable, timeout, and retry interval. Explicit test values are allowed, shown as test
-   configuration, and passed to Azure settings. It also resolves the latest stable CI package
+   when applicable, timeout, and retry interval. These values come from the selected profile;
+   the launcher has no endpoint or credential override parameters. It also resolves the latest stable CI package
    release and looks up the language asset name in `packages/catalog.json`; there are no
    `PackageUrl` or `PackageSha256` inputs. Use
    `-PackageReleaseTag epp-packages-<run>-<attempt>` to pin a previous CI release. Malformed or
@@ -353,10 +354,6 @@ request prerequisite installation, sign in through Azure CLI, perform permission
 region checks, verify package checksums, build the C# package locally when selected, and compile Bicep.
 Installation, sign-in, and consent prompts are separate from deployment approval.
 A preflight error is not a successful preview.
-
-The [main guide's terminal captures](../../README.md#3-run-guided-setup) show real input screens,
-with identifying details and provider names hidden. They illustrate the prompts, not deployment
-approval, resource creation, or the final completion summary.
 
 ### After approving the plan
 

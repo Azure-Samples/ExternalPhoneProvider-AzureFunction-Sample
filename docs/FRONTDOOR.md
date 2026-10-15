@@ -52,6 +52,8 @@ Give each Function App, storage account, and Key Vault a globally unique name. E
 its own identity IDs and vault references. Keep the **provider and authentication configuration
 consistent and use the same RSA key**, rather than copying every setting literally.
 The SMS/voice arrows show live delivery. Evaluation returns the nonce without contacting the provider.
+The diagram's provider-secret arrows apply to API-key integrations; OAuth uses each region's
+outbound managed identity. Match the key material across regions, not the vault URLs or version IDs.
 
 | Component | Purpose |
 |---|---|
@@ -297,8 +299,9 @@ double-load capacity, complete dependency isolation, or a full regional outage.
 Run only in an approved, isolated nonproduction environment, with synthetic data, bounded load,
 and the [fire-drill's approval, abort, and restoration safeguards](#6-regional-failover-fire-drill).
 Use an authorized test harness calling the Front Door endpoint, not a real Entra/SAS sign-in flow.
-**SAS evaluation can trigger native fallback; do not assume it is non-delivering.** Real-SAS and
-delivery testing require separate safety approval and are not part of this checklist.
+**Function evaluation suppresses sends only inside this endpoint.** Confirm real-SAS fallback
+and retry behavior with Microsoft rather than assuming a whole sign-in flow is non-delivering.
+Real-SAS and delivery testing require separate safety approval and are not part of this checklist.
 Agree load, headroom, recovery time, error/latency limits, soak duration, and restoration deadlines
 before starting; do not substitute the historical measurements for your acceptance targets.
 

@@ -122,8 +122,11 @@ Correlation header sanitization and empty-value handling differ by runtime; see 
 the internal attempt `messageId`, with a generated fallback. These IDs do not provide deduplication.
 
 **For live requests, echo the nonce only after acceptance, not before sending.**
-Acceptance is not proof of handset receipt. SAS treats a `2xx` response with a matching nonce
-as handled; a mismatched nonce, non-`2xx` response, or timeout causes SAS to fall back to native delivery.
+Acceptance is not proof of handset receipt. The sample's integration contract expects SAS to
+recognize a `2xx` response with a matching nonce; failures or timeouts can lead to native fallback.
+This repository does not implement or verify the current SAS caller's fallback or retry policy.
+Confirm that behavior through the [approved test procedure](ONBOARDING.md#validate-the-deployed-endpoint),
+including whether a lost response can lead to another send.
 
 On failure, omit both the nonce and accepted status. Handler errors contain `error` and a
 generated `requestId`, plus a fixed `reason` for validation errors and `correlationId` where

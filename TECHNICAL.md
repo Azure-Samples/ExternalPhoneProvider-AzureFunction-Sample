@@ -253,10 +253,12 @@ credential acquisition. Platform-managed identity caching and decryption-key ref
 Core Tools does not resolve Azure Key Vault reference expressions locally. Supply the local test PEM
 or base64 PEM directly; use a reference such as `@Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/<private-key-secret>/)`
 for `EPP_DECRYPTION_KEY_PEM` in Azure app settings, where the platform resolves it.
-Guided setup instead uses a **versioned** reference to
-`secrets/phone-provider-encryption/<version>`, containing a certificate and its exportable RSA private
-key in PEM format. A new Key Vault certificate version does not automatically switch the Function
-or update Entra. See [certificate lifecycle](setup/docs/README.md#encryption-certificate-lifecycle).
+Guided setup uses the **versioned** backing-secret URL recorded as `certificateSecretId` in the
+deployment summary. Initial creation uses `phone-provider-encryption`; replacement uses a suffixed
+name, and reuse preserves the selected certificate's name and vault. The secret contains the
+certificate and its exportable RSA private key in PEM format. Do not reconstruct its URL from the
+certificate name or version. A new Key Vault certificate version does not automatically switch
+the Function or update Entra. See [certificate lifecycle](setup/docs/README.md#encryption-certificate-lifecycle).
 
 Configure inbound issuer/audience/caller trust in **Easy Auth**, not these application variables.
 Incoming `tenantId`, `channel`, `mode` and `ttlSeconds` are request data and never override the
@@ -279,13 +281,13 @@ Basic authentication uses `base64(customer-id:api-key)`, with the existing Key V
 `telesign-customer-id` and `telesign-api-key`. Digest and Phase 2 token authentication are not
 implemented. The incoming caller's Authorization header is never forwarded.
 
-The adapter builds the following JSON from the decrypted delivery context and envelope:
+For an SMS request, the adapter builds the following JSON from the decrypted delivery context and envelope:
 
 ```json
 {
   "recipient": { "phone_number": "+1234567890" },
   "message": { "text": "Your verification code is 4821", "language": "en" },
-  "channels": [{ "channel": "voice" }],
+  "channels": [{ "channel": "sms" }],
   "correlation_id": "unique-string-123"
 }
 ```

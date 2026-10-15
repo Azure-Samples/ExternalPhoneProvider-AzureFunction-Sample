@@ -513,10 +513,10 @@ component/role/region grouping for the multi-region query.
 
 | Starting rule | Query adaptation | Condition |
 | --- | --- | --- |
-| Elevated request failure rate | Append `| where Requests >= 20 and FailurePct > 5` to the rolling-window summary. | Table rows > 0; evaluate every 5 minutes; require 2 of 3 evaluations. |
-| High request latency | Append `| where Requests >= 20 and P95Ms > 2000` to the same summary. | Table rows > 0; evaluate every 5 minutes; require 2 of 3 evaluations. |
+| Elevated request failure rate | Append a `where` filter with `Requests >= 20 and FailurePct > 5` to the rolling-window summary. | Table rows > 0; evaluate every 5 minutes; start with one violating evaluation. |
+| High request latency | Append a `where` filter with `Requests >= 20 and P95Ms > 2000` to the same summary. | Table rows > 0; evaluate every 5 minutes; start with one violating evaluation. |
 | JavaScript credential failures | Use the service-event query with `ago(15m)` and only `credential_refresh_failed`. | Table rows > 0; evaluate every 5 minutes; start with a warning. |
-| Expected origin missing | Append `| where MissingTelemetry` to the inventory query. | Table rows > 0; 20-minute lookback; evaluate every 5 minutes after accounting for ingestion delay. |
+| Expected origin missing | Append a `where MissingTelemetry` filter to the inventory query. | Table rows > 0; 20-minute lookback; evaluate every 5 minutes after accounting for ingestion delay. |
 
 The minimum request count deliberately avoids unstable percentages on tiny
 samples; it also means low-traffic failures need separate investigation or
@@ -524,6 +524,11 @@ authorized synthetic monitoring. Tune thresholds and severity to observed
 traffic, provider behavior, and your error budget. Use dimension splits for
 regional rules; do not configure a numeric threshold on an already filtered
 table-row query as though it returned raw events.
+
+These rolling summaries no longer return a datetime column. Do not select multiple violations
+for them as written: [Azure Monitor requires datetime output][log-alerts] for that option.
+For a sustained-failure rule, have the query maintainer design time-bucketed output and align
+the query lookback, aggregation granularity, and evaluation period before enabling it.
 
 Verify cross-workspace access for the alert's evaluation identity, enable
 appropriate resolution behavior, and inspect rule health. Query/permission
