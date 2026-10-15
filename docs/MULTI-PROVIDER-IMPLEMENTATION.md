@@ -4,19 +4,20 @@
 
 [Documentation](README.md) | [Normal deployment](GETTING-STARTED.md) | [Provider interface](../TECHNICAL.md#provider-result-mapping)
 
-Add controlled primary-to-secondary fallback around `/api/SendOtp`. Keep one server-owned SMS
-provider order with durable state and provider-specific approval.
+This advanced design adds controlled primary-to-secondary fallback around `/api/SendOtp`.
 
 Use the secondary **only after proof that the primary did not accept the request**. Timeouts,
 lost responses, and generic errors are uncertain and must not trigger an automatic resend.
 
-Follow [policy](#1-set-a-fixed-provider-order-and-a-deny-by-default-policy),
-[account configuration](#2-configure-and-prevalidate-both-accounts),
-[credential isolation](#3-give-each-context-its-own-credential-service-and-lifecycle),
-[durable state](#4-add-durable-operation-state-before-enabling-fallback),
-[fallback flow](#5-integrate-one-guarded-fallback-into-the-handler),
-[end-to-end deadline](#6-enforce-one-aggregate-deadline), and [validation](#7-validate-offline-then-deploy-only-after-separate-approval).
-[.NET/Python pointers](#net-and-python-integration-pointers) are not implemented fallback.
+| Step | Task |
+| --- | --- |
+| 1 | [Set provider order and policy](#1-provider-order) |
+| 2 | [Configure both accounts](#2-configure-and-prevalidate-both-accounts) |
+| 3 | [Isolate credentials](#3-credential-isolation) |
+| 4 | [Add durable operation state](#4-operation-state) |
+| 5 | [Implement guarded fallback](#5-fallback-flow) |
+| 6 | [Apply one deadline](#6-use-one-end-to-end-deadline) |
+| 7 | [Test and deploy](#7-validation-and-deployment) |
 
 <a id="1-set-a-fixed-provider-order-and-a-deny-by-default-policy"></a>
 ## 1. Provider order
@@ -45,15 +46,15 @@ Keep **routing order** separate from **fallback eligibility**. Use this policy:
 | Primary-only credential acquisition fails before transport is entered | Eligible only if this pre-dispatch fact is recorded, the account policy explicitly permits it, the durable operation guard allows the transition, and the request budget is sufficient. |
 | Provider-specific, documented proof that the primary did not accept the operation | Eligible only through a reviewed nonacceptance classifier, explicit account policy, the durable guard and sufficient budget. |
 
-**Enable fallback only after the provider confirms a safe nonacceptance signal.** Caller
-authentication and provider account controls still apply.
+Enable fallback only after the provider confirms a safe nonacceptance signal. Caller
+authentication and provider controls still apply.
 
 ## 2. Configure and prevalidate both accounts
 
 [config.js](../javascript/src/functions/config.js) accepts `readConfig(settings)`, so each
 account can use its own immutable settings without changing `process.env` per request.
-The following **customer-owned format** is not loaded by the sample. Replace each
-`<supported-adapter-name>` with a registered adapter and match its credential requirements.
+The following customer-owned format is not loaded by the sample. Replace each
+`<supported-adapter-name>` with a registered adapter.
 
 ```json
 [
@@ -81,9 +82,8 @@ The following **customer-owned format** is not loaded by the sample. Replace eac
 ]
 ```
 
-This SMS-only policy requires `EPP_PROVIDER_SMS_ENDPOINT` for each account. A voice policy requires
-`EPP_PROVIDER_VOICE_ENDPOINT` instead. The validated request channel selects the matching endpoint;
-there is no shared or other-channel endpoint fallback.
+This SMS policy requires `EPP_PROVIDER_SMS_ENDPOINT` for each account. Voice uses
+`EPP_PROVIDER_VOICE_ENDPOINT`. There is no shared endpoint fallback.
 
 At startup, validate both account configurations before enabling the endpoint. Check for unique
 IDs, the required channel endpoint, matching authentication mode, approved URLs, credential

@@ -2,7 +2,14 @@
 
 [Documentation](README.md) | [Find deployed logs](MONITORING.md#runtime-specific-log-discovery) | [HTTP contract](CONTRACT.md)
 
-Use this reference with the [monitoring walkthrough](MONITORING.md).
+Use this page to identify safe event fields and runtime differences.
+
+| Need | Section |
+| --- | --- |
+| Compare runtime output | [Runtime formats](#runtime-formats) |
+| Follow one request | [Event sequence](#event-sequence) |
+| Interpret IDs and fields | [Safe fields and identifiers](#safe-fields-and-identifiers) |
+| Configure collection | [Levels and collection](#levels-and-collection) |
 
 **Exclude request bodies, decrypted fields, credentials, nonces, raw exceptions, and provider
 responses.** Keep body tracing off.
@@ -15,8 +22,8 @@ responses.** Keep body tracing off.
 | Python | Standard `logging`; `otp_log.py` defines fixed event IDs, names, levels, and fields. An immutable `LoggerAdapter` supplies Function and Microsoft trace identifiers. |
 | .NET | Standard `ILogger`; `OtpLog` defines source-generated IDs/names. `ILogger.BeginScope` supplies `FunctionName`, `FunctionRequestId`, `FunctionInvocationId`, `MsClientRequestId`, `MsCorrelationId`, and `MsCorrelationIdSource`. |
 
-Each invocation ends with `request_completed`. Logger/exporter behavior controls formatting and
-property preservation. JavaScript, Python, and .NET field names differ; verify the
+Each invocation ends with `request_completed`. Exporters control formatting and property
+preservation. Field names differ by runtime, so verify the
 [deployed schema](MONITORING.md#runtime-specific-log-discovery).
 
 ## Event sequence
@@ -61,21 +68,17 @@ Unknown status text and malformed JSON are never logged; malformed JSON emits on
 
 ## Safe fields and identifiers
 
-Build metadata from **validated allowlisted fields**. Exclude unknown, tenant, locale, risk, and
-decrypted data.
+Build metadata from validated allowlisted fields. Exclude unknown, tenant, locale, risk, and
+decrypted values.
 
 `providerCredentialSource` is `managed_identity_client_assertion` for app tokens and `key_vault`
 for API keys. Cached resolution does not imply a network fetch or fresh token exchange.
 `providerCredentialElapsedMs` includes resolution and usability checks, not a separate deadline.
 SDK diagnostics remain suppressed.
 
-`provider_request_built` describes the outbound request, not a new physical connection or HTTP
-client. `providerEndpoint` records the **final** scheme, host/port, and path, which can differ
-from the configured base URL. For example, `https://provider.example/epp/voice?key=secret` becomes
-`https://provider.example/epp/voice`. Userinfo, query strings, and fragments are excluded, but
-**path segments are not redacted**: use provider-approved paths without secrets/personal data.
-Logging does not alter the actual URL or required query parameters. Standard verbs are uppercase;
-custom/invalid verbs appear as `other` without changing the sent request.
+`providerEndpoint` records the final scheme, host, port, and path. It removes user information,
+query strings, and fragments, but not path segments. Keep secrets and personal data out of URL
+paths. Logging does not change the request.
 
 JavaScript/Python events carry Function request/invocation IDs and Microsoft trace IDs available
 at that stage. JavaScript also carries known channel/evaluation/provider context; Python uses
@@ -97,13 +100,10 @@ Microsoft IDs are absent or change. Log names deliberately distinguish these sou
 | `functionOutboundManagedIdentityClientId` | Raw configured `EPP_OUTBOUND_MI_CLIENT_ID` used to obtain the app assertion, not the Key Vault identity or the identity's principal/Object ID. |
 | `providerEndpoint` | Validated final outbound URL without userinfo, query string or fragment; scheme, host/port and API path remain visible. |
 
-The six external/configuration ID fields preserve raw values and case, without hashing/truncation.
-Only nonblank strings of **1-128 ASCII characters** are recorded: a letter/digit first, then
-letters, digits, `.`, `_`, `:`, or `-`. Missing/blank values are null; other invalid values are
-null and their names appear in `omittedIdFields`, never their values.
-These guards affect logs only, not wire IDs, correlation precedence, or outcomes.
-Application/client/tenant IDs are identifiers, not secrets or trust assertions; incoming
-`tenantId` never becomes a trusted identity.
+External IDs keep their original value and case. Logs accept only 1-128 ASCII characters, starting
+with a letter or digit and followed by letters, digits, `.`, `_`, `:`, or `-`. Missing or invalid
+values are null. Invalid field names appear in `omittedIdFields`, never their values. These checks
+change logs only, not request behavior or trust.
 
 ## Levels and collection
 

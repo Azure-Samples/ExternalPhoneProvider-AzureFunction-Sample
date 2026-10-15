@@ -5,43 +5,39 @@
 
 [Documentation](README.md) | [Single-region setup](GETTING-STARTED.md) | [Routing troubleshooting](../setup/docs/Troubleshooting.md#optional-front-door-deployments)
 
-Azure Front Door provides **one public EPP URL across regional Function Apps**. Start with a
-validated [single-region deployment](GETTING-STARTED.md), then add origins, readiness, routing,
-validation, failover drills, and rollback.
+Azure Front Door provides one public EPP URL across regional Function Apps. Start with a validated
+[single-region deployment](GETTING-STARTED.md).
 
-Follow [scope](#scope-and-observed-behavior), [architecture](#architecture),
-[plan/capacity](#1-plan-the-regional-deployment), [origins/keys](#2-prepare-equivalent-independently-provisioned-origins),
-[readiness](#3-provide-a-non-delivering-readiness-endpoint), [routing](#4-configure-front-door-manually),
-[validation](#5-validate-before-manually-activating-policy), and [fire-drill](#6-regional-failover-fire-drill).
-Use [historical results](#observed-failover-results-and-limitations) as test context.
+| Step | Task |
+| --- | --- |
+| 1 | [Plan regions and capacity](#1-plan-the-regional-deployment) |
+| 2 | [Prepare equivalent origins and keys](#2-prepare-regional-origins) |
+| 3 | [Add a non-delivering readiness endpoint](#3-provide-a-non-delivering-readiness-endpoint) |
+| 4 | [Configure Front Door](#4-configure-front-door-manually) |
+| 5 | [Validate the complete route](#5-validate-before-manually-activating-policy) |
+| 6 | [Run a failover drill](#6-regional-failover-fire-drill) |
+
+[Historical test results](#observed-failover-results-and-limitations) are context, not an SLA.
 
 ## Scope and observed behavior
 
-Testing used JavaScript origins, Front Door Standard, two or three regions, a shared key, and a
-non-delivering readiness handler.
-
-Add the [readiness contract](#3-provide-a-non-delivering-readiness-endpoint) to each regional
-package before enabling probes. Released packages remain single-region.
-
-Build acceptance tests around the selected runtime and features, including approved live checks,
-Microsoft caller behavior, dependency loss, networking, and realistic load.
+The recorded tests used JavaScript, Front Door Standard, two or three regions, one shared
+encryption key, and a non-delivering readiness handler. Released packages remain single-region,
+so add and validate the readiness route before enabling probes.
 
 ### Regional resiliency responsibility
 
-Customers own capacity, credentials, keys, monitoring, and approved drills. Validate any
-alternate topology separately.
-
-Set RTO/RPO, failure, latency, capacity, and evidence targets for the regional design.
+Customers own capacity, credentials, keys, monitoring, drills, and rollback. Set recovery,
+latency, capacity, failure, and evidence targets before testing.
 
 <a id="architecture-one-url-multiple-origins"></a>
 ## Architecture
 
 ![Multi-region External Phone Provider architecture with Azure Front Door](images/multi-region-architecture.png)
 
-Region names are examples. Give each Function App, storage account, and Key Vault a unique name.
-Keep **provider and authentication configuration consistent and use the same RSA key**.
-Evaluation returns the nonce without contacting the provider. API-key integrations use secrets;
-OAuth uses each region's outbound identity. Match key material, not vault URLs or version IDs.
+Give each regional Function App, storage account, and Key Vault a unique name. Keep provider and
+authentication settings consistent and use the same RSA key. Match key material, not vault names
+or version IDs.
 
 | Component | Purpose |
 |---|---|
@@ -55,33 +51,26 @@ priority, latency, and weight. Equal weights do not guarantee a 50/50 split.
 
 ### Two-region baseline to provision and validate
 
-Use two regional stacks at equal priority. Each has its own Function App, capacity, storage,
-Key Vault, identities, telemetry, matching decryption key, and provider credentials. Verify each
-can operate without the other region.
-
-Share the public URL, endpoint app, issuer, audience, caller policy, provider route, and public-key
-identity. Replicate the private key using [key coordination](#coordinate-the-encryption-key).
-Front Door, Entra authentication, and the provider remain shared dependencies.
+Start with two equal-priority regional stacks. Each region has its own Function App, capacity,
+storage, Key Vault, identities, telemetry, matching key, and provider credentials. Verify each can
+operate without the other. Front Door, Microsoft Entra authentication, and the provider remain
+shared dependencies.
 
 ## 1. Plan the regional deployment
 
-Build the regional design in an isolated nonproduction tenant and subscription, separate from
-live traffic. Review the
+Build and test the regional design outside live traffic. Review the
 [setup prerequisites](../setup/docs/README.md#prerequisites-for-step-2) and
 [regional quota guidance](../setup/docs/Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku).
 
-- Start with two regions, based on service availability, capacity, residency, and the selected
-  Security Store provider's requirements. A third region adds cost and capacity, but does not
-  necessarily shorten failure detection.
+- Choose regions based on service availability, capacity, residency, and provider requirements.
 - Check availability of **every** required resource type, not just EP1 quota. Hosting availability
   does not mean Application Insights or other dependencies are available there.
 - Budget for an EP1 plan and regional dependencies in each region, Front Door, and telemetry.
-  Size and validate each region for the survivor workload described below, not just its normal share.
-- Choose one language and verify that each origin receives the same package. Do not mix
-  implementations or package versions while measuring failover.
+  Size each region for the survivor workload, not only its normal share.
+- Use one runtime and the same package in every region.
 - Record the endpoint application's client ID, validated token audience and issuer, authorized
   caller application ID, certificate/public-key identity, selected provider route, and regional owners.
-- Plan manual rollout, validation, certificate renewal, monitoring, and rollback before activation.
+- Plan rollout, validation, renewal, monitoring, drills, and rollback before activation.
 
 Use the regional procedure in this guide rather than rerunning `Setup-Epp.ps1` against the same
 application. The setup script creates one region; the steps below coordinate Front Door, shared
@@ -91,17 +80,12 @@ application configuration or certificate unexpectedly.
 <a id="capacity-gate-each-region-must-support-the-combined-peak-load"></a>
 ### Regional capacity
 
-**Size and validate each region to serve the full combined peak workload.** In a balanced
-two-region active-active design, each region needs capacity for **at least twice its normal
-traffic**. Add room for bursts, approved retries, probes, and dependencies. Reserve this
-capacity in both A and B before using regional failover. Retry capacity does not change the rule
-to check an uncertain live send before retrying.
+Size and validate each region for the full combined peak workload. In a balanced two-region
+design, each region needs at least twice its normal traffic plus room for bursts, probes, and
+dependencies.
 
-Use the expected peak workload rather than a quiet-period average. Equal weights do not guarantee
-equal routing. If traffic is uneven, each region still needs the combined peak plus headroom, so
-the less-used region may need more than twice its usual traffic. For more than two regions,
-document the failure budget and measure capacity for every allowed survivor group and routing
-pattern.
+Use peak workload, not a quiet-period average. Equal weights do not guarantee equal routing.
+For more than two regions, test every supported survivor combination.
 
 Record the workload mix, offered and completed request rates, concurrency, payload sizes, test
 duration, per-region latency percentiles, errors/timeouts, resource saturation, and dependency

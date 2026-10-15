@@ -20,18 +20,21 @@ Use the guide that matches your task.
 <a id="develop"></a>
 ## Understand and develop
 
-- [Architecture, settings, and built-in providers](../TECHNICAL.md)
+- [Technical reference](../TECHNICAL.md)
+  - [Soprano and Telesign](../TECHNICAL.md#built-in-providers)
 - [Send OTP API](CONTRACT.md)
-- Runtime guides: [JavaScript](../javascript/README.md), [C#](../dotnet/README.md), and
-  [Python](../python/README.md)
+- Runtime guides:
+  - [JavaScript](../javascript/README.md)
+  - [C#](../dotnet/README.md)
+  - [Python](../python/README.md)
 - [Add Twilio](BRING-YOUR-OWN-PROVIDER.md)
-- [Application log fields](LOGGING.md)
 
 ## Operate
 
-- [Function monitoring and alerts](MONITORING.md)
-- [Application Insights collection](APPLICATION-INSIGHTS.md)
-- [Microsoft Entra ID monitoring](SIGN-IN-MONITORING.md)
+- [Monitor the endpoint](MONITORING.md)
+  - [Application Insights setup and data](APPLICATION-INSIGHTS.md)
+  - [Application log fields](LOGGING.md)
+  - [Microsoft Entra ID sign-ins](SIGN-IN-MONITORING.md)
 - [Certificate renewal](../setup/docs/README.md#encryption-certificate-lifecycle)
 - [Rollback and decommissioning](../setup/docs/README.md#rollback-and-decommissioning)
 
