@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="1140" viewBox="0 0 960 1140" role="img" aria-labelledby="title description">
+  <title id="title">One endpoint, two request paths</title>
+  <desc id="description">Microsoft Entra ID calls the Function through Easy Auth. The Function validates and decrypts using its Key Vault-backed private key. Evaluation returns without calling a provider. Live requests use separate provider credentials and wait for recognized acceptance before responding. Recipient delivery is checked separately. Function telemetry does not prove delivery.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#245b91"/></marker>
+    <marker id="accepted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#21704d"/></marker>
+    <style>
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #172b40; font-size: 20px; }
+      .title { font-size: 30px; font-weight: 700; }
+      .heading { font-size: 23px; font-weight: 650; }
+      .small { font-size: 18px; }
+      .box { fill: #f1f6fc; stroke: #7595b7; stroke-width: 1.5; }
+      .success { fill: #edf7f1; stroke: #54856d; stroke-width: 1.5; }
+      .line { fill: none; stroke: #245b91; stroke-width: 2.5; marker-end: url(#arrow); }
+      .return { fill: none; stroke: #21704d; stroke-width: 2.5; marker-end: url(#accepted); }
+    </style>
+  </defs>
+  <rect width="960" height="1140" fill="white"/>
+  <text x="32" y="45" class="title">One endpoint, two request paths</text>
+  <text x="32" y="77" class="small">Original illustration of the sample; not a deployment or delivery result.</text>
+
+  <rect x="32" y="105" width="896" height="88" rx="12" class="box"/>
+  <text x="56" y="140" class="heading">Microsoft Entra ID</text>
+  <text x="56" y="172">HTTPS POST /api/SendOtp: signed bearer token + encrypted payload</text>
+  <path d="M306 193V236" class="line"/>
+
+  <rect x="32" y="238" width="548" height="94" rx="12" class="box"/>
+  <text x="56" y="274" class="heading">Easy Auth: verify the Microsoft caller</text>
+  <text x="56" y="306">Check token, issuer, audience and allowed app.</text>
+  <path d="M306 332V375" class="line"/>
+
+  <rect x="620" y="238" width="308" height="232" rx="12" fill="#fff7e8" stroke="#ae8741" stroke-width="1.5"/>
+  <text x="644" y="274" class="heading">Key Vault</text>
+  <text x="644" y="308">Private decryption key</text>
+  <text x="644" y="340" class="small">Function system identity</text>
+  <text x="644" y="368" class="small">resolves the pinned secret.</text>
+  <text x="644" y="412" class="small">Matching public certificate:</text>
+  <text x="644" y="440" class="small">endpoint app registration.</text>
+  <path d="M620 422H582" class="line"/>
+
+  <rect x="32" y="377" width="548" height="93" rx="12" class="box"/>
+  <text x="56" y="413" class="heading">Function: validate and decrypt</text>
+  <text x="56" y="445">Check envelope, JWE and required contents.</text>
+  <path d="M306 470V499H237V532" class="line"/>
+  <path d="M306 499H723V532" class="line"/>
+
+  <rect x="32" y="534" width="410" height="151" rx="12" class="success"/>
+  <text x="56" y="572" class="heading">Evaluation: mode 2</text>
+  <text x="56" y="607">Skip provider selection,</text>
+  <text x="56" y="636">credentials and HTTP on this path.</text>
+  <text x="56" y="665" font-weight="650">No message is sent.</text>
+
+  <rect x="518" y="534" width="410" height="151" rx="12" class="box"/>
+  <text x="542" y="572" class="heading">Live: mode 1</text>
+  <text x="542" y="607">Select the SMS or voice URL.</text>
+  <text x="542" y="636">Use provider API keys or OAuth,</text>
+  <text x="542" y="665">never the incoming bearer token.</text>
+  <path d="M237 685V754" class="return"/>
+  <path d="M723 685V754" class="line"/>
+
+  <rect x="518" y="756" width="410" height="142" rx="12" class="box"/>
+  <text x="542" y="794" class="heading">Selected phone provider</text>
+  <text x="542" y="830">Function waits for recognized</text>
+  <text x="542" y="860">acceptance on successful HTTP.</text>
+  <text x="542" y="886">Unknown results fail.</text>
+  <path d="M518 814H444" class="return"/>
+
+  <rect x="32" y="756" width="410" height="142" rx="12" class="success"/>
+  <text x="56" y="794" class="heading">Respond to Microsoft Entra ID</text>
+  <text x="56" y="830">HTTP 200 + original nonce</text>
+  <text x="56" y="860">correlationId +</text>
+  <text x="56" y="886">providerStatus: "accepted"</text>
+
+  <path d="M723 898V944" class="line" stroke-dasharray="5 5"/>
+  <rect x="518" y="946" width="410" height="89" rx="12" fill="#fff7e8" stroke="#ae8741" stroke-width="1.5"/>
+  <text x="542" y="981" class="heading">Recipient delivery</text>
+  <text x="542" y="1013">Check separately; not awaited.</text>
+  <text x="32" y="961" class="small">Failures omit the success nonce.</text>
+  <text x="32" y="990" class="small">A timeout can follow acceptance:</text>
+  <text x="32" y="1019" class="small">do not blindly send again.</text>
+
+  <path d="M32 1060H928" stroke="#c6d3df"/>
+  <text x="32" y="1090" class="small">Function telemetry goes to Application Insights and its Log Analytics workspace.</text>
+  <text x="32" y="1118" class="small">Provider credential preparation can run independently when caching is enabled.</text>
+</svg>

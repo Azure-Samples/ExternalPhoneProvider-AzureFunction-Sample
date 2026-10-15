@@ -36,7 +36,8 @@ sample's release package. No Front Door deployment script is supplied.
    trusted tenant issuer, endpoint-app `allowedAudiences` and a nonempty `allowedApplications` list for
    the authorized Microsoft caller. Do not exclude SendOtp. There is no backup application token validation;
    never expose the endpoint to the public internet with Easy Auth disabled or bypassed.
-5. Install dependencies from [package.json](package.json), run its offline test script and start the
+5. Install dependencies from [package.json](package.json), run the
+   [offline test commands](../docs/BRING-YOUR-OWN-PROVIDER.md#run-the-offline-tests), and start the
    local Functions host from this folder. Core Tools has no Easy Auth: bind only to loopback, with no
    tunnels or public forwarding. Publish this app folder only, preserving dependencies and observing
    [.funcignore](.funcignore); inspect the package before upload. Offline tests cover application

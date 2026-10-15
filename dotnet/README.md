@@ -40,7 +40,8 @@ used JavaScript; validate an equivalent .NET readiness implementation and deploy
 	before `SendOtp` runs. Those failures therefore do not produce application `ILogger` events or the
 	handler's custom error response body; platform diagnostics and responses apply instead.
 4. Build [dotnet.csproj](dotnet.csproj), run the offline xUnit suites in
-	[tests/Epp.Otp.Tests.csproj](tests/Epp.Otp.Tests.csproj), and start the local Functions host from this folder.
+	[tests/Epp.Otp.Tests.csproj](tests/Epp.Otp.Tests.csproj) using the
+	[offline test commands](../docs/BRING-YOUR-OWN-PROVIDER.md#run-the-offline-tests), and start the local Functions host from this folder.
 	Core Tools has no Easy Auth: bind only to loopback, with no tunnels or public forwarding.
 5. Publish this app folder to a compatible .NET isolated Function App. Inspect the package: both
 	[.funcignore](.funcignore) and the project protect local settings; private keys must not be included.

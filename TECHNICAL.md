@@ -13,16 +13,20 @@ and managed-identity access to credentials.
 
 ## Single-region architecture
 
-![Single-region External Phone Provider architecture](docs/images/single-region-architecture.png)
+![Microsoft Entra ID calls Easy Auth and the Function; evaluation skips the provider, while live requests wait for provider acceptance before returning the nonce. Recipient delivery is checked separately.](docs/images/single-region-architecture.png)
+
+*Original illustration; [scalable diagram and editable source](docs/images/single-region-architecture.svg).
+Follow the left branch for evaluation and the right branch for a live send.*
 
 Microsoft Entra ID sends an authenticated, encrypted request. Easy Auth checks the caller,
 then the Function decrypts the request using its Key Vault-backed key. For a live request, the
 selected adapter submits the message and returns success after provider acceptance, not after
 confirmed recipient delivery. Application Insights collects the available request and log telemetry.
 
-The diagram is an overview, not a portal screenshot. East US is illustrative; select a region
-with capacity and quota for your hosting plan. The provider-secret path applies to API-key
-integrations; OAuth integrations use managed-identity token exchange instead. Credential caching
+The diagram is an overview, not a portal screenshot or a complete resource inventory. Select a
+region with capacity and quota for your hosting plan. Provider API keys come from Key Vault;
+OAuth integrations use managed-identity token exchange instead. Both are separate from the
+decryption key and the incoming caller token. Credential caching
 depends on the [selected cache settings](docs/CONTRACT.md#credential-caching-and-refresh), and
 [log formats vary by runtime](docs/MONITORING.md#runtime-specific-log-discovery).
 

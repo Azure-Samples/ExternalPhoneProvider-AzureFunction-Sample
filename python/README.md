@@ -35,7 +35,8 @@ used JavaScript; validate an equivalent Python readiness implementation and depl
 	caller. Do not exclude SendOtp. There is no backup application token validation; never expose the
 	endpoint to the public internet with Easy Auth disabled or bypassed.
 4. Use a virtual environment, install [requirements.txt](requirements.txt) and pytest, then run the
-	offline [tests/](tests/) from this folder. Start the local Functions host from this app root.
+	offline [tests/](tests/) from this folder using the
+	[offline test commands](../docs/BRING-YOUR-OWN-PROVIDER.md#run-the-offline-tests). Start the local Functions host from this app root.
 	Core Tools has no Easy Auth: bind only to loopback, with no tunnels or public forwarding.
 5. Publish this folder to a compatible Linux Python Function App with dependencies or a supported
 	remote build. Inspect the package and apply [.funcignore](.funcignore); keep local settings and keys private.

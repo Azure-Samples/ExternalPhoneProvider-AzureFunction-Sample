@@ -44,16 +44,21 @@ approved by the deployment owners; the observed results below do not establish t
 
 ## Architecture: one URL, multiple origins
 
-![Multi-region External Phone Provider architecture with Azure Front Door](images/multi-region-architecture.png)
+![Azure Front Door routes Microsoft Entra ID requests to two regional Functions with equivalent Easy Auth, matching decryption keys and local dependencies; separate readiness probes do not call the shared phone provider.](images/multi-region-architecture.png)
 
-The diagram shows the design, not the exact test deployment. Its region names are examples.
-Custom domains and Premium/WAF are optional and weren't part of the Standard-tier test.
+*Original design illustration; [scalable diagram and editable source](images/multi-region-architecture.svg).
+Solid arrows show request routing; dashed arrows show the separate readiness probes.*
+
+The diagram shows the design, not a deployed environment. Regions A and B are placeholders.
+Custom domains and Premium/WAF are optional, not shown, and weren't part of the Standard-tier test.
 Give each Function App, storage account, and Key Vault a globally unique name. Each region also has
 its own identity IDs and vault references. Keep the **provider and authentication configuration
 consistent and use the same RSA key**, rather than copying every setting literally.
-The SMS/voice arrows show live delivery. Evaluation returns the nonce without contacting the provider.
-The diagram's provider-secret arrows apply to API-key integrations; OAuth uses each region's
-outbound managed identity. Match the key material across regions, not the vault URLs or version IDs.
+Only live requests reach the provider; evaluation returns the nonce without contacting it.
+API-key integrations read regional vault secrets; OAuth uses each region's outbound managed
+identity. Match the key material across regions, not the vault URLs, identity IDs, or version IDs.
+For response timing and separate recipient delivery, see the
+[single-request illustration](../TECHNICAL.md#single-region-architecture).
 
 | Component | Purpose |
 |---|---|

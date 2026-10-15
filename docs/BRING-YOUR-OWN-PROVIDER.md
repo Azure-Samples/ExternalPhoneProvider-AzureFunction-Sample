@@ -5,6 +5,9 @@ an encrypted phone number and one-time passcode message. Your endpoint verifies 
 decrypts the details, and either evaluates the request without sending or uses your phone service.
 It then responds to Entra ID. **Your team owns the connection to that service.**
 
+See the [request-path illustration](../TECHNICAL.md#single-region-architecture) for the
+authentication boundary, separate decryption key, and evaluation/live branches.
+
 Before deploying, ask your tenant administrator to confirm
 [eligibility, testing, and activation with Microsoft](ONBOARDING.md#before-purchasing-or-deploying).
 Deploying the endpoint alone does not enable tenant policy.
@@ -188,13 +191,56 @@ or send-retry loop. Keep service secrets in Key Vault, not in settings or source
 3. Add tests in the directory above for registration, request mapping, missing credentials,
    recognized acceptance, rejection, unknown responses, and timeouts on each supported channel.
    Check that evaluation sends nothing, live success waits for acceptance, and failures omit the
-   nonce. Use fake credentials and service responses; run your runtime's tests and build.
+   nonce. Use fake credentials and service responses; [run the offline tests](#run-the-offline-tests)
+   before building your package.
 4. [Package your changed source](../TECHNICAL.md#build-zips-locally), not an unchanged public
    release. C# needs publish output; Python needs the documented Linux remote build.
    Follow [manual deployment](ONBOARDING.md#optional-local-development-and-manual-deployment)
    to deploy the custom package and apply cloud settings and vault permissions separately.
    Retain the [Easy Auth trust checks](ONBOARDING.md#manual-deployment-trust-checklist), then
    complete the validation below.
+
+### Run the offline tests
+
+Use a **full repository checkout**, not a downloaded Function release ZIP: the ZIPs omit tests,
+and the suites use the shared `tests/fixtures/contract.json`. Run the unchanged suite first,
+then rerun it after adding your integration. You do not need a tenant, app registration,
+`local.settings.json`, Azurite, Core Tools, or provider account for these tests.
+
+Choose only your runtime. Open a terminal in the indicated folder, relative to the repository
+root, without production or deployed provider settings in its environment.
+Dependency preparation needs the package registry; the tests use local test keys and
+fake credentials/transport rather than Azure sign-in or live sends.
+
+**JavaScript — `javascript/`, Node.js 20 or 22 with npm:**
+
+```powershell
+# First checkout, or after package-lock.json changes:
+npm ci
+npm test
+```
+
+**C# — `dotnet/`, .NET 8 SDK:**
+
+```powershell
+dotnet test .\tests\Epp.Otp.Tests.csproj
+```
+
+`dotnet test` restores and builds the test project, which compiles the handler and shared source
+directly. Also run `dotnet build` in `dotnet/` before packaging to check the actual Function project.
+
+**Python — `python/`, Python 3.11 in an activated virtual environment:**
+
+```powershell
+# First checkout, or after requirements.txt changes:
+python -m pip install -r requirements.txt pytest
+python -m pytest tests
+```
+
+Use the test runner's final summary and exit code: no collected tests, a missing module, or a
+failed restore is not a passing run. These commands follow the repository's
+[CI workflow](../.github/workflows/ci.yml). A pass checks the application, not deployed Easy Auth,
+provider authorization, or delivery; continue with the separate acceptance checks below.
 
 <a id="step-7-check-endpoints-timeouts-and-privacy"></a>
 <a id="6-validate-before-activation"></a>
