@@ -20,15 +20,15 @@ the adapters in this folder.
 1. Create the [local settings below](#environment-configuration). For live integration, choose a
    fixed provider ID from [providers/](src/providers/), configure its endpoints/options, and
    complete [provider authentication](../docs/ONBOARDING.md#complete-provider-authentication).
-   No provider is selected by default.
+   Select one provider explicitly.
 2. Use a virtual environment, install [requirements.txt](requirements.txt) and pytest, and run
    [tests/](tests/). Start Core Tools here, **on loopback only, without tunnels**; it has no Easy Auth.
 3. For manual deployment, publish this app to a compatible Linux Python Function with dependencies
    or a supported remote build. Inspect [.funcignore](.funcignore) and the package for private
    settings/keys. Complete the [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist)
-   before public access: it is the only caller-authentication gate; never disable it or exempt SendOtp.
-   Run [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint);
-   offline tests do not verify platform authentication.
+   before public access. Keep Easy Auth enabled for SendOtp, then run
+   [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint) to verify
+   platform authentication.
 
 **Regional continuity:** use the [Front Door guide](../docs/FRONTDOOR.md) to implement and validate
 the readiness route and regional deployment for Python. The recorded trials used JavaScript, so
@@ -54,13 +54,13 @@ For local evaluation, start Azurite and replace the test-key placeholder in this
 For live delivery, use the [shared settings table](../TECHNICAL.md#configure-environment-variables)
 for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter-specific options.
 Keep values as strings, including `EPP_PROVIDER_TIMEOUT_MS: "1500"`. Replace placeholders;
-API keys belong in provider-named Key Vault secrets, not this file.
-A missing/invalid selected channel endpoint fails closed without fallback.
+Store API keys in provider-named Key Vault secrets. Each selected channel requires a valid
+endpoint; an invalid or missing endpoint returns an error without using the other channel.
 
 Core Tools loads `Values` into `os.environ`; direct Python execution and pytest do not.
 [read_config](src/config.py) returns an `AppConfig`, and the handler reads its attributes.
-Restart after edits. Core Tools cannot resolve Key Vault references locally, so use only a local
-test PEM or base64 PEM. Never copy Azurite settings into Azure.
+Restart after edits. Core Tools cannot resolve Key Vault references locally, so use a local
+test PEM or base64 PEM. Keep Azurite settings in the local environment.
 
 In Azure, configure the same app settings and use a Key Vault reference for the private PEM.
 Provider secrets use managed identity, not a developer CLI login. Keep local evaluation on loopback.
@@ -68,8 +68,9 @@ Provider secrets use managed identity, not a developer CLI login. Keep local eva
 ## Request behavior
 
 `POST /api/SendOtp` follows the [shared request/response contract](../docs/CONTRACT.md#1-http-api).
-Easy Auth authenticates; JWE decryption, nonce values, and request fields do not.
-The handler never parses or echoes incoming `Authorization`.
+Easy Auth authenticates the caller. JWE decryption, nonce values, and request fields serve other
+parts of the contract. The handler leaves incoming `Authorization` processing to Easy Auth and
+does not echo it.
 
 Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) for no-send validation:
 authentication and decryption still run, but request-path provider lookup, credentials, and HTTP do not.
@@ -83,7 +84,8 @@ and [Telesign integration](../TECHNICAL.md#telesign-epp).
 
 Use the provider-neutral
 [BYOT request and response guide](../docs/BRING-YOUR-OWN-PROVIDER.md) for the Microsoft Entra ID payload,
-caller authentication, and response rules. The customer owns the outbound service integration.
+caller authentication, and response rules. Customers can connect the outbound phone service
+that meets their requirements.
 
 For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
 [runtime-specific log discovery](../docs/MONITORING.md#runtime-specific-log-discovery).

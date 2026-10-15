@@ -132,8 +132,8 @@ After Step 2 approval, setup configures:
 - Microsoft Graph **beta** access for the Entra `signInAudienceRestrictions` allowed-tenants preview.
   The selected provider tenant is allowed in addition to the app's home tenant, which Entra always allows.
   See the [allowed-tenants schema](https://learn.microsoft.com/en-us/graph/api/resources/allowedtenantsaudience?view=graph-rest-beta).
-- The selected **Linux FC1 or EP1** plan available in the region, with sufficient subscription
-  quota. Service availability and provider registration do not guarantee quota. Resolve
+- The selected **Linux FC1 or EP1** plan available in the region, with enough subscription
+  quota. Check service availability, provider registration, and quota separately. Resolve
   [`SubscriptionIsOverQuotaForSku`](Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku)
   before retrying. After approval, setup registers required providers; the operator needs their
   subscription-scoped `/register/action` permission.
@@ -145,12 +145,12 @@ After Step 2 approval, setup configures:
 ### Permissions are separate
 
 For an Azure built-in-role example, **Owner at the selected subscription** includes deployment,
-resource-provider registration, and role-assignment rights. **Contributor alone is insufficient**
-for `Microsoft.Authorization/roleAssignments/write`; Contributor plus **Role Based Access Control
-Administrator** at the required scope is another administrator-reviewed option, subject to any
-role-assignment conditions. Setup deploys at subscription scope and creates a new resource group;
-a role on an unrelated existing group is not sufficient. Request only approved scope/duration
-and activate eligible PIM roles before setup. See [Azure roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles).
+resource-provider registration, and role-assignment rights. Another reviewed option is
+**Contributor** plus **Role Based Access Control Administrator** at the required scope, subject
+to any role-assignment conditions. Setup deploys at subscription scope and creates a new resource
+group, so access to an unrelated group does not cover the deployment. Request the approved scope
+and duration, and activate eligible PIM roles before setup. See
+[Azure roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles).
 
 Azure roles do not grant Entra/Graph permissions, and Entra roles do not grant Azure/vault access.
 The Entra Privileged Role Administrator and directory permissions of the signed-in Azure CLI user
@@ -327,9 +327,9 @@ at `Deploy this complete plan? Type Yes or No [No]`. Do not supply `-ApproveDepl
 that switch authorizes the deployment phase without asking again.
 
 This is a cancellation at the approval gate, not an offline simulation. The existing application
-registration is still required. Before the plan appears, setup can download tools and packages,
-request prerequisite installation, sign in through Azure CLI, perform permission and
-region checks, verify package checksums, build the C# package locally when selected, and compile Bicep.
+registration is still required. Before the plan appears, setup can download tools and packages, request required installation,
+and sign in through Azure CLI. It also checks permissions and regions, verifies package checksums,
+builds the C# package when selected, and compiles Bicep.
 Installation, sign-in, and consent prompts are separate from deployment approval.
 A preflight error is not a successful preview.
 
@@ -366,10 +366,11 @@ The suffix does not include provider/region, so changing those inputs with the s
 subscription/app/prefix can reconfigure the existing endpoint. See
 [deployment separation and key constraints](../../docs/ONBOARDING.md#inputs-you-supply-to-setup).
 
-The plan creates or updates a dedicated resource group, selected Linux FC1 or EP1 hosting plan, Function App,
-storage account/private package container, Key Vault, Log Analytics workspace, Application Insights,
-outbound managed identity, diagnostics, Easy Auth, and scoped role assignments. Storage/package
-access uses managed identity, not account keys or Azure Storage shared access signatures.
+The plan creates or updates the complete deployment. This includes a dedicated resource group,
+Linux FC1 or EP1 hosting plan, Function App, storage, private package container, and Key Vault.
+It also includes Log Analytics, Application Insights, an outbound managed identity, diagnostics,
+Easy Auth, and scoped role assignments. Storage and package access use managed identity instead
+of account keys or Azure Storage shared access signatures.
 Telemetry uses the system identity; the outbound identity is selected explicitly, not through
 a global `AZURE_CLIENT_ID`.
 
@@ -584,11 +585,11 @@ if ($LASTEXITCODE -ne 0) { throw 'ServicePlans.Tests.ps1 failed.' }
 Remove-Item -LiteralPath $templatePath
 ```
 
-The suites cover commit-pinned launcher downloads and cleanup; cached account and subscription
-selection; Azure CLI Graph transport; application and region selection; provider discovery,
-allowlist preservation, and stale-plan rejection; certificate decisions and cleanup ordering;
-provider/package resolution; and FC1/EP1 deployment paths. GitHub, Azure, Microsoft Graph,
-certificate, and publication calls are mocked. CI runs the same eight suites on Windows and Linux.
+The suites cover launcher downloads and cleanup; account, subscription, application, and region
+selection; Azure CLI Graph calls; provider discovery; allowlist preservation; and stale-plan
+checks. They also cover certificate choices, provider and package selection, and FC1/EP1
+deployment. GitHub, Azure, Microsoft Graph, certificate, and publication calls are mocked.
+CI runs the same eight suites on Windows and Linux.
 They do not certify live deployments, RBAC propagation,
 Key Vault issuance, Entra behavior, or provider delivery.
 
@@ -609,9 +610,9 @@ configuration APIs alone do not establish EPP feature availability or an EPP upd
 Do not invent a PATCH payload, assume a Graph success means activation, or use the general
 Delete operation as an EPP rollback.
 
-Before a policy change, the **Authentication Policy Administrator** must obtain Microsoft's
-current approved EPP procedure for the selected tenant/channel: tool, API/version and exact
-field placement, required consent/roles, readback, validation, and rollback semantics.
+Before a policy change, the **Authentication Policy Administrator** gets Microsoft's current
+approved EPP procedure for the selected tenant and channel. It must identify the tool, API and
+version, exact field placement, required consent and roles, readback steps, validation, and rollback.
 Delegated `Policy.ReadWrite.AuthenticationMethod` is a policy-management permission, not proof
 of EPP entitlement; confirm the approved procedure's permission requirements separately from setup.
 If this information or the feature is unavailable, leave policy unchanged and record the blocker.

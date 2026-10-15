@@ -4,10 +4,10 @@
 
 [Documentation](README.md) | [Exact HTTP contract](CONTRACT.md) | [Runtime guides](README.md#develop)
 
-**Microsoft Entra ID** sends your **External Phone Provider (EPP)** endpoint
-an encrypted phone number and one-time passcode message. Your endpoint verifies the caller,
-decrypts the details, and either evaluates the request without sending or uses your phone service.
-It then responds to Entra ID. **The customer owns the connection to that service.**
+This guide shows how to connect a phone service to the **External Phone Provider (EPP)**
+contract. **Microsoft Entra ID** sends the endpoint an encrypted phone number and one-time
+passcode message. The endpoint verifies the caller, decrypts the details, and either evaluates
+the request without sending or uses the connected phone service.
 
 Before deploying, ask your tenant administrator to confirm
 [eligibility, testing, and activation with Microsoft](ONBOARDING.md#before-purchasing-or-deploying).
@@ -23,8 +23,8 @@ Then [register your integration](#where-to-add-your-integration) and [validate b
 
 Entra ID sends **`POST /api/SendOtp` over HTTPS**, with a signed bearer token in `Authorization`.
 In this sample, **Easy Auth** (Azure App Service Authentication) checks the token and authorizes
-the caller before the Function runs. The Function's trigger is anonymous and has no backup
-authentication check, so do not expose it with Easy Auth disabled or bypassed.
+the caller before the Function runs. Keep Easy Auth enabled because the anonymous Function
+trigger relies on this platform check.
 
 Require HTTPS and authentication, return `401` for unauthenticated requests, and restrict access
 to the trusted tenant issuer, endpoint-app audience, and authorized Microsoft caller application ID.
@@ -84,7 +84,7 @@ The decrypted delivery context contains:
 | `riskContext` | No | Contextual JSON data; no shared schema validation, risk evaluation, or forwarding. |
 | `textToVoice` | No | Legacy speech data; no portable schema or shared forwarding. |
 
-Do not assume an optional field is supported just because it appears in the request.
+Treat optional fields as available only when the selected integration supports them.
 For parser and wrong-type handling, see [runtime binding differences](CONTRACT.md#runtime-binding-differences).
 
 <a id="4-complete-the-customer-owned-service-integration"></a>
@@ -101,14 +101,14 @@ Map the requested SMS or voice delivery to your service, preserving the destinat
 and passcode. Handle voice rendering and locales as needed. Authenticate with your own service
 credentials; **never forward the incoming bearer token**.
 
-Wait for recognized acceptance before returning success. A queued or pending result counts
-only if your integration recognizes it as acceptance. Unknown or incomplete responses must fail,
-and a success-looking body on a failed HTTP response is not acceptance. Return the result through
-the shared response behavior below, not as raw service JSON.
+Return success after the integration recognizes provider acceptance. A queued or pending result
+counts only when the integration defines it as accepted. Map unknown, incomplete, or failed HTTP
+responses to an error, even when the response body looks successful. Use the shared response
+behavior below instead of returning raw service JSON.
 
-The sample uses one configured service per deployment. A custom integration does not add
-guided setup support. Follow [Where to add your integration](#where-to-add-your-integration)
-for the files to create, registration, settings, and packaging.
+The sample uses one configured service per deployment. Follow
+[Where to add your integration](#where-to-add-your-integration) for the source files,
+registration, settings, packaging, and custom deployment steps.
 
 ## 4. Respond to Entra ID
 
@@ -202,7 +202,7 @@ or send-retry loop. Keep service secrets in Key Vault, not in settings or source
    release. C# needs publish output; Python needs the documented Linux remote build.
    Follow [manual deployment](ONBOARDING.md#optional-local-development-and-manual-deployment)
    to deploy the custom package and apply cloud settings and vault permissions separately.
-   Retain the [Easy Auth trust checks](ONBOARDING.md#manual-deployment-trust-checklist), then
+   Keep the [Easy Auth trust checks](ONBOARDING.md#manual-deployment-trust-checklist), then
    complete the validation below.
 
 <a id="step-7-check-endpoints-timeouts-and-privacy"></a>
@@ -215,10 +215,11 @@ invalid or tampered payloads, evaluation without a send, and controlled live tes
 Check handset receipt or voice audio separately from acceptance. For local tests, use test keys
 and fake service responses on loopback only, without tunnels; Core Tools has no Easy Auth.
 
-The sample completes the request after provider acceptance. If your live design adds early
-acknowledgement, background delivery, a durable queue, retries, or deduplication, define their
-timing and ownership explicitly. The outbound timeout covers the provider call rather than the
-whole request; investigate a timed-out send before retrying because it may already be accepted.
+The sample completes the request after provider acceptance. A live design can add early
+acknowledgement, background delivery, a durable queue, retries, or duplicate-send protection.
+Define the timing and owner for each feature. The outbound timeout covers the provider call,
+not the whole request. Check a timed-out send before retrying because the provider may already
+have accepted it.
 
 Keep phone numbers, messages, passcodes, nonces, tokens, keys, JWE contents, and raw service
 responses out of logs. Disable body tracing in the application, platform, and proxies.

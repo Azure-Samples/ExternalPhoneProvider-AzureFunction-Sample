@@ -2,12 +2,12 @@
 
 [Documentation](README.md) | [Find deployed logs](MONITORING.md#runtime-specific-log-discovery) | [HTTP contract](CONTRACT.md)
 
-This reference defines endpoint events and their interpretation. Incident investigation begins
-with the monitoring walkthrough rather than a search for a universal JSON request summary.
+This reference explains endpoint events and how to read them. Start an investigation with the
+monitoring walkthrough, then use the runtime format shown here.
 
-**Never log request bodies, decrypted fields, credentials, nonces, raw exceptions, or provider
-response bodies.** Keep SDK, platform, and proxy body tracing off. This page describes what the
-application emits; your monitoring pipeline determines what is collected.
+**Keep request bodies, decrypted fields, credentials, nonces, raw exceptions, and provider
+response bodies out of logs.** Keep SDK, platform, and proxy body tracing off. This page
+describes what the application emits; the monitoring pipeline determines what is collected.
 
 ## Runtime formats
 
@@ -17,7 +17,8 @@ application emits; your monitoring pipeline determines what is collected.
 | Python | Standard `logging`; `otp_log.py` defines fixed event IDs, names, levels, and fields. An immutable `LoggerAdapter` supplies Function and Microsoft trace identifiers. |
 | .NET | Standard `ILogger`; `OtpLog` defines source-generated IDs/names. `ILogger.BeginScope` supplies `FunctionName`, `FunctionRequestId`, `FunctionInvocationId`, `MsClientRequestId`, `MsCorrelationId`, and `MsCorrelationIdSource`. |
 
-Each invocation ends with a fixed `request_completed` event, not a mutable comprehensive summary.
+Each invocation ends with a fixed `request_completed` event. It is not a changing summary of
+every earlier event.
 The configured logger/exporter owns formatting and property preservation.
 The fields below describe JavaScript, **not portable custom properties**. Python uses `event_name`
 and extras such as `httpStatus`; .NET uses `HttpStatus` and scopes such as `FunctionRequestId`.

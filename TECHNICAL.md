@@ -33,14 +33,14 @@ neither of which is a successful evaluation.
 
 ## Resiliency and business continuity
 
-Start with a validated single-region deployment. When regional continuity is required, the
-[Azure Front Door design](docs/FRONTDOOR.md) describes one public URL across independently
-provisioned regional origins while preserving the SendOtp contract.
+Start with a validated single-region deployment. For regional continuity, the
+[Azure Front Door design](docs/FRONTDOOR.md) uses one public URL across separate regional
+origins while preserving the SendOtp contract.
 
-The guide covers survivor capacity, shared encryption-key coordination, regional dependencies,
-safe failover drills, and rollback. It also defines a dedicated non-delivering readiness endpoint
-to implement and validate with each regional package. Build regional provisioning and readiness
-into your approved BCDR process, then activate only after both directions pass the documented checks.
+The guide covers capacity, shared encryption keys, regional dependencies, safe failover drills,
+and rollback. It also defines a non-delivering readiness endpoint for each regional package.
+Add regional deployment and readiness to the approved BCDR process, then activate after both
+failover directions pass the documented checks.
 
 ## Implementations
 
@@ -129,7 +129,7 @@ JavaScript installs production dependencies from the lockfile in a temporary fol
 JavaScript dependencies. When adding native dependencies or packages that require install scripts,
 review packaging and build them for the target Azure OS.
 
-**.NET is a source ZIP, not compiled output.** It contains `dotnet.csproj`, `host.json`, `Program.cs`,
+**The .NET download contains source code.** It includes `dotnet.csproj`, `host.json`, `Program.cs`,
 and the C# files under `Functions/` and `Src/`. Packaging does not run restore, build, or publish,
 and needs no .NET SDK. It excludes `bin/`, `obj/`, tests, local settings, and compiled dependencies.
 Customers extract it and run `dotnet publish dotnet.csproj --configuration Release --output ../publish`
@@ -137,10 +137,10 @@ with the .NET 8 SDK, or use a deployment pipeline that builds the project. Deplo
 publish output with `host.json` at its root, not the source ZIP directly. CI tests this customer
 build from an extracted copy; that temporary publish output is not included in the download.
 
-**Python is a source ZIP, not a ready-to-run package.** Deploy to a Linux Function App with remote
-build enabled in the deployment tool for your hosting plan, so Azure installs `requirements.txt`.
-Do not use this source ZIP directly with run-from-package or copy Windows-installed Python dependencies
-to Azure. The script deliberately does not invoke pip or include a local virtual environment.
+**The Python download contains source code.** Deploy it to a Linux Function App with remote build
+enabled so Azure installs `requirements.txt`. Use the supported remote-build path instead of
+run-from-package or Windows-installed dependencies. The packaging script does not run pip or
+include a local virtual environment.
 
 Existing archives are never overwritten. For another build, specify a new path:
 
@@ -279,9 +279,9 @@ For an SMS request, the adapter builds the following JSON from the decrypted del
 ```
 
 `phoneNumber` must match `^\+[1-9][0-9]{1,14}$`; the leading `+` is preserved. SMS passes the complete
-`message` unchanged as `message.text`, including whitespace. For Voice, each six-digit numeric run
-that is not part of a longer number is rendered with comma-separated digits, and the complete paced
-message is sent twice with one separating space. Telesign performs text-to-speech for Voice; no
+`message` unchanged as `message.text`, including whitespace. For Voice, each standalone six-digit
+number is rendered with comma-separated digits. The complete paced message is sent twice with one
+separating space. Telesign performs text-to-speech for Voice; no
 separate speech object is needed.
 A nonblank string `locale` becomes `message.language`; otherwise language is omitted. The envelope
 channel selects the single `sms` or `voice` entry. `correlation_id` uses a nonempty string request
@@ -295,11 +295,13 @@ omits that header on live sends and does not forward it from incoming requests. 
 `mode: 2` evaluation path for Function tests without delivery: it skips provider HTTP and credential
 lookup entirely, rather than invoking Telesign shutter mode.
 
-Responses normalize `reference_id` and `status.code`/`status.description` internally; provider
+Responses normalize `reference_id` and `status.code`/`status.description` internally. Provider
 metadata is not exposed in the public nonce response. [Application logs](docs/LOGGING.md#safe-fields-and-identifiers)
-include only the provider HTTP status, mapped status/outcome and the bounded raw provider reference
-ID as `providerMessageId` for support lookup, never the raw response or description. Existing numeric success codes
-are retained (SMS: 200, 203, 290-292; Voice: 100-103). EPP code `3001` ("Message in progress"),
+include the provider HTTP status and mapped status/outcome. They also include a length-limited
+provider reference ID as `providerMessageId` for support lookup. They exclude the raw response
+and description.
+Existing numeric success codes remain unchanged (SMS: 200, 203, 290-292; Voice: 100-103).
+EPP code `3001` ("Message in progress"),
 observed for both channels, is also accepted on successful HTTP responses. This acknowledges
 provider acceptance, not handset receipt or completed audio playback. The sample's recognized
 codes are not a complete provider status-code catalog. Missing, malformed, or

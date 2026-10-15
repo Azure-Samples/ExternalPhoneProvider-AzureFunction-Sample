@@ -45,11 +45,10 @@ approved folder.
 
 ## Generate the activity report
 
-The following sample installs the required Microsoft Graph modules for the current user,
-connects to Microsoft Graph, identifies SMS and voice authentication steps, and matches
-each masked phone detail to a registered phone method. It caches phone-method lookups so
-each user is queried only once. Replace `$start` and `$end` with the required period to
-analyze.
+The sample installs the required Microsoft Graph modules and connects to Microsoft Graph.
+It finds SMS and voice authentication steps, matches each masked phone detail to a registered
+phone method, and caches each user's phone-method lookup. Set `$start` and `$end` to the
+required reporting period.
 
 ```powershell
 # 1. Install required modules if they are missing
@@ -176,11 +175,10 @@ from that detail and matches the visible suffix (`90`) against the user's regist
 methods. It then extracts the calling code from the uniquely matched registered number,
 whose Graph format includes a space after the code, such as `+91 1234567890`.
 
-For SMS, only `mobile` and `alternateMobile` registrations are considered; voice can use
-any registered phone type. A row is grouped as `Unknown` when the masked detail exposes
-fewer than two digits, no registered number matches, more than one registered number has
-the same visible suffix, or the matched number has an unexpected format. This avoids
-guessing a destination. Review the `Unknown` total before relying on the estimate.
+For SMS, the script uses `mobile` and `alternateMobile` registrations. Voice can use any
+registered phone type. The report uses `Unknown` when the visible detail is too short,
+does not match one registered number, or has an unexpected format. This avoids guessing
+a destination. Review the `Unknown` total before relying on the estimate.
 
 The script does not use sign-in geography. `-All` requests all available pages, but large
 tenants should still account for Microsoft Graph throttling and execution time. The script

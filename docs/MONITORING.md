@@ -22,9 +22,9 @@ For a first single-region deployment:
    reminders and cost ownership.
 
 For **missing data**, use [collection checks](#9-sampling-ingestion-gaps-privacy-and-validation).
-Optional: [multiple regions](#3-multiple-regions-and-cross-workspace-queries),
+Additional guidance covers [multiple regions](#3-multiple-regions-and-cross-workspace-queries),
 [Workbook](#6-build-a-shared-operations-workbook), [availability checks](#7-availability-authenticated-functions-and-fc1),
-and [Front Door](#8-optional-azure-front-door-layer). None is needed to find single-region logs.
+and [Front Door](#8-optional-azure-front-door-layer). Start with the single-region steps above.
 
 These examples do not create monitors automatically. Review permissions, privacy, and charges
 before applying them. Thresholds and intervals are **starting points, not SLAs**; tune them to
@@ -44,8 +44,8 @@ Keep a private inventory with one row per expected regional endpoint:
 | Expected traffic or authorized synthetic-test cadence | Decide whether missing data is actionable, including standby origins. |
 | Front Door profile, endpoint, origin group, and origin | Associate regional routing and health with the Function. |
 
-Do not derive the expected inventory solely from recent telemetry: an origin that
-never reports would be absent from that list.
+Build the expected inventory from the deployment record. Recent telemetry alone can miss an
+origin that has not reported.
 
 [Guided setup](../setup/docs/README.md) creates the collection resources, not action groups,
 Workbooks, or alerts. [Verify the deployed collection configuration](APPLICATION-INSIGHTS.md#single-region-configuration);
@@ -56,8 +56,8 @@ The template requests 30-day retention; check effective workspace/table retentio
 ### Portal resources
 
 1. Open the Function App named in your deployment summary.
-2. Select **Monitoring > Application Insights**. Follow the linked resource name; do not
-   select **Change your resource** or **Apply** just to view your logs.
+2. Select **Monitoring > Application Insights** and follow the linked resource name.
+   Viewing logs does not require **Change your resource** or **Apply**.
 
 ![Function App Monitoring menu with Application Insights selected and its connected resource link](images/onboarding/monitoring-link.png)
 
@@ -611,11 +611,11 @@ separate readiness design described above. See [Front Door monitoring][front-doo
 <a id="9-sampling-ingestion-gaps-privacy-and-validation"></a>
 ## 9. Sampling and data quality
 
-If data stops arriving, check the time range and workspace/component/role filters,
-actual traffic, deployment changes, log levels, host/worker exporter configuration,
-ingestion authorization/network access, sampling, throttling, and workspace daily
-caps. Retention and collection transformations can also affect query results.
-Never interpret an inaccessible workspace or missing table as a healthy empty window.
+If data stops arriving, first check the time range, workspace, component, role filters,
+and actual traffic. Then check recent deployments, log levels, host and worker exporters,
+ingestion access, network access, sampling, throttling, and workspace daily caps.
+Retention and collection transformations can also affect query results. Treat an
+inaccessible workspace or missing table as a collection issue, not a healthy empty window.
 
 This query estimates the event-to-ingestion gap for **received** requests:
 

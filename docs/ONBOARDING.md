@@ -28,17 +28,16 @@ a missing adapter.
 labels, pricing, and access can change. A store listing does not mean the setup script supports
 that integration; check [guided provider support](#provider-credential-names).*
 
-Have your tenant administrator confirm the supported EPP onboarding/activation procedure with
-Microsoft and the provider **before incurring deployment costs**. This repository does not define
-tenant eligibility, licensing, preview enrollment, or a self-service activation entitlement.
-The allowed-tenants preview used by setup must also be available in the customer tenant. If an
-offer, preview, authorized test caller, or activation procedure is unavailable, stop at that gate
-and use the offer's available support route or your organization's Microsoft support channel.
-Do not assume that being an Azure subscription owner grants access to these features.
+Before creating deployment costs, have the tenant administrator confirm the supported EPP
+onboarding and activation procedure with Microsoft and the provider. Confirm tenant eligibility,
+licensing, preview enrollment, the allowed-tenants preview, an authorized test caller, and the
+activation path. Use the offer's support route or the organization's Microsoft support channel
+to complete any missing step. Azure subscription ownership is separate from access to these
+features.
 
-Assign an **onboarding owner** in your organization to coordinate tenant/policy, Azure, and
-provider administrators with Microsoft support. Obtain approved test and policy-change procedures
-before deployment; the repository supplies no named onboarding contact.
+Assign an **onboarding owner** to coordinate tenant policy, Azure, provider administrators, and
+Microsoft support. Get the approved test and policy-change procedures before deployment. Use the
+organization's existing support contacts because this repository does not list a named contact.
 
 Use the [production-readiness considerations](CONTRACT.md#production-limitations) to plan the
 capabilities your live service needs, such as durable delivery, retry and deduplication strategy,
@@ -119,9 +118,8 @@ certificate is separate again. Fix the failing path rather than replacing unrela
 ## Complete provider authentication
 
 <a id="provider-credential-names"></a>
-Guided setup currently supports **Soprano and Telesign only**. The other bundled adapters are
-developer integrations, not additional guided provider offers. The table is alphabetical,
-not a recommendation order:
+Guided setup supports **Soprano and Telesign**. The other bundled adapters are available for
+custom development and deployment. The table is alphabetical, not a recommendation order:
 
 | Provider | Credential names / mode | Deployment support |
 |---|---|---|
@@ -192,18 +190,22 @@ where the provider supports it, and verify live delivery before retiring them.
 Setup creates customer-side federation, **not** the commercial account or access in Soprano's
 tenant. Complete this handoff before treating OAuth as ready.
 
-Send the following **identifiers only** through the provider's approved onboarding channel:
-customer tenant ID; `applicationId` / `EPP_OUTBOUND_CLIENT_ID`; intended channels and their full provider URLs;
-`EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_APP_ID`, and `EPP_PROVIDER_SCOPE`; and the account/sender
-reference requested by the provider. If troubleshooting federation, also supply the outbound
-identity Client ID and Principal ID, and the federated credential's issuer/subject/audience
-metadata. Never supply the managed-identity assertion, access token, private key, or a new client secret.
+Send **identifiers only** through the provider's approved onboarding channel:
 
-Ask the provider administrator to confirm the API tenant/app/scope, provision/authorize the
-calling application's service principal in that tenant through its supported process, and
-confirm the exact consent/application roles and account/channel entitlement. This repository
-does not publish a supported Soprano consent URL or role-ID catalog; do not guess a role or
-construct an admin-consent link from the sample's GUIDs. Record their completion confirmation.
+- customer tenant ID and `applicationId` / `EPP_OUTBOUND_CLIENT_ID`
+- intended channels and their full provider URLs
+- `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_APP_ID`, and `EPP_PROVIDER_SCOPE`
+- the provider-requested account or sender reference
+
+For federation troubleshooting, also provide the outbound identity Client ID and Principal ID,
+plus the federated credential's issuer, subject, and audience. Keep the managed-identity assertion,
+access token, private key, and client secrets private.
+
+Ask the provider administrator to confirm the API tenant, app, and scope. They can then authorize
+the calling application's service principal through the provider's supported process and confirm
+the exact consent, application roles, and account/channel access. Use the provider's approved
+consent path rather than building a URL or role list from sample GUIDs. Record the completion
+confirmation.
 
 Inspect the dedicated app's **Certificates & secrets > Federated credentials** and the outbound
 identity's Overview. Setup's subject is the identity's **Principal ID**, issuer is the customer's
@@ -215,17 +217,17 @@ for the mechanism, then use an authorized controlled live test to verify the ful
 ## Validate the deployed endpoint
 
 <a id="4-package-deploy-and-verify"></a>
-**Authorized testing is an assisted gate.** This repository supplies offline runtime tests, not
-a customer self-service tool that obtains a token as Microsoft's phone-provider application.
-An ordinary `az account get-access-token` result or a customer's test app is not that caller.
-Do not add a test application to `allowedApplications`, disable Easy Auth, or publish a local
-unauthenticated host to work around this. Ask the onboarding owner to arrange Microsoft's
-approved EPP caller/test procedure. If unavailable, record **not validated** and do not activate.
+**Use Microsoft's assisted process for authorized testing.** The repository provides offline
+runtime tests, while Microsoft supplies the approved EPP caller and test procedure. An ordinary
+`az account get-access-token` result or a customer test app represents a different caller.
+Keep `allowedApplications` and Easy Auth unchanged, and keep local hosts private. Ask the
+onboarding owner to arrange the approved procedure. Activate after that validation is complete.
+If the procedure is not available, record **not validated** and leave the policy inactive.
 
-Provide that operator the endpoint URL, customer tenant ID, endpoint application client ID,
-identifier URI, encryption key ID, **public** certificate/thumbprint, and provider from your
-inventory/summary, plus the intended channels and approved test window. Agree on controlled
-recipients privately and obtain explicit permission before any paid/live send.
+Provide the operator with the endpoint URL, customer tenant ID, endpoint application client ID,
+identifier URI, encryption key ID, and **public** certificate or thumbprint. Also provide the
+selected provider, intended channels, and approved test window from the deployment inventory.
+Agree on controlled recipients privately and get permission before any paid live send.
 
 | Order / owner | Check | Evidence to retain without sensitive payloads |
 |---|---|---|

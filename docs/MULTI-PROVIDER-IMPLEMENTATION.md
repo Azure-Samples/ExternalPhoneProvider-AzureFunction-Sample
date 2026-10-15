@@ -4,20 +4,20 @@
 
 [Documentation](README.md) | [Normal deployment](GETTING-STARTED.md) | [Provider interface](BRING-YOUR-OWN-PROVIDER.md)
 
-This guide describes a customer-owned primary-to-secondary provider design. It adds code,
-durable state, provider-specific approval, and dedicated testing around the existing
-`/api/SendOtp` URL. Keep the provider order on the server for one SMS channel rather than letting
-the caller select accounts or treating the order as a vendor ranking.
+This guide shows how to add controlled primary-to-secondary provider fallback around the existing
+`/api/SendOtp` URL. The design adds durable state, provider-specific approval, and dedicated
+tests. Keep the provider order on the server for one SMS channel.
 
-Try a secondary **only with proof that the primary did not accept**. Timeouts, lost responses,
-and generic errors are not that proof; never automatically resend on those signals.
+Use the secondary **only after confirmed proof that the primary did not accept the request**.
+Treat timeouts, lost responses, and generic errors as uncertain outcomes and investigate them
+without an automatic resend.
 
 Follow [policy](#1-set-a-fixed-provider-order-and-a-deny-by-default-policy),
 [account configuration](#2-configure-and-prevalidate-both-accounts),
 [credential isolation](#3-give-each-context-its-own-credential-service-and-lifecycle),
 [durable state](#4-add-durable-operation-state-before-enabling-fallback),
-[orchestration](#5-integrate-one-guarded-fallback-into-the-handler),
-[deadline](#6-enforce-one-aggregate-deadline), and [validation](#7-validate-offline-then-deploy-only-after-separate-approval).
+[fallback flow](#5-integrate-one-guarded-fallback-into-the-handler),
+[end-to-end deadline](#6-enforce-one-aggregate-deadline), and [validation](#7-validate-offline-then-deploy-only-after-separate-approval).
 [.NET/Python pointers](#net-and-python-integration-pointers) are not implemented fallback.
 
 <a id="1-set-a-fixed-provider-order-and-a-deny-by-default-policy"></a>
@@ -49,10 +49,10 @@ Keep **routing order** separate from **fallback eligibility**. Use this policy:
 | Primary-only credential acquisition fails before transport is entered | Eligible only if this pre-dispatch fact is recorded, the account policy explicitly permits it, the durable operation guard allows the transition, and the request budget is sufficient. |
 | Provider-specific, documented proof that the primary did not accept the operation | Eligible only through a reviewed nonacceptance classifier, explicit account policy, the durable guard and sufficient budget. |
 
-**Default to no fallback.** No real provider response is designated safe to fall back
-from by this guide. Obtain and review provider-specific semantics before enabling that path.
-An expired/rejected inbound token never reaches it. A provider credential failure must not bypass
-account suspension, consent requirements, entitlement restrictions or a provider block.
+**Keep fallback off until the provider confirms a safe nonacceptance signal.** Review that
+provider-specific signal and the account policy before enabling the path. An expired or rejected
+inbound token never reaches fallback. Provider credential handling continues to honor account
+status, consent, access rules, and provider blocks.
 
 ## 2. Configure and prevalidate both accounts
 
@@ -94,9 +94,9 @@ This SMS-only policy requires `EPP_PROVIDER_SMS_ENDPOINT` for each account. A vo
 `EPP_PROVIDER_VOICE_ENDPOINT` instead. The validated request channel selects the matching endpoint;
 there is no shared or other-channel endpoint fallback.
 
-Your startup loader must reject duplicate/missing IDs, missing endpoints for the policy's channel,
-mismatched authentication modes, unapproved endpoints, missing credential references and invalid
-deadline policy. Validate both contexts before enabling the endpoint, not only after the primary fails.
+At startup, validate both account configurations before enabling the endpoint. Check for unique
+IDs, the required channel endpoint, matching authentication mode, approved URLs, credential
+references, and a valid deadline policy.
 
 For each selected [adapter](../javascript/src/functions/providers), inspect `credentialSpec`
 for the required secret names and any account identifier, and `createRequest` for endpoint and
@@ -108,8 +108,8 @@ Set an account/destination-approved sender where required; an adapter's default 
 proof of approval. These requirements apply equally to primary and secondary roles.
 
 Store no credential values in the configuration. Attach each referenced user-assigned managed
-identity to the Function App and grant the vault-reading identity scoped secret-read access,
-such as Key Vault Secrets User under RBAC or the approved access-policy equivalent. If using
+identity to the Function App. Grant the vault-reading identity scoped secret-read access, such
+as Key Vault Secrets User under RBAC or the approved access-policy equivalent. If using
 the system-assigned identity, grant that identity instead. Client-ID settings do not attach
 identities or grant access. Complete provider account, recipient, sender and consent prerequisites;
 see [provider onboarding](ONBOARDING.md#complete-provider-authentication).
@@ -171,11 +171,10 @@ changes; never repurpose a live service for another account.
 <a id="4-add-durable-operation-state-before-enabling-fallback"></a>
 ## 4. Operation state
 
-The repository has **no durable attempt store or idempotency contract**. Implement these before
-adding a second possible submission. Agree on a stable, authorized logical-operation key with
-the caller/test contract. Do not assume a generated invocation ID, correlation GUID or nonce is
-an idempotency key. Bind the key to the authorized caller, operation and immutable request/policy
-identity so another request cannot reuse it to obtain a different delivery.
+Add a **durable attempt store and idempotency contract** before allowing a second submission.
+Agree on a stable, authorized operation key with the caller and test owner. Generated invocation
+IDs, correlation GUIDs, and nonces serve other purposes. Bind the operation key to the authorized
+caller, request, and fixed policy so another request cannot reuse it for a different delivery.
 
 Use transactional/conditional writes in a durable shared store, not an in-memory map or lock.
 Atomically claim an operation across concurrent invocations and worker restarts. Persist intent
@@ -205,7 +204,8 @@ Entra ID retries or native fallback outside this endpoint can still produce dupl
 behavior with the owner rather than promising the local guard prevents it.
 
 <a id="5-integrate-one-guarded-fallback-into-the-handler"></a>
-## 5. Fallback orchestration
+<a id="5-fallback-orchestration"></a>
+## 5. Fallback flow
 
 In [SendOtp.js](../javascript/src/functions/SendOtp.js), preserve authentication at the platform
 boundary, [envelope validation](../javascript/src/functions/entraPayload.js),
@@ -221,7 +221,7 @@ returns a structured category. Use `providerConfig` for outbound settings and th
 [OtpDelivery](../javascript/src/functions/delivery.js) construction and content handling intact.
 
 The existing credential catch immediately returns 502, and transport/result failures immediately
-return errors. Your attempt helper must report the stage to the orchestrator instead of hiding
+return errors. The attempt helper reports the stage to the main flow instead of hiding
 it in a catch that calls the secondary. Preserve their final HTTP classifications when fallback
 is denied. This is **policy pseudocode**, not executable glue or a complete handler:
 
@@ -264,9 +264,9 @@ reinterpret generic `Fail` or a broad status range as proof.
 [providerTransport.js](../javascript/src/functions/providerTransport.js) collapses fetch and
 response-body failures into `provider_timeout`/`provider_network_error`. Those errors do **not**
 expose whether the request was transmitted. Treat them as uncertain after intent, including
-connection errors; do not guess they happened before send. A primary credential failure can
-be pre-dispatch only when control flow and operation state prove transport was never entered,
-the failure is isolated to that primary, and account policy still permits the secondary.
+connection errors; do not guess they happened before send. Treat a primary credential failure
+as pre-dispatch only when the flow and operation state prove transport was never entered.
+The failure must also be isolated to the primary, and account policy must still allow the secondary.
 
 Keep endpoint allowlists, HTTPS checks, manual redirects and per-provider response mapping.
 Never forward inbound authorization. Preserve the endpoint success nonce/correlation response
@@ -274,20 +274,21 @@ only for evaluation or an accepted delivery result; terminal/uncertain outcomes 
 nonce. Continue using [safe logging](../javascript/src/functions/logging.js), with an explicit
 per-attempt provider ID/classification and one final request outcome.
 
-## 6. Enforce one aggregate deadline
+<a id="6-enforce-one-aggregate-deadline"></a>
+## 6. Use one end-to-end deadline
 
-Define an end-to-end budget with the service/caller owner; this guide provides no SLA or magic
-timeout value. Include validation, durable-store waits, primary credential acquisition/transport,
-secondary credential acquisition/transport and final response work. An operation must not receive
-a fresh budget when a duplicate invocation arrives.
+Define one end-to-end time budget with the service and caller owners. Include validation,
+durable-store waits, both providers' credential and transport work, and the final response.
+A duplicate invocation continues to use the original operation budget.
 
 The current credential service has its own acquisition bound and the transport its own timeout.
 `parseProviderTimeout` normalizes a single provider timeout, **not** an aggregate deadline.
 Add explicit remaining-budget checks and cancellation propagation in your customer integration.
 Do not use `Promise.race` to return while a send continues in the background. If ownership,
 deadline or cancellation changes after dispatch, record uncertainty and never fall back.
-Reserve enough time for the whole secondary attempt and finalization, rechecking before intent;
-insufficient budget means no secondary even when nonacceptance is otherwise eligible.
+Reserve enough time for the complete secondary attempt and final response, and check the remaining
+time again before sending. Skip the secondary when the remaining time cannot cover that work,
+even when the primary result would otherwise allow fallback.
 
 <a id="7-validate-offline-then-deploy-only-after-separate-approval"></a>
 ## 7. Validation and deployment

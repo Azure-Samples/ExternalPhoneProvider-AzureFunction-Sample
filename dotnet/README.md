@@ -20,16 +20,16 @@ the adapters in this folder.
 1. Create the [local settings below](#environment-configuration). For live integration, choose an
    adapter's fixed `Name` from [Providers/](Src/Providers/), configure its endpoints/options, and
    complete [provider authentication](../docs/ONBOARDING.md#complete-provider-authentication).
-   No provider is selected by default.
+   Select one provider explicitly.
 2. Build [dotnet.csproj](dotnet.csproj), run [xUnit tests](tests/Epp.Otp.Tests.csproj), and start
    Core Tools here, **on loopback only, without tunnels**; it has no Easy Auth.
 3. For manual deployment, publish this app to a compatible .NET isolated Function App.
    Inspect the output and [.funcignore](.funcignore); the project excludes local settings, and
    private keys must not be packaged. Complete the
    [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist) before public
-   access: it is the only caller-authentication gate; never disable it or exempt SendOtp.
-   Run [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint);
-   offline tests do not verify platform authentication.
+   access. Keep Easy Auth enabled for SendOtp, then run
+   [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint) to verify
+   platform authentication.
 
 **Regional continuity:** use the [Front Door guide](../docs/FRONTDOOR.md) to implement and validate
 the readiness route and regional deployment for .NET. The recorded trials used JavaScript, so
@@ -55,8 +55,9 @@ For local evaluation, start Azurite and replace the test-key placeholder in this
 For live delivery, use the [shared settings table](../TECHNICAL.md#configure-environment-variables)
 for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter-specific options.
 Keep values as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"1500"`.
-Replace placeholders; credentials belong in the adapter's Key Vault secrets, not this file.
-A missing/invalid selected channel endpoint fails closed without fallback.
+Replace placeholders and store credentials in the adapter's Key Vault secrets. Each selected
+channel requires a valid endpoint; an invalid or missing endpoint returns an error without using
+the other channel.
 
 Core Tools loads `Values` into environment variables; direct worker execution and unit tests do not
 load local settings. [AppConfig.Read](Src/AppConfig.cs) reads them through `IEnv`. Restart after
@@ -69,8 +70,9 @@ Provider credentials use managed identity, not a developer CLI login. Keep local
 ## Request behavior
 
 `POST /api/SendOtp` follows the [shared request/response contract](../docs/CONTRACT.md#1-http-api).
-Easy Auth authenticates; JWE decryption, nonce values, and request fields do not.
-The handler never parses or echoes incoming `Authorization`.
+Easy Auth authenticates the caller. JWE decryption, nonce values, and request fields serve other
+parts of the contract. The handler leaves incoming `Authorization` processing to Easy Auth and
+does not echo it.
 
 **.NET binding runs first:** `[FromBody]` creates `EntraSendOtpPayload`. Malformed JSON, invalid
 enum tokens, or other deserialization errors can fail before `SendOtp`, its `ILogger` events,
@@ -89,7 +91,8 @@ and [Telesign integration](../TECHNICAL.md#telesign-epp).
 
 Use the provider-neutral
 [BYOT request and response guide](../docs/BRING-YOUR-OWN-PROVIDER.md) for the Microsoft Entra ID payload,
-caller authentication, and response rules. The customer owns the outbound service integration.
+caller authentication, and response rules. Customers can connect the outbound phone service
+that meets their requirements.
 
 For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
 [runtime-specific log discovery](../docs/MONITORING.md#runtime-specific-log-discovery).
@@ -126,6 +129,6 @@ name used by the simple `SelectProvider` policy in `SendOtp`. Providers own auth
 credential resolution, request construction and private typed response DTOs. Their public `SendOtpAsync`
 method delegates to the base `SendJsonAsync<TResponse>` transport and maps the typed response into
 `ProviderResult`; provider mapping code never handles `HttpResponseMessage` or raw JSON DOM types.
-Provider-specific response semantics stay in each provider; no shared response-mapping
-registry is used. Common async HTTP transport lives in `PhoneProviderBase`. See
+Each provider keeps its own response rules. Common async HTTP transport lives in
+`PhoneProviderBase`. See
 [production-readiness considerations](../docs/CONTRACT.md#production-limitations) when planning a live service.

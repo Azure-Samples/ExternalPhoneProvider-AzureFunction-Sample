@@ -9,9 +9,9 @@ For missing or incomplete telemetry, use
 [single-region configuration](#single-region-configuration). This page covers JavaScript,
 .NET isolated, and Python.
 
-Function telemetry shows execution, timing, and logs, **not recipient delivery**.
-[Microsoft Entra ID sign-in monitoring](SIGN-IN-MONITORING.md) uses a separate tenant export pipeline and does
-not prove delivery either.
+Function telemetry shows execution, timing, and logs. Confirm recipient delivery through the
+provider's supported delivery evidence. [Microsoft Entra ID sign-in monitoring](SIGN-IN-MONITORING.md)
+uses a separate tenant export pipeline for identity activity.
 
 This page assumes the endpoint is already deployed. Use the [setup guide](GETTING-STARTED.md)
 first, then follow the [approved test handoff](ONBOARDING.md#validate-the-deployed-endpoint).
@@ -62,9 +62,9 @@ exporters can change formatting, casing, and which properties survive.
 
 To add direct worker instrumentation, follow the
 [Functions OpenTelemetry guidance](https://learn.microsoft.com/en-us/azure/azure-functions/opentelemetry-howto)
-for the selected language: initialize exporter/instrumentations and credentials, then verify correlation
-and duplicate suppression. Do not copy another runtime's host settings. For languages outside
-this sample, check Microsoft's corresponding support tab.
+for the selected language. Initialize the exporter, instrumentation, and credentials, then verify
+correlation and duplicate suppression. Use the settings for that runtime. For languages outside
+this sample, check the matching Microsoft support tab.
 
 <a id="signals-tables-and-metrics-are-different-things"></a>
 ## Telemetry signals and tables

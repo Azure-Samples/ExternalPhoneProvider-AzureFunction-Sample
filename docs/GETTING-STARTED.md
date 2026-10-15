@@ -16,15 +16,15 @@ Portal screenshots hide identifying details; labels and layout may differ.
 
 ## 1. Get ready
 
-Create an **isolated test environment** in a nonproduction tenant and subscription. Use a new
-application registration and a unique resource prefix so the endpoint is easy to identify and
-remains separate from production and other deployments.
+Start with a **separate test environment** in a nonproduction tenant and subscription. Create a
+new application registration and choose a unique resource prefix. This makes the endpoint easy
+to identify and keeps testing separate from production.
 
 Before purchasing or deploying, confirm access to a supported provider's EPP integration through
 [Microsoft Security Store](https://securitystore.microsoft.com/private-solutions). Arrange
 Microsoft's approved testing and activation procedure with your tenant administrator.
-Buying an offer is one part of onboarding; tenant access, the approved procedure, and deployment
-are completed separately. Confirm those paths before continuing, or use the
+The complete onboarding path includes the provider offer, tenant access, the approved procedure,
+and deployment. Confirm each part before continuing, or use the
 [access and support guidance](ONBOARDING.md#before-purchasing-or-deploying) to get them in place.
 
 In Security Store, open **Private solutions** and select your approved subscription.
@@ -79,8 +79,8 @@ Use these field labels to find the right IDs:
 *Use **Application (client) ID** for `-ApplicationId` and **Directory (tenant) ID** for `-TenantId`.
 The **Object ID** is not either of these setup inputs. All ID values are hidden in this example.*
 
-Do not add a client secret, API permission, or app role yourself; setup handles the remaining
-configuration. See [application registration details](../setup/docs/README.md#step-1---manually-create-the-application).
+Let setup add the required API permission and app role. No client secret is needed.
+See [application registration details](../setup/docs/README.md#step-1---manually-create-the-application).
 
 Also keep your Azure subscription ID handy. The
 [setup values worksheet](ONBOARDING.md#inputs-you-supply-to-setup) explains where to find
@@ -127,10 +127,10 @@ to reuse one exact Key Vault certificate version or approve replacement. Coordin
 first: changing these credentials affects every endpoint sharing the application.
 
 **Review the complete deployment plan before typing `Yes`.** Check the accounts, region,
-SMS and voice provider URLs, platform, plan, cache settings, resource names, permissions, and
-the exact certificate key IDs to keep or remove and any access to an existing vault. Setup grants the
-Microsoft phone-provider service principal Microsoft Graph `Application.Read.All`, a tenant-wide
-application-read permission. `No` or Enter cancels deployment; sign-in and prerequisite prompts
+SMS and voice provider URLs, platform, plan, cache settings, and resource names. Also check
+permissions, certificate key IDs, and access to any existing vault. Setup grants the Microsoft
+phone-provider service principal Microsoft Graph `Application.Read.All`, a tenant-wide
+application-read permission. `No` or Enter cancels deployment. Sign-in and prerequisite prompts
 are separate from this approval.
 
 **Plan review without deployment:** run interactively and choose **No** at the final prompt.
@@ -138,15 +138,15 @@ This still performs online preflight and downloads. There is no `-DryRun` or `-W
 see [plan review](../setup/docs/README.md#reviewing-the-plan-without-deploying) for details.
 
 Wait for **Deployment completed** and the saved summary before Step 4. Setup creates the
-Function App, storage, Key Vault, identities, and monitoring; **do not create them manually first**.
+Function App, storage, Key Vault, identities, and monitoring as one coordinated deployment.
+Begin without precreating these resources so setup can apply the complete reviewed plan.
 Keep `epp-output` private. Its public certificate and
 [summary](../setup/docs/README.md#read-the-deployment-summary) identify resources, endpoint,
 application client ID, and encryption key ID. No private key is downloaded.
 
 Setup verifies that the Function can resolve its selected private-key reference before changing
-the registered encryption certificates. It also verifies **Easy Auth**, the endpoint's
-caller-authentication protection, before opening public access. Never disable it to fix a setup
-or testing problem. If setup fails, use the
+the registered encryption certificates. It also verifies **Easy Auth**, the endpoint's caller-authentication protection, before opening
+public access. Keep Easy Auth enabled during setup, testing, and operation. If setup fails, use the
 [troubleshooting guide](../setup/docs/Troubleshooting.md) rather than deleting resources and starting over.
 
 To find the deployed resources, open **Azure portal > Resource groups** and select the group
@@ -160,8 +160,8 @@ the portal's Create button to deploy the endpoint.*
 
 ## 4. Connect your provider and test
 
-Complete [provider authentication](ONBOARDING.md#complete-provider-authentication); deployment
-does not do this for you. API-key integrations use the
+Azure deployment is complete. Next, finish
+[provider authentication](ONBOARDING.md#complete-provider-authentication). API-key integrations use the
 [setup-created vault and exact secret names](ONBOARDING.md#where-to-enter-api-key-credentials-in-key-vault).
 OAuth uses the provider-administrator handoff, not API-key secrets.
 Keep credentials out of source, screenshots, and shared logs.

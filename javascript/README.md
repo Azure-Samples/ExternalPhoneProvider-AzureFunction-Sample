@@ -20,15 +20,15 @@ the adapters in this folder.
 1. Create the [local settings below](#environment-configuration). For live integration, choose a
    fixed provider ID from [providers/](src/functions/providers/), configure its endpoints/options,
    and complete [provider authentication](../docs/ONBOARDING.md#complete-provider-authentication).
-   No provider is selected by default.
+   Select one provider explicitly.
 2. Install [package.json](package.json) dependencies, run its offline test script, and start Core Tools
    from this folder. **Bind only to loopback, without tunnels:** Core Tools has no Easy Auth.
 3. For manual deployment, [package](../TECHNICAL.md#build-zips-locally) this app only, preserving
    dependencies and [.funcignore](.funcignore). Inspect for secrets before upload. Complete the
-   [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist) before public access:
-   it is the only caller-authentication gate; never disable it or exempt SendOtp.
-   Then run [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint);
-   offline tests do not verify platform authentication.
+   [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist) before public
+   access. Keep Easy Auth enabled for SendOtp, then run
+   [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint) to verify
+   platform authentication.
 
 **Regional continuity:** [Front Door](../docs/FRONTDOOR.md) uses multiple regional origins behind
 one URL. Its JavaScript trials and readiness contract provide the starting point for implementing
@@ -55,13 +55,13 @@ the test-key placeholder in this minimal setup:
 For live delivery, use the [shared settings table](../TECHNICAL.md#configure-environment-variables)
 for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter-specific options.
 Keep `Values` as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"1500"`.
-Replace placeholders; API keys belong in Key Vault, not this file.
-A missing/invalid selected channel endpoint fails closed without fallback.
+Replace placeholders; Store API keys in Key Vault. Each selected channel requires a valid endpoint; an invalid or
+missing endpoint returns an error without using the other channel.
 
 Core Tools copies `Values` into the process environment; direct Node processes and offline tests do
 not load this file. [AppConfig](src/functions/config.js) reads `process.env` when `readConfig()` runs.
-Restart after edits. Core Tools cannot resolve Key Vault references locally, so use only a local
-test PEM or base64 PEM. Never copy Azurite settings into Azure.
+Restart after edits. Core Tools cannot resolve Key Vault references locally, so use a local
+test PEM or base64 PEM. Keep Azurite settings in the local environment.
 
 In Azure, configure the same app settings and use a Key Vault reference for the private PEM.
 Provider secrets use managed identity, not a developer CLI login. Keep local evaluation on loopback.
@@ -69,8 +69,9 @@ Provider secrets use managed identity, not a developer CLI login. Keep local eva
 ## Request behavior
 
 `POST /api/SendOtp` follows the [shared request/response contract](../docs/CONTRACT.md#1-http-api).
-Easy Auth authenticates; JWE decryption, nonce values, and request fields do not.
-The handler never parses or echoes incoming `Authorization`.
+Easy Auth authenticates the caller. JWE decryption, nonce values, and request fields serve other
+parts of the contract. The handler leaves incoming `Authorization` processing to Easy Auth and
+does not echo it.
 
 Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) for no-send validation:
 authentication and decryption still run, but request-path provider lookup, credentials, and HTTP do not.
@@ -85,7 +86,8 @@ For message/voice mapping and credential rules, see the
 
 Use the provider-neutral
 [BYOT request and response guide](../docs/BRING-YOUR-OWN-PROVIDER.md) for the Microsoft Entra ID payload,
-caller authentication, and response rules. The customer owns the outbound service integration.
+caller authentication, and response rules. Customers can connect the outbound phone service
+that meets their requirements.
 
 For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and the
 [JavaScript service-event queries](../docs/MONITORING.md#4-javascript-service-event-queries).
@@ -116,7 +118,7 @@ unset for local evaluation without credential acquisition; prewarming never send
 | [test/](test/) | Representative offline checks |
 
 To add a provider, implement its fixed `name`, `authenticationMode`, `credentialSpec`,
-`createRequest` and `interpretResponse` in the provider folder, then add it to the switch in
+`createRequest`, and `interpretResponse` in the provider folder. Then add it to the switch in
 [providers/index.js](src/functions/providers/index.js). `interpretResponse` returns a
 `ProviderResult` containing the provider-owned outcome, endpoint HTTP status and one safe fixed
 failure classification. Raw API JSON stays inside the provider. See

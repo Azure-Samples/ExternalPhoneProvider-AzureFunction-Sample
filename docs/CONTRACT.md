@@ -46,9 +46,9 @@ the cleartext envelope carries routing/scheduling only.
 | `x-ms-correlation-id` | tracing only; fallback for envelope `correlationId`, not authentication |
 | `x-ms-client-request-id` | per-attempt tracing id (used as `messageId`), not authentication |
 
-Forwarded headers, including `x-ms-client-principal`, do not establish trust by themselves and cannot
-replace the required Easy Auth gate. The handler does not use them to authenticate callers or forward
-the incoming `Authorization` header to the provider. Configure Easy Auth as described in section 5.
+Easy Auth provides caller trust. Forwarded headers such as `x-ms-client-principal` provide context,
+not authentication. The handler does not use them to authenticate callers or forward the incoming
+`Authorization` header to the provider. Configure Easy Auth as described in section 5.
 
 <a id="epp-request-body-envelope-cleartext-envelope"></a>
 ### EPP request body
@@ -89,8 +89,8 @@ advisory key-ID check must not replace the original protected-header bytes used 
 
 `EPP_DECRYPTION_KEY_PEM` accepts a private-key PEM alone or a PEM certificate bundle containing the
 private key, in plain text or base64 form. Guided setup issues a certificate inside Key Vault or
-reuses an explicitly selected certificate version, pins its PEM backing-secret reference, and
-keeps exactly one approved encryption credential on the application. Certificate synchronization
+reuses a selected certificate version. It pins the PEM backing-secret reference and keeps exactly
+one approved encryption credential on the application. Certificate synchronization
 is manual; Key Vault renewal does not automatically update Entra or select another decryption key. See the
 [certificate lifecycle](../setup/docs/README.md#encryption-certificate-lifecycle).
 
@@ -439,10 +439,10 @@ stop polling/prevent late publication at shutdown. .NET has no poller to stop: f
 fills are not retained and later misses attempt retrieval. It does not proactively refresh a
 still-valid entry.
 
-JavaScript bounds shared acquisition to 2.5 seconds and propagates cancellation through the SDK
-transport. Python bounds waits and SDK connect/read inactivity to 2.5 seconds but cannot forcibly
-cancel synchronous I/O. .NET uses a 2.5-second fetch budget linked to the fetch caller's cancellation
-token. None is a whole-invocation deadline.
+JavaScript limits shared acquisition to 2.5 seconds and passes cancellation through the SDK
+transport. Python limits waits and SDK connect/read inactivity to 2.5 seconds. Synchronous I/O
+may continue until the underlying call returns. .NET uses a 2.5-second fetch budget linked to
+the caller's cancellation token. None is a whole-invocation deadline.
 
 All runtimes fetch a complete API-key/customer-ID bundle before use and use managed identity
 for vault access. With caching enabled, Soprano reuses managed-identity and client-assertion SDK credentials
@@ -459,7 +459,7 @@ Do not log SDK exception details or tokens. No cache retries/deduplicates provid
 
 ## 5. Required behaviors
 
-- **Fail-closed**: only `Continue` → `200 accepted`; unknown status → `Fail`.
+- **Safe outcome mapping (fail-closed)**: only `Continue` → `200 accepted`; unknown status → `Fail`.
 - **Managed identity**: Key Vault access via managed identity only (user-assigned if `AZURE_CLIENT_ID`
   set, else system-assigned). No static credentials.
 - **Privacy**: never log phone numbers, passcodes, nonce values, bearer tokens, API keys, JWE headers/payloads,
@@ -478,13 +478,13 @@ Do not log SDK exception details or tokens. No cache retries/deduplicates provid
   the authorized Microsoft caller application ID. No excluded path may bypass authentication for SendOtp.
   The trigger remains `authLevel: anonymous`; there is no application token validation or function-key
   fallback. The platform rejects unauthenticated requests with `401` and denies callers outside the
-  allowlist before the handler. **Never expose the endpoint to the public internet with Easy Auth off
-  or bypassed.** Core Tools supplies no Easy Auth: local execution must bind only to loopback, with
-  no tunnels or public forwarding. Neither request data, JWE decryption, a fixed nonce nor forwarded
-  principal headers authenticate the Entra ID caller.
+  allowlist before the handler. **Keep Easy Auth enabled for every public SendOtp route.**
+  Core Tools supplies no Easy Auth, so local execution stays on loopback without tunnels or public
+  forwarding. Request data, JWE decryption, a fixed nonce, and forwarded principal headers serve
+  other parts of the contract; Easy Auth authenticates the Entra ID caller.
 - **Timeout boundaries**: platform authentication and Key Vault retrieval happen outside the outbound HTTP
   timer. Python uses connect/read inactivity timeouts, not a hard elapsed-time deadline. The cap
-  therefore does not guarantee a 3.2-second end-to-end response, especially on cold starts.
+  does not guarantee a 3.2-second end-to-end response, especially on cold starts.
   A timed-out POST may already have been accepted; avoid blind retries that duplicate messages.
 
 ### Application logs
@@ -545,8 +545,8 @@ delivery and provider-specific features need their own validation.
   standalone six-digit numeric runs and repeats the full message. Validate supported locales,
   passcode formats, and actual audio for the intended experience.
 - **Additional production capabilities:** add the body-size/content-type and E.164 validation,
-  subscription provisioning, certification, least-cost routing, or voice-callback workflows
-  required by the design. Native caller fallback remains with the caller rather than this Function.
+  subscription setup, certification, least-cost routing, or voice-callback workflows required
+  by the design. Native caller fallback remains with the caller rather than this Function.
 
 See [setup compatibility](ONBOARDING.md#setup-script-compatibility) for credential provisioning,
 endpoint format and unsupported setup options.

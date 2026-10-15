@@ -18,8 +18,9 @@ the export and alerts after endpoint setup.
 
 ## Recommended monitors
 
-Agree source tenant, exact identity/resource IDs, and notification owners, then implement in
-priority order. Do not scope by name fragments or every tenant application.
+Agree on the source tenant, exact identity and resource IDs, and notification owners. Then
+implement the monitors in priority order. Use exact IDs instead of name fragments or every
+tenant application.
 
 <a id="priority-1-integration-identities-cannot-sign-in"></a>
 ### Integration sign-in failures
@@ -72,7 +73,8 @@ priority order. Do not scope by name fragments or every tenant application.
 **Set up once, then adapt:** select the [required categories](#choose-additional-export-categories),
 verify [fields](#field-checks-for-the-recommended-monitors), and reuse the
 [alert setup](#5-create-your-first-alert) and [safe test](#6-test-then-hand-over).
-Choose each monitor's threshold from representative traffic, not a small export or a universal SLA.
+Choose each monitor's threshold from normal traffic for that environment rather than a small
+export or a universal SLA.
 
 ## 1. Choose your tenant and access
 

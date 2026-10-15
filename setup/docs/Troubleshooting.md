@@ -2,9 +2,10 @@
 
 [Documentation](../../docs/README.md) | [Setup reference](README.md) | [Resume onboarding](../../docs/GETTING-STARTED.md)
 
-Select the stage that failed. Keep existing resources in place, and never blindly retry a
-live send. Before rerunning setup, read [safe recovery](#recover-without-destructive-cleanup).
-After deployment, complete the provider and delivery checks separately.
+Select the stage that failed and keep existing resources in place. Before rerunning setup, use
+[safe recovery](#recover-without-destructive-cleanup). For a live-send timeout, check the provider
+outcome before retrying. After deployment, complete provider acceptance and delivery checks
+separately.
 
 ## Find your symptom
 
@@ -26,7 +27,7 @@ subscription, resource group, runtime/release, UTC test time, and safe correlati
 Never attach complete settings, tokens, phone numbers, OTPs, private keys, encrypted bodies, or
 raw provider responses. Keep body tracing off.
 
-| Symptom | First checks / owner | Do not do this |
+| Symptom | First checks / owner | Safeguard |
 |---|---|---|
 | Cannot see an offer or EPP activation/test capability | Customer onboarding owner verifies the [Security Store and feature-access gate](../../docs/ONBOARDING.md#before-purchasing-or-deploying) with provider/Microsoft support. | Do not infer eligibility from Azure Owner or a successful purchase. |
 | Setup reports success, but no OTP delivery | Finish [Telesign vault entry or Soprano provider consent](../../docs/ONBOARDING.md#complete-provider-authentication); confirm authorized testing and policy activation are separately complete. | Do not redeploy all runtimes or paste credentials into local settings. |
@@ -45,16 +46,17 @@ Evaluation success, provider acceptance, and recipient delivery are different ev
 
 ## Recover without destructive cleanup
 
-1. **Locate the failure.** Before approval, checks do not mutate Azure resources, although sign-in
+1. **Locate the failure.** Before approval, checks do not change Azure resources, although sign-in
    or Bicep installation may occur. After approval, partial Azure or Microsoft Entra ID changes can
    remain without a summary. Inspect the original error and **resource group > Deployments**.
 2. **Fix, then rerun with the same reviewed inputs:** tenant, subscription, app, runtime, plan,
-   prefix, provider/route, and source/package versions. Changed IDs can create resources, break key
-   continuity, or reconfigure the endpoint. There is no checkpoint resume or automatic undo; use a
-   change window for active endpoints.
-3. **Verify the failed stage and complete acceptance checks.** Never use resource-group deletion,
-   vault purge/recreation, encryption-credential removal, or shared-grant revocation as a retry.
-   Retirement uses the separate [rollback procedure](README.md#rollback-and-decommissioning).
+   prefix, provider/route, and source/package versions. This keeps resource names, keys, and
+   endpoint configuration consistent. Active endpoints need a change window because setup has
+   no checkpoint resume or automatic undo.
+3. **Verify the failed stage and complete acceptance checks.** Keep resource-group deletion,
+   vault purge/recreation, encryption-credential removal, and shared-grant revocation out of
+   retry steps. Use the separate [rollback procedure](README.md#rollback-and-decommissioning)
+   when retiring a deployment.
 
 ## Certificate selection, reuse, or cleanup fails
 
@@ -109,8 +111,8 @@ registration. A supported Linux EP1 region can still have zero quota for your su
 5. Alternatively, choose another region only after checking its quota, service availability,
    and your residency and provider requirements. Review the updated deployment plan before approval.
 
-**Expected:** sufficient effective quota, not merely a submitted request. Setup cannot guarantee
-an increase. See [quota support](https://learn.microsoft.com/azure/quotas/quotas-overview).
+**Expected:** the approved quota is visible and large enough for the deployment. A submitted
+request alone is not enough. See [quota support](https://learn.microsoft.com/azure/quotas/quotas-overview).
 Do not change SKU, authentication, or provider credentials to bypass the error; rerun with reviewed
 inputs after quota is resolved, then validate the endpoint.
 

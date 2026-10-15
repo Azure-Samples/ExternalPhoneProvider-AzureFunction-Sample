@@ -1,11 +1,12 @@
 # External Phone Provider Azure Function Sample
 
-Connect Microsoft Entra ID to your phone provider for SMS and voice one-time passwords.
-Deploy **one endpoint in one Azure region**, using JavaScript, C#, or Python.
-Guided setup handles the Azure resources and publishes your selected runtime package.
+Use this sample to connect Microsoft Entra ID to a phone provider for SMS and voice one-time
+passwords. Guided setup deploys **one endpoint in one Azure region** and publishes the selected
+JavaScript, C#, or Python package.
 
-**Use an isolated test environment.** The sample supports integration evaluation, implementation
-planning, and production preparation. Review [requirements](#requirements) before deployment.
+**Start in a separate nonproduction environment.** This keeps testing away from live resources
+while supporting evaluation, implementation planning, and production preparation. Review
+[requirements](#requirements) before deployment.
 
 ## Table of Contents
 
@@ -35,9 +36,8 @@ Before deploying:
 
 - Confirm [supported provider access and Microsoft's approved testing and activation procedure](docs/GETTING-STARTED.md#1-get-ready).
   These define the supported path for setup, validation, and activation.
-- Create an isolated test environment: use a nonproduction tenant and subscription, register a
-  new application, and choose a unique resource prefix so this endpoint stays separate from
-  production and other deployments.
+- Prepare a separate test environment with a nonproduction tenant and subscription, a new
+  application registration, and a unique resource prefix.
 - Check the required [administrator roles, Azure permissions, tools, regional availability, and quota](setup/docs/README.md#prerequisites-for-step-2).
 - Plan for Azure resource, telemetry, and provider charges. Use the [provider cost estimate](docs/COST-CALCULATOR.md) as planning input, not a billing report.
 - Keep Easy Auth enabled from deployment through live operation so every request is checked
@@ -47,9 +47,10 @@ Before deploying:
 
 ![Microsoft Entra ID sends an encrypted request through Easy Auth to a Function, which uses Key Vault and calls the phone provider](docs/images/single-region-architecture.png)
 
-*Easy Auth checks the Microsoft caller; the Function decrypts the request.
-Live success means provider acceptance, not confirmed delivery; evaluation sends nothing. Region, credentials, caching, and
-telemetry are illustrative: see [architecture details](TECHNICAL.md#single-region-architecture).
+*Easy Auth checks the Microsoft caller, and the Function decrypts the request.
+For live requests, success confirms provider acceptance; confirm delivery separately. Evaluation
+sends nothing. Region, credentials, caching, and telemetry are illustrative: see
+[architecture details](TECHNICAL.md#single-region-architecture).
 [Open the full-size diagram](docs/images/single-region-architecture.png).*
 
 ## Get started

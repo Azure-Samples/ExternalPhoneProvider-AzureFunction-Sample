@@ -8,14 +8,14 @@
 Azure Front Door provides **one public EPP URL backed by Function Apps in multiple regions**.
 Start with a validated [single-region deployment](GETTING-STARTED.md), then use this guide to
 plan and implement the regional origins, readiness route, Front Door configuration, validation,
-failover drills, and rollback. Transition errors are part of the acceptance criteria.
+failover drills, and rollback. Include transition errors in the acceptance checks.
 
 Follow [scope](#scope-and-observed-behavior), [architecture](#architecture),
 [plan/capacity](#1-plan-the-regional-deployment), [origins/keys](#2-prepare-equivalent-independently-provisioned-origins),
 [readiness](#3-provide-a-non-delivering-readiness-endpoint), [routing](#4-configure-front-door-manually),
 [validation](#5-validate-before-manually-activating-policy), and [fire-drill](#6-regional-failover-fire-drill).
-Keep [historical results](#observed-failover-results-and-limitations) separate from
-your acceptance criteria; use [operations/rollback](#operations-and-rollback) after validation.
+Use [historical results](#observed-failover-results-and-limitations) as background for the
+acceptance plan. After validation, follow [operations and rollback](#operations-and-rollback).
 
 ## Scope and observed behavior
 
@@ -28,9 +28,9 @@ regional package and validate it before enabling probes. The released packages r
 single-region baseline; include runtime-specific validation for .NET or Python.
 
 The recorded trials cover encrypted evaluation, caller and origin restrictions, and controlled
-Function stop/restart. The acceptance plan must cover the required features: approved live
-SMS/voice checks, real Microsoft Entra caller behavior, regional dependency loss, custom domains,
-WAF or Private Link, and production-representative load.
+Function stop/restart. Build the acceptance plan around the features in use. It can include approved live SMS and voice
+checks, real Microsoft Entra caller behavior, regional dependency loss, custom domains, WAF or
+Private Link, and realistic load.
 
 ### Regional resiliency responsibility
 
@@ -72,13 +72,12 @@ normally adds an **origin**, not another customer-facing endpoint.
 
 ### Two-region baseline to provision and validate
 
-Use two independently provisioned regional stacks, A and B, at equal Front Door priority for
-active-active service. Each has its own Function App and hosting capacity, private runtime/package
-storage, Key Vault containing the shared decryption key and applicable provider credentials,
-managed identities with local scoped access, and regional telemetry. Configure provider federation
-for each regional outbound identity where required. Neither stack may require the other region's
-storage, vault, or identity to serve or recover; verify startup, key resolution, and credential
-refresh as well as already-warm requests.
+Use two separate regional stacks, A and B, at equal Front Door priority for active-active service.
+Each stack has its own Function App, hosting capacity, private package storage, Key Vault, managed
+identities, and telemetry. Both vaults contain the matching decryption key and the provider
+credentials needed in that region. Configure provider federation for each regional outbound
+identity when required. Verify that each stack can start, resolve keys, refresh credentials, and
+serve requests without the other region's storage, vault, or identity.
 
 Keep one shared Front Door public SendOtp URL and endpoint application registration, with identical
 issuer, audience, authorized-caller policy, selected provider route, and encryption public-key
@@ -116,42 +115,38 @@ application configuration or certificate unexpectedly.
 <a id="capacity-gate-each-region-must-support-the-combined-peak-load"></a>
 ### Regional capacity
 
-**EACH region must be provisioned and validated to serve the combined peak workload on its own.**
-For a balanced two-region active-active baseline, this means **at least twice its normal per-region
-traffic**, plus explicitly planned headroom for bursts, retries, probe traffic, and dependency
-overhead. Reserve that capacity in both A and B before relying on regional failover; spare capacity
-only in one direction is insufficient. Planning retry headroom does not authorize blind retries
-of live sends.
+**Size and validate each region to serve the full combined peak workload.** In a balanced
+two-region active-active design, each region needs capacity for **at least twice its normal
+traffic**. Add room for bursts, approved retries, probes, and dependencies. Reserve this
+capacity in both A and B before using regional failover. Retry capacity does not change the rule
+to check an uncertain live send before retrying.
 
-Use the expected peak offered workload, not a quiet-period average or the lower throughput left
-after requests time out. Equal weights do not guarantee equal routing. If normal traffic is
-unequal, each region still needs the entire combined peak workload plus headroom; the less-used
-region may need more than twice its usual traffic. An N-region alternative needs a documented
-failure budget and measured capacity for every permitted survivor set and routing distribution.
-Adding origins does not waive the double-load requirement for the balanced two-region baseline.
+Use the expected peak workload rather than a quiet-period average. Equal weights do not guarantee
+equal routing. If traffic is uneven, each region still needs the combined peak plus headroom, so
+the less-used region may need more than twice its usual traffic. For more than two regions,
+document the failure budget and measure capacity for every allowed survivor group and routing
+pattern.
 
 Record the workload mix, offered and completed request rates, concurrency, payload sizes, test
 duration, per-region latency percentiles, errors/timeouts, resource saturation, and dependency
 throttling. Verify hosting/subscription quotas, available warm capacity and scale-out delay,
 storage and vault limits, identity/token-service capacity, and provider account/rate limits.
-Autoscale maxima, provisioned instance counts, and approved quotas alone are **not capacity proof**.
-Pass only against agreed latency/error and sustained-load criteria with measured evidence in
-both directions. No measured production-capacity result is supplied by this guide.
+Use measured load results in both failover directions. Autoscale limits, instance counts, and
+approved quotas are inputs, while sustained request rate, latency, errors, and saturation show
+whether the design meets the agreed capacity target. This guide does not include a measured
+production result.
 
 Encrypted evaluation requests bypass request-path provider credential resolution and outbound
 provider calls. A double-load evaluation drill proves only the exercised ingress, authentication,
 decryption, and routing path, **not complete live-send capacity**. Background credential refresh
 can still run independently; its presence does not prove live-path credential capacity.
 
-The capacity gate separately requires production-representative evidence in both survivor
-regions using a **non-delivering, provider-approved sandbox/stub** that exercises the live request
-path, credential acquisition/refresh, and representative provider latency and quota/throttling
-behavior, or separately authorized delivery validation. Document how the sandbox/stub represents
-production and obtain provider capacity/quota evidence for what it cannot reproduce; an instant
-success stub or bypassed credential lookup is insufficient. Evaluate cold starts, cache expiry,
-and credential/key refresh so warm caches do not hide a dependency on the failed region. Keep
-this separate from the evaluation-only fire-drill; do not silently enable live sends in that drill
-or mark the full capacity gate passed using evaluation-only throughput.
+For full-path capacity evidence, test both survivor regions with a **non-delivering,
+provider-approved sandbox or stub**. Exercise the live request path, credential refresh, realistic
+provider delay, and quota or throttling behavior. If the test system cannot match part of
+production, record the difference and add provider capacity evidence. Include cold starts, cache
+expiry, and key refresh so warm caches do not hide a regional dependency. Keep this test separate
+from the evaluation-only fire drill, and use live sends only through a separately approved test.
 
 <a id="2-prepare-equivalent-independently-provisioned-origins"></a>
 ## 2. Prepare regional origins
@@ -181,7 +176,7 @@ Keep public access disabled while setting up authentication, keys, identities, a
 
 ### Coordinate the encryption key
 
-The caller must be able to encrypt once for any eligible origin. Every origin therefore needs the
+The caller must be able to encrypt once for any eligible origin. Every origin needs the
 **same RSA private key corresponding to the registered public certificate**. Front Door's HTTPS
 certificate is separate from this JWE encryption certificate.
 
@@ -218,16 +213,17 @@ Implement a separate route such as **`/api/health/ready`** with this contract:
   Never exempt `/api/SendOtp`, `/api/*`, or the whole application.
 - Keep the origin-level Front Door access restrictions described below on the readiness route too.
 
-Readiness proves neither provider availability nor handset delivery. Validate those separately.
-Do not point probes at a nonexistent handler, use a cached static `200`, or disable Easy Auth to
-make probes succeed. Front Door treats only a `200` probe response as healthy.
+Readiness confirms that the handler and decryption key are usable. Validate provider availability
+and handset delivery separately. Point probes to the implemented readiness handler, return a live
+result rather than a cached static `200`, and keep Easy Auth enabled for SendOtp. Front Door treats
+only a `200` probe response as healthy.
 If every origin is unhealthy, Front Door can still route requests across them. Keep authentication
 and application failure handling effective independently of probe status.
 
 ## 4. Configure Front Door manually
 
 In the Azure portal, create a Front Door Standard/Premium profile, an endpoint, and an origin group.
-These are the **settings we tested**. Treat them as a starting point, not a performance guarantee:
+These are the **tested starting settings**. Validate them against the required performance target:
 
 | Setting | Tested value |
 |---|---|
@@ -357,20 +353,18 @@ instead of treating the observed timings below as an SLA.
    Mark each criterion pass/fail/not tested with an owner and retest date. Never attach secrets,
    bearer tokens, request bodies, OTPs, or nonces.
 
-### What this drill does not prove
+<a id="what-this-drill-does-not-prove"></a>
+### Additional validation
 
-Stopping a Function App simulates one application origin becoming unavailable. It does **not**
-simulate the loss of an Azure region's storage, vault, identity access, network paths, control
-plane, or telemetry, nor prove the surviving stack can start or refresh credentials without them.
-The regional-resiliency validation plan must separately validate loss of regional dependencies and telemetry,
-using approved nonproduction fault scenarios and capturing evidence outside the affected region.
-Include dependency refresh/startup and restoration behavior; a warm app-stop success alone leaves
-these regional-outage gaps open. Record any scenario that cannot be safely exercised as an
-unvalidated limitation requiring deployment-owner review, not a passing regional-outage test.
+Stopping a Function App tests routing when one application origin is unavailable. Add separate
+nonproduction tests for regional storage, vault, identity access, network paths, control plane,
+and telemetry. Capture evidence outside the affected region. Include cold startup, credential
+refresh, and restoration so the plan covers more than an already-warm app. Record any scenario
+that cannot be tested safely and assign an owner and follow-up date.
 
-Evaluation also does not prove real Entra caller deadlines/retries, provider acceptance, or handset
-delivery. Validate those separately with the provider and onboarding owner. Neither this runbook
-nor Front Door makes retries automatically safe or guarantees zero downtime.
+Use separate approved checks for real Microsoft Entra caller timing, provider acceptance, and
+handset delivery. Define retry and availability targets with the provider and onboarding owner.
+Front Door and this runbook do not guarantee zero downtime or make uncertain retries safe.
 
 ## Observed failover results and limitations
 
