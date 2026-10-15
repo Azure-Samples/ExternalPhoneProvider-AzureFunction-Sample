@@ -1,7 +1,7 @@
 # External Phone Provider: Technical Reference
 
 For the single-region customer deployment flow, start with the
-[main onboarding guide](README.md).
+[five-step setup guide](docs/GETTING-STARTED.md).
 
 Azure Front Door is an [optional manual multi-region design](docs/FRONTDOOR.md), not a feature
 enabled by the single-region setup script. Its additional readiness endpoint is not shipped in
@@ -13,7 +13,7 @@ and managed-identity access to credentials.
 
 ## Single-region architecture
 
-![Single-region External Phone Provider architecture](docs/images/single-region-architecture.png)
+See the [single-region diagram in the sample overview](README.md#architecture).
 
 Microsoft Entra ID sends an authenticated, encrypted request. Easy Auth checks the caller,
 then the Function decrypts the request using its Key Vault-backed key. For a live request, the
@@ -341,7 +341,8 @@ authentication; [separate deployed security checks](docs/ONBOARDING.md#4-package
 
 ## Docs
 
-- **[README.md](README.md)**: single-region customer onboarding.
+- **[README.md](README.md)**: sample overview and architecture.
+- **[Setup guide](docs/GETTING-STARTED.md)**: single-region customer onboarding.
 - **[docs/ONBOARDING.md](docs/ONBOARDING.md)**: customer value sources, provider handoffs, validation, and optional manual deployment.
 - **[docs/FRONTDOOR.md](docs/FRONTDOOR.md)**: optional manual multi-region onboarding and observed failover limitations.
 - **[docs/CONTRACT.md](docs/CONTRACT.md)**: the language-agnostic contract every implementation follows.

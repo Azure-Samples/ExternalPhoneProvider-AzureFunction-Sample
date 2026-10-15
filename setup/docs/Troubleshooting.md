@@ -4,7 +4,7 @@ Find your symptom in the [triage table](#after-deployment-triage), then follow t
 If the setup script stopped, start with [safe recovery](#recover-without-destructive-cleanup)
 before rerunning it. A successful deployment does not yet prove provider access or delivery.
 
-Return to the [main setup guide](../../README.md) when you are ready to continue onboarding.
+Return to the [five-step setup guide](../../docs/GETTING-STARTED.md) when you are ready to continue onboarding.
 
 ## After-deployment triage
 

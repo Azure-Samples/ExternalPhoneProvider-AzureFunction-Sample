@@ -1,6 +1,6 @@
 # Customer configuration and validation
 
-Start with the [five-step setup guide](../README.md). Come here when you need exact IDs,
+Start with the [five-step setup guide](GETTING-STARTED.md). Come here when you need exact IDs,
 provider credential names, or the checks to complete before activation.
 
 **After successful guided setup, go straight to [provider authentication](#complete-provider-authentication),

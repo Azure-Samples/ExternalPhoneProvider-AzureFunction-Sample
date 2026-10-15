@@ -10,7 +10,7 @@ The sample still ships with one provider per deployment and **no provider fallba
 describes customer code you must implement and review. A timeout, lost response or generic
 provider error is not proof of nonacceptance: in those cases, do not automatically send again.
 
-For a normal deployment, follow the [main setup guide](../README.md) instead. This is an advanced
+For a normal deployment, follow the [five-step setup guide](GETTING-STARTED.md) instead. This is an advanced
 developer walkthrough: it requires custom code, durable operation state, provider-specific
 approval, and separate testing. It is not another step in guided onboarding.
 

@@ -2,7 +2,7 @@
 
 Use Azure Front Door when you want **one public EPP URL backed by Function Apps in multiple regions**.
 You configure this option manually. For a single region, start with the
-[main onboarding guide](../README.md).
+[five-step setup guide](GETTING-STARTED.md).
 
 **We don't provide a Front Door deployment script.** The guided setup creates one regional endpoint,
 not the multi-region setup described here. This guide covers what you need to configure and test.

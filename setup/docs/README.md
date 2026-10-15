@@ -1,6 +1,6 @@
 # EPP endpoint setup reference
 
-New to the sample? Follow the [main setup guide](../../README.md). This reference explains the
+New to the sample? Follow the [five-step setup guide](../../docs/GETTING-STARTED.md). This reference explains the
 permissions, hosting choices, script prompts, and maintenance steps in more detail.
 
 The three stages in this reference are:
