@@ -53,7 +53,7 @@ For local development, manual configuration, and deployment checks, see the
 [detailed configuration and validation guide](docs/ONBOARDING.md).
 
 For the provider-neutral inbound interface, read the
-[BYOT request and response guide](docs/BRING-YOUR-OWN-PROVIDER.md). It covers the SAS envelope,
+[BYOT request and response guide](docs/BRING-YOUR-OWN-PROVIDER.md). It covers the Entra ID envelope,
 caller authentication, encrypted delivery context, and endpoint responses. The outbound service
 integration remains customer-owned; the guide does not add an adapter or guided setup support.
 
@@ -163,16 +163,16 @@ extend it deliberately if you add runtime assets, and never put secrets in appli
 
 ## The design in one line
 
-SAS → Easy Auth → anonymous HTTP handler (`POST /api/SendOtp`, validate envelope + decrypt JWE) →
+Microsoft Entra ID → Easy Auth → anonymous HTTP handler (`POST /api/SendOtp`, validate envelope + decrypt JWE) →
 configured provider (API key or OAuth) → HTTP result with nonce on success.
 Only provider acceptance returns the nonce for live requests. Incoming `mode: 2` (evaluation) is the
-generic shutter: after platform authentication, validate and decrypt, then echo the nonce without
+non-delivery path: after platform authentication, validate and decrypt, then echo the nonce without
 calling a provider.
 
 See [docs/CONTRACT.md](docs/CONTRACT.md) for the full specification every implementation follows.
 
 Request `tenantId`, `channel`, `mode` and `ttlSeconds` are request data, not extra environment settings.
-The trusted tenant issuer, endpoint-app audience and authorized SAS caller are configured in Easy Auth,
+The trusted tenant issuer, endpoint-app audience and authorized Microsoft caller are configured in Easy Auth,
 not in application environment settings or incoming request data.
 
 ## Configure environment variables
@@ -253,10 +253,12 @@ credential acquisition. Platform-managed identity caching and decryption-key ref
 Core Tools does not resolve Azure Key Vault reference expressions locally. Supply the local test PEM
 or base64 PEM directly; use a reference such as `@Microsoft.KeyVault(SecretUri=https://<vault>.vault.azure.net/secrets/<private-key-secret>/)`
 for `EPP_DECRYPTION_KEY_PEM` in Azure app settings, where the platform resolves it.
-Guided setup instead uses a **versioned** reference to
-`secrets/phone-provider-encryption/<version>`, containing a certificate and its exportable RSA private
-key in PEM format. A new Key Vault certificate version does not automatically switch the Function
-or update Entra. See [certificate lifecycle](setup/docs/README.md#encryption-certificate-lifecycle).
+Guided setup uses the **versioned** backing-secret URL recorded as `certificateSecretId` in the
+deployment summary. Initial creation uses `phone-provider-encryption`; replacement uses a suffixed
+name, and reuse preserves the selected certificate's name and vault. The secret contains the
+certificate and its exportable RSA private key in PEM format. Do not reconstruct its URL from the
+certificate name or version. A new Key Vault certificate version does not automatically switch
+the Function or update Entra. See [certificate lifecycle](setup/docs/README.md#encryption-certificate-lifecycle).
 
 Configure inbound issuer/audience/caller trust in **Easy Auth**, not these application variables.
 Incoming `tenantId`, `channel`, `mode` and `ttlSeconds` are request data and never override the
@@ -276,16 +278,16 @@ The `telesign` adapter sends its JSON contract to the complete SMS or voice URL 
 request channel from the configured endpoints. It does not append or infer a route.
 
 Basic authentication uses `base64(customer-id:api-key)`, with the existing Key Vault secrets
-`telesign-customer-id` and `telesign-api-key`. Digest and Phase 2 token authentication are not
+`telesign-customer-id` and `telesign-api-key`. Digest and provider-token authentication are not
 implemented. The incoming caller's Authorization header is never forwarded.
 
-The adapter builds the following JSON from the decrypted delivery context and envelope:
+For an SMS request, the adapter builds the following JSON from the decrypted delivery context and envelope:
 
 ```json
 {
   "recipient": { "phone_number": "+1234567890" },
   "message": { "text": "Your verification code is 4821", "language": "en" },
-  "channels": [{ "channel": "voice" }],
+  "channels": [{ "channel": "sms" }],
   "correlation_id": "unique-string-123"
 }
 ```
@@ -313,8 +315,8 @@ include only the provider HTTP status, mapped status/outcome and the bounded raw
 ID as `providerMessageId` for support lookup, never the raw response or description. Existing numeric success codes
 are retained (SMS: 200, 203, 290-292; Voice: 100-103). EPP code `3001` ("Message in progress"),
 observed for both channels, is also accepted on successful HTTP responses. This acknowledges
-provider acceptance, not handset receipt or completed audio playback. The supplied EPP integration
-overview does not provide a complete replacement status-code catalog. Missing, malformed, or
+provider acceptance, not handset receipt or completed audio playback. The sample's recognized
+codes are not a complete provider status-code catalog. Missing, malformed, or
 unknown codes fail closed, as do unsuccessful HTTP responses. Confirm the status-code catalog and
 account access with Telesign before production.
 
@@ -323,12 +325,12 @@ account access with Telesign before production.
 **Easy Auth (App Service Authentication) is the only caller-authentication gate, before the anonymous
 Function.** Enable it with `requireAuthentication=true`, `unauthenticatedClientAction=Return401` and
 `requireHttps=true`. Configure the trusted tenant issuer and `allowedAudiences` for the endpoint app,
-and a **nonempty `allowedApplications`** list pinned to the authorized SAS caller application ID.
+and a **nonempty `allowedApplications`** list pinned to the authorized Microsoft caller application ID.
 Do not exclude the SendOtp path. The handler does not parse or validate bearer tokens, and there is
 no backup application validation or function-key gate. **Never expose this endpoint to the public
 internet with Easy Auth disabled or bypassed.** See [platform setup](docs/ONBOARDING.md#2-provision-encryption-and-deployment-trust).
 
-JWE decryption protects the payload but **does not authenticate SAS**: anyone with the public key can
+JWE decryption protects the payload but **does not authenticate the caller**: anyone with the public key can
 encrypt a request. A nonce echo, including a fixed nonce, is not caller authentication. Provider API
 keys are read from **Key Vault** via **managed identity**; they authenticate the outbound provider call,
 not the inbound request.

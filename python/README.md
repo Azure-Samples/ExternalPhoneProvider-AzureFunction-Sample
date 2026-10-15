@@ -31,7 +31,7 @@ used JavaScript; validate an equivalent Python readiness implementation and depl
 	[Easy Auth](../docs/ONBOARDING.md#2-provision-encryption-and-deployment-trust), the only authentication
 	gate before the anonymous Function. Enable `requireAuthentication=true`,
 	`unauthenticatedClientAction=Return401` and `requireHttps=true`; pin the trusted tenant issuer,
-	endpoint-app `allowedAudiences` and a nonempty `allowedApplications` list for the authorized SAS
+	endpoint-app `allowedAudiences` and a nonempty `allowedApplications` list for the authorized Microsoft
 	caller. Do not exclude SendOtp. There is no backup application token validation; never expose the
 	endpoint to the public internet with Easy Auth disabled or bypassed.
 4. Use a virtual environment, install [requirements.txt](requirements.txt) and pytest, then run the
@@ -86,18 +86,18 @@ tests on an ordinary workstation, and bind local hosts only to loopback.
 `mode`, `channel`, `ttlSeconds` and `tenantId` are request data, not deployment authentication settings.
 Easy Auth authenticates and authorizes the caller before the anonymous handler validates the envelope
 and decrypts the JWE. Incoming `Authorization` is not parsed or echoed by the handler. JWE does not
-authenticate SAS: anyone with the public key can encrypt a request, and a fixed nonce is not authentication.
+authenticate the caller: anyone with the public key can encrypt a request, and a fixed nonce is not authentication.
 
-Use incoming `mode: 2` or `mode: "evaluation"` as the generic shutter for every provider: platform
-authentication on Azure, handler validation and decryption run, but provider lookup, provider Key Vault
+For any provider, use incoming `mode: 2` or `mode: "evaluation"` to evaluate without sending.
+Platform authentication on Azure, handler validation and decryption run, but provider lookup, provider Key Vault
 reads and provider HTTP do not. No provider configuration or diagnostic environment flag is required.
 Live requests use the configured provider's API key or OAuth token and
 await acceptance before returning the nonce; failures omit it. Acceptance is not handset delivery.
 Platform/key prerequisites and HTTP outcomes are defined in the
-[contract](../docs/CONTRACT.md#evaluation-generic-shutter).
+[contract](../docs/CONTRACT.md#evaluation-no-provider-send).
 
 For Soprano voice, the adapter extracts the first six-digit passcode from the rendered message. It
-uses a nonblank SAS request locale as the language, falling back to `en-US`, and sends fixed gender
+uses the request's nonblank locale as the language, falling back to `en-US`, and sends fixed gender
 `1` and loop `2`. These values require no additional environment settings. Soprano SMS continues to
 forward the rendered message unchanged.
 
@@ -107,7 +107,7 @@ six-digit numeric run that is not part of a longer number and repeats the comple
 ## Source
 
 Start with the provider-neutral
-[BYOT request and response guide](../docs/BRING-YOUR-OWN-PROVIDER.md) for the SAS payload,
+[BYOT request and response guide](../docs/BRING-YOUR-OWN-PROVIDER.md) for the Microsoft Entra ID payload,
 caller authentication, and response rules. Your team owns the outbound service integration.
 
 For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and

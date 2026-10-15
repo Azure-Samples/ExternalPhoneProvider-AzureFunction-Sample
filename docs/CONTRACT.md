@@ -22,8 +22,8 @@ is separate from this contract and must not deliver OTPs.
 
 **Endpoint:** `POST /api/SendOtp` (Functions HTTP trigger, `authLevel: anonymous`). **Easy Auth is the
 only caller-authentication boundary and runs before the handler**; the application has no token
-validator or function-key gate. This is the interface **SAS (StrongAuthenticationService)** calls.
-SAS sends an Entra bearer JWT as part of its protocol; Easy Auth validates it, not the handler.
+validator or function-key gate. This is the interface **Microsoft Entra ID** calls.
+Entra ID sends a signed bearer JWT; Easy Auth validates it, not the handler.
 PII (phone number + the rendered message, which contains the passcode) is **encrypted** inside a JWE;
 the cleartext envelope carries routing/scheduling only.
 
@@ -102,7 +102,7 @@ Decryption failure → `400`. Missing `nonce` / `phoneNumber` / `message` → `4
 
 For Soprano live voice, the provider finds the first six consecutive digits in `message`, preserving
 leading zeros, and splits the rendered text into `beforePasswordText`, `password`, and
-`afterPasswordText`. It uses a nonblank SAS `locale` as `language`, falling back to `en-US`, and sends
+`afterPasswordText`. It uses the request's nonblank `locale` as `language`, falling back to `en-US`, and sends
 fixed `gender: 1` and `loop: 2`. The resulting object is sent as `voice.text2voice` without a top-level
 `text` field. A message without a six-digit sequence fails closed before provider HTTP. No additional
 environment settings are required. Soprano SMS continues to forward `message` unchanged, and
@@ -124,7 +124,7 @@ federated credential trusts the identity's principal ID, home-tenant v2 issuer, 
 `api://AzureADTokenExchange` audience. Key Vault identity selection remains independent.
 
 Only the final application token is sent as `Authorization: Bearer ...`. No Soprano API ID/key,
-managed-identity assertion, or incoming SAS token is forwarded. Missing settings, token-acquisition
+managed-identity assertion, or incoming Entra ID token is forwarded. Missing settings, token-acquisition
 failure, blank tokens, or tokens with 30 seconds or less remaining lifetime fail before provider HTTP;
 there is no API-key fallback. Evaluation skips acquisition. A provider rejection is not retried.
 Tokens are treated as opaque: the Function checks SDK expiry metadata, not custom JWT claims.
@@ -148,27 +148,19 @@ acquisition's asynchronous context. Python filters Azure Identity/Core/MSAL reco
 handlers in that context; configure logging sinks before handling requests. .NET disables credential
 diagnostics. Keep platform body tracing off and never log credential objects or tokens.
 
-When migrating from the earlier optional-JWT branch, replace `EPP_PROVIDER_APPLICATION_ID` with
-`EPP_OUTBOUND_CLIENT_ID` and `EPP_PROVIDER_MI_CLIENT_ID` with `EPP_OUTBOUND_MI_CLIENT_ID`.
-Remove `EPP_PROVIDER_JWT_ENABLED`; it no longer controls authentication. Reuse the exact provider
-scope selected by setup and replace old base URLs with complete send URLs. These source changes
-do not update deployed settings or establish provider authorization. Earlier QA4 tests of API keys
-plus JWT do not validate the current Bearer-only configuration or production endpoints.
+Use the exact provider scope and complete send URLs selected by setup. Source changes do not
+update deployed settings or establish provider authorization. Validate the current OAuth
+configuration with your provider before activation.
 
 See [Microsoft's managed-identity federation guidance](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity).
 
-Use a SAS locale supported by the selected Soprano endpoint and account. On QA4, an API-key
-voice request using `en` returned HTTP `400` with error code `400101`; the same request structure
-using `en-US` returned HTTP `201` with `ENROUTE` on September 15, 2026. This confirms acceptance,
-not handset receipt or audio quality. When SAS omits the locale, the providers use `en-US`.
+Confirm that the request's locale is supported by your Soprano endpoint and account. The Soprano
+adapter uses `en-US` when the locale is absent or blank; a nonblank value is forwarded without
+checking provider support. Test recipient audio separately from API acceptance.
+This adapter uses the JSON `/messages/omnimsg` interface configured by the provider profile,
+not a form-encoded voice API. Use the field names and response mapping in the selected adapter.
 
-The supplied Soprano Connect Voice PDF describes a different API: `POST /voice/voice_orderApiCreate.do`
-with form-encoded fields, `subAction=20`, and numeric language IDs (`1` is default English).
-Its password fields are `beforePassword`, `passwordText`, and `afterPassword`. This provider follows
-the reference integration's JSON `/messages/omnimsg` contract instead; do not mix the form API's
-language IDs, field names, or `ApiResponse.StatusCode` response format with this JSON interface.
-
-JWE provides payload confidentiality and integrity, **not SAS caller authentication**. Anyone with the
+JWE provides payload confidentiality and integrity, **not caller authentication**. Anyone with the
 public key can encrypt a request. The nonce acknowledges decryption; it is not an authentication
 credential or replay protection, and a fixed nonce cannot substitute for Easy Auth.
 
@@ -178,10 +170,17 @@ credential or replay protection, and a fixed nonce cannot substitute for Easy Au
 { "nonce": "<echo of request nonce>", "correlationId": "<echo>", "providerStatus": "accepted" }
 ```
 
-`accepted`/`pending` are **not** failures (provider queued it; acceptance ≠ delivery to the handset).
-The endpoint returns **`200`** on acceptance (any `2xx` counts as transport acceptance). On `2xx` **with a
-matching nonce**, SAS treats the send as handled. **Nonce mismatch / non-2xx / timeout → SAS falls back
-to native CAPP delivery.** `Evaluation` mode returns `200` + nonce echo without delivering.
+The endpoint returns **`200`** only after the adapter recognizes acceptance on a successful
+provider HTTP response. A queued or pending status counts only when that adapter explicitly
+recognizes it; a provider `2xx` alone is insufficient. Acceptance is not handset delivery.
+`Evaluation` mode returns `200` + nonce echo without a provider send.
+
+The sample's integration contract expects the caller to treat `2xx` with a matching nonce as
+handled; a nonce mismatch, non-`2xx` response, or timeout can lead to native fallback.
+This repository does not implement or verify the Entra ID caller's current fallback, retry,
+or timing behavior. Confirm it through the
+[approved EPP procedure](ONBOARDING.md#validate-the-deployed-endpoint);
+do not rely on fallback as a guaranteed recovery mechanism.
 
 Live handlers await provider acceptance; they do not launch background delivery after replying.
 Handler failures omit the nonce and accepted status and return a sanitized error with a request ID
@@ -227,7 +226,7 @@ See the handlers for exact binding and response paths:
 [JavaScript](../javascript/src/functions/SendOtp.js),
 [Python](../python/function_app.py), and [.NET](../dotnet/Functions/SendOtp.cs).
 
-### Evaluation (generic shutter)
+### Evaluation (no provider send)
 
 The only shared non-delivery control is the existing incoming `mode: 2` or `mode: "evaluation"`,
 for every provider and language. On Azure, Easy Auth still authenticates the caller before the
@@ -264,6 +263,7 @@ implemented `StepUp`/`409` mapping.
 | `Fail` | `401` | provider returned 401/403 (auth) |
 | `Fail` | `400` | other provider 4xx |
 | `Fail` | `502` | other provider error, or missing credential/endpoint |
+| N/A | `400` | configured provider name is missing or not registered |
 | N/A | `504` | request to the provider timed out |
 | N/A | `502` | network error to the provider (non-timeout) |
 
@@ -279,8 +279,9 @@ Each provider owns:
 - safe failure classification: `provider_http_error`, `provider_rejected`,
   `unrecognized_provider_status`, `missing_provider_message_id` or `invalid_provider_json`.
 
-The shared transport owns only final HTTPS validation, a capped timeout, manual redirects,
-`AbortController`/cancellation through response-body reading and one JSON parse. The provider receives
+The shared transport owns final HTTPS validation, timeout handling, disabled redirects, and
+response-body reading and decoding. JavaScript/.NET propagate cancellation through body reading;
+Python uses connect/read inactivity timeouts. The provider receives
 the transport result and returns a normalized provider result. Raw API-specific JSON is not inspected
 by the Function and never enters public responses or logs.
 
@@ -289,9 +290,9 @@ This model is internal: do not serialize it into the endpoint response or logs. 
 status, the mapped outcome and a bounded raw provider message ID; descriptions and raw
 metadata remain private. Public HTTP responses still expose only the existing
 nonce/correlation/status or sanitized error contract.
-Provider requests are serialized only when building the outbound HTTP body; incoming provider JSON
-is parsed once and normalized inside its provider. No serialization framework or provider-specific
-class hierarchy is required.
+Provider requests are serialized when building the outbound HTTP body. JavaScript/Python map
+parsed response objects; .NET deserializes provider-specific response types through
+`PhoneProviderBase.SendJsonAsync<TResponse>`. The handler uses only the normalized result.
 
 Consult the selected provider implementation for required credentials and options. The
 [onboarding credential naming table](ONBOARDING.md#provider-credential-names) lists exact secret
@@ -304,12 +305,12 @@ SMS and Voice use the complete provider-approved URLs selected from the provider
 supplies `recipient.phone_number`, `message.text` (unchanged for SMS, paced/repeated for voice), optional `message.language`, one
 selected `channels[].channel`, and `correlation_id`. Keep the leading `+` in the E.164 phone number.
 
-Phase 1 supports Basic and Digest; this sample implements Basic only. Per
+This sample implements Basic authentication only. Per
 [Telesign's authentication instructions](https://developer.telesign.com/enterprise/docs/authentication#basic-authentication),
 the header is `Authorization: Basic <base64(UTF8(customer-id:api-key))>`, using the raw Customer ID
 and API Key strings from Key Vault. Do not decode the API key first, send the API key alone, or
 substitute a key identifier. The guide's `Basic YOUR_API_KEY` is abbreviated, not the literal encoding.
-Provider-token authentication is described as Phase 2 and is not implemented for Telesign here.
+Digest and provider-token authentication are not implemented for Telesign here.
 
 The optional `account_lifecycle_event` and `originating_ip` fields are reserved for future intelligence
 capabilities. They are omitted; do not infer an originating address from the Function or synthesize
@@ -352,7 +353,7 @@ managed identity. Soprano exchanges an outbound managed-identity assertion for a
 configured provider tenant/scope. Do not put provider secrets in code or app settings.
 
 Caller trust is configured in **Easy Auth**, not application environment variables: pin the trusted
-tenant issuer, the endpoint-app audience and the authorized SAS caller application ID. Incoming
+tenant issuer, the endpoint-app audience and the authorized Microsoft caller application ID. Incoming
 `tenantId` is routing metadata and cannot select any of these. There is no application host-detection
 guard or backup token validation. See [platform onboarding](ONBOARDING.md#2-provision-encryption-and-deployment-trust).
 
@@ -463,13 +464,13 @@ Do not log SDK exception details or tokens. No cache retries/deduplicates provid
 - **Platform authentication only**: enable Easy Auth with `requireAuthentication=true`,
   `unauthenticatedClientAction=Return401` and `requireHttps=true`. Configure the trusted tenant issuer
   and `allowedAudiences` for the endpoint app, plus a **nonempty `allowedApplications`** list pinned to
-  the authorized SAS caller application ID. No excluded path may bypass authentication for SendOtp.
+  the authorized Microsoft caller application ID. No excluded path may bypass authentication for SendOtp.
   The trigger remains `authLevel: anonymous`; there is no application token validation or function-key
   fallback. The platform rejects unauthenticated requests with `401` and denies callers outside the
   allowlist before the handler. **Never expose the endpoint to the public internet with Easy Auth off
   or bypassed.** Core Tools supplies no Easy Auth: local execution must bind only to loopback, with
   no tunnels or public forwarding. Neither request data, JWE decryption, a fixed nonce nor forwarded
-  principal headers authenticate the SAS caller.
+  principal headers authenticate the Entra ID caller.
 - **Timeout boundaries**: platform authentication and Key Vault retrieval happen outside the outbound HTTP
   timer. Python uses connect/read inactivity timeouts, not a hard elapsed-time deadline. The cap
   therefore does not guarantee a 3.2-second end-to-end response, especially on cold starts.

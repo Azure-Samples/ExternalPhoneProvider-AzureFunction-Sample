@@ -34,7 +34,7 @@ sample's release package. No Front Door deployment script is supplied.
    Auth is the only caller-authentication gate before the anonymous Function. Enable
    `requireAuthentication=true`, `unauthenticatedClientAction=Return401` and `requireHttps=true`; pin the
    trusted tenant issuer, endpoint-app `allowedAudiences` and a nonempty `allowedApplications` list for
-   the authorized SAS caller. Do not exclude SendOtp. There is no backup application token validation;
+   the authorized Microsoft caller. Do not exclude SendOtp. There is no backup application token validation;
    never expose the endpoint to the public internet with Easy Auth disabled or bypassed.
 5. Install dependencies from [package.json](package.json), run its offline test script and start the
    local Functions host from this folder. Core Tools has no Easy Auth: bind only to loopback, with no
@@ -75,16 +75,13 @@ once per call to `readConfig()`. Restart the host after changing settings. Confi
 storage other than Azurite separately; do not copy a local emulator connection into Azure. Core Tools
 does not resolve Key Vault references locally; supply the local test PEM or base64 PEM directly.
 
-Older private settings may contain `DEFAULT_PROVIDER`, `ENDPOINT_TIMEOUT_MS`, `REQUIRE_AUTH`,
-`EXPECTED_AUDIENCE`, `ISSUER_TENANT_ID`, `EUDB`, or per-provider `*_ENDPOINT` entries. Those do not
-configure the current shared engine. Use `EPP_PROVIDER_NAME`, the endpoint settings above and
-`EPP_PROVIDER_TIMEOUT_MS` instead; configure caller authentication in Easy Auth. Keep provider options
-that are actually read, such as a service-plan ID. Private integration helpers may
-load settings from another location or use test credential variables, but the Function itself does not.
+Use `EPP_PROVIDER_NAME`, the channel-specific endpoint settings above, and `EPP_PROVIDER_TIMEOUT_MS`;
+configure caller authentication in Easy Auth, not application settings. Add only provider options
+read by the selected adapter, such as a service-plan ID.
 
 The Soprano provider uses the configured complete endpoint and an OAuth bearer token. For voice, it
 extracts the first six-digit passcode from the rendered message and sends fixed synthesis values:
-gender `1` and loop `2`. It uses a nonblank SAS request locale as the language, falling back to
+gender `1` and loop `2`. It uses the request's nonblank locale as the language, falling back to
 `en-US` when the locale is absent or invalid. These values require no additional environment
 settings. Soprano SMS continues to forward the rendered message unchanged. The Telesign provider
 uses the configured complete endpoint and API-key credentials from Key Vault. Telesign SMS forwards
@@ -100,15 +97,15 @@ provider lookup, while tests inject mocked credentials and HTTP. Keep the local 
 
 Easy Auth authenticates and authorizes the caller before `POST /api/SendOtp`; the anonymous handler
 validates the envelope and decrypts the JWE, without parsing or echoing incoming `Authorization`.
-JWE does not authenticate SAS: anyone with the public key can encrypt a request, and a fixed nonce
+JWE does not authenticate the caller: anyone with the public key can encrypt a request, and a fixed nonce
 is not authentication. Request `mode`, `channel`, `ttlSeconds` and `tenantId` are request data, not
 environment settings or sources of identity trust. SMS forwards the caller-rendered message;
 voice uses the provider-specific extraction/pacing described above.
 
-For non-delivery validation, use incoming `mode: 2` or `mode: "evaluation"`. This generic shutter
+For non-delivery validation, use incoming `mode: 2` or `mode: "evaluation"`. This evaluation path
 works for every provider without provider configuration, provider Key Vault reads or provider HTTP;
 platform authentication on Azure and handler decryption still run. No diagnostic environment flag is needed. See the
-[evaluation contract](../docs/CONTRACT.md#evaluation-generic-shutter) for authentication/key prerequisites.
+[evaluation contract](../docs/CONTRACT.md#evaluation-no-provider-send) for authentication/key prerequisites.
 
 Live requests use the configured provider's API key or OAuth token and await acceptance before returning the nonce.
 Acceptance is not handset delivery; failures omit the nonce, and timeouts must not trigger blind
@@ -117,7 +114,7 @@ retries. The shared contract defines validation, HTTP outcomes and privacy-safe 
 ## Source and extension points
 
 Start with the provider-neutral
-[BYOT request and response guide](../docs/BRING-YOUR-OWN-PROVIDER.md) for the SAS payload,
+[BYOT request and response guide](../docs/BRING-YOUR-OWN-PROVIDER.md) for the Microsoft Entra ID payload,
 caller authentication, and response rules. Your team owns the outbound service integration.
 
 For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and the

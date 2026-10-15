@@ -28,6 +28,12 @@ account must be allowed to consent to or use these Microsoft Graph delegated per
 - `AuditLog.Read.All`
 - `UserAuthenticationMethod.Read.All`
 
+Reading other users' phone methods also requires a
+[supported Entra role](https://learn.microsoft.com/en-us/graph/api/authentication-list-phonemethods?view=graph-rest-1.0#permissions),
+not just consent to those scopes. Authentication Administrator receives masked phone numbers;
+if the calling code is unavailable, the script reports `Unknown`. Confirm approved read access
+with your identity administrator rather than granting broader roles just to fill the report.
+
 Access to sign-in logs also depends on your Microsoft Entra licensing, directory role,
 and log-retention period. Review the requested permissions before consenting. The script
 processes sign-in authentication details that can include phone numbers. It exports only
