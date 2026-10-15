@@ -85,8 +85,8 @@ Follow the [Front Door guide](../../docs/FRONTDOOR.md), including readiness and 
   network restriction. Never exempt SendOtp or disable Easy Auth.
 - An authenticated SendOtp 403 is a failure, not proof of failover. Check origin, ingress, and auth.
 - A shared-URL success does not prove every origin works; verify each with safe regional telemetry.
-- Distinguish delayed aggregate metrics from event timestamps and client observations. See the
-  [recorded test results and limitations](../../docs/FRONTDOOR.md#observed-failover-results-and-limitations).
+- Distinguish delayed aggregate metrics from event timestamps and client observations. Review
+  [failover behavior](../../docs/FRONTDOOR.md#failover-behavior) before setting recovery expectations.
 
 ## Deployment fails with SubscriptionIsOverQuotaForSku
 
