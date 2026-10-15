@@ -22,7 +22,7 @@ used JavaScript; validate an equivalent .NET readiness implementation and deploy
 2. Consult the selected adapter in [Src/Providers/](Src/Providers/) for required credentials and
 	options. For API-key authentication, store credentials in Key Vault under the provider's secret names
 	and grant the Function's managed identity *Key Vault Secrets User*. For OAuth, complete the
-	[provider-administrator handoff](../docs/ONBOARDING.md#soprano-provider-administrator-handoff)
+	[provider-administrator handoff](../docs/ONBOARDING.md#oauth-provider-administrator-handoff)
 	instead of creating API-key secrets. Configure the matching endpoints/options for either mode.
 3. Base private local settings on [../docs/local.settings.sample.json](../docs/local.settings.sample.json),
 	replacing placeholders and selecting `FUNCTIONS_WORKER_RUNTIME=dotnet-isolated`. Put settings
@@ -107,6 +107,11 @@ uses the request's nonblank locale as the language, falling back to `en-US`, and
 `1` and loop `2`. These values require no additional environment settings. Soprano SMS continues to
 forward the rendered message unchanged.
 
+Telesign uses OAuth when `EPP_PROVIDER_AUTH_MODE=oauth`; existing `apiKey` or unset-mode deployments
+retain Basic auth with Key Vault credentials. Setup maps `deployment.AccessTokenScopeTenant` to
+`EPP_PROVIDER_TENANT_ID` independently of the Security Store `tenantId`. Complete Telesign's
+placeholder tenant/app ID/scopes before guided deployment.
+
 Telesign SMS also forwards the rendered message unchanged. Telesign voice comma-separates each
 six-digit numeric run that is not part of a longer number and repeats the complete paced message twice.
 
@@ -137,7 +142,8 @@ credentials, and testing, not just a change to `SelectProvider`.
 OAuth caching. Both default to `true`. Setting the selected switch to `false` skips startup warmup
 and fetches on every live request, using fresh SDK credentials for OAuth.
 When enabled, it asks the selected provider for credentials at startup and on cache misses.
-Each provider owns credential acquisition and its secret names. The service stores
+Each provider owns its credential policy and secret names; Telesign and Soprano delegate OAuth
+acquisition to the shared `OAuthTokenProvider`. The service stores
 the result in .NET `MemoryCache` until the credential's absolute expiry; the next request fetches a
 replacement. There is no polling timer or separate cache implementation. The fetch has a
 2.5-second cancellation budget linked to its caller's token. `MemoryCache.GetOrCreateAsync`
@@ -152,6 +158,7 @@ shared-acquisition behavior applies here. Evaluation remains independent.
 | [Src/EntraSendOtpPayload.cs](Src/EntraSendOtpPayload.cs) | Bound request model, strict channel/mode converters and semantic validation |
 | [Src/JweDeliveryContext.cs](Src/JweDeliveryContext.cs) | Pinned JWE decryption and decrypted delivery context |
 | [Src/CredentialTokenService.cs](Src/CredentialTokenService.cs) | Provider-supplied retrieval, one expiring `MemoryCache` value and startup warmup |
+| [Src/OAuthTokenProvider.cs](Src/OAuthTokenProvider.cs) | Shared managed-identity/client-assertion token exchange for Telesign and Soprano |
 | [Src/OtpLog.cs](Src/OtpLog.cs) | Source-generated, strongly typed [structured logging events](../docs/CONTRACT.md#application-logs) |
 | [Src/PhoneProviderBase.cs](Src/PhoneProviderBase.cs) | Provider extension contract and shared typed JSON/HTTP transport |
 | [Src/Providers/](Src/Providers/) | Provider identity, credential delegation and API-specific request/response protocols |

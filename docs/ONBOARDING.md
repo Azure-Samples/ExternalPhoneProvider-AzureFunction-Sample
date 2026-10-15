@@ -105,17 +105,17 @@ can restore setup-managed values.
 
 | Value or setting | Source / verification | Customer action |
 |---|---|---|
-| `EPP_PROVIDER_NAME`, `EPP_PROVIDER_ENDPOINT_REGION`, `EPP_PROVIDER_AUTH_MODE` | Selected profile: Telesign `apiKey`, Soprano `oauth`. | Compare with approved provider/region. |
+| `EPP_PROVIDER_NAME`, `EPP_PROVIDER_ENDPOINT_REGION`, `EPP_PROVIDER_AUTH_MODE` | Selected profile: Telesign and Soprano `oauth`. Legacy Telesign `apiKey` is still supported. | Compare with approved provider/region. Complete Telesign's placeholder OAuth values before using its new profile. |
 | `EPP_PROVIDER_SMS_ENDPOINT`, `EPP_PROVIDER_VOICE_ENDPOINT` | Complete SMS and voice URLs from the selected regional profile; they may differ. Setup writes both, and each request's `channel` selects one. | Have the provider confirm account access for each intended channel. Do not append another API path or substitute an arbitrary test URL. |
-| `EPP_PROVIDER_TENANT_ID` | Profile's provider directory; also appears as `providerTenantId` in the summary. | Do not replace it with the customer's tenant ID. Used for provider tenant restriction and Soprano OAuth authority. |
-| `EPP_PROVIDER_APP_ID`, `EPP_PROVIDER_SCOPE` | Soprano API resource client ID and exact `api://.../.default` scope from the profile. | Provider administrator confirms these; API-key providers do not need them. The app ID is setup metadata; the runtime requests the configured scope. Neither is the endpoint app ID. |
-| `EPP_OUTBOUND_CLIENT_ID` | Dedicated endpoint application's **client ID**, reused as the Soprano calling app. | Do not create a second client secret or substitute the Soprano API app ID. |
-| `EPP_OUTBOUND_MI_CLIENT_ID` | Setup-created outbound user-assigned managed identity > Overview > Client ID. | Soprano token exchange uses this ID. Its Principal/Object ID is different and is used by the federated credential's subject. |
-| `KEY_VAULT_URL` | Summary's `resources.keyVault`; vault Overview > Vault URI. | Put Telesign credentials in this vault. Setup grants its Function system identity Key Vault Secrets User. |
+| `EPP_PROVIDER_TENANT_ID` | Profile's `deployment.AccessTokenScopeTenant`; summary's `accessTokenScopeTenant` for OAuth. | This is the token-issuing directory, not necessarily the Security Store `deployment.tenantId` / summary `providerTenantId`. Do not substitute the customer's tenant ID. Setup preserves and allows both provider tenants. |
+| `EPP_PROVIDER_APP_ID`, `EPP_PROVIDER_SCOPE` | Provider API resource client ID and exact resource scope ending in `/.default` from the profile. | Provider administrator confirms these; API-key providers do not need them. The app ID is setup metadata; the runtime requests the configured scope. Neither is the endpoint app ID. |
+| `EPP_OUTBOUND_CLIENT_ID` | Dedicated endpoint application's **client ID**, reused as the OAuth calling app. | Do not create a second client secret or substitute the provider API app ID. |
+| `EPP_OUTBOUND_MI_CLIENT_ID` | Setup-created outbound user-assigned managed identity > Overview > Client ID. | OAuth token exchange uses this ID. Its Principal/Object ID is different and is used by the federated credential's subject. |
+| `KEY_VAULT_URL` | Summary's `resources.keyVault`; vault Overview > Vault URI. | API-key adapters, including legacy Telesign, use this vault. OAuth does not read provider secrets. Setup grants its Function system identity Key Vault Secrets User. |
 | `EPP_DECRYPTION_KEY_PEM`, `EPP_ENCRYPTION_KEY_ID` | Versioned Key Vault reference and the single registered encryption credential ID. The certificate can be in a reused vault distinct from `KEY_VAULT_URL`. Summary includes certificate/secret identifiers and expiry, **not** private-key bytes. | Do not view/copy the private key. Assign a [renewal owner](../setup/docs/README.md#encryption-certificate-lifecycle). |
 | `EPP_PROVIDER_TIMEOUT_MS`, `EPP_PROVIDER_RETRY_INTERVAL_MS` | Profile timing values. Runtime provider HTTP timeout is capped at 2500 ms. | Neither is a whole-request deadline; retry interval metadata does **not** enable send retries. |
 | `EPP_KEY_VAULT_CACHE_ENABLED`, `EPP_ACCESS_TOKEN_CACHE_ENABLED` | Setup writes `false` for FC1, `true` for EP1. | Independently control API-key/OAuth caching and startup preparation. Unset defaults to `true`; deploy a supporting package and restart after changes. See [plan guidance](../setup/docs/README.md#service-plan-selection). |
-| Application Insights, storage, runtime/package settings and identities | Created/configured for the selected plan; system identity handles vault/storage/telemetry, outbound identity handles Soprano exchange. | Verify telemetry ingestion. Do not copy local emulator settings or EP1-only settings into FC1. |
+| Application Insights, storage, runtime/package settings and identities | Created/configured for the selected plan; system identity handles vault/storage/telemetry, outbound identity handles OAuth exchange. | Verify telemetry ingestion. Do not copy local emulator settings or EP1-only settings into FC1. |
 | Inbound caller issuer, audience and allowlist | Function App > Authentication; setup configures Easy Auth for the Microsoft phone-provider caller. | Read back platform authentication, not just `EPP_EXPECTED_*` metadata. App settings are not an alternative caller-authentication gate. |
 
 Guided setup writes both channel-specific endpoint settings and requires a package that reads
@@ -137,8 +137,8 @@ not a recommendation order:
 |---|---|---|
 | `infobip` | `infobip-api-key`; `Authorization: App ...` | Adapter only; no guided profile. Validate its account/options separately. |
 | `sinch` | `sinch-api-token`; static token | Adapter only; no guided profile. Validate its account/options separately. |
-| `soprano` | No API-key secrets; OAuth client assertion | Guided; complete the [provider-admin handoff](#soprano-provider-administrator-handoff). |
-| `telesign` | `telesign-api-key` and `telesign-customer-id`; Basic authentication | Guided; complete the [vault steps](#telesign-enter-and-verify-the-two-vault-secrets). |
+| `soprano` | No API-key secrets; OAuth client assertion | Guided; complete the [provider-admin handoff](#oauth-provider-administrator-handoff). |
+| `telesign` | OAuth client assertion for new deployments; legacy Basic uses `telesign-api-key` and `telesign-customer-id` | OAuth profile awaits provider values; follow [OAuth configuration](#telesign-oauth-configuration-and-handoff). Existing Basic deployments use the [vault steps](#telesign-enter-and-verify-the-two-vault-secrets). |
 
 ### Where to enter API-key credentials in Key Vault
 
@@ -173,7 +173,29 @@ If the vault denies access, ask the approved credential administrator for help; 
 vault protection or copy credentials into Function settings. See the permission and runtime
 checks in the provider-specific steps below.
 
+### Telesign: OAuth configuration and handoff
+
+The [Telesign profile](../setup/providers/telesign.json) now selects `oauth`, but its
+`deployment.AccessTokenScopeTenant` and each route's `appId` and `scope` are intentionally
+placeholders. **The provider owner must replace them before guided setup can deploy.** Obtain
+Telesign's token-issuing tenant ID, API application ID, and exact resource scope ending in
+`/.default`; complete both Global and EU routes. Keep `deployment.tenantId` unchanged as the
+Security Store tenant. The access-token tenant can be different.
+
+Use a Function package with Telesign OAuth support and complete the
+[OAuth administrator handoff](#oauth-provider-administrator-handoff). No Telesign API-key secrets
+are used in OAuth mode; the Function sends only the acquired access token as a Bearer credential.
+Token failures never trigger Basic authentication. Verify both channels through the approved
+procedure before activation.
+
+Existing Basic-auth Functions do not change until their configuration is changed. An unset
+`EPP_PROVIDER_AUTH_MODE` or `apiKey` retains Basic authentication. Rerunning setup with the new
+profile is an explicit migration to OAuth, not an automatic conversion of stored credentials.
+Coordinate provider authorization before that migration; do not bypass placeholder validation.
+
 ### Telesign: enter and verify the two vault secrets
+
+**Legacy Basic authentication only.** Do not create these secrets for an OAuth deployment.
 
 1. Obtain the raw API key and matching Customer ID from your Telesign account's approved secure
    credential process. Confirm that this account can call the configured EPP URL for each channel you intend to enable.
@@ -201,16 +223,18 @@ screenshots, or chat. During rotation, coordinate the matching pair and provider
 two secret updates are not atomic. Keep old credentials usable during the approved transition
 where the provider supports it, and verify live delivery before retiring them.
 
-### Soprano: provider-administrator handoff
+<a id="soprano-provider-administrator-handoff"></a>
+### OAuth: provider-administrator handoff
 
 Setup configures the customer-side multitenant app and a federated identity credential trusting
 the outbound managed identity. It does **not** provision your commercial account or grant
-application access in Soprano's tenant. A successful Azure deployment is therefore not evidence
-that Soprano OAuth is ready.
+application access in the selected Telesign or Soprano access-token tenant. A successful Azure
+deployment is therefore not evidence that provider OAuth is ready.
 
 Send the following **identifiers only** through the provider's approved onboarding channel:
 customer tenant ID; `applicationId` / `EPP_OUTBOUND_CLIENT_ID`; intended channels and their full provider URLs;
-`EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_APP_ID`, and `EPP_PROVIDER_SCOPE`; and the account/sender
+the provider's Security Store tenant ID, `EPP_PROVIDER_TENANT_ID` (access-token tenant),
+`EPP_PROVIDER_APP_ID`, and `EPP_PROVIDER_SCOPE`; and the account/sender
 reference requested by the provider. If troubleshooting federation, also supply the outbound
 identity Client ID and Principal ID, and the federated credential's issuer/subject/audience
 metadata. Never supply the managed-identity assertion, access token, private key, or a new client secret.
@@ -218,7 +242,7 @@ metadata. Never supply the managed-identity assertion, access token, private key
 Ask the provider administrator to confirm the API tenant/app/scope, provision/authorize the
 calling application's service principal in that tenant through its supported process, and
 confirm the exact consent/application roles and account/channel entitlement. This repository
-does not publish a supported Soprano consent URL or role-ID catalog; do not guess a role or
+does not publish a supported provider consent URL or role-ID catalog; do not guess a role or
 construct an admin-consent link from the sample's GUIDs. Record their completion confirmation.
 
 Inspect the dedicated app's **Certificates & secrets > Federated credentials** and the outbound

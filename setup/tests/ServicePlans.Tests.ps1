@@ -96,6 +96,8 @@ try {
         $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix unit
         $provider = @{
             DisplayName = 'Telesign'; EndpointRegion = 'global'; AuthenticationMode = 'apiKey'
+            TenantId = '44444444-4444-4444-4444-444444444444'
+            AccessTokenScopeTenant = '77777777-7777-7777-7777-777777777777'
             Settings = @{
                 EPP_PROVIDER_TENANT_ID = '44444444-4444-4444-4444-444444444444'
                 EPP_PROVIDER_SMS_ENDPOINT = 'https://sms.provider.contoso.com/send'
@@ -139,6 +141,18 @@ try {
             }
             else { Assert ($script:Calls[0] -like '*geoRegions*') 'EP1 must keep its ARM availability check.' }
         }
+        $provider.AuthenticationMode = 'oauth'
+        $inputs.ProviderAuthentication = 'oauth'
+        $provider.Settings.EPP_PROVIDER_TENANT_ID = $provider.AccessTokenScopeTenant
+        $provider.Settings.EPP_PROVIDER_APP_ID = '88888888-8888-8888-8888-888888888888'
+        $provider.Settings.EPP_PROVIDER_SCOPE = 'api://88888888-8888-8888-8888-888888888888/.default'
+        $script:Messages.Clear()
+        Show-EppPlan -Inputs $inputs -Names $names -ProviderConfiguration $provider -Context $context
+        $plan = $script:Messages -join "`n"
+        Assert ($plan.Contains("Security Store tenant: $($provider.TenantId)") -and
+            $plan.Contains("Access-token tenant: $($provider.AccessTokenScopeTenant)")) 'Approval must disclose the two distinct provider tenants.'
+        Assert ($plan.Contains('Telesign OAuth: add a federated credential') -and
+            -not $plan.Contains('Soprano OAuth')) 'Federation guidance must identify the selected OAuth provider.'
         $inputs.ServicePlan = 'FC1'
         $script:Regions = '[{"name":"East US"}]'
         Assert-Throws { Assert-EppServicePlanLocation -Inputs $inputs } 'FC1 is unavailable'
@@ -263,9 +277,11 @@ try {
                     -AssetDirectory $Directory -WorkingDirectory $Directory -Package $publish.Package -OutputDirectory $Directory
             } 'stop-after-parameters'
             Assert ($script:DeploymentParameters.servicePlan.value -ceq $id) 'The approved plan must be passed to Bicep.'
-            foreach ($setting in @('EPP_PROVIDER_SMS_ENDPOINT', 'EPP_PROVIDER_VOICE_ENDPOINT')) {
-                Assert ($script:DeploymentParameters.providerSettings.value[$setting] -ceq $provider.Settings[$setting]) 'Both approved endpoints must be passed to Bicep.'
+            foreach ($setting in @('EPP_PROVIDER_SMS_ENDPOINT', 'EPP_PROVIDER_VOICE_ENDPOINT', 'EPP_PROVIDER_TENANT_ID', 'EPP_PROVIDER_SCOPE')) {
+                Assert ($script:DeploymentParameters.providerSettings.value[$setting] -ceq $provider.Settings[$setting]) 'Approved endpoints and OAuth settings must be passed to Bicep.'
             }
+            Assert ($script:DeploymentParameters.providerSettings.value.EPP_PROVIDER_TENANT_ID -ceq $provider.AccessTokenScopeTenant -and
+                $script:DeploymentParameters.providerSettings.value.EPP_PROVIDER_TENANT_ID -cne $provider.TenantId) 'Deploy the access-token authority rather than the Security Store tenant.'
             Assert (-not $script:DeploymentParameters.providerSettings.value.ContainsKey('EPP_PROVIDER_CHANNEL')) 'Bicep must not receive a channel restriction.'
         }
 

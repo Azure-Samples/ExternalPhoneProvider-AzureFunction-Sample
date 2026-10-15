@@ -31,9 +31,9 @@ public class SendOtpTests
         "request_received", "payload_validated", "delivery_context_decrypted",
         "evaluation_completed", "response_prepared", "request_completed",
     ];
-    private static void ConfigureSoprano(HandlerRig rig)
+    private static void ConfigureOAuth(HandlerRig rig, string provider = "soprano")
     {
-        rig.Env["EPP_PROVIDER_NAME"] = "soprano";
+        rig.Env["EPP_PROVIDER_NAME"] = provider;
         rig.Env["EPP_PROVIDER_AUTH_MODE"] = "oauth";
         rig.Env["EPP_PROVIDER_SMS_ENDPOINT"] = "https://provider.example/full/send/";
         rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] = "https://provider.example/full/send/";
@@ -42,7 +42,8 @@ public class SendOtpTests
         rig.Env["EPP_OUTBOUND_CLIENT_ID"] = "calling-application";
         rig.Env["EPP_OUTBOUND_MI_CLIENT_ID"] = "outbound-identity";
         rig.Env["AZURE_CLIENT_ID"] = "different-vault-identity";
-        rig.Http.Respond = _ => Task.FromResult(Json(201, "{\"status\":\"ENROUTE\"}"));
+        rig.Http.Respond = _ => Task.FromResult(Json(201,
+            provider == "telesign" ? "{\"status\":{\"code\":3001}}" : "{\"status\":\"ENROUTE\"}"));
     }
 
     [Theory]
@@ -63,7 +64,7 @@ public class SendOtpTests
                 ValueTask.FromResult(new AccessToken("token", DateTimeOffset.UtcNow.AddHours(1)))));
         if (provider == "soprano")
         {
-            ConfigureSoprano(rig);
+            ConfigureOAuth(rig);
         }
         else
         {
@@ -97,7 +98,7 @@ public class SendOtpTests
                 ValueTask.FromResult(new AccessToken("assertion", DateTimeOffset.UtcNow.AddHours(1)))),
             (_, _, _) => new TestTokenCredential((_, _) =>
                 ValueTask.FromResult(new AccessToken("token", DateTimeOffset.UtcNow.AddHours(1)))));
-        if (provider == "soprano") ConfigureSoprano(rig);
+        if (provider == "soprano") ConfigureOAuth(rig);
         rig.Env["EPP_PROVIDER_NAME"] = provider;
         rig.Env["EPP_PROVIDER_AUTH_MODE"] = provider == "soprano" ? "oauth" : "apiKey";
         rig.Env["EPP_PROVIDER_SMS_ENDPOINT"] = "https://sms.provider.example/send";
@@ -179,9 +180,11 @@ public class SendOtpTests
     }
 
     [Theory]
-    [InlineData("false", 200)]
-    [InlineData("PRIVATE-INVALID", 502)]
-    public async Task OAuthCacheSettingSkipsStartupAndNeverBlocksEvaluation(string setting, int liveStatus)
+    [InlineData("soprano", "false", 200)]
+    [InlineData("soprano", "PRIVATE-INVALID", 502)]
+    [InlineData("telesign", "false", 200)]
+    [InlineData("telesign", "PRIVATE-INVALID", 502)]
+    public async Task OAuthCacheSettingSkipsStartupAndNeverBlocksEvaluation(string provider, string setting, int liveStatus)
     {
         var calls = 0;
         using var rig = new HandlerRig(
@@ -192,7 +195,7 @@ public class SendOtpTests
                 calls++;
                 return ValueTask.FromResult(new AccessToken("token", DateTimeOffset.UtcNow.AddHours(1)));
             }));
-        ConfigureSoprano(rig);
+        ConfigureOAuth(rig, provider);
         rig.Env["EPP_ACCESS_TOKEN_CACHE_ENABLED"] = setting;
         rig.Env["EPP_KEY_VAULT_CACHE_ENABLED"] = "PRIVATE-UNUSED";
         await rig.Credentials.StartAsync(default);
@@ -218,9 +221,10 @@ public class SendOtpTests
     }
 
     [Theory]
-    [InlineData("api://provider/.default")]
-    [InlineData("api://second/.default")]
-    public async Task SopranoOAuthUsesSetupIdentitiesScopeAndOneBoundedExchange(string scope)
+    [InlineData("soprano", "api://provider/.default")]
+    [InlineData("soprano", "api://second/.default")]
+    [InlineData("telesign", "api://telesign/.default")]
+    public async Task ProviderOAuthUsesSetupIdentitiesScopeAndOneBoundedExchange(string provider, string scope)
     {
         var scopes = new List<string>();
         var identities = new List<string>();
@@ -245,13 +249,17 @@ public class SendOtpTests
                 return new AccessToken("private-provider-token", DateTimeOffset.UtcNow.AddHours(1));
             });
         });
-        ConfigureSoprano(rig);
+        ConfigureOAuth(rig, provider);
+        rig.Env["EPP_PROVIDER_TENANT_ID"] = "alternate-token-tenant";
         rig.Env["EPP_PROVIDER_SCOPE"] = scope;
         AssertAccepted(await rig.Invoke("evaluation"));
         Assert.Empty(applications);
+        await rig.Credentials.StartAsync(default);
+        Assert.Single(applications);
+        Assert.Equal(0, rig.Http.Calls);
         foreach (var channel in new[] { "sms", "voice" })
         {
-            AssertAccepted(await rig.Invoke(channel: channel, deliveryOverrides: JsonSerializer.SerializeToElement(new
+            AssertAccepted(await rig.Invoke(channel: channel, tenantId: "security-store-tenant", deliveryOverrides: JsonSerializer.SerializeToElement(new
             {
                 providerJwt = "FORGED-PAYLOAD", locale = "fr-FR",
                 textToVoice = new { beforePasswordText = "ignored", password = "001234", language = "override" },
@@ -260,7 +268,7 @@ public class SendOtpTests
             Assert.DoesNotContain("X-MEMS-API-ID", rig.Http.Headers.Keys);
             Assert.DoesNotContain("X-MEMS-API-Key", rig.Http.Headers.Keys);
             Assert.DoesNotContain("FORGED", rig.Http.Body!);
-            if (channel == "voice")
+            if (provider == "soprano" && channel == "voice")
             {
                 using var body = JsonDocument.Parse(rig.Http.Body!);
                 var speech = body.RootElement.GetProperty("voice").GetProperty("text2voice");
@@ -275,7 +283,7 @@ public class SendOtpTests
         AssertAccepted(await rig.Invoke());
         Assert.Single(applications);
         Assert.Equal(new[] { scope }, scopes);
-        Assert.Equal(new[] { ("provider-tenant", "calling-application") }, applications);
+        Assert.Equal(new[] { ("alternate-token-tenant", "calling-application") }, applications);
         Assert.All(identities, identity => Assert.Equal("outbound-identity", identity));
         Assert.Equal(3, rig.Http.Calls);
         Assert.Equal(0, rig.Secrets.Calls);
@@ -285,11 +293,15 @@ public class SendOtpTests
     }
 
     [Theory]
-    [InlineData(true, "", 3600)]
-    [InlineData(true, "private-assertion", 5)]
-    [InlineData(false, " ", 3600)]
-    [InlineData(false, "private-token", -1)]
-    public async Task SopranoOAuthRejectsUnusableTokensBeforeProviderIo(bool invalidAssertion, string token, int lifetime)
+    [InlineData("soprano", true, "", 3600)]
+    [InlineData("soprano", true, "private-assertion", 5)]
+    [InlineData("soprano", false, " ", 3600)]
+    [InlineData("soprano", false, "private-token", -1)]
+    [InlineData("telesign", true, "", 3600)]
+    [InlineData("telesign", true, "private-assertion", 5)]
+    [InlineData("telesign", false, " ", 3600)]
+    [InlineData("telesign", false, "private-token", -1)]
+    public async Task ProviderOAuthRejectsUnusableTokensBeforeProviderIo(string provider, bool invalidAssertion, string token, int lifetime)
     {
         var invalid = new AccessToken(token, DateTimeOffset.UtcNow.AddSeconds(lifetime));
         using var rig = new HandlerRig(_ => new TestTokenCredential((_, _) => ValueTask.FromResult(invalidAssertion
@@ -299,15 +311,17 @@ public class SendOtpTests
                 await assertion(cancellation);
                 return invalid;
             }));
-        ConfigureSoprano(rig);
+        ConfigureOAuth(rig, provider);
         AssertFailure(rig, await rig.Invoke(), 502);
         Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
     }
 
     [Theory]
-    [InlineData("true")]
-    [InlineData("false")]
-    public async Task SopranoOAuthCancellationAndRejectionNeverFallBackOrRetry(string setting)
+    [InlineData("soprano", "true")]
+    [InlineData("soprano", "false")]
+    [InlineData("telesign", "true")]
+    [InlineData("telesign", "false")]
+    public async Task ProviderOAuthCancellationAndRejectionNeverFallBackOrRetry(string provider, string setting)
     {
         CancellationToken observed = default;
         var waitForCancellation = true;
@@ -327,7 +341,7 @@ public class SendOtpTests
             return new AccessToken("token", DateTimeOffset.UtcNow.AddHours(1));
         });
         using var rig = new HandlerRig(CreateIdentity, CreateProvider);
-        ConfigureSoprano(rig);
+        ConfigureOAuth(rig, provider);
         rig.Env["EPP_ACCESS_TOKEN_CACHE_ENABLED"] = setting;
         AssertFailure(rig, await rig.Invoke().WaitAsync(TimeSpan.FromSeconds(10)), 502);
         Assert.True(observed.IsCancellationRequested);
@@ -337,9 +351,10 @@ public class SendOtpTests
         AssertFailure(rig, await rig.Invoke(), 502);
         Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
         using var replacement = new HandlerRig(CreateIdentity, CreateProvider);
-        ConfigureSoprano(replacement);
+        ConfigureOAuth(replacement, provider);
         replacement.Env["EPP_ACCESS_TOKEN_CACHE_ENABLED"] = setting;
-        replacement.Http.Respond = _ => Task.FromResult(Json(401, "{\"status\":\"REJECTED\"}"));
+        replacement.Http.Respond = _ => Task.FromResult(Json(401,
+            provider == "telesign" ? "{\"status\":{\"code\":999}}" : "{\"status\":\"REJECTED\"}"));
         AssertFailure(replacement, await replacement.Invoke(), 401);
         Assert.Equal((1, 0), (replacement.Http.Calls, replacement.Secrets.Calls));
     }
@@ -743,7 +758,7 @@ public class SendOtpTests
                 Assert.Equal("PRIVATE-ASSERTION", await assertion(cancellation));
                 return new AccessToken("PRIVATE-TOKEN", DateTimeOffset.UtcNow.AddHours(1));
             }));
-        ConfigureSoprano(rig);
+        ConfigureOAuth(rig);
         rig.Env["EPP_PROVIDER_SMS_ENDPOINT"] = "https://provider.example/api/send?key=PRIVATE-QUERY";
         rig.Env["EPP_PROVIDER_TENANT_ID"] = "provider-tenant-id";
         rig.Env["EPP_OUTBOUND_CLIENT_ID"] = "outbound-client-id";
@@ -1026,13 +1041,13 @@ public class SendOtpTests
                 ["EPP_PROVIDER_TIMEOUT_MS"] = "2500",
                 ["EPP_DECRYPTION_KEY_PEM"] = Keys.Rsa.ExportPkcs8PrivateKeyPem(),
             };
+            var identityFactory = createIdentity ?? (_ => throw new InvalidOperationException("Unexpected managed identity"));
+            var oauthFactory = createOAuth ?? ((_, _, _) => throw new InvalidOperationException("Unexpected OAuth"));
             PhoneProviderBase[] providers =
             {
                 new InfobipProvider(Secrets),
-                new TelesignProvider(Secrets),
-                new SopranoProvider(
-                    createIdentity ?? (_ => throw new InvalidOperationException("Unexpected managed identity")),
-                    createOAuth ?? ((_, _, _) => throw new InvalidOperationException("Unexpected OAuth"))),
+                new TelesignProvider(Secrets, Env, new OAuthTokenProvider(identityFactory, oauthFactory)),
+                new SopranoProvider(identityFactory, oauthFactory),
                 new SinchProvider(Secrets),
             };
             Credentials = new CredentialTokenService(providers, Env);

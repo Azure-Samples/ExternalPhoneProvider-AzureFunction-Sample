@@ -508,6 +508,7 @@ try {
             }
             $provider = @{
                 Id = 'unit'; EndpointRegion = 'global'; AuthenticationMode = 'apiKey'
+                TenantId = $inputs.ProviderTenantId; AccessTokenScopeTenant = $inputs.ProviderTenantId
                 Settings = @{ EPP_PROVIDER_SMS_ENDPOINT = 'https://sms.contoso.com/send'; EPP_PROVIDER_VOICE_ENDPOINT = 'https://voice.contoso.com/send'; EPP_PROVIDER_TENANT_ID = $inputs.ProviderTenantId }
             }
             $deployment = @{
@@ -527,6 +528,8 @@ try {
                 $script:ReferenceError = ''; $script:Calls.Clear()
                 $result = Invoke-EppDeployment @deployment
                 Assert ($result.certificateAction -ceq $action -and $result.certificateReferenceResolved -eq $true) 'The persisted result must identify the action and resolved reference.'
+                Assert ($result.providerTenantId -ceq $inputs.ProviderTenantId -and
+                    $null -eq $result.accessTokenScopeTenant) 'Basic-auth summaries must preserve the provider tenant without claiming an OAuth authority.'
                 Assert ($result.sourceRevision -ceq ('a' * 40) -and $result.source -ceq $inputs.SourceBaseUri -and
                     $result.packageFile -ceq 'epp-javascript.zip' -and $result.packageUrl -ceq $inputs.PackageUrl -and
                     $result.packageReleaseTag -ceq $inputs.PackageReleaseTag) 'The persisted result must identify the setup source and downloaded Function release.'
@@ -602,6 +605,38 @@ try {
                 Assert ($launcher.ParamBlock.Parameters.Name.VariablePath.UserPath -contains $parameter) "The launcher must forward $parameter."
             }
             Assert ($script:Answers.Count -eq 0) 'Every expected interactive answer must be consumed.'
+
+            $script:SetEndpointWithoutFederation = (Get-Command Set-EppApplicationEndpoint).ScriptBlock
+            function script:Set-EppApplicationEndpoint {
+                param($Inputs, $Context, $Outputs, $Certificate, $KeyId, [switch] $ConfigureFederation)
+                Assert $ConfigureFederation 'Telesign OAuth must request outbound managed-identity federation.'
+                & $script:SetEndpointWithoutFederation -Inputs $Inputs -Context $Context -Outputs $Outputs `
+                    -Certificate $Certificate -KeyId $KeyId -ConfigureFederation:$false
+            }
+            $oauthInputs = @{} + $inputs
+            $oauthInputs.ProviderAuthentication = 'oauth'
+            $oauthInputs.AccessTokenScopeTenant = '99999999-9999-9999-9999-999999999999'
+            $oauthInputs.ProviderAllowedTenantIds = @($inputs.ProviderTenantId, $oauthInputs.AccessTokenScopeTenant)
+            $oauthProvider = @{} + $provider
+            $oauthProvider.Id = 'telesign'; $oauthProvider.DisplayName = 'Telesign'; $oauthProvider.AuthenticationMode = 'oauth'
+            $oauthProvider.AccessTokenScopeTenant = $oauthInputs.AccessTokenScopeTenant
+            $oauthProvider.Settings = @{} + $provider.Settings
+            $oauthProvider.Settings.EPP_PROVIDER_TENANT_ID = $oauthInputs.AccessTokenScopeTenant
+            $oauthProvider.Settings.EPP_PROVIDER_APP_ID = '88888888-8888-8888-8888-888888888888'
+            $oauthProvider.Settings.EPP_PROVIDER_SCOPE = 'api://88888888-8888-8888-8888-888888888888/.default'
+            $oauthContext = @{} + $context
+            $oauthContext.CertificatePlan = Get-EppCertificatePlan @planArgs @reuseArgs -NonInteractive
+            $oauthDeployment = @{} + $deployment
+            $oauthDeployment.Inputs = $oauthInputs; $oauthDeployment.ProviderConfiguration = $oauthProvider; $oauthDeployment.Context = $oauthContext
+            $result = Invoke-EppDeployment @oauthDeployment
+            Assert ($result.providerTenantId -ceq $inputs.ProviderTenantId -and
+                $result.accessTokenScopeTenant -ceq $oauthInputs.AccessTokenScopeTenant) 'OAuth summaries must retain distinct Security Store and access-token tenant IDs.'
+            $saved = @(Get-ChildItem -LiteralPath $Directory -Filter 'deployment-*.json' | ForEach-Object {
+                Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+            } | Where-Object providerAuthentication -eq 'oauth')
+            Assert ($saved.Count -eq 1 -and $saved[0].providerTenantId -ceq $result.providerTenantId -and
+                $saved[0].accessTokenScopeTenant -ceq $result.accessTokenScopeTenant -and
+                $saved[0].allowedProviderTenantIds -contains $result.accessTokenScopeTenant) 'Persist both tenant roles and the OAuth authority in the approved allowlist.'
         }
         finally {
             if ($issued) { $issued.Certificate.Dispose() }

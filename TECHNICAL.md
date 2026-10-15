@@ -206,9 +206,9 @@ how code accesses configuration; request fields remain separate from deployment 
 | `EPP_PROVIDER_SMS_ENDPOINT` | Required for SMS delivery | Provider-approved HTTPS SMS endpoint. Guided setup writes the complete send URL from the selected regional profile. |
 | `EPP_PROVIDER_VOICE_ENDPOINT` | Required for voice delivery | Provider-approved HTTPS voice endpoint, which can differ from the SMS endpoint. Guided setup writes the complete send URL. |
 | `EPP_PROVIDER_ENDPOINT_REGION` | Guided deployment metadata | Selected `global` or `eu` route label. |
-| `EPP_PROVIDER_AUTH_MODE` | Live delivery | Must match the adapter: `apiKey` for Infobip, Sinch, or Telesign; `oauth` for Soprano. Bundled adapters do not all have guided setup profiles. |
-| `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE` | Soprano OAuth | Provider tenant and selected API scope. |
-| `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | Soprano OAuth | Existing multitenant application and outbound user-assigned managed identity used for client-assertion exchange. |
+| `EPP_PROVIDER_AUTH_MODE` | Live delivery | `oauth` for Telesign or Soprano; `apiKey` for Infobip, Sinch, or legacy Telesign. Unset preserves Telesign Basic auth. Bundled adapters do not all have guided setup profiles. |
+| `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE` | Provider OAuth | Token-issuing tenant from profile `deployment.AccessTokenScopeTenant` and selected API scope. The profile's `tenantId` remains the separate Security Store tenant. |
+| `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | Provider OAuth | Existing multitenant application and outbound user-assigned managed identity used for client-assertion exchange. |
 | `EPP_PROVIDER_TIMEOUT_MS` | Optional | Decimal milliseconds. Defaults to `1500`, capped at `2500`; not an end-to-end deadline. |
 | `EPP_KEY_VAULT_CACHE_ENABLED` | Optional | `true` enables provider API-key bundle caching; `false` reads the bundle for each live request. Unset defaults to `true`. |
 | `EPP_ACCESS_TOKEN_CACHE_ENABLED` | Optional | `true` enables OAuth credential caching; `false` uses request-scoped MI/client-assertion credentials. Unset defaults to `true`. |
@@ -227,9 +227,10 @@ see [endpoint selection](docs/CONTRACT.md#default-provider-and-configuration-rea
 2. **In Azure:** set the same application variables on the selected Function App (or serving slot)
   under **Settings → Environment variables → App settings**, then apply the changes. Local settings
   are not published automatically. Configure host storage separately for the selected hosting plan.
-3. For Telesign, store provider API credentials in Key Vault using the exact manifest names. For
-  Soprano, configure provider consent plus the profile's tenant/scope and outbound managed-identity
-  federation; the Function stores no Soprano client secret.
+3. For Telesign or Soprano OAuth, configure provider consent plus the profile's access-token
+  tenant/scope and outbound managed-identity federation; the Function stores no provider client
+  secret. Complete Telesign's placeholder tenant/app ID/scopes before deployment. For API-key
+  adapters, including legacy Telesign Basic auth, use the exact Key Vault secret names.
 
 Evaluation requests do not need provider variables or provider secrets. They still need the decryption
 key. The default credential resolvers use `ManagedIdentityCredential`, **not** the developer's CLI
@@ -277,9 +278,17 @@ not a provider ranking. The wire example below illustrates Telesign's format onl
 The `telesign` adapter sends its JSON contract to the complete SMS or voice URL selected by the
 request channel from the configured endpoints. It does not append or infer a route.
 
-Basic authentication uses `base64(customer-id:api-key)`, with the existing Key Vault secrets
-`telesign-customer-id` and `telesign-api-key`. Digest and provider-token authentication are not
-implemented. The incoming caller's Authorization header is never forwarded.
+The guided profile selects OAuth. With `EPP_PROVIDER_AUTH_MODE=oauth`, Telesign uses the same
+managed-identity/client-assertion exchange as Soprano and sends the resulting access token as a
+Bearer credential. `deployment.AccessTokenScopeTenant` selects the issuing tenant independently
+of the Security Store `tenantId`; setup maps it to `EPP_PROVIDER_TENANT_ID`. The checked-in
+Telesign token tenant, API application IDs, and scopes are placeholders that must be completed
+before setup can proceed.
+
+Existing `apiKey` or unset-mode deployments retain Basic authentication using
+`base64(customer-id:api-key)` and the Key Vault secrets `telesign-customer-id` and `telesign-api-key`.
+OAuth failure never falls back to Basic. Digest authentication is not implemented. The incoming
+caller's Authorization header is never forwarded.
 
 For an SMS request, the adapter builds the following JSON from the decrypted delivery context and envelope:
 

@@ -23,8 +23,15 @@ class TelesignProvider(PhoneProviderBase):
     name = "telesign"
     authentication_mode = "apiKey"
 
+    def __init__(self, authentication_mode="apiKey"):
+        if authentication_mode not in ("apiKey", "oauth"):
+            raise ValueError("unsupported authentication mode")
+        self.authentication_mode = authentication_mode
+
     @property
     def credential_spec(self):
+        if self.authentication_mode == "oauth":
+            return {"mode": "oauth"}
         return {
             "mode": self.authentication_mode,
             "key_vault_secret_name": "telesign-api-key",
@@ -38,8 +45,16 @@ class TelesignProvider(PhoneProviderBase):
             r"\+[1-9][0-9]{1,14}", delivery.phone_number
         ):
             raise ValueError("invalid recipient")
-        raw = f"{credential['identity']}:{credential['secret']}".encode()
-        authorization = "Basic " + base64.b64encode(raw).decode()
+        if credential.get("mode") != self.authentication_mode:
+            raise ValueError("provider credential unavailable")
+        if self.authentication_mode == "oauth" and credential.get("access_token", "").strip():
+            authorization = "Bearer " + credential["access_token"]
+        elif (self.authentication_mode == "apiKey" and credential.get("identity", "").strip()
+              and credential.get("secret", "").strip()):
+            raw = f"{credential['identity']}:{credential['secret']}".encode()
+            authorization = "Basic " + base64.b64encode(raw).decode()
+        else:
+            raise ValueError("provider credential unavailable")
         correlation_id = delivery.correlation_id
         if not isinstance(correlation_id, str) or not correlation_id:
             correlation_id = delivery.message_id

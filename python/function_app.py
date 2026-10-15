@@ -45,7 +45,9 @@ class InvalidRequest(Exception):
         self.correlation_id = correlation_id
 
 
-def _select_provider(name):
+def _select_provider(name, authentication_mode=None):
+    if isinstance(name, str) and name.lower() == "telesign" and authentication_mode == "oauth":
+        return TelesignProvider("oauth")
     return _providers.get(name.lower()) if isinstance(name, str) and name else None
 
 
@@ -62,7 +64,7 @@ def _failure(log, status, stage, reason):
 
 def _send_to_provider(delivery, log):
     config = read_config()
-    provider = _select_provider(config.provider_name)
+    provider = _select_provider(config.provider_name, config.provider_auth_mode)
     if provider is None:
         return _failure(log, 400, "provider_selection", "unknown_provider"), log
 
@@ -241,7 +243,7 @@ def _warm_selected_credentials():
     config = read_config()
     if not config.provider_name:
         return
-    provider = _select_provider(config.provider_name)
+    provider = _select_provider(config.provider_name, config.provider_auth_mode)
     if provider is None or (
         config.provider_auth_mode
         and config.provider_auth_mode != provider.authentication_mode

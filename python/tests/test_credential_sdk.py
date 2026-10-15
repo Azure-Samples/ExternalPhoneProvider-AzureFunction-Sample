@@ -9,13 +9,18 @@ import pytest
 import src.credentials as credentials_module
 from src.config import read_config
 from src.credentials import CredentialTokenService
+from src.providers.soprano import SopranoProvider
+from src.providers.telesign import TelesignProvider
 
 
 @pytest.mark.parametrize("refresh_in", [None, 60])
 @pytest.mark.parametrize("cache_enabled", [None, " TrUe ", "false"])
-def test_real_provider_sdk_honors_cache_setting_and_refresh_metadata(monkeypatch, refresh_in, cache_enabled):
+@pytest.mark.parametrize("provider", [SopranoProvider(), TelesignProvider("oauth")], ids=["soprano", "telesign"])
+def test_real_provider_sdk_honors_cache_setting_and_refresh_metadata(monkeypatch, refresh_in, cache_enabled, provider):
     token_endpoint_calls = []
     mi_calls = []
+    token_tenant = "44444444-4444-4444-4444-444444444444"
+    authority = f"https://login.microsoftonline.com/{token_tenant}"
 
     def response(payload):
         result = requests.Response()
@@ -28,6 +33,10 @@ def test_real_provider_sdk_honors_cache_setting_and_refresh_metadata(monkeypatch
 
     def send(_session, method, url, **kwargs):
         if method == "POST" and url.endswith("/oauth2/v2.0/token"):
+            assert url == f"{authority}/oauth2/v2.0/token"
+            assert kwargs["data"]["scope"] == "api://provider/.default"
+            assert kwargs["data"]["client_id"] == "22222222-2222-2222-2222-222222222222"
+            assert kwargs["data"]["client_assertion"] == "PRIVATE-ASSERTION"
             token_endpoint_calls.append(url)
             time.sleep(0.03)
             payload = {"access_token": "PRIVATE-PROVIDER", "expires_in": 3600, "token_type": "Bearer"}
@@ -35,10 +44,11 @@ def test_real_provider_sdk_honors_cache_setting_and_refresh_metadata(monkeypatch
                 payload["refresh_in"] = refresh_in
             return response(payload)
         if method == "GET" and ".well-known/openid-configuration" in url:
+            assert url.startswith(authority + "/")
             return response({
-                "token_endpoint": "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token",
-                "authorization_endpoint": "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/oauth2/v2.0/authorize",
-                "issuer": "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/v2.0",
+                "token_endpoint": f"{authority}/oauth2/v2.0/token",
+                "authorization_endpoint": f"{authority}/oauth2/v2.0/authorize",
+                "issuer": f"{authority}/v2.0",
             })
         raise AssertionError("Unexpected HTTP in fake credential transport")
 
@@ -56,7 +66,7 @@ def test_real_provider_sdk_honors_cache_setting_and_refresh_metadata(monkeypatch
         "clock": lambda: now,
     })
     config = read_config({
-        "EPP_PROVIDER_TENANT_ID": "11111111-1111-1111-1111-111111111111",
+        "EPP_PROVIDER_TENANT_ID": token_tenant,
         "EPP_OUTBOUND_CLIENT_ID": "22222222-2222-2222-2222-222222222222",
         "EPP_OUTBOUND_MI_CLIENT_ID": "33333333-3333-3333-3333-333333333333",
         "EPP_PROVIDER_SCOPE": "api://provider/.default",
@@ -65,14 +75,14 @@ def test_real_provider_sdk_honors_cache_setting_and_refresh_metadata(monkeypatch
     })
     try:
         with ThreadPoolExecutor(max_workers=10) as pool:
-            results = list(pool.map(lambda _: manager.resolve({"mode": "oauth"}, config), range(10)))
+            results = list(pool.map(lambda _: manager.get_credentials(provider, config), range(10)))
         assert all(value["access_token"] == "PRIVATE-PROVIDER" for value in results)
         enabled = cache_enabled != "false"
         assert len(token_endpoint_calls) == (1 if enabled else 10)
         assert len(mi_calls) == (2 if enabled else 20)
-        assert manager.resolve({"mode": "oauth"}, config)["access_token"] == "PRIVATE-PROVIDER"
+        assert manager.get_credentials(provider, config)["access_token"] == "PRIVATE-PROVIDER"
         now += 60
-        assert manager.resolve({"mode": "oauth"}, config)["access_token"] == "PRIVATE-PROVIDER"
+        assert manager.get_credentials(provider, config)["access_token"] == "PRIVATE-PROVIDER"
         if enabled:
             manager.refresh().result(timeout=3)
             assert len(token_endpoint_calls) == 1

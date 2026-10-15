@@ -16,11 +16,12 @@ encrypted request bodies, or raw provider responses. Do not enable body tracing 
 | Symptom | First checks / owner | Do not do this |
 |---|---|---|
 | Cannot see an offer or EPP activation/test capability | Customer onboarding owner verifies the [Security Store and feature-access gate](../../docs/ONBOARDING.md#before-purchasing-or-deploying) with provider/Microsoft support. | Do not infer eligibility from Azure Owner or a successful purchase. |
-| Setup reports success, but no OTP delivery | Finish [Telesign vault entry or Soprano provider consent](../../docs/ONBOARDING.md#complete-provider-authentication); confirm authorized testing and policy activation are separately complete. | Do not redeploy all runtimes or paste credentials into local settings. |
+| Setup reports success, but no OTP delivery | Finish [provider OAuth consent or legacy Telesign vault entry](../../docs/ONBOARDING.md#complete-provider-authentication); confirm authorized testing and policy activation are separately complete. | Do not redeploy all runtimes or paste credentials into local settings. |
 | Endpoint returns 401/403 with no invocation | Azure operator checks Easy Auth, issuer/audience/caller restrictions, network access, and available platform/auth logs. An ordinary customer CLI token is not the allowlisted Microsoft caller. | Do not disable Easy Auth, add a test caller, or interpret rejection as readiness. |
 | App failure after invocation, including 401 | Inspect correlated `request_failed` and provider-response events. A provider's 401/403 is mapped to a handler 401; this differs from Easy Auth rejection. | Do not change inbound trust to fix outbound provider authorization. |
 | `decryption_failed` or unresolved key reference | Compare summary certificate/thumbprint/key ID and versioned reference; verify Function identity vault access and reference resolution, then use an authorized evaluation. | Do not export the private key, remove certificates outside approved cleanup, or assume new vault versions automatically update Entra. |
-| Provider credentials unavailable | Check secret names/enabled versions/vault access for Telesign; customer federation plus provider-side authorization/tenant/scope for Soprano. Allow RBAC propagation. | Do not assume evaluation validates outbound credentials. |
+| Provider credentials unavailable | For OAuth, check customer federation and provider-side authorization in `AccessTokenScopeTenant`, plus the API scope. For legacy Telesign Basic, check secret names/enabled versions/vault access. | Do not assume evaluation validates outbound credentials or fall back from OAuth to Basic. |
+| Telesign profile is not deployment-ready | Its OAuth tenant, API app ID, and scopes are placeholders. Have the provider owner complete `AccessTokenScopeTenant` and both routes' `appId`/`scope`. | Do not substitute the Security Store or customer tenant, invent values, or bypass validation. |
 | Timeout, 502/504, or provider acceptance without handset receipt | Separate credential, outbound HTTP, host, and caller timings; ask the provider for supported delivery evidence. Confirm locale/digit clarity for voice. | Do not blindly resend: the first request may already have been accepted. |
 | No requests/traces in Application Insights | Check the exact component/workspace, UTC window, actual authorized traffic, host/worker startup, ingestion identity/network, filters/sampling/caps, and effective exporter. Use [collection guidance](../../docs/APPLICATION-INSIGHTS.md). | Do not treat an empty table/Failures view as healthy or search every runtime for a JSON request summary. |
 | Requests exist but Python/.NET event query is empty | Use [runtime-specific discovery](../../docs/MONITORING.md#runtime-specific-log-discovery). Python extras/.NET scopes may not be exported; .NET host OpenTelemetry does not initialize direct worker export. | Do not apply JavaScript's JSON parser to other runtimes or promise complete dependencies/exceptions. |
@@ -311,7 +312,7 @@ Bicep component can be installed after confirmation. In unattended runs, preinst
 
 Only the dedicated customer application registration must exist from manual Step 1. After approval,
 setup makes it multi-tenant, restricts it to its home tenant plus the provider JSON's `tenantId`
-and existing allowed provider tenants through the Entra allowed-tenants preview, creates both
+(Security Store), `AccessTokenScopeTenant` for OAuth, and existing allowed provider tenants through the Entra allowed-tenants preview, creates both
 required service principals, adds and assigns
 `Epp.Invoke`, and grants the Microsoft phone-provider service principal Graph `Application.Read.All`.
 
@@ -393,8 +394,10 @@ For live delivery, confirm the request's channel-specific provider URL
 (`EPP_PROVIDER_SMS_ENDPOINT` or `EPP_PROVIDER_VOICE_ENDPOINT`) and its account authorization.
 The matching setting is required; missing, empty, or invalid URLs fail closed without using a
 shared or other-channel endpoint. Use a package that supports these settings.
-Telesign needs its exact Key Vault secret names; Soprano needs provider-side authorization, not
-API-key secrets. Arrange an authorized evaluation through the
+Telesign and Soprano OAuth need provider-side authorization in the configured token tenant, not
+API-key secrets. Only legacy Telesign Basic auth uses its two Key Vault secrets. Confirm
+`EPP_PROVIDER_TENANT_ID` matches `AccessTokenScopeTenant`, which may differ from the Security Store
+`tenantId`. Arrange an authorized evaluation through the
 [test handoff](../../docs/ONBOARDING.md#validate-the-deployed-endpoint) before controlled live
 messages. EPP policy remains a separate assisted administrator-approved operation; no setup code
 updates it. Public Graph SMS/voice schemas do not document the EPP activation fields.

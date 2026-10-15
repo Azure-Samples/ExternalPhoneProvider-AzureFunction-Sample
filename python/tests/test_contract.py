@@ -95,22 +95,44 @@ def test_sinch_requires_a_provider_message_id_for_success():
 
 
 @pytest.mark.parametrize("channel", ["sms", "voice"])
-def test_telesign_request_contract(channel):
-    request = TelesignProvider().build_request(
+@pytest.mark.parametrize("mode", ["apiKey", "oauth"])
+def test_telesign_request_contract(channel, mode):
+    provider = TelesignProvider(mode)
+    credential = (
+        {"mode": "oauth", "access_token": "provider-token"} if mode == "oauth"
+        else {"mode": "apiKey", "secret": "key", "identity": "customer"}
+    )
+    request = provider.build_request(
         channel,
         f"https://verify.telesign.com/epp/{channel}",
         _delivery(channel),
-        {"mode": "apiKey", "secret": "key", "identity": "customer"},
+        credential,
         {},
     )
     assert request.headers["Authorization"] == (
-        "Basic " + base64.b64encode(b"customer:key").decode())
+        "Bearer provider-token" if mode == "oauth"
+        else "Basic " + base64.b64encode(b"customer:key").decode())
+    if mode == "oauth":
+        assert provider.credential_spec == {"mode": "oauth"}
     body = json.loads(request.body)
     assert body["recipient"] == {"phone_number": "+15551234567"}
     assert body["channels"] == [{"channel": channel}]
     assert body["correlation_id"] == "correlation-id"
     if channel == "voice":
         assert "9, 1, 8, 2, 7, 3" in body["message"]["text"]
+    else:
+        assert body["message"]["text"] == MESSAGE
+
+
+@pytest.mark.parametrize("credential", [
+    {"mode": "apiKey", "identity": "customer", "secret": "key"},
+    {"mode": "oauth", "access_token": ""},
+    {"mode": "oauth", "access_token": " "},
+])
+def test_telesign_oauth_rejects_mismatched_or_empty_credentials(credential):
+    with pytest.raises(ValueError, match="provider credential unavailable"):
+        TelesignProvider("oauth").build_request(
+            "sms", "https://verify.telesign.com/epp/sms", _delivery(), credential, {})
 
 
 def test_telesign_enforces_integer_status_codes():

@@ -5,9 +5,10 @@ $setupDirectory = Split-Path -Parent $PSScriptRoot
 $module = Import-Module (Join-Path $setupDirectory 'support' 'Epp.Setup.psm1') -Force -PassThru
 $directory = Join-Path ([IO.Path]::GetTempPath()) "epp-provider-tests-$([Guid]::NewGuid().ToString('N'))"
 try {
-    New-Item -ItemType Directory -Path (Join-Path $directory 'providers') -Force | Out-Null
+    $assets = Join-Path $directory 'assets'
+    New-Item -ItemType Directory -Path (Join-Path $assets 'providers') -Force | Out-Null
     foreach ($file in @('catalog.json', 'telesign.json', 'soprano.json')) {
-        Copy-Item -LiteralPath (Join-Path $setupDirectory 'providers' $file) -Destination (Join-Path $directory 'providers' $file)
+        Copy-Item -LiteralPath (Join-Path $setupDirectory 'providers' $file) -Destination (Join-Path $assets 'providers' $file)
     }
     & $module {
         param($SetupDirectory, $Directory)
@@ -24,6 +25,7 @@ try {
             throw "Expected failure matching '$Pattern'."
         }
         $script:SetupDirectory = $SetupDirectory
+        $assets = Join-Path $Directory 'assets'
         $script:Messages = [Collections.Generic.List[string]]::new()
         $script:Prompts = [Collections.Generic.List[string]]::new()
         $script:Answers = [Collections.Generic.Queue[string]]::new()
@@ -82,9 +84,23 @@ try {
         Assert ($script:Prompts.Count -eq 0) 'Package resolution must not ask for raw URLs or checksums.'
         function script:Invoke-RestMethod { throw 'Unexpected REST call (no network allowed).' }
 
+        $profile = Read-EppJson (Join-Path $SetupDirectory 'providers' 'telesign.json')
+        Assert ($profile.deployment.authentication.mode -ceq 'oauth') 'New Telesign deployments must select OAuth.'
+        $profile.deployment.AccessTokenScopeTenant = '<telesign-access-token-tenant-id>'
+        Assert-Throws {
+            ConvertTo-EppProviderSettings -Profile $profile -Id telesign -DisplayName Telesign -EndpointRegion global -NonInteractive
+        } 'deployment.AccessTokenScopeTenant.*access-token tenant'
+        $profile.deployment.AccessTokenScopeTenant = '11111111-1111-1111-1111-111111111111'
+        foreach ($region in @('global', 'eu')) {
+            $profile.deployment.routes[$region].appId = '22222222-2222-2222-2222-222222222222'
+            $profile.deployment.routes[$region].scope = 'api://22222222-2222-2222-2222-222222222222/.default'
+        }
+        $profile | ConvertTo-Json -Depth 10 |
+            Set-Content -LiteralPath (Join-Path $assets 'providers' 'telesign.json') -Encoding utf8NoBOM
+
         foreach ($id in @('telesign', 'soprano')) {
             foreach ($region in @('global', 'eu')) {
-                $configuration = Get-EppProvider -AssetDirectory $Directory `
+                $configuration = Get-EppProvider -AssetDirectory $assets `
                     -Provider $id -EndpointRegion $region -NonInteractive
                 $route = $configuration.Manifest.deployment.routes[$region]
                 $settings = $configuration.Settings
@@ -97,8 +113,14 @@ try {
                 Assert ($settings.EPP_PROVIDER_TIMEOUT_MS -ceq [string]$route.timeoutMilliseconds) 'Preserve the provider timeout.'
                 Assert ($settings.EPP_PROVIDER_RETRY_INTERVAL_MS -ceq [string]([long]$route.retryIntervalSeconds * 1000)) 'Preserve retry interval metadata.'
                 Assert ($settings.EPP_PROVIDER_AUTH_MODE -ceq $configuration.Manifest.deployment.authentication.mode) 'Preserve provider authentication.'
-                if ($id -eq 'soprano') {
+                Assert ($configuration.TenantId -ceq $configuration.Manifest.deployment.tenantId) 'Keep the Security Store tenant separate from token acquisition.'
+                Assert ($configuration.AccessTokenScopeTenant -ceq $configuration.Manifest.deployment.AccessTokenScopeTenant -and
+                    $settings.EPP_PROVIDER_TENANT_ID -ceq $configuration.AccessTokenScopeTenant) 'Configure the Function OAuth authority from AccessTokenScopeTenant.'
+                if ($configuration.AuthenticationMode -eq 'oauth') {
                     Assert ($settings.EPP_PROVIDER_APP_ID -ceq $route.appId -and $settings.EPP_PROVIDER_SCOPE -ceq $route.scope) 'Preserve regional OAuth settings.'
+                }
+                if ($id -eq 'telesign') {
+                    Assert ($configuration.TenantId -cne $settings.EPP_PROVIDER_TENANT_ID) 'The token tenant must be independently configurable.'
                 }
             }
         }
@@ -112,6 +134,33 @@ try {
         Assert ($configuration.Settings.EPP_PROVIDER_VOICE_ENDPOINT -ceq $profile.deployment.routes.eu.voiceEndpoint) 'EU selection must preserve its distinct voice endpoint.'
         Assert-Throws { ConvertTo-EppProviderSettings -Profile $profile -Id soprano -DisplayName Soprano -NonInteractive } '\-EndpointRegion is required'
         Assert-Throws { ConvertTo-EppProviderSettings -Profile $profile -Id soprano -DisplayName Soprano -EndpointRegion invalid -NonInteractive } 'Unknown EndpointRegion'
+
+        $profile.deployment.Remove('AccessTokenScopeTenant')
+        $configuration = ConvertTo-EppProviderSettings -Profile $profile -Id soprano -DisplayName Soprano -EndpointRegion eu -NonInteractive
+        Assert ($configuration.Settings.EPP_PROVIDER_TENANT_ID -ceq $profile.deployment.tenantId) 'Legacy profiles without AccessTokenScopeTenant must keep their original OAuth authority.'
+        foreach ($value in @($null, '', ' ', 'invalid', '<telesign-access-token-tenant-id>', [Guid]::Empty.ToString())) {
+            $profile.deployment.AccessTokenScopeTenant = $value
+            Assert-Throws {
+                ConvertTo-EppProviderSettings -Profile $profile -Id soprano -DisplayName Soprano -EndpointRegion eu -NonInteractive
+            } 'deployment.AccessTokenScopeTenant'
+        }
+        $profile.deployment.AccessTokenScopeTenant = ' AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA '
+        $configuration = ConvertTo-EppProviderSettings -Profile $profile -Id soprano -DisplayName Soprano -EndpointRegion eu -NonInteractive
+        Assert ($configuration.Settings.EPP_PROVIDER_TENANT_ID -ceq 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') 'Normalize the token tenant independently of the Security Store tenant.'
+        $profile.deployment.tenantId = 'invalid'
+        Assert-Throws {
+            ConvertTo-EppProviderSettings -Profile $profile -Id soprano -DisplayName Soprano -EndpointRegion eu -NonInteractive
+        } 'deployment.tenantId'
+
+        $legacy = Read-EppJson (Join-Path $SetupDirectory 'providers' 'telesign.json')
+        $legacy.deployment.Remove('AccessTokenScopeTenant')
+        $legacy.deployment.authentication = @{
+            mode = 'apiKey'; keyVaultSecretName = 'telesign-api-key'; identityKeyVaultSecretName = 'telesign-customer-id'
+        }
+        $legacyConfiguration = ConvertTo-EppProviderSettings -Profile $legacy -Id telesign -DisplayName Telesign -EndpointRegion global -NonInteractive
+        Assert ($legacyConfiguration.AuthenticationMode -ceq 'apiKey' -and
+            $legacyConfiguration.Settings.EPP_PROVIDER_TENANT_ID -ceq $legacy.deployment.tenantId -and
+            -not $legacyConfiguration.Settings.ContainsKey('EPP_PROVIDER_SCOPE')) 'Existing Basic-auth profiles must not require OAuth configuration.'
 
         foreach ($region in @('global', 'eu')) {
             $profile = Read-EppJson (Join-Path $SetupDirectory 'providers' 'soprano.json')
@@ -157,6 +206,7 @@ try {
         }
         function script:Connect-EppContext {
             param($Inputs, $Names, [switch] $NonInteractive, [switch] $InstallPrerequisites, [switch] $ForceAuthentication)
+            $script:PreflightInputs = @{} + $Inputs
             throw 'preflight-reached'
         }
         $script:GraphConnections = 0
@@ -176,7 +226,7 @@ try {
             SubscriptionId = '22222222-2222-2222-2222-222222222222'
             ApplicationId = '33333333-3333-3333-3333-333333333333'
             Location = 'westus2'; ResourcePrefix = 'unit'; Language = 'javascript'; ServicePlan = 'FC1'
-            AssetDirectory = $SetupDirectory
+            AssetDirectory = $assets
             SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
         }
         foreach ($id in @('telesign', 'soprano')) {
@@ -184,6 +234,10 @@ try {
                 Assert-Throws {
                     Invoke-EppSetup @inputs -Provider $id -EndpointRegion $region -OutputDirectory $Directory -NonInteractive
                 } '^preflight-reached$'
+                $profile = Read-EppJson (Join-Path $assets 'providers' "$id.json")
+                Assert ($script:PreflightInputs.ProviderTenantId -ceq $profile.deployment.tenantId -and
+                    $script:PreflightInputs.AccessTokenScopeTenant -ceq $profile.deployment.AccessTokenScopeTenant -and
+                    $script:PreflightInputs.ProviderAuthentication -ceq 'oauth') 'Preflight must receive both tenant identities and the chosen authentication mode.'
             }
         }
         Assert ($script:Prompts.Count -eq 0) 'Unattended setup must reach preflight without any channel input.'
@@ -200,7 +254,7 @@ try {
         Assert ($script:Answers.Count -eq 0) 'All expected prompt answers must be consumed.'
 
         $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix $inputs.ResourcePrefix
-        $configuration = Get-EppProvider -AssetDirectory $Directory -Provider telesign -EndpointRegion global -NonInteractive
+        $configuration = Get-EppProvider -AssetDirectory $assets -Provider telesign -EndpointRegion global -NonInteractive
         $script:Messages.Clear()
         Show-EppDeploymentResult -Inputs $inputs -Names $names -ProviderConfiguration $configuration `
             -EndpointUrl 'https://unit.azurewebsites.net/api/SendOtp' -ResultPath (Join-Path $Directory 'deployment.json')
@@ -210,6 +264,13 @@ try {
         }
         Assert ($result.Contains('each channel you intend to enable')) 'Policy activation must remain an explicit per-channel choice.'
         Assert ($result.Contains('did not change the External Phone Provider policy')) 'Setup must not claim policy activation.'
+        Assert ($result.Contains("access-token tenant '$($configuration.AccessTokenScopeTenant)'") -and
+            $result.Contains($configuration.Settings.EPP_PROVIDER_SCOPE) -and
+            -not $result.Contains('Add the Telesign credentials to Key Vault')) 'OAuth handoff must name the target tenant and scope, not ask for API keys.'
+        $script:Messages.Clear()
+        Show-EppDeploymentResult -Inputs $inputs -Names $names -ProviderConfiguration $legacyConfiguration `
+            -EndpointUrl 'https://unit.azurewebsites.net/api/SendOtp' -ResultPath (Join-Path $Directory 'deployment.json')
+        Assert (($script:Messages -join "`n").Contains('Add the Telesign credentials to Key Vault')) 'Legacy Basic-auth handoff must still describe its vault secrets.'
     } $setupDirectory $directory
     Write-Host 'Provider profiles, channel-independent setup, prompts, and policy handoff checks passed.'
 }

@@ -22,7 +22,7 @@ used JavaScript; validate an equivalent Python readiness implementation and depl
 2. Consult the selected provider in [src/providers/](src/providers/) for required credentials and
 	options. For API-key authentication, store credentials in Key Vault under the provider-owned secret names
 	and grant the Function's managed identity *Key Vault Secrets User*. For OAuth, complete the
-	[provider-administrator handoff](../docs/ONBOARDING.md#soprano-provider-administrator-handoff)
+	[provider-administrator handoff](../docs/ONBOARDING.md#oauth-provider-administrator-handoff)
 	instead of creating API-key secrets. Configure the matching endpoints/options for either mode.
 3. Base private local settings on [../docs/local.settings.sample.json](../docs/local.settings.sample.json),
 	replacing placeholders and selecting `FUNCTIONS_WORKER_RUNTIME=python`. Put settings at the
@@ -100,6 +100,11 @@ For Soprano voice, the adapter extracts the first six-digit passcode from the re
 uses the request's nonblank locale as the language, falling back to `en-US`, and sends fixed gender
 `1` and loop `2`. These values require no additional environment settings. Soprano SMS continues to
 forward the rendered message unchanged.
+
+Telesign uses OAuth when `EPP_PROVIDER_AUTH_MODE=oauth`; existing `apiKey` or unset-mode deployments
+retain Basic auth with Key Vault credentials. Setup maps `deployment.AccessTokenScopeTenant` to
+`EPP_PROVIDER_TENANT_ID` independently of the Security Store `tenantId`. Complete Telesign's
+placeholder tenant/app ID/scopes before guided deployment.
 
 Telesign SMS also forwards the rendered message unchanged. Telesign voice comma-separates each
 six-digit numeric run that is not part of a longer number and repeats the complete paced message twice.

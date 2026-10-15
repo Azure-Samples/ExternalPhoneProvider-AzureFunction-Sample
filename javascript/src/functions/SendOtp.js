@@ -38,7 +38,7 @@ const {
 async function startProviderCredentialRefresh() {
     const config = readConfig();
     if (!config.providerName) return;
-    const provider = selectProvider(config.providerName);
+    const provider = selectProvider(config.providerName, config.providerAuthMode);
     if (!provider || (config.providerAuthMode
         && config.providerAuthMode !== provider.authenticationMode)) {
         reportRefreshFailure('configuration');
@@ -156,7 +156,7 @@ app.http('SendOtp', {
                 });
             }
 
-            const provider = selectProvider(config.providerName);
+            const provider = selectProvider(config.providerName, config.providerAuthMode);
             if (!provider) {
                 fail('provider_selection', 'unknown_provider', 400);
                 return respond(400, { error: 'provider_delivery_failed', correlationId, requestId });

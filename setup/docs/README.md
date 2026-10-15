@@ -34,10 +34,35 @@ Setup does not prompt for a channel or write a channel restriction to app settin
 Provider profiles contain complete region route objects at `deployment.routes.global` and
 `deployment.routes.eu`. Each route has separate `smsEndpoint` and `voiceEndpoint` URLs plus shared
 authentication and timing settings. The URLs can differ; setup always provisions both as
-`EPP_PROVIDER_SMS_ENDPOINT` and `EPP_PROVIDER_VOICE_ENDPOINT`. Telesign contains its supplied
-route URLs, tenant, authentication, and timings. Soprano contains its provider tenant, Global/EU
-routes, API application ID, scope, authentication, and timings. The provider files contain the
-complete deployment contract.
+`EPP_PROVIDER_SMS_ENDPOINT` and `EPP_PROVIDER_VOICE_ENDPOINT`. Both profiles select OAuth.
+Telesign retains its supplied route URLs, Security Store tenant, and timings, but its access-token
+tenant, API application ID, and scope are placeholders awaiting provider confirmation. **Telesign
+cannot be deployed with this profile until those placeholders are replaced in both routes.**
+Soprano's supplied values remain unchanged.
+
+### Provider tenant configuration
+
+Each provider JSON keeps these two fields next to one another under `deployment`:
+
+| Profile field | Purpose |
+|---|---|
+| `tenantId` | Provider's Security Store tenant; identifies the provider during application discovery and remains `providerTenantId` in the deployment summary. |
+| `AccessTokenScopeTenant` | Tenant issuing the outbound API access token. Setup maps it to the existing `EPP_PROVIDER_TENANT_ID` Function setting and records it as `accessTokenScopeTenant`. It can differ from `tenantId`. |
+
+OAuth also requires a provider-confirmed `appId` and resource `scope` ending in `/.default` in
+each Global/EU route. Do not replace the Security Store tenant with the token tenant or use the
+customer tenant as a substitute. For legacy profiles, an omitted `AccessTokenScopeTenant` uses
+`tenantId`; an explicitly empty, invalid, or placeholder value is rejected, not silently ignored.
+Setup preserves existing allowed tenants and adds both the Security Store tenant and the OAuth
+token tenant to the customer's multitenant app allowlist, deduplicating equal IDs. The home tenant
+remains allowed. The approval plan shows both tenant roles; Easy Auth still trusts only the
+approved Microsoft caller in the customer tenant.
+
+The new Telesign profile does not migrate running Functions automatically. Existing
+`EPP_PROVIDER_AUTH_MODE=apiKey` deployments (or an unset mode) keep Basic authentication with
+`telesign-api-key` and `telesign-customer-id` in Key Vault. Before rerunning setup to switch to
+OAuth, complete the placeholders, use a package supporting Telesign OAuth, and arrange
+[provider authorization](../../docs/ONBOARDING.md#oauth-provider-administrator-handoff).
 
 Use a Function package that supports these channel-specific settings. Both URLs are configured
 explicitly; neither channel uses a shared endpoint fallback. Older packages must be upgraded.
@@ -99,21 +124,21 @@ Use a dedicated nonproduction tenant/subscription for the first deployment.
 2. Record the **Directory (tenant) ID** and **Application (client) ID**. The script requires the
    client ID, not the application's object ID, and will not create a replacement registration.
 3. Complete provider purchase and account/sender registration, and arrange API onboarding for the selected adapter.
-   Telesign uses `telesign-api-key` and `telesign-customer-id` in Key Vault. Soprano uses OAuth
-   client-assertion exchange with the selected provider tenant/scope/application ID. Setup does not
+   Telesign and Soprano use OAuth client-assertion exchange with the selected access-token
+   tenant/scope/application ID. Telesign's profile values must be completed first. Setup does not
    grant provider API consent or application roles. Finish the
    [provider authentication handoff](../../docs/ONBOARDING.md#complete-provider-authentication)
    after setup creates the vault and identity identifiers needed for those steps.
 
 After the single Step 2 approval, PowerShell makes the dedicated app organizational multi-tenant,
-restricts it through the Entra allowed-tenants preview to its home tenant plus the selected provider
-tenant from the provider JSON, preserving any existing allowed provider tenants,
+restricts it through the Entra allowed-tenants preview to its home tenant plus the selected provider's
+Security Store and OAuth token tenants from the provider JSON, preserving any existing allowed provider tenants,
 adds the `Epp.Invoke` application permission, creates/reuses its enterprise application, requires
 assignment, creates/reuses the Microsoft phone-provider service principal, and assigns `Epp.Invoke`.
 It also grants that Microsoft service principal tenant-wide Microsoft Graph `Application.Read.All`,
 adds the hostname-based identifier URI and public JWE encryption certificate, and configures Easy
-Auth to allow only the Microsoft phone-provider application. Soprano additionally creates the
-disclosed outbound managed-identity federated credential.
+Auth to allow only the Microsoft phone-provider application. OAuth deployments additionally create
+the disclosed outbound managed-identity federated credential.
 
 ## Prerequisites for Step 2
 
@@ -138,7 +163,7 @@ disclosed outbound managed-identity federated credential.
   user session through `az ad` and `az rest`; Azure subscription roles alone do not grant these
   directory permissions.
 - Microsoft Graph **beta** access for the Entra `signInAudienceRestrictions` allowed-tenants preview.
-  The selected provider tenant is allowed in addition to the app's home tenant, which Entra always allows.
+  The selected provider's Security Store and OAuth token tenants are allowed in addition to the app's home tenant, which Entra always allows.
   See the [allowed-tenants schema](https://learn.microsoft.com/en-us/graph/api/resources/allowedtenantsaudience?view=graph-rest-beta).
 - The selected **Linux Flex Consumption FC1 or Premium EP1** plan available in the chosen region,
   with sufficient subscription quota. Availability is checked for that plan only; regional service
@@ -513,8 +538,9 @@ configuration metadata, not provider credentials or private-key bytes. Keep it a
 |---|---|
 | `tenantId`, `subscriptionId`, `applicationId` | Verify the intended customer directory, Azure subscription, and endpoint **client ID**. |
 | `resources.functionApp`, `resources.keyVault`, `resources.applicationInsights`, `resources.logAnalytics` | Find the exact Azure resources; do not guess names or use a different environment's vault. |
-| `provider`, `endpointRegion`, `providerTenantId` | Confirm provider routing, separate from the customer's directory and Azure location. Both SMS and voice use this configuration. |
-| `allowedProviderTenantIds` | Review the complete preserved provider-tenant allowlist, including the selected provider. This does not enable runtime fallback between providers. |
+| `provider`, `endpointRegion`, `providerTenantId` | Confirm the provider route and Security Store tenant, separate from the customer's directory and Azure location. Both SMS and voice use this configuration. |
+| `accessTokenScopeTenant` | OAuth token-issuing tenant, matching `EPP_PROVIDER_TENANT_ID`. Can differ from `providerTenantId`; null for API-key deployments. |
+| `allowedProviderTenantIds` | Review the preserved allowlist, including the selected provider's Security Store tenant and OAuth token tenant. This does not enable runtime fallback between providers. |
 | `providerSmsEndpoint`, `providerVoiceEndpoint` | Confirm the distinct or identical provider URLs for SMS and voice. These are outbound provider URLs, not the Function's `endpointUrl`. |
 | `endpointUrl`, `identifierUri` | Exact SendOtp URL and registered app audience information for the authorized test/policy operator. |
 | `encryptionKeyId`, `certificateThumbprint`, `certificateId`, `certificateSecretId`, `certificateExpiresUtc` | Public-key identification and version/renewal inventory. A secret **ID** is not its value; do not fetch its private-key contents. |

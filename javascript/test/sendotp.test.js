@@ -162,14 +162,14 @@ function event(name) {
     return records.find((record) => record.eventName === name);
 }
 
-for (const provider of ['telesign', 'soprano']) {
-    test(`${provider}: disabled cache skips startup and evaluation but acquires for every live request`, async () => {
-        const apiKey = provider === 'telesign';
+for (const [provider, mode] of [['telesign', 'apiKey'], ['telesign', 'oauth'], ['soprano', 'oauth']]) {
+    test(`${provider} ${mode}: disabled cache skips startup and evaluation but acquires for every live request`, async () => {
+        const apiKey = mode === 'apiKey';
         process.env.EPP_PROVIDER_NAME = provider;
         process.env.EPP_PROVIDER_AUTH_MODE = apiKey ? 'apiKey' : 'oauth';
         process.env[apiKey ? 'EPP_KEY_VAULT_CACHE_ENABLED' : 'EPP_ACCESS_TOKEN_CACHE_ENABLED'] = 'false';
         process.env[apiKey ? 'EPP_ACCESS_TOKEN_CACHE_ENABLED' : 'EPP_KEY_VAULT_CACHE_ENABLED'] = 'PRIVATE-UNUSED';
-        if (apiKey) fetchMock.mock.mockImplementation(async () => ({
+        if (provider === 'telesign') fetchMock.mock.mockImplementation(async () => ({
             ok: true, status: 200, text: async () => JSON.stringify({ status: { code: 3001 } }),
         }));
         await startHook();
@@ -184,6 +184,44 @@ for (const provider of ['telesign', 'soprano']) {
         assert.equal(service.timer, null);
     });
 }
+
+test('Telesign OAuth startup and both live channels use only the acquired provider token', async () => {
+    process.env.EPP_PROVIDER_NAME = 'telesign';
+    process.env.EPP_PROVIDER_TENANT_ID = '44444444-4444-4444-4444-444444444444';
+    fetchMock.mock.mockImplementation(async () => ({
+        ok: true, status: 200, text: async () => JSON.stringify({ status: { code: 3001 } }),
+    }));
+    await startHook();
+    assert.equal(getToken.mock.callCount(), 1);
+    assert.equal(fetchMock.mock.callCount(), 0);
+    assert.equal((await invoke(await envelope({ mode: 2 }))).status, 200);
+    for (const channel of [1, 2]) {
+        const result = await invoke(await envelope({ channel, tenantId: 'FORGED-TENANT' },
+            { ...baseDelivery, providerJwt: 'FORGED-TOKEN' }), { authorization: 'Bearer FORGED-CALLER' });
+        assert.equal(result.status, 200);
+        assert.equal(result.jsonBody.nonce, baseDelivery.nonce);
+        const request = fetchMock.mock.calls.at(-1).arguments[1];
+        assert.equal(request.headers.Authorization, 'Bearer PRIVATE-OAUTH-TOKEN');
+        assert.doesNotMatch(request.body, /FORGED/);
+        assert.equal(event('provider_selected').providerAuthMode, 'oauth');
+        assert.equal(event('provider_credential_resolution_started').providerTenantId,
+            process.env.EPP_PROVIDER_TENANT_ID);
+    }
+    assert.equal(getToken.mock.callCount(), 1);
+    assert.equal(getSecret.mock.callCount(), 0);
+});
+
+test('Telesign OAuth acquisition failure never falls back to vault credentials or provider HTTP', async () => {
+    process.env.EPP_PROVIDER_NAME = 'telesign';
+    getToken.mock.mockImplementation(async () => { throw new Error('PRIVATE-TOKEN-FAILURE'); });
+    mock.method(console, 'warn', () => {});
+    failure(await invoke(await envelope()), 502);
+    assert.equal(event('request_failed').failureReason, 'credential_unavailable');
+    assert.equal(getToken.mock.callCount(), 1);
+    assert.equal(getSecret.mock.callCount(), 0);
+    assert.equal(fetchMock.mock.callCount(), 0);
+    assert.equal((await invoke(await envelope({ mode: 2 }))).status, 200);
+});
 
 test('invalid cache settings fail live credentials but leave evaluation and private logs unchanged', async () => {
     const warnings = mock.method(console, 'warn', () => {});

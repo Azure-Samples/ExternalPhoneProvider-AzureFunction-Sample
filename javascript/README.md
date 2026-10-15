@@ -23,7 +23,7 @@ sample's release package. No Front Door deployment script is supplied.
 2. Consult the selected implementation in [src/functions/providers/](src/functions/providers/)
    for required credentials and options. For API-key authentication, store credential values under
    the provider's Key Vault secret names and grant the Function's managed identity *Key Vault Secrets User*.
-   For OAuth, complete the [provider-administrator handoff](../docs/ONBOARDING.md#soprano-provider-administrator-handoff)
+   For OAuth, complete the [provider-administrator handoff](../docs/ONBOARDING.md#oauth-provider-administrator-handoff)
    instead of creating API-key secrets. Configure the matching endpoints and required options for either mode.
    This guide does not duplicate individual API contracts.
 3. Use [../docs/local.settings.sample.json](../docs/local.settings.sample.json) as a starting point,
@@ -84,7 +84,11 @@ extracts the first six-digit passcode from the rendered message and sends fixed 
 gender `1` and loop `2`. It uses the request's nonblank locale as the language, falling back to
 `en-US` when the locale is absent or invalid. These values require no additional environment
 settings. Soprano SMS continues to forward the rendered message unchanged. The Telesign provider
-uses the configured complete endpoint and API-key credentials from Key Vault. Telesign SMS forwards
+uses the configured complete endpoint and OAuth when `EPP_PROVIDER_AUTH_MODE=oauth`; existing
+`apiKey` or unset-mode deployments retain Basic auth with Key Vault credentials. Setup maps
+`deployment.AccessTokenScopeTenant` to `EPP_PROVIDER_TENANT_ID` independently of the Security Store
+`tenantId`. Complete Telesign's placeholder tenant/app ID/scopes before guided deployment.
+Telesign SMS forwards
 the rendered message unchanged; Telesign voice comma-separates each six-digit numeric run that is
 not part of a longer number and repeats the complete paced message twice.
 

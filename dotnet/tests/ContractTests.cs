@@ -248,24 +248,30 @@ public class ContractTests
     }
 
     [Theory]
-    [InlineData("sms", "en")]
-    [InlineData("voice", "en")]
-    [InlineData("sms", null)]
-    [InlineData("sms", "")]
-    [InlineData("sms", " ")]
-    public async Task TelesignUsesExactEppJsonContract(string channel, string? locale)
+    [InlineData("sms", "en", "apiKey")]
+    [InlineData("voice", "en", "apiKey")]
+    [InlineData("sms", null, "apiKey")]
+    [InlineData("sms", "", "apiKey")]
+    [InlineData("sms", " ", "apiKey")]
+    [InlineData("sms", "en", "oauth")]
+    [InlineData("voice", "en", "oauth")]
+    [InlineData("sms", null, "oauth")]
+    public async Task TelesignUsesExactEppJsonContract(string channel, string? locale, string mode)
     {
         var delivery = Delivery(channel) with { Locale = locale };
-        var request = await new TelesignProvider().CaptureRequestAsync(
+        var env = new TestEnv { ["EPP_PROVIDER_AUTH_MODE"] = mode };
+        var request = await new TelesignProvider(env: env).CaptureRequestAsync(
             channel,
             $"https://verify.telesign.com/epp/{channel}",
             delivery,
-            new ProviderCredentials("apiKey", "test-key", "test-id"),
-            new TestEnv());
+            mode == "oauth" ? new ProviderCredentials("oauth", AccessToken: "provider-token")
+                : new ProviderCredentials("apiKey", "test-key", "test-id"),
+            env);
         AssertJsonRequest(
             request,
             $"https://verify.telesign.com/epp/{channel}",
-            "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("test-id:test-key")));
+            mode == "oauth" ? "Bearer provider-token"
+                : "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("test-id:test-key")));
         var expectedText = channel == "voice"
             ? "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.   "
               + "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.  "
@@ -280,6 +286,21 @@ public class ContractTests
             correlation_id = delivery.CorrelationId,
         };
         Assert.Equal(JsonSerializer.Serialize(expected), request.Body);
+    }
+
+    [Theory]
+    [InlineData("apiKey", "oauth", "provider-token")]
+    [InlineData("oauth", "apiKey", null)]
+    [InlineData("oauth", "oauth", "")]
+    [InlineData("oauth", "oauth", " ")]
+    public async Task TelesignRejectsMismatchedOrEmptyCredentials(string mode, string credentialMode, string? token)
+    {
+        var env = new TestEnv { ["EPP_PROVIDER_AUTH_MODE"] = mode };
+        var error = await Assert.ThrowsAsync<PhoneProviderBase.ProviderSendException>(() =>
+            new TelesignProvider(env: env).CaptureRequestAsync(
+                "sms", "https://verify.telesign.com/epp/sms", Delivery(),
+                new ProviderCredentials(credentialMode, "key", "customer", token), env));
+        Assert.Equal(502, error.StatusCode);
     }
 
     [Fact]

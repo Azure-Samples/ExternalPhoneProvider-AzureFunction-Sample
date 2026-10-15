@@ -25,6 +25,11 @@ Buying an offer does not enable the tenant feature or deploy this sample. If acc
 approved procedure is unavailable, **stop here** and follow the
 [access and support guidance](docs/ONBOARDING.md#before-purchasing-or-deploying).
 
+**Telesign OAuth configuration is pending.** Its setup profile now selects OAuth but contains
+placeholders for the access-token tenant, API application ID, and scopes. The provider owner must
+complete those values before guided deployment; setup rejects the placeholders. Existing
+Basic-auth deployments remain supported. See [Telesign OAuth onboarding](docs/ONBOARDING.md#telesign-oauth-configuration-and-handoff).
+
 In Security Store, open **Private solutions** and select your approved subscription to review
 its available offers. See [sample offers](docs/ONBOARDING.md#before-purchasing-or-deploying) in the
 detailed guide; a listing does not guarantee support in this setup script.

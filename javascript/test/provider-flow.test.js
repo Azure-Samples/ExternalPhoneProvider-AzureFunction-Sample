@@ -226,6 +226,32 @@ test('Telesign status.code must be an integer number', () => {
     }
 });
 
+test('Telesign OAuth changes only credentials and authorization, never the channel payload', () => {
+    const basic = selectProvider('telesign', 'apiKey');
+    const oauth = selectProvider('telesign', 'oauth');
+    assert.equal(oauth.authenticationMode, 'oauth');
+    assert.deepEqual(oauth.credentialSpec, { mode: 'oauth' });
+    assert.equal(selectProvider('telesign'), basic);
+    for (const channel of ['sms', 'voice']) {
+        const original = basic.createRequest({ ...input, channel });
+        const request = oauth.createRequest({
+            ...input, channel, credential: { mode: 'oauth', accessToken: 'provider-token' },
+        });
+        assert.equal(request.headers.Authorization, 'Bearer provider-token');
+        assert.equal(request.url, original.url);
+        assert.equal(request.body, original.body);
+        assert.throws(() => oauth.createRequest({ ...input, channel }), /credential unavailable/);
+        for (const accessToken of ['', ' ']) {
+            assert.throws(() => oauth.createRequest({
+                ...input, channel, credential: { mode: 'oauth', accessToken },
+            }), /credential unavailable/);
+        }
+        assert.throws(() => basic.createRequest({
+            ...input, channel, credential: { mode: 'oauth', accessToken: 'provider-token' },
+        }), /credential unavailable/);
+    }
+});
+
 test('providers fail closed with fixed safe classifications', () => {
     const cases = [
         [selectProvider('infobip'), response(null, 200, false), 'invalid_provider_json', 502],
