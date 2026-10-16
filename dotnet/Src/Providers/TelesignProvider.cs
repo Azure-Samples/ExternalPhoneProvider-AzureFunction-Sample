@@ -97,8 +97,7 @@ public sealed class TelesignProvider : PhoneProviderBase
         return new ProviderCredentials(
             AuthenticationMode,
             Secret: key.Result,
-            Identity: identity.Result,
-            ExpiresOn: DateTimeOffset.UtcNow.AddMinutes(5));
+            Identity: identity.Result);
     }
 
     private static (Outcome Outcome, bool Recognized) MapStatus(string? status) => status switch

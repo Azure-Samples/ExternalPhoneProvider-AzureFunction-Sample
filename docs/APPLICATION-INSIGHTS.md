@@ -88,8 +88,8 @@ Check the following:
 6. **Live path:** Validate provider acceptance and recipient delivery separately through an
    approved controlled test.
 
-A `401` or `403` can be rejected before the Function runs. Evaluation does not contact the provider.
-Background credential refresh can run independently.
+A `401` or `403` can be rejected before the Function runs. Evaluation does not acquire provider
+credentials or contact the provider. There is no background credential refresher.
 
 <a id="identity-and-ingestion"></a>
 ### Ingestion identity

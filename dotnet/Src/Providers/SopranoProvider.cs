@@ -19,7 +19,7 @@ public sealed class SopranoProvider : PhoneProviderBase
     private readonly object _credentialGate = new();
     private readonly Func<string, TokenCredential> _createIdentity;
     private readonly Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> _createCredential;
-    private (TokenCredential Identity, TokenCredential Credential, string Scope)? _credentials;
+    private (TokenCredential Credential, string Scope)? _credentials;
 
     public SopranoProvider()
         : this(
@@ -113,23 +113,20 @@ public sealed class SopranoProvider : PhoneProviderBase
     public override async Task<ProviderCredentials> FetchCredentialsAsync(
         AppConfig config, CancellationToken cancellationToken = default)
     {
-        var (identity, credential, scope) = ConfigureCredentials(config);
-        await GetAssertionAsync(identity, cancellationToken).ConfigureAwait(false);
+        var (credential, scope) = ConfigureCredentials(config);
         var token = CheckToken(await credential.GetTokenAsync(
             new TokenRequestContext([scope]),
             cancellationToken).ConfigureAwait(false));
         return new ProviderCredentials(
             AuthenticationMode,
-            AccessToken: token.Token,
-            ExpiresOn: token.ExpiresOn - ExpirySkew);
+            AccessToken: token.Token);
     }
 
-    private (TokenCredential Identity, TokenCredential Credential, string Scope) ConfigureCredentials(AppConfig config)
+    private (TokenCredential Credential, string Scope) ConfigureCredentials(AppConfig config)
     {
-        var cacheEnabled = CredentialTokenService.IsCacheEnabled(AuthenticationMode, config);
         lock (_credentialGate)
         {
-            if (cacheEnabled && _credentials is { } cached) return cached;
+            if (_credentials is { } configured) return configured;
             if (string.IsNullOrWhiteSpace(config.ProviderTenantId)
                 || string.IsNullOrWhiteSpace(config.ProviderScope)
                 || string.IsNullOrWhiteSpace(config.OutboundClientId)
@@ -140,9 +137,8 @@ public sealed class SopranoProvider : PhoneProviderBase
                 config.ProviderTenantId,
                 config.OutboundClientId,
                 async cancellation => (await GetAssertionAsync(identity, cancellation).ConfigureAwait(false)).Token);
-            var configured = (identity, credential, config.ProviderScope);
-            if (cacheEnabled) _credentials = configured;
-            return configured;
+            _credentials = (credential, config.ProviderScope);
+            return _credentials.Value;
         }
     }
 

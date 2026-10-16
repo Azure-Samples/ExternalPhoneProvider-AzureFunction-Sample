@@ -108,8 +108,8 @@ see [provider onboarding](ONBOARDING.md#complete-provider-authentication).
 <a id="3-give-each-context-its-own-credential-service-and-lifecycle"></a>
 ## 3. Credential isolation
 
-Open [credentials.js](../javascript/src/functions/credentials.js). When caching is enabled, its
-singleton retains the first selected configuration. Passing another account does not switch that cache.
+Open [credentials.js](../javascript/src/functions/credentials.js). Its singleton retains SDK clients
+initialized for the selected account. Passing another account does not replace those clients.
 Create a long-lived service for each account instead, with an immutable configuration:
 
 ```javascript
@@ -131,31 +131,25 @@ for (const entry of entries) {
 }
 ```
 
-The loader must finish all checks in step 2 before this loop runs. Do not share caches between
-accounts, even if they use the same adapter. Keep expiry, acquisition bounds, refresh coalescing
-and sanitized failure reporting. Logical isolation within a worker is not a tenant security boundary.
+The loader must finish all checks in step 2 before this loop runs. Do not share SDK credential
+instances between accounts, even if they use the same adapter. Keep token usability checks,
+acquisition bounds, and sanitized failure reporting. Logical isolation within a worker is not a
+tenant security boundary.
 
-For this walkthrough, acquire credentials lazily. In `SendOtp.js`, remove the singleton's
-`startProviderCredentialRefresh` function and its `app.hook.appStart(...)` registration. Replace
-the termination function, retain its registration once, and update the **bottom export** together:
+Credentials are acquired lazily. In `SendOtp.js`, replace the singleton's termination hook with
+cleanup for every account, retaining only one registration:
 
 ```javascript
-function stopProviderCredentialRefresh() {
+app.hook.appTerminate(() => {
     for (const { credentials } of contexts.values()) credentials.close();
-}
-
-// Keep this registration once, replacing the original lifecycle wiring.
-app.hook.appTerminate(stopProviderCredentialRefresh);
-// At the bottom of the module; do not leave the removed startup function here.
-module.exports = { stopProviderCredentialRefresh };
+});
 ```
 
-Remove the singleton import only after replacing its request/lifecycle uses. With its selected
-cache enabled, each service begins periodic refresh when first used. With caching disabled,
-each live attempt acquires credentials without a poller or cross-request reuse. Preserve
-the [cache switches](../TECHNICAL.md#provider-settings-and-credential-caching) in each account's configuration.
-Setup sets them to `false` for FC1 and `true` for EP1. Omitted values default to `true`.
-An evaluation request must not start credential acquisition. Already-running refresh is independent.
+Remove the singleton import only after replacing its request/lifecycle uses. Each live attempt
+reads the required API-key secrets or calls the account's reusable SDK token credential. SDK token
+caching remains enabled; there are no custom caches, warmup, pollers, or failure cooldowns.
+See [credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
+An evaluation request must not start credential acquisition.
 Rebuild contexts on controlled restart when configuration changes. Never repurpose a live service
 for another account.
 
@@ -291,13 +285,13 @@ dependencies from the existing lockfile only when needed:
 # Only if dependencies are missing.
 npm ci --prefix .\javascript --ignore-scripts --no-audit --no-fund
 node --test .\javascript\test\provider-flow.test.js `
-    .\javascript\test\credential-cache.test.js `
+    .\javascript\test\credentials.test.js `
     .\javascript\test\sendotp.test.js
 ```
 
 After customization, adapt the original singleton/lifecycle fixtures and extend the
 [adapter](../javascript/test/provider-flow.test.js),
-[credential](../javascript/test/credential-cache.test.js) and
+[credential](../javascript/test/credentials.test.js) and
 [handler](../javascript/test/sendotp.test.js) tests. Use fake credentials, transport, clocks, and
 store faults. Block external network. Verify:
 
@@ -315,7 +309,7 @@ Routing and isolation tests alone are **not fallback tests**. No production clas
 Keep response-based fallback disabled until reviewed.
 
 Deploy one app/package at `/api/SendOtp` for code-owned policy, orchestrator, classifier, or store changes.
-Validate startup configuration on controlled restart. Verify cache refresh for rotation and update
+Validate startup configuration on controlled restart. Verify request-time acquisition after rotation and update
 pinned references explicitly. Unchanged approved tests or Markdown edits need no redeployment.
 
 Preserve inbound authentication and origin/network restrictions, including any Front Door
@@ -331,10 +325,10 @@ a send or proves Microsoft Entra ID integration, capacity, regional resilience o
 **.NET:** Start with [SendOtp.cs](../dotnet/Functions/SendOtp.cs),
 [AppConfig.Read(IEnv)](../dotnet/Src/AppConfig.cs) and
 [PhoneProviderBase](../dotnet/Src/PhoneProviderBase.cs).
-[CredentialTokenService](../dotnet/Src/CredentialTokenService.cs) caches by provider name, while
-the [OAuth adapter implementation](../dotnet/Src/Providers) retains initialized OAuth state and
+[CredentialTokenService](../dotnet/Src/CredentialTokenService.cs) bounds each request's acquisition, while
+the [OAuth adapter implementation](../dotnet/Src/Providers) retains SDK credential instances and
 [SecretResolver](../dotnet/Src/SecretResolver.cs) retains its vault client. Isolate the full
-account object graph and update [Program.cs](../dotnet/Program.cs) lifecycle registrations.
+account object graph and update [Program.cs](../dotnet/Program.cs) provider registrations.
 Review cancellation, concurrent acquisition and failure classification rather than assuming
 the JavaScript behavior transfers unchanged.
 
@@ -342,7 +336,7 @@ the JavaScript behavior transfers unchanged.
 [read_config(env)](../python/src/config.py) and [PhoneProviderBase](../python/src/provider.py).
 Pass explicit account contexts instead of rereading process settings. Use a separate
 [CredentialTokenService](../python/src/credentials.py) and
-[SecretResolver(env)](../python/src/secrets.py) per account. Update warmup and shutdown.
+[SecretResolver(env)](../python/src/secrets.py) per account. Close each credential service at shutdown.
 Both runtimes still need customer-owned durable operation state, deadline enforcement and
 reviewed fallback classification. These pointers are not evidence that fallback is implemented
 or validated in either runtime.

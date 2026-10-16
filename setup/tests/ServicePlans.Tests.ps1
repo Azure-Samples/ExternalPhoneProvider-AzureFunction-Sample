@@ -120,7 +120,6 @@ try {
             $script:Messages.Clear()
             Show-EppPlan -Inputs $inputs -Names $names -ProviderConfiguration $provider -Context $context
             $plan = $script:Messages -join "`n"
-            $enabled = ($id -eq 'EP1').ToString().ToLowerInvariant()
             Assert ($plan.Contains("Service plan: $id")) 'The approval must name the selected plan.'
             Assert ($plan.Contains($inputs.SourceBaseUri) -and $plan.Contains($inputs.PackageUrl) -and
                 $plan.Contains("Release:      $($inputs.PackageReleaseTag)")) 'The approval must identify the setup source and exact Function release URL.'
@@ -128,7 +127,7 @@ try {
             Assert ($plan.Contains("SMS endpoint: $($provider.Settings.EPP_PROVIDER_SMS_ENDPOINT)")) 'The approval must disclose the SMS endpoint.'
             Assert ($plan.Contains("Voice endpoint: $($provider.Settings.EPP_PROVIDER_VOICE_ENDPOINT)")) 'The approval must disclose the voice endpoint.'
             foreach ($setting in @('EPP_KEY_VAULT_CACHE_ENABLED', 'EPP_ACCESS_TOKEN_CACHE_ENABLED')) {
-                Assert ($plan.Contains("$setting=$enabled")) 'The approval must disclose both cache settings.'
+                Assert (-not $plan.Contains($setting)) 'The approval must not advertise obsolete cache settings.'
             }
             $script:Calls.Clear()
             Assert-EppServicePlanLocation -Inputs $inputs
@@ -278,7 +277,7 @@ try {
             Assert ($plan.sku -ceq "[if(variables('isFlexConsumption'), createObject('name', 'FC1', 'tier', 'FlexConsumption'), createObject('name', 'EP1', 'tier', 'ElasticPremium', 'capacity', 1))]") 'Bicep must deploy the selected SKU, tier, and Premium capacity.'
             $settings = ($inner.resources | Where-Object { $_.type -eq 'Microsoft.Web/sites/config' -and $_.name -like '*appsettings*' }).properties
             foreach ($setting in @('EPP_KEY_VAULT_CACHE_ENABLED', 'EPP_ACCESS_TOKEN_CACHE_ENABLED')) {
-                Assert ($settings.Contains("'$setting', if(variables('isFlexConsumption'), 'false', 'true')")) 'Both cache app settings must follow the selected plan.'
+                Assert (-not $settings.Contains($setting)) 'Bicep must not configure removed credential caches.'
             }
             $site = ($inner.resources | Where-Object type -eq 'Microsoft.Web/sites').properties
             Assert ($site -is [Collections.IDictionary]) 'Function App properties must remain a literal object so serverFarmId is visible during provider preflight.'

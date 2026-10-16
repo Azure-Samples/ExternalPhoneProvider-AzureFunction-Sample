@@ -15,7 +15,7 @@ Select the failed stage and keep existing resources. Before rerunning, use
 | Certificate or resource registration fails | [Certificate selection](#certificate-selection-reuse-or-cleanup-fails), [resource providers](#a-required-azure-resource-provider-is-not-registered) |
 | Download, build, or parser failure | [Old package prompts](#setup-still-asks-for-packageurl-or-packagesha256), [checksum/download](#a-checksum-or-package-download-fails), [.NET](#net-build-fails), [Python](#python-remote-build-fails), [CLI JSON](#azure-cli-warnings-break-json-parsing) |
 | Deployment stops after approval | [Publication and startup](#deployment-stops-after-approval) |
-| Endpoint rejects calls, does not deliver, or has no logs | [After-deployment triage](#after-deployment-triage), [401/live delivery](#the-endpoint-returns-401-or-live-delivery-fails), [cache settings](#credential-caching-does-not-match-the-selected-plan) |
+| Endpoint rejects calls, does not deliver, or has no logs | [After-deployment triage](#after-deployment-triage), [401/live delivery](#the-endpoint-returns-401-or-live-delivery-fails), [credential acquisition](#provider-credential-acquisition-fails) |
 | Optional regional routing fails | [Front Door checks](#optional-front-door-deployments) |
 
 ## After-deployment triage
@@ -136,14 +136,24 @@ Keep the original deployment inputs rather than switching plans.
 **Verify:** `az deployment sub validate` checks the template without creating resources.
 It does not verify publication, startup, Easy Auth, or delivery.
 
-## Credential caching does not match the selected plan
+<a id="credential-caching-does-not-match-the-selected-plan"></a>
+## Provider credential acquisition fails
 
-**Check:** serving-app `EPP_KEY_VAULT_CACHE_ENABLED` and `EPP_ACCESS_TOKEN_CACHE_ENABLED`.
-Setup writes both as `"false"` for FC1 or `"true"` for EP1 and restores them on rerun.
-**Fix:** deploy a supporting release and restart after edits; older packages ignore the switches.
-The [credential caching guide](../../TECHNICAL.md#provider-settings-and-credential-caching) defines accepted values,
-fail-closed invalid settings, and runtime differences. Disabling a cache does not eliminate live
-credential acquisition or affect the platform's decryption-key reference.
+**Signal:** `request_failed` with stage `provider_credentials`, reason `credential_unavailable`,
+and HTTP `502`. The request has not reached the provider.
+
+**Check:** for API keys, verify managed-identity access to the configured vault and the exact
+provider secret names. For OAuth, verify the attached outbound managed identity, application
+federation, provider tenant/scope, and provider permissions using the
+[authentication handoff](../../docs/ONBOARDING.md#complete-provider-authentication).
+Removing a refresher does not correct missing permissions or invalid identity configuration.
+
+Current packages acquire credentials only during live requests, retain SDK token caching, and
+have no custom failure cooldown. The next live request can retry acquisition. Deploy the updated
+package to remove older refresher behavior; obsolete cache switches have no effect on current
+packages. Restart after configuration changes. See
+[credential acquisition](../../TECHNICAL.md#provider-settings-and-credential-acquisition).
+Evaluation does not prove provider credentials work.
 
 ## appservice list-locations rejects EP1
 

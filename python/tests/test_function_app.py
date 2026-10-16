@@ -79,21 +79,20 @@ def _events(caplog):
     return [record for record in caplog.records if hasattr(record, "event_name")]
 
 
-@pytest.mark.parametrize(("provider", "mode", "switch"), [
-    ("telesign", "apiKey", "EPP_KEY_VAULT_CACHE_ENABLED"),
-    ("soprano", "oauth", "EPP_ACCESS_TOKEN_CACHE_ENABLED"),
+@pytest.mark.parametrize(("provider", "mode"), [
+    ("telesign", "apiKey"),
+    ("soprano", "oauth"),
 ])
-def test_disabled_cache_skips_startup_and_evaluation_but_not_live_credentials(monkeypatch, provider, mode, switch):
+def test_only_live_requests_acquire_credentials(monkeypatch, provider, mode):
     monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
     monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", mode)
     for name in ("EPP_KEY_VAULT_CACHE_ENABLED", "EPP_ACCESS_TOKEN_CACHE_ENABLED"):
-        monkeypatch.setenv(name, "false" if name == switch else "PRIVATE-UNUSED")
+        monkeypatch.setenv(name, "PRIVATE-OBSOLETE")
     function_app._credentials.get_credentials.return_value = {
         "mode": mode, "secret": "key", "identity": "customer", "access_token": "token",
     }
     provider_module.requests.request.return_value = Mock(
         status_code=200, json=Mock(return_value={"status": {"code": 3001} if mode == "apiKey" else "ENROUTE"}))
-    function_app._warm_selected_credentials()
     response = _HANDLER(_request(_envelope(mode=2)))
     assert response.status_code == 200 and json.loads(response.get_body())["nonce"] == _NONCE
     function_app._credentials.get_credentials.assert_not_called()
@@ -103,23 +102,31 @@ def test_disabled_cache_skips_startup_and_evaluation_but_not_live_credentials(mo
     assert function_app._credentials.get_credentials.call_count == 2
 
 
-@pytest.mark.parametrize(("provider", "mode"), [("telesign", "apiKey"), ("soprano", "oauth")])
-def test_invalid_cache_setting_fails_live_but_not_evaluation(monkeypatch, caplog, provider, mode):
-    monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
-    monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", mode)
-    monkeypatch.setenv("EPP_KEY_VAULT_CACHE_ENABLED", "PRIVATE-INVALID")
-    monkeypatch.setenv("EPP_ACCESS_TOKEN_CACHE_ENABLED", "PRIVATE-INVALID")
-    secrets = Mock()
+def test_credential_failure_is_request_correlated_and_next_request_recovers(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    monkeypatch.setenv("EPP_PROVIDER_NAME", "telesign")
+    monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", "apiKey")
+    monkeypatch.setenv("EPP_KEY_VAULT_CACHE_ENABLED", "PRIVATE-OBSOLETE")
+    monkeypatch.setenv("EPP_ACCESS_TOKEN_CACHE_ENABLED", "PRIVATE-OBSOLETE")
+    secrets = Mock(resolve=Mock(side_effect=ValueError("PRIVATE-SDK-FAILURE")))
     service = CredentialTokenService(secrets)
     monkeypatch.setattr(function_app, "_credentials", service)
     try:
-        function_app._warm_selected_credentials()
         assert _HANDLER(_request(_envelope(mode=2))).status_code == 200
+        secrets.resolve.assert_not_called()
         response = _HANDLER(_request(_envelope()))
         assert response.status_code == 502 and "nonce" not in json.loads(response.get_body())
-        secrets.resolve.assert_not_called()
         provider_module.requests.request.assert_not_called()
-        assert any(record.event_name == "credential_refresh_failed" for record in _events(caplog))
+        failure = next(record for record in _events(caplog) if record.event_name == "request_failed")
+        assert failure.failureStage == "provider_credentials"
+        assert failure.failureReason == "credential_unavailable"
+        secrets.resolve.side_effect = None
+        secrets.resolve.return_value = "key"
+        provider_module.requests.request.return_value = Mock(
+            status_code=200, json=Mock(return_value={"status": {"code": 3001}}))
+        assert _HANDLER(_request(_envelope())).status_code == 200
+        assert secrets.resolve.call_count == 4
+        provider_module.requests.request.assert_called_once()
         assert "PRIVATE" not in caplog.text
     finally:
         service.close()

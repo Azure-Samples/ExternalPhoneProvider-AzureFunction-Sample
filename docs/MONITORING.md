@@ -156,19 +156,19 @@ AppTraces
 | extend Event = parse_json(Message)
 | where tostring(Event.logType) == "service"
 | where tostring(Event.eventName) in
-    ("request_failed", "unexpected_error", "credential_refresh_failed")
+    ("request_failed", "unexpected_error")
 | summarize EstimatedEvents = sum(tolong(coalesce(ItemCount, 1)))
     by EventName = tostring(Event.eventName),
        FailureStage = tostring(Event.failureStage),
        FailureReason = tostring(Event.failureReason),
-       CacheKind = tostring(Event.cacheKind),
        bin(TimeGenerated, 5m)
 | order by TimeGenerated asc
 ```
 
-Credential refresh can run outside a request. A successful evaluation does not prove provider
-credentials work. When collection or refresh is off, verify credential health directly instead
-of relying on warnings.
+Credential acquisition failures have `failureStage=provider_credentials` and
+`failureReason=credential_unavailable` on the failing request. There is no background refresher
+or idle credential-health signal. A successful evaluation does not prove provider credentials work;
+validate that path separately through an approved live test.
 
 <a id="runtime-specific-log-discovery"></a>
 ## Runtime log formats
@@ -268,7 +268,7 @@ legitimately have no request rows.
 | --- | --- |
 | Request failures | Five-minute `AppRequests` summary with a minimum request count and a threshold based on normal traffic. |
 | High latency | Five-minute request summary with a reviewed p95 threshold and minimum request count. |
-| JavaScript credential failures | `credential_refresh_failed` events over a 15-minute window. |
+| JavaScript credential failures | `request_failed` events with `failureStage=provider_credentials` over a 15-minute window. |
 | Missing regional telemetry | Expected-inventory query filtered to `MissingTelemetry`. |
 | Certificate or credential renewal | Independent inventory reminder and the approved renewal runbook. |
 
@@ -311,7 +311,7 @@ The supported end-to-end check uses an authorized caller, a valid encrypted eval
 and nonce verification without recording the nonce. Evaluation does not test provider acceptance
 or delivery. Live checks need separate approval, controlled recipients, and cost limits.
 
-FC1 can scale to zero. Idle periods can have no requests or refresh logs, and the first authorized
+FC1 can scale to zero. Idle periods can have no request logs, and the first authorized
 request can include cold-start latency. Frequent probes can change both cost and observed latency.
 
 <a id="8-optional-azure-front-door-layer"></a>
