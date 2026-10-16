@@ -4,30 +4,31 @@
 
 [Documentation](README.md) | [Setup reference](../setup/docs/README.md) | [Troubleshooting](../setup/docs/Troubleshooting.md)
 
-Deploy **one regional endpoint** for Microsoft Entra ID SMS and voice requests. Guided setup
-publishes the selected package. Validate each channel you plan to use.
+Deploy one regional endpoint for Microsoft Entra ID SMS and voice requests.
 
-Follow in order: [prepare](#1-get-ready), [register](#2-register-your-application),
-[deploy](#3-run-guided-setup), [connect and test](#4-connect-your-provider-and-test),
-then [activate and hand over](#5-activate-and-hand-over).
-Portal labels may differ from the screenshots.
+| Step | Task |
+| --- | --- |
+| 1 | [Prepare access, tools, region, and budget](#1-get-ready) |
+| 2 | [Register the endpoint application](#2-register-your-application) |
+| 3 | [Run guided setup](#3-run-guided-setup) |
+| 4 | [Connect the provider and test](#4-connect-your-provider-and-test) |
+| 5 | [Activate and hand over](#5-activate-and-hand-over) |
+
+Complete the steps in order. Portal labels can differ from the screenshots.
 
 ## 1. Get ready
 
-Start with a **separate test environment** in a nonproduction tenant and subscription. Create a
-new application registration and choose a unique resource prefix. This makes the endpoint easy
-to identify and keeps testing separate from production.
+Use a separate test environment with its own application registration and resource prefix.
 
-Before purchasing or deploying, confirm access to a supported provider's EPP integration through
+Before purchasing or deploying, confirm provider EPP access in
 [Microsoft Security Store](https://securitystore.microsoft.com/private-solutions) and arrange
-Microsoft's approved testing and activation procedure. See
+Microsoft's approved test and activation process. See
 [access and support](ONBOARDING.md#before-purchasing-or-deploying).
 
 In Security Store, open **Private solutions** and select the approved subscription. Check
 [guided provider support](ONBOARDING.md#provider-credential-names).
 
-Use the [SMS cost estimation guide](COST-CALCULATOR.md) to create a planning estimate,
-then confirm destination rates, fees, and final costs with your provider.
+Use the [cost estimate](COST-CALCULATOR.md), then confirm rates and fees with the provider.
 
 Prepare:
 
@@ -41,10 +42,10 @@ Prepare:
 - **Azure region and budget:** check availability and subscription quota for your chosen Linux
   plan. Azure resources and provider services can incur charges.
 
-Check the [full prerequisites](../setup/docs/README.md#prerequisites-for-step-2), including the
-Microsoft Entra ID allowed-tenants preview. Setup can install Bicep, but not Azure CLI.
+Check the [full prerequisites](../setup/docs/README.md#prerequisites-for-step-2). Setup can install
+Bicep, but not Azure CLI.
 
-Assign an **onboarding owner** and review [production readiness](CONTRACT.md#production-limitations).
+Assign an **onboarding owner** and review [production readiness](../TECHNICAL.md#production-readiness).
 
 ## 2. Register your application
 
@@ -91,15 +92,15 @@ Review the downloaded script, then run it:
 .\Setup-Epp.ps1
 ```
 
-On a shared workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` for a fresh Azure CLI sign-in.
+On a shared workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` for a fresh sign-in.
 
 Select the tenant, subscription, application **client ID**, and region. Then choose:
 
 - **Provider and route:** enter or confirm the provider by name. **Tenant scope** means Global/EU
   provider routing, not Azure region or a data-residency guarantee.
 - **Platform:** JavaScript, C#, or Python.
-- **Hosting:** FC1 can scale to zero and cold-start; EP1 has paid warm capacity. FC1's usage grant
-  does not make deployment free. Review [plan details](../setup/docs/README.md#service-plan-selection).
+- **Hosting:** FC1 can scale to zero and cold-start. EP1 has paid warm capacity. Review
+  [plan details](../setup/docs/README.md#service-plan-selection).
 - **Resource prefix:** 2-8 lowercase letters/digits, starting with a letter.
 
 Complete required sign-in, MFA, or administrator consent. Resolve preflight errors before approval.
@@ -108,17 +109,16 @@ For existing encryption credentials, follow
 [certificate selection](../setup/docs/README.md#encryption-certificate-selection). Coordinate
 changes across every endpoint sharing the application.
 
-**Review the complete deployment plan before typing `Yes`.** Check the accounts, region,
-SMS and voice provider URLs, platform, plan, cache settings, and resource names. Also check
-permissions, certificate key IDs, and access to any existing vault. The plan includes Microsoft Graph `Application.Read.All` for the Microsoft phone-provider service
-principal. `No` or Enter cancels deployment.
+**Review the deployment plan before typing `Yes`.** Check accounts, region, provider URLs,
+runtime, plan, cache settings, resource names, permissions, certificate key IDs, and vault access.
+The plan includes Microsoft Graph `Application.Read.All` for the Microsoft phone-provider service
+principal. `No` or Enter cancels.
 
 **Plan review:** run interactively and choose **No** at the final prompt. See
 [plan review](../setup/docs/README.md#reviewing-the-plan-without-deploying).
 
-Wait for **Deployment completed** and the saved summary before Step 4. Setup creates the
-Function App, storage, Key Vault, identities, and monitoring as one coordinated deployment.
-Begin without precreating these resources so setup can apply the complete reviewed plan.
+Wait for **Deployment completed** and the saved summary before Step 4. Setup creates the Function
+App, storage, Key Vault, identities, and monitoring. Do not precreate these resources.
 Keep `epp-output` private. Its [summary](../setup/docs/README.md#read-the-deployment-summary)
 identifies the resources, endpoint, app, and encryption key. No private key is downloaded.
 
@@ -131,9 +131,7 @@ listed in your deployment summary.
 
 ![Example regional resource group showing a Function App, monitoring, Key Vault, managed identity, hosting plan, and storage](images/onboarding/resource-group.png)
 
-*This existing Premium test deployment shows the resource types to look for, not a new
-deployment or a guarantee that your resource list will be identical. Use setup rather than
-the portal's Create button to deploy the endpoint.*
+*This Premium test deployment shows the expected resource types. Your list can differ.*
 
 ## 4. Connect your provider and test
 
@@ -149,8 +147,7 @@ In your Function App, open **Settings > Authentication**. Check that authenticat
 
 ![Function Authentication page showing Enabled, Require authentication, and Return HTTP 401 Unauthorized](images/onboarding/authentication.png)
 
-*The **Microsoft** identity provider on this page validates the caller. It is not the phone
-provider you selected for SMS or voice.*
+*The **Microsoft** identity provider validates the caller. It is not the SMS or voice provider.*
 
 Complete the [approved endpoint checks](ONBOARDING.md#validate-the-deployed-endpoint):
 
@@ -160,7 +157,7 @@ Complete the [approved endpoint checks](ONBOARDING.md#validate-the-deployed-endp
    both provider acceptance and receipt of the SMS or voice call. Acceptance alone is not proof of delivery.
 4. Check that the request and relevant logs appear in Application Insights.
 
-Use Microsoft's approved caller and test procedure for these checks; an ordinary Azure CLI token
+Use Microsoft's approved caller and test procedure for these checks. An ordinary Azure CLI token
 cannot represent that caller. Activate the endpoint after every required check passes. If a live
 send times out, investigate its outcome before trying again because the provider may already have
 accepted it.
@@ -173,7 +170,7 @@ They save the existing policy, apply the approved endpoint URL and application c
 preserve other settings, and validate the result.
 
 Repeat for each authentication method you intend to enable. SMS and voice can share the same
-Function endpoint URL and application client ID; no additional setup run is needed for the second channel.
+Function endpoint URL and application client ID. No additional setup run is needed for the second channel.
 
 Before handing over, confirm:
 

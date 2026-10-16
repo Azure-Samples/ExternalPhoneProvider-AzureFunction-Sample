@@ -1,8 +1,8 @@
 # Estimate telecom-provider and Azure hosting costs
 
-Estimate SMS and voice traffic before onboarding an External Phone Provider (EPP). The report
-groups recent authentication steps by calling code, such as `+1` or `+91`. Apply provider rates
-to estimate a telecom budget. This guide also describes the Azure resources to include when
+Estimate SMS and voice traffic before onboarding a provider. The report groups recent
+authentication steps by calling code. Apply provider rates to estimate a telecom budget.
+This guide also describes the Azure resources to include when
 estimating the separate cost of hosting the provider integration.
 
 The guide separates the estimate into two parts:
@@ -12,11 +12,18 @@ The guide separates the estimate into two parts:
 
 ## 1. Estimate telecom-provider costs
 
-**This is not a billing report.** It counts each matching authentication step as one estimated
-request. Confirm retries, fallback, segmentation, destinations, taxes, fees, and pricing with
-the provider.
+> [!IMPORTANT]
+> This is not a billing report. Confirm retries, fallback, message segments, destinations, taxes,
+> fees, and pricing with the provider.
 
-The `authenticationDetails` data used by this guide is currently available through the
+| Step | Task |
+| --- | --- |
+| 1 | [Prepare access](#prerequisites) |
+| 2 | [Generate the report](#generate-the-activity-report) |
+| 3 | [Calculate the estimate](#convert-activity-into-a-cost-estimate) |
+| 4 | [Confirm provider rates](#confirm-provider-rates) |
+
+The report uses `authenticationDetails`, which is currently available through the
 [Microsoft Graph beta API](https://learn.microsoft.com/en-us/graph/api/resources/authenticationdetail?view=graph-rest-beta).
 Review the beta API and script before each planning exercise. The script matches masked trailing
 digits to registered phone methods to derive the calling code.
@@ -30,10 +37,10 @@ account must be allowed to consent to or use these Microsoft Graph delegated per
 - `UserAuthenticationMethod.Read.All`
 
 Reading other users' phone methods requires a
-[supported Entra role](https://learn.microsoft.com/en-us/graph/api/authentication-list-phonemethods?view=graph-rest-1.0#permissions),
-Authentication Administrator receives masked phone numbers; unresolved calling codes appear as `Unknown`.
+[supported Microsoft Entra ID role](https://learn.microsoft.com/en-us/graph/api/authentication-list-phonemethods?view=graph-rest-1.0#permissions).
+Authentication Administrators receive masked phone numbers. Unresolved calling codes appear as `Unknown`.
 
-Access also depends on Microsoft Entra licensing, roles, and retention. The script exports
+Access also depends on Microsoft Entra ID licensing, roles, and retention. The script exports
 aggregated calling codes, methods, and counts, not full phone numbers. Protect the output.
 
 Create `C:\temp` before running the script, or change the `Export-Csv` path to an
@@ -41,10 +48,8 @@ approved folder.
 
 ### Generate the activity report
 
-The sample installs the required Microsoft Graph modules and connects to Microsoft Graph.
-It finds SMS and voice authentication steps, matches each masked phone detail to a registered
-phone method, and caches each user's phone-method lookup. Set `$start` and `$end` to the
-required reporting period.
+The script installs the required modules, finds SMS and voice authentication steps, matches masked
+details to registered phone methods, and groups the result. Set `$start` and `$end` first.
 
 ```powershell
 # 1. Install required modules if they are missing
@@ -159,27 +164,16 @@ $report | Format-Table -AutoSize
 $report | Export-Csv -Path "C:\temp\SMS_Voice_SignIns_By_Calling_Code.csv" -NoTypeInformation
 ```
 
-Microsoft documents `SMS` and `Voice` as authentication method values and states that
-`authenticationMethodDetail` can contain the phone number for those methods. Some tenant
-sign-in results report SMS as `Text message`; the script accepts both values and normalizes
-them to `SMS` in the exported report. It does not use the cmdlet's `-Property` parameter,
-because `authenticationDetails` is returned on the beta sign-in objects without that
-selection and the parameter has not behaved consistently across module versions.
+The script accepts `SMS`, `Text message`, and `Voice`, then normalizes text messages to `SMS`.
 
-The phone detail can be masked, for example `+x XXXXXXXX90`. The script removes non-digits
-from that detail and matches the visible suffix (`90`) against the user's registered
-methods. It then extracts the calling code from the uniquely matched registered number,
-whose Graph format includes a space after the code, such as `+91 1234567890`.
+For a masked value such as `+x XXXXXXXX90`, the script matches the visible suffix to one registered
+method and extracts its calling code.
 
-For SMS, the script uses `mobile` and `alternateMobile` registrations. Voice can use any
-registered phone type. The report uses `Unknown` when the visible detail is too short,
-does not match one registered number, or has an unexpected format. This avoids guessing
-a destination. Review the `Unknown` total before relying on the estimate.
+SMS uses `mobile` and `alternateMobile` registrations. Voice can use any phone type. The report
+uses `Unknown` rather than guessing when it cannot find one match. Review that total.
 
-The script does not use sign-in geography. `-All` requests all available pages, but large
-tenants should still account for Microsoft Graph throttling and execution time. The script
-uses `-ErrorAction Stop` rather than silently producing a partial report when either
-sign-in or phone-method retrieval fails.
+The script does not use sign-in geography. Large tenants should account for Microsoft Graph
+throttling and execution time. Errors stop the report instead of returning partial results.
 
 The Microsoft Graph
 [list signIns API documentation](https://learn.microsoft.com/en-us/graph/api/signin-list?view=graph-rest-1.0&tabs=http)

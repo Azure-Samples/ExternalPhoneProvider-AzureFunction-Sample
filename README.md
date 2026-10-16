@@ -3,7 +3,9 @@
 Connect Microsoft Entra ID to a phone provider for SMS and voice one-time passwords.
 Guided setup deploys **one regional endpoint** using JavaScript, C#, or Python.
 
-Start in a separate nonproduction environment and review [requirements](#requirements).
+> [!IMPORTANT]
+> Start in a separate nonproduction environment. Confirm provider access and Microsoft's approved
+> test and activation process before deployment.
 
 ## Table of Contents
 
@@ -12,33 +14,31 @@ Start in a separate nonproduction environment and review [requirements](#require
 - [Architecture](#architecture)
 - [Get started](#get-started)
 - [Guidance](#guidance)
-  - [Deploy and configure](#deploy-and-configure)
-  - [Operate](#operate)
-  - [Develop](#develop)
-  - [Advanced topics](#advanced-topics)
+- [Advanced topics](#advanced-topics)
 - [Getting help](#getting-help)
 
 ## Features
 
 - JavaScript, C#, and Python implementations of one [HTTP and trust contract](docs/CONTRACT.md).
 - Guided Azure deployment with Easy Auth, Key Vault, and monitoring.
-- No-send evaluation for authentication and decryption checks.
-- Provider-neutral [phone-service integration](docs/BRING-YOUR-OWN-PROVIDER.md).
+- Evaluation mode checks authentication and decryption without sending a message.
+- Built-in provider integrations and an [Add Twilio](docs/BRING-YOUR-OWN-PROVIDER.md) guide.
 
 ## Requirements
 
-- Confirm [provider access and Microsoft's approved test and activation process](docs/GETTING-STARTED.md#1-get-ready).
-- Prepare a nonproduction tenant, subscription, app registration, and unique resource prefix.
+- Use a separate test environment with a Microsoft Entra ID tenant, Azure subscription, app
+  registration, and unique resource name prefix.
 - Check [roles, permissions, tools, regional availability, and quota](setup/docs/README.md#prerequisites-for-step-2).
-- Plan for Azure, telemetry, and provider charges; the [cost estimate](docs/COST-CALCULATOR.md) is not a bill.
-- Keep Easy Auth enabled for the approved Microsoft caller.
+- Plan for Azure, telemetry, and provider charges. The [cost estimate](docs/COST-CALCULATOR.md) is not a bill.
+- Use Easy Auth to allow only the approved Microsoft caller.
 
 ## Architecture
 
 ![Microsoft Entra ID sends an encrypted request through Easy Auth to a Function, which uses Key Vault and calls the phone provider](docs/images/single-region-architecture.png)
 
 *Easy Auth checks the Microsoft caller before the Function decrypts the request.
-Live success confirms provider acceptance; confirm delivery separately. Evaluation sends nothing.
+Live success confirms provider acceptance. Confirm delivery separately. Evaluation validates the
+request without sending a message.
 See [architecture details](TECHNICAL.md#single-region-architecture).
 [Open the full-size diagram](docs/images/single-region-architecture.png).*
 
@@ -52,33 +52,23 @@ Follow the **[five-step setup guide](docs/GETTING-STARTED.md)** in order:
 4. <a id="4-connect-your-provider-and-test"></a>[Connect and test](docs/GETTING-STARTED.md#4-connect-your-provider-and-test): configure provider access and run approved checks.
 5. <a id="5-activate-and-hand-over"></a>[Activate and hand over](docs/GETTING-STARTED.md#5-activate-and-hand-over): activate after validation and assign owners.
 
-Before live use, review [production readiness](docs/CONTRACT.md#production-limitations).
+Before live use, review [production readiness](TECHNICAL.md#production-readiness).
 
 <a id="find-more-detail"></a>
+<a id="deploy-and-configure"></a>
+<a id="operate"></a>
+<a id="develop"></a>
 ## Guidance
 
-### Deploy and configure
-
-- [Five-step setup](docs/GETTING-STARTED.md)
-- [Configuration and validation](docs/ONBOARDING.md)
-- [Setup reference](setup/docs/README.md)
-- [Troubleshooting](setup/docs/Troubleshooting.md)
-
-### Operate
-
-- [Function monitoring and alerts](docs/MONITORING.md)
-- [Application Insights collection](docs/APPLICATION-INSIGHTS.md)
-- [Microsoft Entra ID monitoring](docs/SIGN-IN-MONITORING.md)
-- [Certificate renewal and rollback](setup/docs/README.md#encryption-certificate-lifecycle)
-- [Provider cost estimate](docs/COST-CALCULATOR.md)
-
-### Develop
-
-- Runtime guides: [JavaScript](javascript/README.md), [C#](dotnet/README.md), [Python](python/README.md)
-- [Architecture and settings](TECHNICAL.md)
-- [HTTP contract](docs/CONTRACT.md)
-- [Log schema](docs/LOGGING.md)
-- [Phone-service integration](docs/BRING-YOUR-OWN-PROVIDER.md)
+| Goal | Start here |
+| --- | --- |
+| Deploy and configure | [Five-step setup](docs/GETTING-STARTED.md) |
+| Find settings and provider details | [Technical reference](TECHNICAL.md) |
+| Resolve a problem | [Troubleshooting](setup/docs/Troubleshooting.md) |
+| Monitor the endpoint | [Monitoring](docs/MONITORING.md) |
+| Review the API | [Send OTP](docs/CONTRACT.md) |
+| Add Twilio | [Twilio integration guide](docs/BRING-YOUR-OWN-PROVIDER.md) |
+| Work on a runtime | [JavaScript](javascript/README.md), [C#](dotnet/README.md), or [Python](python/README.md) |
 
 <a id="optional-designs"></a>
 ### Advanced topics

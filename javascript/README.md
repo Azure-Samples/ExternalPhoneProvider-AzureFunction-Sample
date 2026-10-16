@@ -31,7 +31,7 @@ provider per deployment.
 
 Run Core Tools from `javascript/`. Create an untracked `local.settings.json` **beside
 [host.json](host.json), not inside `src/`**. Start from the
-[shared sample](../docs/local.settings.sample.json); for local evaluation, start Azurite and replace
+[shared sample](../docs/local.settings.sample.json). For local evaluation, start Azurite and replace
 the test-key placeholder in this minimal setup:
 
 ```json
@@ -48,10 +48,10 @@ the test-key placeholder in this minimal setup:
 For live delivery, use the [shared settings table](../TECHNICAL.md#configure-environment-variables)
 for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter-specific options.
 Keep `Values` as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"1500"`.
-Replace placeholders; Store API keys in Key Vault. Each selected channel requires a valid endpoint; an invalid or
-missing endpoint returns an error without using the other channel.
+Replace the placeholders. Store API keys in Key Vault. Each selected channel requires a valid
+endpoint. An invalid or missing endpoint returns an error without using the other channel.
 
-Core Tools copies `Values` into the process environment; direct Node processes and offline tests
+Core Tools copies `Values` into the process environment. Direct Node processes and offline tests
 do not load the file. Restart after edits. Use a local test PEM because Core Tools cannot resolve
 Key Vault references locally. Keep Azurite settings local.
 
@@ -61,41 +61,37 @@ Provider secrets use managed identity, not a developer CLI login. Keep local eva
 ## Request behavior
 
 `POST /api/SendOtp` follows the [shared request/response contract](../docs/CONTRACT.md#1-http-api).
-Easy Auth authenticates the caller. JWE decryption, nonce values, and request fields serve other
-parts of the contract. The handler leaves incoming `Authorization` processing to Easy Auth and
-does not echo it.
+Easy Auth authenticates the caller. The handler then validates and decrypts the payload. It never
+forwards or returns the incoming `Authorization` header.
 
 Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) to validate
 authentication and decryption without a provider send. Live success confirms acceptance,
 **not handset receipt**. Check a timeout before retrying.
 
-For message/voice mapping and credential rules, see the
-[Soprano delivery contract](../docs/CONTRACT.md#encrypteddeliverycontext-jwe) and
-[Telesign integration](../TECHNICAL.md#telesign-epp).
+For built-in message and voice mapping, see
+[Soprano and Telesign](../TECHNICAL.md#built-in-providers).
 
 ## Source and extension points
 
-Use the provider-neutral
-[BYOT request and response guide](../docs/BRING-YOUR-OWN-PROVIDER.md) for the Microsoft Entra ID payload,
-caller authentication, and response rules. Customers can connect the outbound phone service
-that meets their requirements.
+To add Twilio, follow the [Twilio integration guide](../docs/BRING-YOUR-OWN-PROVIDER.md).
+Keep caller authentication and public responses in the shared handler.
 
 For diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and the
 [JavaScript event queries](../docs/MONITORING.md#4-javascript-service-event-queries).
 
-The [cache switches and defaults](../docs/CONTRACT.md#credential-caching-and-refresh) apply here.
+The [cache switches and defaults](../TECHNICAL.md#provider-settings-and-credential-caching) apply here.
 Disabling the selected cache removes startup preparation, polling, and cross-request reuse,
 not live credential acquisition.
 
-With caching enabled, API keys use Key Vault and `lru-cache`; OAuth uses the managed-identity/Entra
-SDKs. A 30-second refresh loop and one in-flight acquisition support warm reads. See the
-[refresh contract](../docs/CONTRACT.md#credential-caching-and-refresh).
+With caching enabled, API keys use Key Vault and `lru-cache`. OAuth uses managed identity and the
+Azure Identity SDK. A 30-second refresh loop and one in-flight acquisition support warm reads. See the
+[credential caching guide](../TECHNICAL.md#provider-settings-and-credential-caching).
 
 | Source | Purpose |
 |---|---|
 | [src/functions/SendOtp.js](src/functions/SendOtp.js) | Explicit HTTP orchestration and startup/termination hooks |
 | [src/functions/config.js](src/functions/config.js) | Shared deployment settings |
-| [src/functions/entraPayload.js](src/functions/entraPayload.js) | Validated Entra envelope and exact contract reasons |
+| [src/functions/entraPayload.js](src/functions/entraPayload.js) | Validated Microsoft Entra ID envelope and exact contract reasons |
 | [src/functions/delivery.js](src/functions/delivery.js) | Validated decrypted context and immutable provider-neutral delivery |
 | [src/functions/jwe.js](src/functions/jwe.js) | Flat JWE validation/decryption with pinned algorithms and PEM key cache |
 | [src/functions/providerTransport.js](src/functions/providerTransport.js) | HTTPS validation, bounded fetch, body read, JSON parse and manual redirects |
@@ -110,4 +106,4 @@ To add a provider, implement its fixed `name`, `authenticationMode`, `credential
 [providers/index.js](src/functions/providers/index.js). `interpretResponse` returns a
 `ProviderResult` containing the provider-owned outcome, endpoint HTTP status and one safe fixed
 failure classification. Raw API JSON stays inside the provider. See
-[production-readiness considerations](../docs/CONTRACT.md#production-limitations) when planning a live service.
+[production readiness](../TECHNICAL.md#production-readiness) when planning a live service.
