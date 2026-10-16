@@ -4,13 +4,12 @@ import logging
 import os
 import time
 import uuid
-from threading import Thread
 
 import azure.functions as func
 
 from src import otp_log
 from src.config import read_config
-from src.credentials import CredentialTokenService, report_refresh_failure, is_cache_enabled
+from src.credentials import CredentialTokenService
 from src.jwe import JweDecryptor
 from src.models import EntraSendOtpPayload, OtpDelivery
 from src.provider import (
@@ -237,25 +236,4 @@ def send_otp(req: func.HttpRequest, context: func.Context = None) -> func.HttpRe
     return func.HttpResponse(json.dumps(body), status_code=status_code, mimetype="application/json")
 
 
-def _warm_selected_credentials():
-    config = read_config()
-    if not config.provider_name:
-        return
-    provider = _select_provider(config.provider_name)
-    if provider is None or (
-        config.provider_auth_mode
-        and config.provider_auth_mode != provider.authentication_mode
-    ):
-        report_refresh_failure("configuration")
-        return
-    try:
-        if not is_cache_enabled(provider.credential_spec, config):
-            return
-        _credentials.get_credentials(provider, config)
-    except Exception:
-        report_refresh_failure("initialization")
-
-
 atexit.register(_credentials.close)
-if os.environ.get("EPP_PROVIDER_NAME", "").strip():
-    Thread(target=_warm_selected_credentials, daemon=True).start()

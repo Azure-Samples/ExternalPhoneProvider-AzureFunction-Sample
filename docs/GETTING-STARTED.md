@@ -110,7 +110,7 @@ For existing encryption credentials, follow
 changes across every endpoint sharing the application.
 
 **Review the deployment plan before typing `Yes`.** Check accounts, region, provider URLs,
-runtime, plan, cache settings, resource names, permissions, certificate key IDs, and vault access.
+runtime, plan, resource names, permissions, certificate key IDs, and vault access.
 The plan includes Microsoft Graph `Application.Read.All` for the Microsoft phone-provider service
 principal. `No` or Enter cancels.
 

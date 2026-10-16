@@ -157,31 +157,27 @@ public class SendOtpTests
         Assert.Equal(1, rig.Http.Calls);
     }
 
-    [Theory]
-    [InlineData(null, 1)]
-    [InlineData("true", 1)]
-    [InlineData("false", 0)]
-    public async Task StartupAndLiveRequestsRespectTheSelectedCache(string? setting, int warmCalls)
+    [Fact]
+    public async Task OnlyLiveRequestsFetchSecretsAndObsoleteCacheSettingsAreIgnored()
     {
         using var rig = new HandlerRig();
-        if (setting is not null) rig.Env["EPP_KEY_VAULT_CACHE_ENABLED"] = setting;
-        rig.Env["EPP_ACCESS_TOKEN_CACHE_ENABLED"] = "PRIVATE-UNUSED";
-        await rig.Credentials.StartAsync(default);
-        Assert.Equal(warmCalls, rig.Secrets.Calls);
+        rig.Env["EPP_KEY_VAULT_CACHE_ENABLED"] = "PRIVATE-OBSOLETE";
+        rig.Env["EPP_ACCESS_TOKEN_CACHE_ENABLED"] = "PRIVATE-OBSOLETE";
+        Assert.Equal(0, rig.Secrets.Calls);
         Assert.Equal(0, rig.Http.Calls);
         AssertAccepted(await rig.Invoke("evaluation"));
-        Assert.Equal(warmCalls, rig.Secrets.Calls);
+        Assert.Equal(0, rig.Secrets.Calls);
         Assert.Equal(0, rig.Http.Calls);
         AssertAccepted(await rig.Invoke());
         AssertAccepted(await rig.Invoke());
-        Assert.Equal(warmCalls == 0 ? 2 : 1, rig.Secrets.Calls);
+        Assert.Equal(2, rig.Secrets.Calls);
         Assert.Equal(2, rig.Http.Calls);
     }
 
     [Theory]
-    [InlineData("false", 200)]
-    [InlineData("PRIVATE-INVALID", 502)]
-    public async Task OAuthCacheSettingSkipsStartupAndNeverBlocksEvaluation(string setting, int liveStatus)
+    [InlineData("false")]
+    [InlineData("PRIVATE-OBSOLETE")]
+    public async Task OAuthAcquisitionIgnoresObsoleteCacheSettingsAndSkipsEvaluation(string setting)
     {
         var calls = 0;
         using var rig = new HandlerRig(
@@ -195,13 +191,12 @@ public class SendOtpTests
         ConfigureSoprano(rig);
         rig.Env["EPP_ACCESS_TOKEN_CACHE_ENABLED"] = setting;
         rig.Env["EPP_KEY_VAULT_CACHE_ENABLED"] = "PRIVATE-UNUSED";
-        await rig.Credentials.StartAsync(default);
         AssertAccepted(await rig.Invoke("evaluation"));
         Assert.Equal(0, calls);
         Assert.Equal(0, rig.Secrets.Calls);
         Assert.Equal(0, rig.Http.Calls);
-        for (var i = 0; i < 2; i++) Assert.Equal(liveStatus, (await rig.Invoke()).StatusCode);
-        Assert.Equal(liveStatus == 200 ? 2 : 0, calls);
+        for (var i = 0; i < 2; i++) AssertAccepted(await rig.Invoke());
+        Assert.Equal(2, calls);
         Assert.DoesNotContain("PRIVATE", string.Join("\n", rig.Log.Messages));
     }
 
@@ -211,7 +206,6 @@ public class SendOtpTests
         using var rig = new HandlerRig();
         rig.Env.Clear();
         rig.Env["EPP_DECRYPTION_KEY_PEM"] = rig.Keys.Rsa.ExportPkcs8PrivateKeyPem();
-        await rig.Credentials.StartAsync(default);
         Assert.Equal(0, rig.Secrets.Calls);
         Assert.Equal(0, rig.Http.Calls);
         AssertAccepted(await rig.Invoke("evaluation"));
@@ -220,7 +214,7 @@ public class SendOtpTests
     [Theory]
     [InlineData("api://provider/.default")]
     [InlineData("api://second/.default")]
-    public async Task SopranoOAuthUsesSetupIdentitiesScopeAndOneBoundedExchange(string scope)
+    public async Task SopranoOAuthUsesSetupIdentitiesAndScopeForEveryRequest(string scope)
     {
         var scopes = new List<string>();
         var identities = new List<string>();
@@ -274,7 +268,7 @@ public class SendOtpTests
         }
         AssertAccepted(await rig.Invoke());
         Assert.Single(applications);
-        Assert.Equal(new[] { scope }, scopes);
+        Assert.Equal(new[] { scope, scope, scope }, scopes);
         Assert.Equal(new[] { ("provider-tenant", "calling-application") }, applications);
         Assert.All(identities, identity => Assert.Equal("outbound-identity", identity));
         Assert.Equal(3, rig.Http.Calls);
@@ -304,10 +298,8 @@ public class SendOtpTests
         Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
     }
 
-    [Theory]
-    [InlineData("true")]
-    [InlineData("false")]
-    public async Task SopranoOAuthCancellationAndRejectionNeverFallBackOrRetry(string setting)
+    [Fact]
+    public async Task SopranoOAuthRecoversAfterTimeoutWithoutRestartAndNeverRetriesProviderRejection()
     {
         CancellationToken observed = default;
         var waitForCancellation = true;
@@ -328,20 +320,15 @@ public class SendOtpTests
         });
         using var rig = new HandlerRig(CreateIdentity, CreateProvider);
         ConfigureSoprano(rig);
-        rig.Env["EPP_ACCESS_TOKEN_CACHE_ENABLED"] = setting;
         AssertFailure(rig, await rig.Invoke().WaitAsync(TimeSpan.FromSeconds(10)), 502);
         Assert.True(observed.IsCancellationRequested);
         Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
         waitForCancellation = false;
-        rig.Credentials.Dispose();
-        AssertFailure(rig, await rig.Invoke(), 502);
-        Assert.Equal((0, 0), (rig.Http.Calls, rig.Secrets.Calls));
-        using var replacement = new HandlerRig(CreateIdentity, CreateProvider);
-        ConfigureSoprano(replacement);
-        replacement.Env["EPP_ACCESS_TOKEN_CACHE_ENABLED"] = setting;
-        replacement.Http.Respond = _ => Task.FromResult(Json(401, "{\"status\":\"REJECTED\"}"));
-        AssertFailure(replacement, await replacement.Invoke(), 401);
-        Assert.Equal((1, 0), (replacement.Http.Calls, replacement.Secrets.Calls));
+        AssertAccepted(await rig.Invoke());
+        Assert.Equal((1, 0), (rig.Http.Calls, rig.Secrets.Calls));
+        rig.Http.Respond = _ => Task.FromResult(Json(401, "{\"status\":\"REJECTED\"}"));
+        AssertFailure(rig, await rig.Invoke(), 401);
+        Assert.Equal((2, 0), (rig.Http.Calls, rig.Secrets.Calls));
     }
 
     private sealed class TestTokenCredential(Func<TokenRequestContext, CancellationToken, ValueTask<AccessToken>> acquire) : TokenCredential
@@ -1035,7 +1022,7 @@ public class SendOtpTests
                     createOAuth ?? ((_, _, _) => throw new InvalidOperationException("Unexpected OAuth"))),
                 new SinchProvider(Secrets),
             };
-            Credentials = new CredentialTokenService(providers, Env);
+            Credentials = new CredentialTokenService();
             _function = new SendOtp(providers, Credentials, Http, new JweDecryptor(Env), Env, Log);
             Function = _function;
         }
@@ -1076,7 +1063,7 @@ public class SendOtpTests
                 foreach (var (key, value) in headers) request.Headers[key] = value;
             return Assert.IsAssignableFrom<ObjectResult>(await _function.Run(request, payload));
         }
-        public void Dispose() { Credentials.Dispose(); Keys.Dispose(); Http.Dispose(); }
+        public void Dispose() { Keys.Dispose(); Http.Dispose(); }
     }
 
     private sealed class TestSecrets : ISecretResolver

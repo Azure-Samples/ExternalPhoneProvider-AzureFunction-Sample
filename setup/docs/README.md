@@ -39,12 +39,12 @@ adapters without guided profiles.
 
 ## Service plan selection
 
-Setup offers these two Linux hosting plans, with the same cache app settings for every language:
+Setup offers these two Linux hosting plans:
 
-| Option | Hosting | `EPP_KEY_VAULT_CACHE_ENABLED` | `EPP_ACCESS_TOKEN_CACHE_ENABLED` |
-|---|---|---|---|
-| 1. Flex Consumption (FC1) | On-demand with a free usage grant; zero always-ready instances, 2048 MB, up to 40 on-demand instances | `"false"` | `"false"` |
-| 2. Premium (EP1) | Existing Premium configuration with one warm instance | `"true"` | `"true"` |
+| Option | Hosting |
+|---|---|
+| 1. Flex Consumption (FC1) | On-demand with a free usage grant; zero always-ready instances, 2048 MB, up to 40 on-demand instances |
+| 2. Premium (EP1) | Existing Premium configuration with one warm instance |
 
 FC1 on-demand compute has a
 [free usage grant](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan#billing);
@@ -54,9 +54,9 @@ FC1 can scale to zero and cold-start.
 EP1 allocates paid warm capacity without OTP traffic. Budget for the plan, storage, Key Vault,
 telemetry, and provider services. Budget alerts do not stop spending.
 
-Each switch controls one provider credential cache; unset defaults to `true`. Disabled caches
-acquire credentials per live request. Values are trimmed, case-insensitive `true` or `false`;
-restart after edits. Rerunning setup restores the plan defaults. Older packages ignore these switches.
+Both plans use the same [request-time credential acquisition](../../TECHNICAL.md#provider-settings-and-credential-acquisition).
+API-key secrets are read on each live request, and Azure Identity manages its own token cache.
+Setup does not configure custom credential caches or refreshers.
 
 Use `-ServicePlan FC1` or `-ServicePlan EP1` to skip the prompt. Unattended setup requires it.
 
@@ -208,7 +208,7 @@ The flow is:
    It uses `packages/catalog.json` and the latest stable CI release, or your
    `-PackageReleaseTag epp-packages-<run>-<attempt>`. Malformed/disabled profiles fail before resource creation.
 5. **Service plan selection:** choose **Flex Consumption FC1** (free usage grant, zero always-ready
-   instances, both cache settings `"false"`) or **Premium EP1** (warm instance, both cache settings `"true"`).
+   instances) or **Premium EP1** (warm instance).
    Supply `-ServicePlan FC1` or `-ServicePlan EP1` to reuse a known selection.
 6. **Enter a resource prefix**, such as `contoso`. All resources created by the script start with
    this prefix. Use 2-8 lowercase letters or digits, starting with a letter. Every top-level
@@ -223,7 +223,7 @@ The flow is:
    Vault location, or replace all encryption credentials with one new certificate. Reuse of one
    among several also removes the others after approval. Enter cancels the certificate decision.
 9. **Review the complete plan**, including resource names, tenant/subscription, language, service plan,
-   both cache settings, automatic package verification/build, provider
+   automatic package verification/build, provider
    settings, scoped roles, the exact encryption key IDs to keep/remove, certificate location or
    staging name, and application configuration. Bicep receives these
    exact names; it does not independently calculate a different naming scheme.
@@ -366,7 +366,7 @@ registration, but infrastructure/settings may have changed. Metadata resolution 
 authorized decryption evaluation before activation.
 
 Find the public certificate and timestamped [summary](#read-the-deployment-summary) in `epp-output`
-beside the script, or `-OutputDirectory`. Plan/cache fields record configuration, not verified
+beside the script, or `-OutputDirectory`. Service-plan fields record configuration, not verified
 runtime behavior. Setup never downloads, writes, or imports the private key locally: the Function
 receives it through its managed-identity reference. The certificate supplies its backing secret;
 there is no separate `phone-provider-decryption-key` secret.

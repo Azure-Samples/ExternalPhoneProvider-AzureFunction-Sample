@@ -93,20 +93,21 @@ provider. `PhoneProviderBase.SendJsonAsync<TResponse>` owns bounded HTTP transpo
 mapping. Each provider maps its statuses to `ProviderResult`. Request-aware routing or multiple
 accounts require a separate trust, configuration, credential, and test design.
 
-`CredentialTokenService` warms and caches the selected provider credential. The shared cache
-switches default to `true`. Disabling the selected switch skips warmup and fetches on every live
-request. Enabled credentials remain in `MemoryCache` until absolute expiry. There is no polling
-timer, and concurrent misses can fetch more than once. The fetch has a 2.5-second cancellation
-budget. See [credential caching](../TECHNICAL.md#provider-settings-and-credential-caching).
+`CredentialTokenService` invokes the selected provider's credential retrieval for each live
+request with a 2.5-second cancellation budget. API-key secrets are read from Key Vault each time.
+The OAuth provider reuses Azure Identity SDK credential instances, leaving token caching and
+renewal to the SDK. There is no custom credential cache, hosted warmup service, polling, or
+retry cooldown. Evaluation does no provider credential work. See
+[credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
 
 | Source | Purpose |
 |---|---|
-| [Program.cs](Program.cs) | Host, provider, credential cache and HTTP client registration |
+| [Program.cs](Program.cs) | Host, provider, credential service and HTTP client registration |
 | [Functions/SendOtp.cs](Functions/SendOtp.cs) | HTTP handler, provider selection, credential resolution and delivery orchestration |
 | [Src/AppConfig.cs](Src/AppConfig.cs) | Shared deployment settings |
 | [Src/EntraSendOtpPayload.cs](Src/EntraSendOtpPayload.cs) | Bound request model, strict channel/mode converters and semantic validation |
 | [Src/JweDeliveryContext.cs](Src/JweDeliveryContext.cs) | Pinned JWE decryption and decrypted delivery context |
-| [Src/CredentialTokenService.cs](Src/CredentialTokenService.cs) | Provider-supplied retrieval, one expiring `MemoryCache` value and startup warmup |
+| [Src/CredentialTokenService.cs](Src/CredentialTokenService.cs) | Bounded provider-supplied credential retrieval for each live request |
 | [Src/OtpLog.cs](Src/OtpLog.cs) | Source-generated, strongly typed [structured logging events](../docs/LOGGING.md#event-sequence) |
 | [Src/PhoneProviderBase.cs](Src/PhoneProviderBase.cs) | Provider extension contract and shared typed JSON/HTTP transport |
 | [Src/Providers/](Src/Providers/) | Provider identity, credential delegation and API-specific request/response protocols |

@@ -27,7 +27,7 @@ Function decrypts the request, and the selected adapter submits a live message. 
 provider acceptance, not confirmed delivery.
 
 East US is illustrative. API-key integrations use provider secrets. OAuth integrations use
-managed-identity token exchange. See [provider settings and caching](#provider-settings-and-credential-caching)
+managed-identity token exchange. See [provider settings and credential acquisition](#provider-settings-and-credential-acquisition)
 and [runtime logs](docs/MONITORING.md#runtime-specific-log-discovery).
 
 An authorized **evaluation request (`mode: 2`)** returns the nonce without sending a message.
@@ -217,7 +217,8 @@ For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in JavaScript,
 | `EPP_DECRYPTION_KEY_PEM` | Every request | Local test PEM or base64 PEM. In Azure, use a Key Vault reference resolving to the private-key secret. Guided setup pins the PEM backing secret of its Key Vault certificate. |
 | `EPP_ENCRYPTION_KEY_ID` | Optional | Expected encryption key ID. A mismatch only produces an advisory warning. |
 
-### Provider settings and credential caching
+<a id="provider-settings-and-credential-caching"></a>
+### Provider settings and credential acquisition
 
 - **Provider:** `EPP_PROVIDER_NAME`, `EPP_PROVIDER_AUTH_MODE`, and
   `EPP_PROVIDER_ENDPOINT_REGION`.
@@ -226,7 +227,6 @@ For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in JavaScript,
 - **Key Vault:** `KEY_VAULT_URL` and optional `AZURE_CLIENT_ID`.
 - **OAuth:** `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE`, `EPP_OUTBOUND_CLIENT_ID`, and
   `EPP_OUTBOUND_MI_CLIENT_ID`.
-- **Caching:** `EPP_KEY_VAULT_CACHE_ENABLED` and `EPP_ACCESS_TOKEN_CACHE_ENABLED`.
 
 All runtimes use `ManagedIdentityCredential` for Key Vault and outbound token access. They do not
 fall back to a developer's Azure CLI identity.
@@ -238,10 +238,24 @@ URLs with a hostname, valid port, no user information, and no fragment. Redirect
 Each channel uses only its configured endpoint. Provider failover requires the
 [advanced fallback design](docs/MULTI-PROVIDER-IMPLEMENTATION.md).
 
-Cache switches accept `true` or `false` and default to `true`. JavaScript and Python warm at startup
-and poll every 30 seconds. .NET warms once and refreshes on a cache miss. Disabling the selected
-cache obtains credentials for each live request. Other values fail live credential acquisition.
-Evaluation skips provider credential work. Credential acquisition has a 2.5-second budget.
+All runtimes acquire provider credentials on demand for each live request:
+
+- **API keys:** read the required secret values from Key Vault each time. Failed reads never
+  fall back to a previous secret bundle.
+- **OAuth:** reuse Azure Identity SDK credential instances and call their token API for each
+  request. The SDK owns token caching and renewal; a usable cached token does not require
+  another token exchange. Managed-identity assertions are obtained only when the SDK needs them.
+
+There are no application-owned provider credential caches, startup warmup, background refresh
+loops, or failure cooldowns. Evaluation skips provider credential work. Acquisition retains its
+2.5-second budget. A failure returns `502` with a request-correlated `credential_unavailable`
+log; the next live request can attempt acquisition again.
+
+`EPP_KEY_VAULT_CACHE_ENABLED` and `EPP_ACCESS_TOKEN_CACHE_ENABLED` are obsolete and ignored by
+current packages. Setup no longer writes them for either hosting plan. Deploy the updated package
+to remove the old behavior; changing settings alone does not update an older package.
+Restart the worker after credential configuration changes so its SDK clients use the new settings.
+This does not change the platform's decryption-key reference or in-process PEM key handling.
 
 1. **Locally:** create private local settings beside the chosen runtime's host file, following its
   [JavaScript](javascript/README.md#environment-configuration), [Python](python/README.md#environment-configuration)

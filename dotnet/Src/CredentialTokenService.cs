@@ -1,56 +1,24 @@
-using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-
 namespace Epp.Otp;
 
-public sealed class CredentialTokenService : IHostedService, IDisposable
+public sealed class CredentialTokenService
 {
     internal static readonly TimeSpan AcquisitionTimeout = TimeSpan.FromSeconds(2.5);
-
-    private readonly IReadOnlyList<PhoneProviderBase> _providers;
-    private readonly IEnv? _env;
-    private readonly ILogger _log;
-    private readonly MemoryCache _cache = new(new MemoryCacheOptions());
-    private bool _disposed;
-
-    public CredentialTokenService(
-        IEnumerable<PhoneProviderBase> providers,
-        IEnv env,
-        ILoggerFactory loggerFactory)
-        : this(providers, env, loggerFactory.CreateLogger("Epp.Otp.DispatchEngine"))
-    {
-    }
-
-    internal CredentialTokenService(
-        IEnumerable<PhoneProviderBase>? providers = null,
-        IEnv? env = null,
-        ILogger? log = null)
-    {
-        _providers = providers?.ToArray() ?? [];
-        _env = env;
-        _log = log ?? NullLogger.Instance;
-    }
 
     public async Task<ProviderCredentials> GetCredentialsAsync(
         PhoneProviderBase provider,
         AppConfig config,
         CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        using var acquisition = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        acquisition.CancelAfter(AcquisitionTimeout);
         try
         {
-            if (!IsCacheEnabled(provider.AuthenticationMode, config))
-                return await FetchAsync(provider, config, cancellationToken).ConfigureAwait(false);
-
-            var value = await _cache.GetOrCreateAsync(provider.Name, async entry =>
-            {
-                var credentials = await FetchAsync(provider, config, cancellationToken).ConfigureAwait(false);
-                entry.AbsoluteExpiration = credentials.ExpiresOn;
-                return credentials;
-            }).ConfigureAwait(false);
-            return value ?? throw Unavailable();
+            acquisition.Token.ThrowIfCancellationRequested();
+            if (provider.AuthenticationMode is not ("apiKey" or "oauth"))
+                throw Unavailable();
+            var credentials = await provider.FetchCredentialsAsync(config, acquisition.Token)
+                .WaitAsync(acquisition.Token).ConfigureAwait(false);
+            return credentials ?? throw Unavailable();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -58,74 +26,11 @@ public sealed class CredentialTokenService : IHostedService, IDisposable
         }
         catch
         {
-            ReportFailure(provider.Name);
+            // SendOtp logs the request failure without exposing SDK error details.
             throw Unavailable();
         }
     }
-
-    private static async Task<ProviderCredentials> FetchAsync(
-        PhoneProviderBase provider, AppConfig config, CancellationToken cancellationToken)
-    {
-        using var acquisition = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        acquisition.CancelAfter(AcquisitionTimeout);
-        var credentials = await provider.FetchCredentialsAsync(config, acquisition.Token).ConfigureAwait(false);
-        if (credentials.ExpiresOn <= DateTimeOffset.UtcNow)
-            throw Unavailable();
-        return credentials;
-    }
-
-    internal static bool IsCacheEnabled(string authenticationMode, AppConfig config)
-    {
-        var setting = authenticationMode switch
-        {
-            "apiKey" => config.KeyVaultCacheEnabled,
-            "oauth" => config.AccessTokenCacheEnabled,
-            _ => throw Unavailable(),
-        };
-        return setting?.Trim().ToLowerInvariant() switch
-        {
-            null or "true" => true,
-            "false" => false,
-            _ => throw Unavailable(),
-        };
-    }
-
-    public async Task StartAsync(CancellationToken cancellationToken)
-    {
-        if (_env is null) return;
-        var config = AppConfig.Read(_env);
-        if (string.IsNullOrWhiteSpace(config.ProviderName)) return;
-        var provider = _providers.FirstOrDefault(candidate =>
-            string.Equals(candidate.Name, config.ProviderName, StringComparison.OrdinalIgnoreCase));
-        if (provider is null || (!string.IsNullOrEmpty(config.ProviderAuthMode)
-            && config.ProviderAuthMode != provider.AuthenticationMode))
-        {
-            ReportFailure("configuration");
-            return;
-        }
-        try
-        {
-            if (!IsCacheEnabled(provider.AuthenticationMode, config)) return;
-            await GetCredentialsAsync(provider, config, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            ReportFailure("initialization");
-        }
-    }
-
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-    private void ReportFailure(string kind)
-        => OtpLog.CredentialRefreshFailed(_log, kind);
 
     internal static InvalidOperationException Unavailable() =>
         new("provider credential unavailable");
-
-    public void Dispose()
-    {
-        if (_disposed) return;
-        _disposed = true;
-        _cache.Dispose();
-    }
 }

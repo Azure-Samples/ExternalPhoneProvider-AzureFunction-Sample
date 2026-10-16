@@ -95,10 +95,10 @@ Set:
 - `EPP_PROVIDER_SMS_ENDPOINT` and `EPP_PROVIDER_VOICE_ENDPOINT` for supported channels.
 - Twilio credential references and any additional adapter settings.
 
-Keep credentials in Key Vault and read them through managed identity. Use the shared cache and
-timeout services instead of adding another credential cache or send-retry loop.
+Keep credentials in Key Vault and read them through managed identity. Use the shared request-time
+credential and timeout services instead of adding a credential cache, refresher, or send-retry loop.
 
-See [provider settings and credential caching](../TECHNICAL.md#provider-settings-and-credential-caching).
+See [provider settings and credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
 
 ## Test it
 

@@ -79,17 +79,15 @@ Keep caller authentication and public responses in the shared handler.
 For diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and the
 [JavaScript event queries](../docs/MONITORING.md#4-javascript-service-event-queries).
 
-The [cache switches and defaults](../TECHNICAL.md#provider-settings-and-credential-caching) apply here.
-Disabling the selected cache removes startup preparation, polling, and cross-request reuse,
-not live credential acquisition.
-
-With caching enabled, API keys use Key Vault and `lru-cache`. OAuth uses managed identity and the
-Azure Identity SDK. A 30-second refresh loop and one in-flight acquisition support warm reads. See the
-[credential caching guide](../TECHNICAL.md#provider-settings-and-credential-caching).
+Each live request reads API-key secrets from Key Vault or calls the reusable Azure Identity
+credential's token API. Only the SDK caches tokens and renews them as needed; there is no custom
+credential cache, startup warmup, polling, or retry cooldown. Evaluation does no provider credential
+work. Acquisition is bounded to 2.5 seconds, and shutdown aborts pending requests. See
+[credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
 
 | Source | Purpose |
 |---|---|
-| [src/functions/SendOtp.js](src/functions/SendOtp.js) | Explicit HTTP orchestration and startup/termination hooks |
+| [src/functions/SendOtp.js](src/functions/SendOtp.js) | Explicit HTTP orchestration and shutdown cancellation |
 | [src/functions/config.js](src/functions/config.js) | Shared deployment settings |
 | [src/functions/entraPayload.js](src/functions/entraPayload.js) | Validated Microsoft Entra ID envelope and exact contract reasons |
 | [src/functions/delivery.js](src/functions/delivery.js) | Validated decrypted context and immutable provider-neutral delivery |
@@ -97,7 +95,7 @@ Azure Identity SDK. A 30-second refresh loop and one in-flight acquisition suppo
 | [src/functions/providerTransport.js](src/functions/providerTransport.js) | HTTPS validation, bounded fetch, body read, JSON parse and manual redirects |
 | [src/functions/providerResult.js](src/functions/providerResult.js) | Provider result and endpoint outcome model |
 | [src/functions/logging.js](src/functions/logging.js) | Immutable request context and fixed privacy-safe structured events |
-| [src/functions/credentials.js](src/functions/credentials.js) | `CredentialTokenService`, `ApiKeyCache`, `AccessTokenCache` and refresh lifecycle |
+| [src/functions/credentials.js](src/functions/credentials.js) | Bounded request-time acquisition and reusable SDK clients |
 | [src/functions/providers/](src/functions/providers/) | Fixed lookup and provider-owned credential/request/response rules |
 | [test/](test/) | Representative offline checks |
 

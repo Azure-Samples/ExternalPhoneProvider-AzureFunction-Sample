@@ -80,13 +80,12 @@ For diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
 [runtime-specific log discovery](../docs/MONITORING.md#runtime-specific-log-discovery).
 Verify which Python logging properties the host/export pipeline preserves.
 
-The [cache switches and defaults](../TECHNICAL.md#provider-settings-and-credential-caching) apply here.
-Disabling the selected cache removes startup preparation, polling, and cross-request reuse,
-not live credential acquisition.
-
-With caching enabled, API keys use Key Vault and `cachetools.TTLCache`. OAuth uses managed identity
-and the Azure Identity SDK. A daemon polls every 30 seconds. See the
-[credential caching guide](../TECHNICAL.md#provider-settings-and-credential-caching).
+Each live request reads API-key secrets from Key Vault or calls the reusable Azure Identity
+credential's token API. Only the SDK caches tokens and renews them as needed; there is no custom
+credential cache, startup warmup, polling, or retry cooldown. Evaluation does no provider credential
+work. Request-scoped daemon threads bound the caller's acquisition wait to 2.5 seconds without
+blocking process shutdown. Timed-out results are discarded; SDK network timeouts bound the
+underlying calls. See [credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
 
 | Source | Purpose |
 |---|---|
@@ -95,10 +94,10 @@ and the Azure Identity SDK. A daemon polls every 30 seconds. See the
 | [src/models.py](src/models.py) | Typed Microsoft Entra ID payload, delivery context, provider request and result dataclasses |
 | [src/jwe.py](src/jwe.py) | Pinned JWE decryption and typed delivery-context conversion |
 | [src/provider.py](src/provider.py) | Shared HTTPS transport, timeout handling and endpoint status mapping |
-| [src/credentials.py](src/credentials.py) | `CredentialTokenService`, `ApiKeyCache` and `AccessTokenCache` |
+| [src/credentials.py](src/credentials.py) | Bounded request-time acquisition and reusable SDK clients |
 | [src/otp_log.py](src/otp_log.py) | Fixed standard-logging event definitions and immutable request context |
 | [src/providers/](src/providers/) | Provider-owned credentials, requests and response mapping |
-| [src/secrets.py](src/secrets.py) | Key Vault transport. Bundle caching belongs to `ApiKeyCache`. |
+| [src/secrets.py](src/secrets.py) | Reusable Key Vault client; secret values are read on every live request |
 
 Add a provider by subclassing `PhoneProviderBase`, declaring its credential specification, and
 implementing `build_request` and `map_response`. Return `ProviderResult` with the coarse endpoint

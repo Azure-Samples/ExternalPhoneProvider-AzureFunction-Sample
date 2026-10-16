@@ -214,8 +214,6 @@ resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     APPLICATIONINSIGHTS_CONNECTION_STRING: insights.properties.ConnectionString
     APPLICATIONINSIGHTS_AUTHENTICATION_STRING: 'Authorization=AAD'
     KEY_VAULT_URL: vault.properties.vaultUri
-    EPP_KEY_VAULT_CACHE_ENABLED: isFlexConsumption ? 'false' : 'true'
-    EPP_ACCESS_TOKEN_CACHE_ENABLED: isFlexConsumption ? 'false' : 'true'
     // Setup pins the encryption settings after Key Vault issues the certificate.
     EPP_OUTBOUND_CLIENT_ID: applicationId
     EPP_OUTBOUND_MI_CLIENT_ID: outboundIdentity.properties.clientId

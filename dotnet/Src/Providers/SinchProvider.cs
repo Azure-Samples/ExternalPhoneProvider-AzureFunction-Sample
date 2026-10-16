@@ -96,8 +96,7 @@ public sealed class SinchProvider : PhoneProviderBase
         if (string.IsNullOrWhiteSpace(secret)) throw CredentialTokenService.Unavailable();
         return new ProviderCredentials(
             AuthenticationMode,
-            Secret: secret,
-            ExpiresOn: DateTimeOffset.UtcNow.AddMinutes(5));
+            Secret: secret);
     }
 
     private static (Outcome Outcome, bool Recognized) MapStatus(string? status) => status switch
