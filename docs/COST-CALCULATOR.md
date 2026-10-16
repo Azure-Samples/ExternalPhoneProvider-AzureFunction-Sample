@@ -1,10 +1,8 @@
 # Estimate telecom-provider and Azure hosting costs
 
-Use this guide to create a planning estimate for SMS and voice traffic before onboarding
-your External Phone Provider (EPP). The report finds SMS and voice authentication steps
-in recent sign-in activity and groups them by the phone number's international calling
-code, such as `+1` or `+91`. Apply your provider's destination rates to the report to
-estimate a telecom budget. This guide also describes the Azure resources to include when
+Estimate SMS and voice traffic before onboarding an External Phone Provider (EPP). The report
+groups recent authentication steps by calling code, such as `+1` or `+91`. Apply provider rates
+to estimate a telecom budget. This guide also describes the Azure resources to include when
 estimating the separate cost of hosting the provider integration.
 
 The guide separates the estimate into two parts:
@@ -14,19 +12,14 @@ The guide separates the estimate into two parts:
 
 ## 1. Estimate telecom-provider costs
 
-**This is an estimate, not a usage or billing report.** A sign-in does not prove that
-the provider accepted or delivered an SMS or voice call. Authentication details can
-contain multiple SMS or voice steps for one sign-in, so this guide counts each matching
-step as one estimated request. Actual provider billing can differ because of retries,
-fallback, failures, message segmentation, and provider-specific charging rules. Confirm
-the assumptions, supported destinations, taxes, fees, and final pricing with your provider.
+**This is not a billing report.** It counts each matching authentication step as one estimated
+request. Confirm retries, fallback, segmentation, destinations, taxes, fees, and pricing with
+the provider.
 
 The `authenticationDetails` data used by this guide is currently available through the
 [Microsoft Graph beta API](https://learn.microsoft.com/en-us/graph/api/resources/authenticationdetail?view=graph-rest-beta).
-Beta APIs are subject to change and are not supported for production applications. Review
-and test this reporting script before each planning exercise. Because sign-in details mask
-phone numbers, the script matches their visible trailing digits to the user's registered
-phone authentication methods and derives the calling code from the matched registration.
+Review the beta API and script before each planning exercise. The script matches masked trailing
+digits to registered phone methods to derive the calling code.
 
 ### Prerequisites
 
@@ -36,22 +29,22 @@ account must be allowed to consent to or use these Microsoft Graph delegated per
 - `AuditLog.Read.All`
 - `UserAuthenticationMethod.Read.All`
 
-Access to sign-in logs also depends on your Microsoft Entra licensing, directory role,
-and log-retention period. Review the requested permissions before consenting. The script
-processes sign-in authentication details that can include phone numbers. It exports only
-aggregated calling codes, methods, and counts, not full phone numbers. Store, share, and
-delete the output according to your organization's privacy and retention requirements.
+Reading other users' phone methods requires a
+[supported Entra role](https://learn.microsoft.com/en-us/graph/api/authentication-list-phonemethods?view=graph-rest-1.0#permissions),
+Authentication Administrator receives masked phone numbers; unresolved calling codes appear as `Unknown`.
+
+Access also depends on Microsoft Entra licensing, roles, and retention. The script exports
+aggregated calling codes, methods, and counts, not full phone numbers. Protect the output.
 
 Create `C:\temp` before running the script, or change the `Export-Csv` path to an
 approved folder.
 
 ### Generate the activity report
 
-The following sample installs the required Microsoft Graph modules for the current user,
-connects to Microsoft Graph, identifies SMS and voice authentication steps, and matches
-each masked phone detail to a registered phone method. It caches phone-method lookups so
-each user is queried only once. Replace `$start` and `$end` with the period you want to
-analyze.
+The sample installs the required Microsoft Graph modules and connects to Microsoft Graph.
+It finds SMS and voice authentication steps, matches each masked phone detail to a registered
+phone method, and caches each user's phone-method lookup. Set `$start` and `$end` to the
+required reporting period.
 
 ```powershell
 # 1. Install required modules if they are missing
@@ -178,11 +171,10 @@ from that detail and matches the visible suffix (`90`) against the user's regist
 methods. It then extracts the calling code from the uniquely matched registered number,
 whose Graph format includes a space after the code, such as `+91 1234567890`.
 
-For SMS, only `mobile` and `alternateMobile` registrations are considered; voice can use
-any registered phone type. A row is grouped as `Unknown` when the masked detail exposes
-fewer than two digits, no registered number matches, more than one registered number has
-the same visible suffix, or the matched number has an unexpected format. This avoids
-guessing a destination. Review the `Unknown` total before relying on the estimate.
+For SMS, the script uses `mobile` and `alternateMobile` registrations. Voice can use any
+registered phone type. The report uses `Unknown` when the visible detail is too short,
+does not match one registered number, or has an unexpected format. This avoids guessing
+a destination. Review the `Unknown` total before relying on the estimate.
 
 The script does not use sign-in geography. `-All` requests all available pages, but large
 tenants should still account for Microsoft Graph throttling and execution time. The script
@@ -218,9 +210,10 @@ Apply the provider's destination-specific rates to those estimated requests. Use
 rows when rates differ by destination, sender type, route, or message category. Include a
 contingency for growth, retries, fallback behavior, and seasonal peaks.
 
-### Confirm the final estimate with your provider
+<a id="confirm-the-final-estimate-with-your-provider"></a>
+### Confirm provider rates
 
-Work with your provider to validate:
+Confirm the following with the provider:
 
 - How each international calling code maps to the provider's destination pricing.
 - Country and carrier coverage, sender registration, and route-specific rates.

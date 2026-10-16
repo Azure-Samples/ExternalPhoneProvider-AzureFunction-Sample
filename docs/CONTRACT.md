@@ -1,31 +1,31 @@
-# External Phone Provider Function: Language-Agnostic Contract
+# HTTP contract
 
-This defines the shared contract for [JavaScript](../javascript/), [Python](../python/) and
-[.NET](../dotnet/). See [production limitations](#production-limitations) before production use.
+<a id="external-phone-provider-function-language-agnostic-contract"></a>
 
-> **Naming.** EPP means **External Phone Provider**. App settings use the `EPP_` prefix; the
-> request and delivery models are `Envelope`, `DeliveryContext` and provider-neutral OTP delivery.
-> Documentation names do not change the external JSON fields or `microsoft.mfa.otpDeliver.v1` version.
+[Documentation](README.md) | [Implementation walkthrough](BRING-YOUR-OWN-PROVIDER.md) | [Settings and packages](../TECHNICAL.md)
 
-The design selects one provider per deployment. The HTTP Function owns the request lifecycle, while
-API-specific credentials, paths, headers, payloads, response rules, outcomes and safe failure
-classifications remain inside each provider implementation.
+Shared contract for [JavaScript](../javascript/), [Python](../python/), and [.NET](../dotnet/).
 
-An [optional manual Front Door topology](FRONTDOOR.md) can route this same API to regional origins.
-It does not change caller authentication, JWE validation, nonce semantics, or provider selection,
-and it does not add automatic provider failover or delivery deduplication. Any readiness endpoint
-is separate from this contract and must not deliver OTPs.
+Go to [request/response](#1-http-api), [HTTP outcomes](#2-outcome--http-status-mapping),
+[provider contract](#3-provider-contract), [settings](#4-configuration-app-settings--env),
+[caching](#credential-caching-and-refresh), [required behaviors](#5-required-behaviors),
+[logs](#application-logs), or [tests](#6-lightweight-tests).
+
+> **Naming:** EPP means **External Phone Provider**. App settings keep the `EPP_` prefix;
+> documentation names do not change external fields or `microsoft.mfa.otpDeliver.v1`.
+
+Each deployment selects one provider. Provider-specific API behavior stays inside its implementation.
+
+The [Front Door design](FRONTDOOR.md) routes this API to regional origins. Its readiness endpoint
+is separate and never delivers OTPs.
 
 ---
 
 ## 1. HTTP API
 
-**Endpoint:** `POST /api/SendOtp` (Functions HTTP trigger, `authLevel: anonymous`). **Easy Auth is the
-only caller-authentication boundary and runs before the handler**; the application has no token
-validator or function-key gate. This is the interface **SAS (StrongAuthenticationService)** calls.
-SAS sends an Entra bearer JWT as part of its protocol; Easy Auth validates it, not the handler.
-PII (phone number + the rendered message, which contains the passcode) is **encrypted** inside a JWE;
-the cleartext envelope carries routing/scheduling only.
+**Endpoint:** `POST /api/SendOtp` (`authLevel: anonymous`). **Easy Auth is the caller-authentication
+boundary before the handler**. The phone number and message are encrypted inside a JWE; the
+cleartext envelope carries routing data.
 
 ### Request headers
 
@@ -36,11 +36,11 @@ the cleartext envelope carries routing/scheduling only.
 | `x-ms-correlation-id` | tracing only; fallback for envelope `correlationId`, not authentication |
 | `x-ms-client-request-id` | per-attempt tracing id (used as `messageId`), not authentication |
 
-Forwarded headers, including `x-ms-client-principal`, do not establish trust by themselves and cannot
-replace the required Easy Auth gate. The handler does not use them to authenticate callers or forward
-the incoming `Authorization` header to the provider. Configure Easy Auth as described in section 5.
+Forwarded headers such as `x-ms-client-principal` provide context, not authentication. The handler
+never forwards `Authorization` to the provider.
 
-### EPP request body: `Envelope` (cleartext envelope)
+<a id="epp-request-body-envelope-cleartext-envelope"></a>
+### EPP request body
 
 | Field | Required | Notes |
 |-------|----------|-------|
@@ -49,14 +49,17 @@ the incoming `Authorization` header to the provider. Configure Easy Auth as desc
 | `correlationId` | no | sign-in tracing metadata |
 | `channel` | yes | request delivery channel: `1`/`sms` or `2`/`voice`; not deployment configuration |
 | `mode` | yes | request delivery mode: `1`/`live` or `2`/`evaluation`; evaluation does not deliver |
-| `ttlSeconds` | no | positive JSON integer, at most `2147483647`; null, booleans, strings, fractions and nonpositive values are rejected. Use canonical integer notation (`60`, not `60.0` or `6e1`) across runtimes |
+| `ttlSeconds` | no | positive JSON integer, at most `2147483647`; omit when absent. Null is not portable; booleans, strings, fractions and nonpositive values are invalid. Use canonical integer notation (`60`, not `60.0` or `6e1`) across runtimes |
 | `encryptedDeliveryContext` | yes | JWE compact serialization (see below) |
 
 Canonical integer notation is a caller requirement, not a portable raw-JSON-token check: JavaScript's
 JSON parser normalizes `60.0` and `6e1` to `60`, while Python/.NET reject those representations here.
 Always send `60` to obtain the same result across runtimes; no custom JSON tokenizer is used.
 
-Unknown `type`, invalid `ttlSeconds`, unsupported `channel` or `mode`, or missing/empty `encryptedDeliveryContext` → `400`. Arrays, objects and booleans are not channel/mode values.
+Handler validation failures for unknown `type`, invalid `ttlSeconds`, unsupported `channel` or
+`mode`, or missing/empty `encryptedDeliveryContext` return `400`. Arrays, objects and booleans
+are not channel/mode values. Some invalid inputs fail .NET host binding before the handler;
+see [runtime binding differences](#runtime-binding-differences).
 
 These are request data, not settings to provision. The TTL check validates the supplied value; it
 does not verify passcode expiry or implement a delivery deadline. Deployment trust comes only from
@@ -75,8 +78,8 @@ advisory key-ID check must not replace the original protected-header bytes used 
 
 `EPP_DECRYPTION_KEY_PEM` accepts a private-key PEM alone or a PEM certificate bundle containing the
 private key, in plain text or base64 form. Guided setup issues a certificate inside Key Vault or
-reuses an explicitly selected certificate version, pins its PEM backing-secret reference, and
-keeps exactly one approved encryption credential on the application. Certificate synchronization
+reuses a selected certificate version. It pins the PEM backing-secret reference and keeps exactly
+one approved encryption credential on the application. Certificate synchronization
 is manual; Key Vault renewal does not automatically update Entra or select another decryption key. See the
 [certificate lifecycle](../setup/docs/README.md#encryption-certificate-lifecycle).
 
@@ -99,7 +102,7 @@ Decryption failure → `400`. Missing `nonce` / `phoneNumber` / `message` → `4
 
 For Soprano live voice, the provider finds the first six consecutive digits in `message`, preserving
 leading zeros, and splits the rendered text into `beforePasswordText`, `password`, and
-`afterPasswordText`. It uses a nonblank SAS `locale` as `language`, falling back to `en-US`, and sends
+`afterPasswordText`. It uses the request's nonblank `locale` as `language`, falling back to `en-US`, and sends
 fixed `gender: 1` and `loop: 2`. The resulting object is sent as `voice.text2voice` without a top-level
 `text` field. A message without a six-digit sequence fails closed before provider HTTP. No additional
 environment settings are required. Soprano SMS continues to forward `message` unchanged, and
@@ -121,7 +124,7 @@ federated credential trusts the identity's principal ID, home-tenant v2 issuer, 
 `api://AzureADTokenExchange` audience. Key Vault identity selection remains independent.
 
 Only the final application token is sent as `Authorization: Bearer ...`. No Soprano API ID/key,
-managed-identity assertion, or incoming SAS token is forwarded. Missing settings, token-acquisition
+managed-identity assertion, or incoming Entra ID token is forwarded. Missing settings, token-acquisition
 failure, blank tokens, or tokens with 30 seconds or less remaining lifetime fail before provider HTTP;
 there is no API-key fallback. Evaluation skips acquisition. A provider rejection is not retried.
 Tokens are treated as opaque: the Function checks SDK expiry metadata, not custom JWT claims.
@@ -145,27 +148,19 @@ acquisition's asynchronous context. Python filters Azure Identity/Core/MSAL reco
 handlers in that context; configure logging sinks before handling requests. .NET disables credential
 diagnostics. Keep platform body tracing off and never log credential objects or tokens.
 
-When migrating from the earlier optional-JWT branch, replace `EPP_PROVIDER_APPLICATION_ID` with
-`EPP_OUTBOUND_CLIENT_ID` and `EPP_PROVIDER_MI_CLIENT_ID` with `EPP_OUTBOUND_MI_CLIENT_ID`.
-Remove `EPP_PROVIDER_JWT_ENABLED`; it no longer controls authentication. Reuse the exact provider
-scope selected by setup and replace old base URLs with complete send URLs. These source changes
-do not update deployed settings or establish provider authorization. Earlier QA4 tests of API keys
-plus JWT do not validate the current Bearer-only configuration or production endpoints.
+Use the exact provider scope and complete send URLs selected by setup. Source changes do not
+update deployed settings or establish provider authorization. Validate the current OAuth
+configuration with your provider before activation.
 
 See [Microsoft's managed-identity federation guidance](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-config-app-trust-managed-identity).
 
-Use a SAS locale supported by the selected Soprano endpoint and account. On QA4, an API-key
-voice request using `en` returned HTTP `400` with error code `400101`; the same request structure
-using `en-US` returned HTTP `201` with `ENROUTE` on September 15, 2026. This confirms acceptance,
-not handset receipt or audio quality. When SAS omits the locale, the providers use `en-US`.
+Confirm that the request's locale is supported by your Soprano endpoint and account. The Soprano
+adapter uses `en-US` when the locale is absent or blank; a nonblank value is forwarded without
+checking provider support. Test recipient audio separately from API acceptance.
+This adapter uses the JSON `/messages/omnimsg` interface configured by the provider profile,
+not a form-encoded voice API. Use the field names and response mapping in the selected adapter.
 
-The supplied Soprano Connect Voice PDF describes a different API: `POST /voice/voice_orderApiCreate.do`
-with form-encoded fields, `subAction=20`, and numeric language IDs (`1` is default English).
-Its password fields are `beforePassword`, `passwordText`, and `afterPassword`. This provider follows
-the reference integration's JSON `/messages/omnimsg` contract instead; do not mix the form API's
-language IDs, field names, or `ApiResponse.StatusCode` response format with this JSON interface.
-
-JWE provides payload confidentiality and integrity, **not SAS caller authentication**. Anyone with the
+JWE provides payload confidentiality and integrity, **not caller authentication**. Anyone with the
 public key can encrypt a request. The nonce acknowledges decryption; it is not an authentication
 credential or replay protection, and a fixed nonce cannot substitute for Easy Auth.
 
@@ -175,25 +170,63 @@ credential or replay protection, and a fixed nonce cannot substitute for Easy Au
 { "nonce": "<echo of request nonce>", "correlationId": "<echo>", "providerStatus": "accepted" }
 ```
 
-`accepted`/`pending` are **not** failures (provider queued it; acceptance ≠ delivery to the handset).
-The endpoint returns **`200`** on acceptance (any `2xx` counts as transport acceptance). On `2xx` **with a
-matching nonce**, SAS treats the send as handled. **Nonce mismatch / non-2xx / timeout → SAS falls back
-to native CAPP delivery.** `Evaluation` mode returns `200` + nonce echo without delivering.
+The endpoint returns **`200`** only after the adapter recognizes acceptance on a successful
+provider HTTP response. A queued or pending status counts only when that adapter explicitly
+recognizes it; a provider `2xx` alone is insufficient. Acceptance is not handset delivery.
+`Evaluation` mode returns `200` + nonce echo without a provider send.
+
+The sample's integration contract expects the caller to treat `2xx` with a matching nonce as
+handled; a nonce mismatch, non-`2xx` response, or timeout can lead to native fallback.
+This repository does not implement or verify the Entra ID caller's current fallback, retry,
+or timing behavior. Confirm it through the
+[approved EPP procedure](ONBOARDING.md#validate-the-deployed-endpoint);
+do not rely on fallback as a guaranteed recovery mechanism.
 
 Live handlers await provider acceptance; they do not launch background delivery after replying.
 Handler failures omit the nonce and accepted status and return a sanitized error with a request ID
 and, after envelope processing, a correlation ID. Platform rejections happen before the handler and
 do not use this application response contract.
 
-Validation failures return `error: "bad_request"` and a fixed `reason` in every language. Envelope
-checks run in this order: object shape, version, encrypted-context presence, channel, mode, TTL.
-Reasons are `invalid JSON body`, `invalid envelope`, `unsupported envelope type`,
+Handler validation failures return `error: "bad_request"` and a fixed `reason`. JavaScript/Python
+envelope checks run in this order: object shape, version, encrypted-context presence, channel, mode, TTL.
+Their reasons are `invalid JSON body`, `invalid envelope`, `unsupported envelope type`,
 `encryptedDeliveryContext is required`, `unsupported channel`, `unsupported mode`, `invalid ttlSeconds`
 or `ttlSeconds expired`. A decrypted context missing a required nonblank string returns
 `incomplete delivery context`. Reasons never include supplied values or exception text. JWE failures
 return `error: "decryption_failed"` without a cryptographic reason or nonce.
 
-### Evaluation (generic shutter)
+### Runtime binding differences
+
+Use the request forms above across runtimes, but expect differences in parsing and errors.
+JavaScript/Python parse JSON inside the handler. The .NET Functions host first binds the JSON
+to a typed `EntraSendOtpPayload`, then calls the handler.
+
+- .NET treats null `ttlSeconds` as omitted, and its enum converter accepts numeric
+  strings such as `"1"`. JavaScript/Python reject those forms. Send an integer TTL or omit it,
+  and use integer channel/mode codes or named strings for portability.
+- Malformed JSON and incompatible property types can fail .NET host binding before the
+  handler's sanitized error response. For payloads reaching its validation, .NET uses
+  `unsupported payload type` rather than `unsupported envelope type`; a null bound payload
+  produces `invalid payload`. Do not assume a host-binding error has handler JSON fields.
+- Required decrypted fields must be nonblank strings. .NET deserializes them as strings, so
+  incompatible types can produce `decryption_failed` before the completeness check.
+  JavaScript/Python instead check their raw values for completeness. Optional fields are not
+  uniformly modeled: only `locale` accompanies the required fields in .NET's delivery context;
+  JavaScript/Python also retain `extension` and `riskContext`, but shared dispatch omits both.
+- For normal nonempty string IDs, the response uses body `correlationId` first, then
+  `x-ms-correlation-id`, then a generated `requestId`. JavaScript uses the raw header;
+  Python/.NET sanitize it. .NET preserves an empty body string; JavaScript/Python fall back.
+  Early validation errors omit correlation; later handled errors include it.
+  Python's unexpected-error path can return null correlation when a parsed payload lacks it.
+- `x-ms-client-request-id` supplies the internal `messageId`, with a generated fallback.
+  JavaScript uses the raw header; Python/.NET sanitize it. Neither request ID nor correlation
+  ID provides deduplication.
+
+See the handlers for exact binding and response paths:
+[JavaScript](../javascript/src/functions/SendOtp.js),
+[Python](../python/function_app.py), and [.NET](../dotnet/Functions/SendOtp.cs).
+
+### Evaluation (no provider send)
 
 The only shared non-delivery control is the existing incoming `mode: 2` or `mode: "evaluation"`,
 for every provider and language. On Azure, Easy Auth still authenticates the caller before the
@@ -218,17 +251,19 @@ wire fields, where required by an API, remain internal and cannot enable a separ
 The provider interprets its parsed status as an **outcome** and endpoint HTTP status.
 **Fail-closed:** an unknown/unmapped or incomplete response is treated as `Fail`.
 An unsuccessful provider HTTP response cannot become `Continue` because its body contains a
-success-looking status. Explicit `Block`/`StepUp` outcomes remain non-success responses.
+success-looking status. Explicit `Block` outcomes remain non-success responses.
+The current runtime outcome enums contain only `Continue`, `Block`, and `Fail`; there is no
+implemented `StepUp`/`409` mapping.
 
 | Outcome | HTTP | When |
 |---------|------|------|
 | `Continue` | `200` | recognized success status |
 | `Block` | `403` | provider says blocked |
-| `StepUp` | `409` | provider signals step-up / fraud escalation |
 | `Fail` | `429` | provider returned 429 |
 | `Fail` | `401` | provider returned 401/403 (auth) |
 | `Fail` | `400` | other provider 4xx |
 | `Fail` | `502` | other provider error, or missing credential/endpoint |
+| N/A | `400` | configured provider name is missing or not registered |
 | N/A | `504` | request to the provider timed out |
 | N/A | `502` | network error to the provider (non-timeout) |
 
@@ -244,19 +279,20 @@ Each provider owns:
 - safe failure classification: `provider_http_error`, `provider_rejected`,
   `unrecognized_provider_status`, `missing_provider_message_id` or `invalid_provider_json`.
 
-The shared transport owns only final HTTPS validation, a capped timeout, manual redirects,
-`AbortController`/cancellation through response-body reading and one JSON parse. The provider receives
+The shared transport owns final HTTPS validation, timeout handling, disabled redirects, and
+response-body reading and decoding. JavaScript/.NET propagate cancellation through body reading;
+Python uses connect/read inactivity timeouts. The provider receives
 the transport result and returns a normalized provider result. Raw API-specific JSON is not inspected
 by the Function and never enters public responses or logs.
 
 This model is internal: do not serialize it into the endpoint response or logs. The
-[request logger](#application-logs) selects only the provider HTTP status, a recognized normalized
+[request logger](LOGGING.md) selects only the provider HTTP status, a recognized normalized
 status, the mapped outcome and a bounded raw provider message ID; descriptions and raw
 metadata remain private. Public HTTP responses still expose only the existing
 nonce/correlation/status or sanitized error contract.
-Provider requests are serialized only when building the outbound HTTP body; incoming provider JSON
-is parsed once and normalized inside its provider. No serialization framework or provider-specific
-class hierarchy is required.
+Provider requests are serialized when building the outbound HTTP body. JavaScript/Python map
+parsed response objects; .NET deserializes provider-specific response types through
+`PhoneProviderBase.SendJsonAsync<TResponse>`. The handler uses only the normalized result.
 
 Consult the selected provider implementation for required credentials and options. The
 [onboarding credential naming table](ONBOARDING.md#provider-credential-names) lists exact secret
@@ -269,12 +305,12 @@ SMS and Voice use the complete provider-approved URLs selected from the provider
 supplies `recipient.phone_number`, `message.text` (unchanged for SMS, paced/repeated for voice), optional `message.language`, one
 selected `channels[].channel`, and `correlation_id`. Keep the leading `+` in the E.164 phone number.
 
-Phase 1 supports Basic and Digest; this sample implements Basic only. Per
+This sample implements Basic authentication only. Per
 [Telesign's authentication instructions](https://developer.telesign.com/enterprise/docs/authentication#basic-authentication),
 the header is `Authorization: Basic <base64(UTF8(customer-id:api-key))>`, using the raw Customer ID
 and API Key strings from Key Vault. Do not decode the API key first, send the API key alone, or
 substitute a key identifier. The guide's `Basic YOUR_API_KEY` is abbreviated, not the literal encoding.
-Provider-token authentication is described as Phase 2 and is not implemented for Telesign here.
+Digest and provider-token authentication are not implemented for Telesign here.
 
 The optional `account_lifecycle_event` and `originating_ip` fields are reserved for future intelligence
 capabilities. They are omitted; do not infer an originating address from the Function or synthesize
@@ -317,7 +353,7 @@ managed identity. Soprano exchanges an outbound managed-identity assertion for a
 configured provider tenant/scope. Do not put provider secrets in code or app settings.
 
 Caller trust is configured in **Easy Auth**, not application environment variables: pin the trusted
-tenant issuer, the endpoint-app audience and the authorized SAS caller application ID. Incoming
+tenant issuer, the endpoint-app audience and the authorized Microsoft caller application ID. Incoming
 `tenantId` is routing metadata and cannot select any of these. There is no application host-detection
 guard or backup token validation. See [platform onboarding](ONBOARDING.md#2-provision-encryption-and-deployment-trust).
 
@@ -392,10 +428,10 @@ stop polling/prevent late publication at shutdown. .NET has no poller to stop: f
 fills are not retained and later misses attempt retrieval. It does not proactively refresh a
 still-valid entry.
 
-JavaScript bounds shared acquisition to 2.5 seconds and propagates cancellation through the SDK
-transport. Python bounds waits and SDK connect/read inactivity to 2.5 seconds but cannot forcibly
-cancel synchronous I/O. .NET uses a 2.5-second fetch budget linked to the fetch caller's cancellation
-token. None is a whole-invocation deadline.
+JavaScript limits shared acquisition to 2.5 seconds and passes cancellation through the SDK
+transport. Python limits waits and SDK connect/read inactivity to 2.5 seconds. Synchronous I/O
+may continue until the underlying call returns. .NET uses a 2.5-second fetch budget linked to
+the caller's cancellation token. None is a whole-invocation deadline.
 
 All runtimes fetch a complete API-key/customer-ID bundle before use and use managed identity
 for vault access. With caching enabled, Soprano reuses managed-identity and client-assertion SDK credentials
@@ -412,7 +448,7 @@ Do not log SDK exception details or tokens. No cache retries/deduplicates provid
 
 ## 5. Required behaviors
 
-- **Fail-closed**: only `Continue` → `200 accepted`; unknown status → `Fail`.
+- **Safe outcome mapping (fail-closed)**: only `Continue` → `200 accepted`; unknown status → `Fail`.
 - **Managed identity**: Key Vault access via managed identity only (user-assigned if `AZURE_CLIENT_ID`
   set, else system-assigned). No static credentials.
 - **Privacy**: never log phone numbers, passcodes, nonce values, bearer tokens, API keys, JWE headers/payloads,
@@ -428,157 +464,27 @@ Do not log SDK exception details or tokens. No cache retries/deduplicates provid
 - **Platform authentication only**: enable Easy Auth with `requireAuthentication=true`,
   `unauthenticatedClientAction=Return401` and `requireHttps=true`. Configure the trusted tenant issuer
   and `allowedAudiences` for the endpoint app, plus a **nonempty `allowedApplications`** list pinned to
-  the authorized SAS caller application ID. No excluded path may bypass authentication for SendOtp.
+  the authorized Microsoft caller application ID. No excluded path may bypass authentication for SendOtp.
   The trigger remains `authLevel: anonymous`; there is no application token validation or function-key
   fallback. The platform rejects unauthenticated requests with `401` and denies callers outside the
-  allowlist before the handler. **Never expose the endpoint to the public internet with Easy Auth off
-  or bypassed.** Core Tools supplies no Easy Auth: local execution must bind only to loopback, with
-  no tunnels or public forwarding. Neither request data, JWE decryption, a fixed nonce nor forwarded
-  principal headers authenticate the SAS caller.
+  allowlist before the handler. **Keep Easy Auth enabled for every public SendOtp route.**
+  Core Tools supplies no Easy Auth, so local execution stays on loopback without tunnels or public
+  forwarding. Request data, JWE decryption, a fixed nonce, and forwarded principal headers serve
+  other parts of the contract; Easy Auth authenticates the Entra ID caller.
 - **Timeout boundaries**: platform authentication and Key Vault retrieval happen outside the outbound HTTP
   timer. Python uses connect/read inactivity timeouts, not a hard elapsed-time deadline. The cap
-  therefore does not guarantee a 3.2-second end-to-end response, especially on cold starts.
+  does not guarantee a 3.2-second end-to-end response, especially on cold starts.
   A timed-out POST may already have been accepted; avoid blind retries that duplicate messages.
 
 ### Application logs
 
-JavaScript emits JSON service records with an immutable request context. Python uses the standard
-`logging` pipeline: `otp_log.py` defines fixed event IDs, names, levels and fields, while an immutable
-`LoggerAdapter` context supplies the Function and Microsoft trace identifiers. The configured
-logging provider owns Python output formatting and export. Neither runtime manually builds a mutable
-comprehensive request summary; each invocation ends with a fixed `request_completed` event.
+See the [application log reference](LOGGING.md) for event order, allowlisted fields, identifier
+provenance, levels, and runtime formats. Each invocation emits fixed events ending in
+`request_completed`, not a mutable request summary. Evaluation emits no provider events.
+Keep bodies, nonces, credentials, and raw exceptions out of every pipeline.
 
-Likewise, .NET uses the standard `ILogger` pipeline instead of manually serializing JSON. `OtpLog`
-defines source-generated events with stable IDs and names, while `ILogger.BeginScope` supplies
-`FunctionName`, `FunctionRequestId`, `FunctionInvocationId`, `MsClientRequestId`,
-`MsCorrelationId` and `MsCorrelationIdSource`. The configured logging provider owns output
-formatting and export. .NET emits `request_completed` as an ordinary typed event rather than a
-mutable comprehensive summary. JavaScript follows the same fixed-event model while retaining its
-existing JSON field names.
-
-A successful live request in each runtime emits:
-
-`request_received`, `payload_validated` (`envelope_validated` in JavaScript),
-`delivery_context_decrypted`, `provider_selected`,
-`provider_credential_resolution_started`, `provider_credential_resolved`,
-`provider_request_build_started`, `provider_request_built`, `provider_request_started`,
-`provider_response_received`, `provider_response_processed`, `response_prepared`,
-`request_completed`.
-
-Failures emit `request_failed` with fixed `FailureStage`, `FailureReason` and `HttpStatus` values.
-Provider results retain the coarse endpoint `Outcome` plus a safe diagnostic classification:
-`provider_http_error`, `provider_rejected`, `unrecognized_provider_status`,
-`missing_provider_message_id` or `invalid_provider_json`. The structured
-`provider_response_processed` event includes this classification together with the upstream HTTP
-status and normalized provider status; raw provider descriptions and bodies remain excluded.
-Credential refresh failures use `credential_refresh_failed`; unexpected unclassified failures use
-`unexpected_error`. Typed event arguments are explicitly allowlisted and never include request
-bodies, decrypted delivery fields, credentials, provider response bodies, query strings or private
-exception messages. Endpoint values contain only scheme, host/port and path. Evaluation omits all
-provider events and emits `evaluation_completed`.
-
-A successful live request emits these separate service events:
-
-| Service event | Safe information recorded |
-|---|---|
-| `request_received` | Function invocation and available raw Microsoft trace IDs under their `x-ms-*` names; no raw body or arbitrary headers. |
-| `envelope_validated` / `payload_validated` | Allowlisted body metadata: validated payload type, normalized `channel`, `evaluation` and optional `ttlSeconds`. |
-| `delivery_context_decrypted` | Decryption completed; no plaintext fields, JWE or key ID. |
-| `provider_selected` | Registered provider and its authentication mode. |
-| `provider_credential_resolution_started` | OAuth client-assertion or Key Vault credential source, with explicitly named raw OAuth application/identity/tenant IDs. |
-| `provider_credential_resolved` | Credential resolution and usability checks completed, with elapsed time; no secret, token, assertion or claims. |
-| `provider_request_build_started` | The provider is preparing the outbound request. |
-| `provider_request_built` | Allowlisted HTTP method, final endpoint scheme/host/port/API path, HTTPS and disabled redirects; no query string, authorization headers or body. |
-| `provider_request_started` | The outbound send is beginning, with method, sanitized endpoint and timeout. |
-| `provider_response_received` | Actual upstream HTTP status; emitted before response-body reading completes. |
-| `provider_response_processed` | Mapped provider status/outcome, fixed failure classification and duration. Raw provider descriptions and bodies are excluded. |
-| `response_prepared` | Response status and booleans indicating nonce/correlation inclusion, not their values or the response body. |
-
-Body metadata is built from validated fields, **not** from a body dump with a few sensitive
-properties removed. Unknown request properties, `tenantId`, locale/risk data and all decrypted
-fields remain excluded. An invalid envelope never contributes unvalidated type or TTL values.
-
-`providerCredentialSource` is `managed_identity_client_assertion` for the app-token path and
-`key_vault` for API-key providers. Resolution may use cached credentials: these events do not claim
-a Key Vault network fetch or a fresh identity/token exchange occurred. `providerCredentialElapsedMs`
-covers resolution plus the existing credential checks, not a separately enforced deadline. SDK
-diagnostics remain suppressed as before; logging adds no token acquisition, secret reads or retries.
-
-`provider_request_built` describes the provider request, not creation of a new physical HTTP connection
-or a new HTTP client in every runtime. `providerEndpoint` uses the **final** provider URL, which can
-differ from the configured base URL, but records only scheme + host/port + API path. For example,
-`https://provider.example/epp/voice?key=secret` is logged as `https://provider.example/epp/voice`.
-Userinfo, the entire query string and fragments are excluded. Use provider-approved paths that do
-not embed secrets or personal data; path segments are not redacted. This does not alter the outbound
-URL or its required query parameters. Standard HTTP verbs are logged in uppercase; custom or invalid
-values are represented as `other` without changing the request sent.
-
-`response_prepared` is emitted on success **and failure** immediately before returning the handler
-response. It does not claim the host has serialized/transmitted that response or Microsoft received
-it; consult platform request telemetry for transport completion. Evaluation emits
-`evaluation_completed` instead of provider events, then `response_prepared` and `request_completed`,
-without resolving provider configuration, credentials or HTTP. Failures emit the fixed
-`request_failed` event with a safe stage, reason and HTTP status.
-A parsed provider rejection uses `provider_response_processed` with its non-success outcome and
-fixed failure reason.
-
-In JavaScript and Python, every service event carries the Function request/invocation IDs, the Microsoft trace IDs available
-at that point. JavaScript also carries known channel/evaluation/provider context; Python supplies
-selected context through its logging adapter and event arguments. The initial event can
-only know header trace IDs; a valid envelope can subsequently supply the selected correlation.
-The generated Function request ID joins these events even when Microsoft IDs are absent or change
-from header to envelope. The identifiers are intentionally not named simply `requestId` or
-`correlationId` in logs:
-
-| Log field | Source and meaning |
-|---|---|
-| `functionName` | Runtime function name: `SendOtp` in JavaScript/.NET, `send_otp` in Python. The HTTP route remains `/api/SendOtp` in every runtime. |
-| `functionRequestId` | Generated by this handler. Matches `requestId` in failure responses; it is not Microsoft's request ID. |
-| `functionInvocationId` | Azure Functions host invocation ID. Null for direct handler calls without a host context. |
-| `x-ms-client-request-id` | Raw Microsoft per-attempt ID from the header of the same name, not the generated fallback used by dispatch. |
-| `x-ms-correlation-id` | Raw selected Microsoft correlation: envelope `correlationId` first, then the header of the same name. The existing precedence is unchanged, and this never contains a generated Function ID. |
-| `msCorrelationIdSource` | `envelope`, `header` or `none`; disambiguates the selected value when the envelope and header differ. |
-| `providerMessageId` | Raw provider-normalized message/reference ID returned by the provider, including Telesign `reference_id`, for support lookup. Not filled from delivery or Function IDs, although a provider may echo an ID it received. |
-| `providerTenantId` | Raw configured `EPP_PROVIDER_TENANT_ID` for OAuth, not incoming envelope `tenantId`. |
-| `functionOutboundClientId` | Raw application's `EPP_OUTBOUND_CLIENT_ID` used for provider access, not a Microsoft request ID. Guided setup reuses the endpoint app client ID here; its outbound purpose is distinct from the inbound audience setting. |
-| `functionOutboundManagedIdentityClientId` | Raw configured `EPP_OUTBOUND_MI_CLIENT_ID` used to obtain the app assertion, not the Key Vault identity or the identity's principal/Object ID. |
-| `providerEndpoint` | Validated final outbound URL without userinfo, query string or fragment; scheme, host/port and API path remain visible. |
-
-The six external/configuration ID fields preserve their raw values and case for cross-system support
-lookup; they are not hashed or truncated. To avoid dumping arbitrary text, only nonblank strings
-of 1-128 ASCII characters are recorded: the first character must be a letter or digit, followed by
-letters, digits, `.`, `_`, `:`, or `-`. This includes GUIDs, hex IDs and ordinary opaque references.
-Missing/blank values are null; other invalid values are null and their field names appear in
-`omittedIdFields`, never the rejected values. These guards affect logs only, not wire IDs or outcomes.
-Application/client/tenant IDs are identifiers, not client secrets or bearer tokens.
-These are tracing fields, not authentication assertions. In particular, an incoming `tenantId`
-does not become a trusted tenant identity in logs. The existing wire correlation precedence,
-provider request IDs and public responses are unchanged.
-
-The fixed `request_completed` event contains only the final HTTP status, result and elapsed time.
-Stage-specific fields remain on the event where they become known instead of being accumulated into
-a mutable summary. `providerHttpStatus` is recorded when response headers arrive, so a response-body
-timeout can legitimately produce `provider_response_received` with upstream `200` followed by
-`request_failed` with Function status `504`, without a mapped provider status or success
-acknowledgement. Unknown provider status text and malformed JSON are never logged; malformed JSON
-emits only `provider_response_invalid_json` before the provider outcome rules run.
-
-Normal events and completion events use Information; invalid requests, non-success 4xx outcomes and
-advisory warnings use Warning; 5xx failures and timeouts use Error. Keep application Information logs
-enabled when investigating. This contract describes **emission**, not guaranteed collection:
-host/telemetry filters and sampling can drop trace records. Application events are logs, not
-the host's Request telemetry type, so excluding `Request` from sampling does not by itself retain
-every event. Configure collection and retention deliberately without enabling SDK/body tracing.
-Easy Auth rejections occur before the handler; inspect available platform/authentication diagnostics
-and caller observations, not just application events.
-
-The camelCase/`x-ms-*` fields above describe the JavaScript schema and are **not a portable
-custom-properties contract**. Python uses `event_name` with logging extras such as `httpStatus`;
-.NET uses typed `ILogger` fields such as `HttpStatus` and scopes such as `FunctionRequestId`.
-The simpler Python/.NET provider-result events do not expose every JavaScript field (for example,
-do not assume a provider reference ID is collected). Exporters can omit extras/scopes.
-Use [runtime-specific queries](MONITORING.md#runtime-specific-log-discovery) and
-[collection guidance](APPLICATION-INSIGHTS.md) to verify what actually arrives.
+Emission is not guaranteed collection. Use [runtime-specific queries](MONITORING.md#runtime-specific-log-discovery)
+and [collection diagnostics](APPLICATION-INSIGHTS.md) before relying on alerts.
 
 ---
 
@@ -604,28 +510,32 @@ wrong issuer or audience, unauthorized caller, HTTPS enforcement and SendOtp rou
 An authorized evaluation must succeed without provider I/O. These checks do not replace provider
 integration or handset-delivery checks. See [deployment verification](ONBOARDING.md#4-package-deploy-and-verify).
 
-## Production limitations
+<a id="production-limitations"></a>
+<a id="production-readiness-considerations"></a>
+## Production readiness
 
-This is a sample, not production certification. Successful provider acceptance and nonce checks do
-not prove handset delivery or support for every provider feature.
+Use this checklist to plan capabilities required beyond the sample.
+Provider acceptance and nonce checks confirm important stages of the request, while handset
+delivery and provider-specific features need their own validation.
 
-- The Function imports one private PEM through a Key Vault secret reference and decrypts in-process;
-  vault-resident cryptographic operations and overlapping key rotation are not implemented.
-- The sample waits for provider acceptance before replying. It has no durable queue, early
-  acknowledgement/background delivery handoff, or automatic send retries. Confirm the current
-  product-approved timing/activation requirements with Microsoft; deployment alone does not
-  establish that the sample meets them.
-- The outbound timeout is not an end-to-end deadline. Cold starts, platform authentication and Key
-  Vault access can exceed the caller's budget; Python uses connect/read inactivity timeouts.
-- Credential caches are process-local and proactive preparation is best-effort, not an Azure
-  traffic-readiness guarantee. Provider delivery still waits for acceptance; background refresh
-  is not background OTP delivery, a queue, or protection against duplicate sends.
-- Voice is provider-specific: Soprano extracts the first six consecutive digits; Telesign paces
-  standalone six-digit numeric runs and repeats the full message. Test supported locales,
-  passcode format, and actual audio; these transforms do not guarantee spoken clarity.
-- Full body-size/content-type and E.164 validation, subscription provisioning, certification,
-  least-cost routing and voice-callback workflows are outside this sample. Native fallback belongs
-  to the caller, not this Function.
+- **Encryption and rotation:** the Function imports one private PEM through a Key Vault secret
+  reference and decrypts in-process. A production design can add vault-resident cryptographic
+  operations and overlapping key rotation when required.
+- **Delivery workflow:** the sample waits for provider acceptance before replying. Add a durable
+  queue, early acknowledgement/background handoff, or automated retry strategy only when the
+  approved product design defines their timing and duplicate-send behavior.
+- **End-to-end timing:** size the caller budget for cold starts, platform authentication, Key Vault
+  access, and the provider request. The outbound timeout covers the provider call rather than the
+  full invocation; Python uses connect/read inactivity timeouts.
+- **Credential readiness:** caches are process-local and proactive preparation is best-effort.
+  Provider delivery still waits for acceptance; background credential refresh is separate from
+  OTP delivery, queuing, and duplicate-send protection.
+- **Voice experience:** Soprano extracts the first six consecutive digits; Telesign paces
+  standalone six-digit numeric runs and repeats the full message. Validate supported locales,
+  passcode formats, and actual audio for the intended experience.
+- **Additional production capabilities:** add the body-size/content-type and E.164 validation,
+  subscription setup, certification, least-cost routing, or voice-callback workflows required
+  by the design. Native caller fallback remains with the caller rather than this Function.
 
 See [setup compatibility](ONBOARDING.md#setup-script-compatibility) for credential provisioning,
 endpoint format and unsupported setup options.

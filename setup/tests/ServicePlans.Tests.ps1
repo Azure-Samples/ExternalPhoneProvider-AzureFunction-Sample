@@ -42,6 +42,7 @@ try {
             $script:Calls.Add($command)
             switch -Regex ($command) {
                 '^version ' { return @{ 'azure-cli' = $script:CliVersion } | ConvertTo-Json }
+                '^bicep version ' { return '' }
                 '^functionapp list-flexconsumption-locations ' { return $script:Regions }
                 '^appservice plan list ' { return $script:ExistingPlans }
                 '^rest --method get .*Microsoft.Web/geoRegions ' {
@@ -57,6 +58,8 @@ try {
                 '^functionapp restart ' { return '' }
                 '^deployment sub create ' {
                     $path = $Arguments[[Array]::IndexOf($Arguments, '--parameters') + 1].Substring(1)
+                    $template = $Arguments[[Array]::IndexOf($Arguments, '--template-file') + 1]
+                    Assert ($template -match 'main\.json$') 'Deploy the compiled JSON, not Bicep.'
                     $script:DeploymentParameters = (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable).parameters
                     throw 'stop-after-parameters'
                 }
@@ -83,7 +86,11 @@ try {
             SubscriptionId = '33333333-3333-3333-3333-333333333333'
             Location = 'westus2'; ResourcePrefix = 'unit'; Platform = 'Node.js'; Language = 'javascript'
             ProviderAuthentication = 'apiKey'; ServicePlan = 'FC1'; BuildStrategy = 'ready'
+            PackageFile = 'epp-javascript.zip'
+            PackageReleaseTag = 'epp-packages-1-1'
             PackageUrl = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
+            SourceRevision = ('a' * 40)
+            SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
             PackageSha256 = ('a' * 64); SourcePackageSha256 = ('a' * 64)
         }
         $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix unit
@@ -111,10 +118,12 @@ try {
         foreach ($id in @('FC1', 'EP1')) {
             $inputs.ServicePlan = $id
             $script:Messages.Clear()
-            Show-EppPlan -Inputs $inputs -Names $names -ProviderConfiguration $provider -Context $context -SourceBaseUri 'https://source.contoso.com/setup'
+            Show-EppPlan -Inputs $inputs -Names $names -ProviderConfiguration $provider -Context $context
             $plan = $script:Messages -join "`n"
             $enabled = ($id -eq 'EP1').ToString().ToLowerInvariant()
             Assert ($plan.Contains("Service plan: $id")) 'The approval must name the selected plan.'
+            Assert ($plan.Contains($inputs.SourceBaseUri) -and $plan.Contains($inputs.PackageUrl) -and
+                $plan.Contains("Release:      $($inputs.PackageReleaseTag)")) 'The approval must identify the setup source and exact Function release URL.'
             Assert ($plan.Contains('SMS and voice (selected by each request)')) 'The approval must disclose support for both request channels.'
             Assert ($plan.Contains("SMS endpoint: $($provider.Settings.EPP_PROVIDER_SMS_ENDPOINT)")) 'The approval must disclose the SMS endpoint.'
             Assert ($plan.Contains("Voice endpoint: $($provider.Settings.EPP_PROVIDER_VOICE_ENDPOINT)")) 'The approval must disclose the voice endpoint.'
@@ -156,7 +165,7 @@ try {
         $script:ExistingPlans = '[]'
 
         function script:Get-Command { param($Name, $ErrorAction); return @{ Name = $Name } }
-        function script:Initialize-EppBicep { param([switch] $NonInteractive, [switch] $InstallPrerequisites); throw 'passed-version-check' }
+        function script:Connect-EppAzureAccount { param($Inputs, [switch] $NonInteractive, [switch] $ForceAuthentication); throw 'passed-version-check' }
         foreach ($id in @('FC1', 'EP1')) {
             $inputs.ServicePlan = $id
             $script:CliVersion = if ($id -eq 'FC1') { '2.59.0' } else { '2.48.0' }
@@ -242,16 +251,16 @@ try {
             $script:StartupError = ''; $script:CloseError = ''
         }
 
-        function script:Get-MgContext { return @{} }
-        function script:Test-EppGraphContext { param($Context, $TenantId); return $true }
-        function script:Get-EppGraphOperator { return @{ Id = 'operator' } }
+        function script:Get-EppGraphOperator { param($Inputs); return @{ Id = 'operator' } }
+        $script:ArmOperator = $context.OperatorId
+        function script:Get-EppArmOperatorObjectId { param($Inputs); return $script:ArmOperator }
         function script:Initialize-EppGraphAccess { param($Inputs, $Context); return @{} }
         function script:Initialize-EppResourceProviders { param($Inputs) }
         foreach ($id in @('FC1', 'EP1')) {
             $inputs.ServicePlan = $id
             Assert-Throws {
                 Invoke-EppDeployment -Inputs $inputs -Names $names -ProviderConfiguration $provider -Context $context `
-                    -AssetDirectory $Directory -Package $publish.Package -OutputDirectory $Directory -SourceBaseUri 'https://source.contoso.com/setup'
+                    -AssetDirectory $Directory -WorkingDirectory $Directory -Package $publish.Package -OutputDirectory $Directory
             } 'stop-after-parameters'
             Assert ($script:DeploymentParameters.servicePlan.value -ceq $id) 'The approved plan must be passed to Bicep.'
             foreach ($setting in @('EPP_PROVIDER_SMS_ENDPOINT', 'EPP_PROVIDER_VOICE_ENDPOINT')) {

@@ -1,54 +1,37 @@
-# Application Insights for the External Phone Provider
+# Application Insights
 
-Application Insights helps you see which requests ran, how long they took, and what the Function
-reported along the way. It does **not** confirm that an SMS or voice call reached the recipient.
+<a id="application-insights-for-the-external-phone-provider"></a>
 
-**Looking for your logs?** Start with the [monitoring guide](MONITORING.md). It shows how to find
-the resources from your deployment summary, run queries, and create alerts.
+[Documentation](README.md) | [Monitoring walkthrough](MONITORING.md) | [Log schema](LOGGING.md)
 
-For user authentication outcomes, see [Microsoft Entra sign-in monitoring](SIGN-IN-MONITORING.md).
-It uses a separate tenant log-export pipeline, not Function telemetry; neither source alone
-proves phone delivery.
+Use the [monitoring walkthrough](MONITORING.md) for queries and alerts. Use
+[single-region configuration](#single-region-configuration) for missing telemetry.
 
-This reference explains how collection works for **JavaScript, .NET isolated, and Python**,
-what each signal means, and why data may be missing. Start with
-[single-region configuration](#single-region-configuration) to check a guided deployment;
-use the remaining sections for runtime differences or a multi-region design.
-You do not need Azure Front Door for Function telemetry.
+Function telemetry covers execution, timing, and logs. Provider delivery evidence and
+[Microsoft Entra ID sign-in monitoring](SIGN-IN-MONITORING.md) are separate.
 
-These instructions do not deploy resources or enable extra instrumentation, alerts, or availability
-tests. Use the [setup guide](../setup/docs/README.md) for deployment and the
-[approved test handoff](ONBOARDING.md#validate-the-deployed-endpoint) to generate test traffic.
+Sections: [collection pipelines](#how-telemetry-reaches-application-insights),
+[signals and tables](#signals-tables-and-metrics-are-different-things),
+[single-region checks](#single-region-configuration), [ingestion identity](#identity-and-ingestion),
+[multi-region layout](#multi-region-configuration), [coverage queries](#read-only-queries-to-establish-what-is-present),
+or [sampling/privacy limits](#sampling-privacy-and-collection-limits).
 
 ## How telemetry reaches Application Insights
 
-There are two execution processes to consider: the **Functions host**, which dispatches
-invocations, and the **language worker**, which runs the endpoint code.
+The **Functions host** records invocation telemetry; the **language worker** runs endpoint code.
+A direct worker exporter needs separate initialization, authentication, filtering, and sampling.
 
-1. The host records invocation telemetry. With the standard Functions logging pipeline,
-   application logs are forwarded from the worker to the host for export.
-2. A worker can instead have its own SDK or OpenTelemetry instrumentation and exporter.
-   That pipeline requires language-specific initialization, authentication, filtering, and
-   sampling; configuring the host alone does not configure every worker signal.
-3. The exporter sends telemetry to the Application Insights ingestion endpoint. The
-   Application Insights resource identifies the application and its linked Log Analytics
-   workspace stores the log records.
-4. Application Insights views and Azure Monitor Logs queries use those records. Correlation
-   identifiers can connect requests, dependencies, and logs when instrumentation propagates
-   the context. Background work does not necessarily belong to a request.
+Application Insights sends records to its linked Log Analytics workspace. Correlation context
+connects requests, dependencies, and logs.
 
-In OpenTelemetry terminology, a distributed trace contains spans. In Application Insights,
-server spans generally appear as **requests**, client spans as **dependencies**, and
-application log messages as **traces**. The `traces` table is not a list of all distributed
-tracing spans.
+Application Insights generally stores server spans as **requests**, client spans as
+**dependencies**, and log messages as **traces**.
 
 ### What the checked-in sample configures
 
-The [deployment template](../setup/infra/resources.bicep) defines a workspace-based Application
-Insights resource, the Function's connection and authentication settings, and a role assignment
-for ingestion. It also defines a **separate** Function diagnostic setting that sends `allLogs`
-and `AllMetrics` to the workspace. Diagnostic settings do not install worker instrumentation
-and do not mean every Azure resource or every dependency is being observed.
+The [deployment template](../setup/infra/resources.bicep) configures Application Insights,
+authenticated ingestion, and a separate `allLogs`/`AllMetrics` diagnostic setting. Diagnostic
+settings do not instrument every worker or dependency.
 
 | Implementation | Checked-in behavior | What not to assume |
 | --- | --- | --- |
@@ -56,26 +39,18 @@ and do not mean every Azure resource or every dependency is being observed.
 | [JavaScript](../javascript/host.json) | Uses standard host Application Insights settings with sampling enabled and `Request` excluded from sampling. | The [package manifest](../javascript/package.json) does not include a direct Application Insights/OpenTelemetry exporter. Host integration is not proof that all outbound Node.js HTTP calls are traced. |
 | [Python](../python/host.json) | Uses standard host Application Insights settings with sampling enabled and `Request` excluded from sampling. | The [requirements](../python/requirements.txt) do not include an Azure Monitor/OpenTelemetry exporter. A Python log message or `requests` call is not automatically a structured custom event or a dependency span. |
 
-These are source defaults, not an inventory of a running deployment. Deployed package versions,
-application-setting overrides, runtime versions, and log filters can change the result. The
-guided setup can publish a released package rather than the current source.
+These are source defaults. Packages, settings, runtime versions, and filters can change them.
 
-The endpoint emits application events such as `request_received`, `provider_response_processed`,
-`request_failed`, `request_completed`, and `credential_refresh_failed` through language logging
-APIs. These are **log events**, not a promise of rows in `customEvents`. .NET uses structured
-`ILogger` events, JavaScript uses its logging helper, and Python uses logging records with extra
-fields. Message formatting, property names/casing, and preservation of extra fields depend on
-the logging/export path. Inspect the actual schema before sharing one event-field query across
-languages.
+[Application events](LOGGING.md#event-sequence) are **logs**, not guaranteed `customEvents`.
+Use [runtime-specific discovery](MONITORING.md#runtime-specific-log-discovery) before sharing queries:
+exporters can change formatting, casing, and which properties survive.
 
-When adding direct worker instrumentation in a future code change, follow the
+For direct worker instrumentation, follow the
 [Functions OpenTelemetry guidance](https://learn.microsoft.com/en-us/azure/azure-functions/opentelemetry-howto)
-for the selected language. Initialize the exporter and required instrumentations, configure
-its credential, and verify correlation and duplicate suppression. Do not simply copy another
-language's host settings. Other Azure Functions languages are outside this repository's sample;
-use the corresponding language tab in the Microsoft guidance for their support requirements.
+for the selected language and verify correlation and duplicate suppression.
 
-## Signals, tables, and metrics are different things
+<a id="signals-tables-and-metrics-are-different-things"></a>
+## Telemetry signals and tables
 
 The following table maps **Application Insights Logs** names to **Log Analytics workspace**
 names. Table availability and contents depend on what was actually emitted and ingested.
@@ -98,7 +73,7 @@ different sampling behavior and dimensions; a chart and a raw row count need not
 **Azure resource metrics** come from the platform and are queried under the relevant resource
 in Azure Monitor Metrics. Function execution/instance/memory metrics depend on the hosting plan;
 FC1 and EP1 do not expose identical sets. Key Vault has its own request/latency signals, Storage
-has transaction/availability/latency signals, and optional Front Door has edge/origin signals.
+has transaction/availability/latency signals, and Front Door adds edge/origin signals.
 These are not automatically Application Insights dependencies or custom metrics.
 
 Resource logs are another independent source. Depending on the resource and diagnostic setting's
@@ -135,8 +110,9 @@ Review the following in the portal without assuming that resource creation prove
    controlled live test. Evaluation skips the provider send; it cannot validate that dependency
    path. Background credential refresh may run independently during either test.
 
-Do not weaken Easy Auth or send periodic OTPs just to populate telemetry. A generic unauthenticated
-URL probe does not validate the endpoint's authenticated, encrypted EPP contract.
+Keep Easy Auth and the approved delivery flow intact while validating telemetry. Use an authorized
+evaluation request for the authenticated, encrypted EPP path rather than generating periodic OTPs
+or relying on a generic unauthenticated URL probe.
 
 ### Identity and ingestion
 
@@ -184,20 +160,17 @@ proof of the Function's execution region. `AppRoleInstance` identifies an instan
 regional label. In a shared component, use verified role naming or an explicitly emitted region
 property; do not expect Azure resource tags to become telemetry properties automatically.
 
-For separate workspaces, use
-[cross-workspace queries](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/cross-workspace-query)
-with explicit `workspace("<workspace-resource-id>").AppRequests` references and a region label
-for each source before the union. The placeholders must be replaced by authorized operators,
-and the query identity needs access to all sources. Group by origin before aggregating so a
-healthy region cannot hide a failing one. Check each region's latest telemetry, including idle
-or standby regions; no traffic and broken collection can both look like an empty result.
+Use the [cross-workspace queries and missing-origin check](MONITORING.md#3-multiple-regions-and-cross-workspace-queries)
+with explicit sources, authorized access to each, and per-origin grouping. Check idle/standby
+origins too: no traffic and broken collection can both look empty.
 
-If Front Door is used, inspect its platform metrics and diagnostic logs separately. An edge or
-WAF rejection, origin-connectivity failure, or health-probe result is not necessarily a Function
-request. Front Door origin health is not evidence of provider authentication or message delivery.
-The [optional Front Door guide](FRONTDOOR.md) describes that topology.
+For the [Front Door multi-region design](FRONTDOOR.md), inspect
+[edge metrics and logs separately](MONITORING.md#8-optional-azure-front-door-layer).
+Edge/WAF rejections, origin-connectivity failures, and probes need not appear as Function requests.
+Origin health does not prove provider authentication or delivery.
 
-## Read-only queries to establish what is present
+<a id="read-only-queries-to-establish-what-is-present"></a>
+## Telemetry coverage queries
 
 Run these examples from the **linked Log Analytics workspace's Logs** view. They use workspace
 table/column names (`TimeGenerated`, `AppRoleName`, `OperationId`, `Properties`), not the

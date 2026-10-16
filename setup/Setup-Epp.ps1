@@ -5,6 +5,8 @@
 .DESCRIPTION
     Download only this file. Supporting PowerShell, Bicep, and provider JSON files come from
     the selected public GitHub repository (Azure-Samples by default).
+    Microsoft Graph operations reuse the Azure CLI user session through az ad and az rest.
+    Interactive setup can select cached tenants, subscriptions, applications, and Azure regions.
     The endpoint supports SMS and voice, selected by each request.
     Application registration and policy activation are manual steps.
     No Azure resources are changed until you approve the complete plan.
@@ -17,9 +19,12 @@
     Premium with cache settings set to true. Prompts when omitted; required for unattended setup.
     Cache control requires a Function package that reads these settings.
 .PARAMETER InstallPrerequisites
-    Install missing Microsoft Graph modules and the Azure CLI Bicep component after explicit opt-in.
+    Install the Azure CLI Bicep component after explicit opt-in. The Graph SDK is not required.
 .PARAMETER ForceAuthentication
-    Require fresh tenant-specific device-code sign-in for Azure CLI and Microsoft Graph.
+    Require fresh tenant-specific Azure CLI device-code sign-in. Graph reuses that CLI session.
+.PARAMETER PassThru
+    Return the structured deployment result in addition to console output. The summary JSON is
+    saved whether or not this switch is supplied.
 .PARAMETER CertificateAction
     Create when no encryption certificate is registered, Reuse a selected certificate, or Replace
     all registered encryption certificates. Existing certificates require an explicit choice.
@@ -58,7 +63,8 @@ param(
     [switch] $NonInteractive,
     [switch] $InstallPrerequisites,
     [switch] $ForceAuthentication,
-    [switch] $ApproveDeployment
+    [switch] $ApproveDeployment,
+    [switch] $PassThru
 )
 
 $ErrorActionPreference = 'Stop'
@@ -83,11 +89,28 @@ try {
     $sourceBaseUri = "https://raw.githubusercontent.com/$repository/$revision/setup"
     Write-Host "Downloading deployment tools from $repository at $revision"
 
-    foreach ($file in @('support/Epp.Setup.psm1', 'support/Epp.Packages.ps1', 'providers/catalog.json', 'packages/catalog.json', 'infra/main.bicep', 'infra/resources.bicep')) {
+    foreach ($file in @('support/Epp.Setup.psm1', 'support/Epp.Packages.ps1', 'support/Epp.Graph.ps1', 'providers/catalog.json', 'packages/catalog.json', 'infra/main.bicep', 'infra/resources.bicep')) {
         $destination = Join-Path $downloadDirectory $file
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Invoke-WebRequest -Uri "$sourceBaseUri/$file" -OutFile $destination -TimeoutSec 60 -MaximumRedirection 0
         if ((Get-Item -LiteralPath $destination).Length -eq 0) { throw "GitHub returned an empty file: $file" }
+    }
+
+    $providerCatalog = Get-Content -LiteralPath (Join-Path $downloadDirectory 'providers/catalog.json') -Raw |
+        ConvertFrom-Json -ErrorAction Stop
+    if ($providerCatalog.schemaVersion -ne 1 -or -not @($providerCatalog.providers).Count) {
+        throw 'The downloaded provider catalog is unsupported or empty.'
+    }
+    $providerFiles = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($providerEntry in @($providerCatalog.providers)) {
+        $file = [string]$providerEntry.file
+        if ($file -cnotmatch '^[a-z][a-z0-9-]{1,31}\.json$' -or -not $providerFiles.Add($file)) {
+            throw 'The downloaded provider catalog contains an invalid or duplicate file.'
+        }
+        $relativePath = "providers/$file"
+        $destination = Join-Path $downloadDirectory $relativePath
+        Invoke-WebRequest -Uri "$sourceBaseUri/$relativePath" -OutFile $destination -TimeoutSec 60 -MaximumRedirection 0
+        if ((Get-Item -LiteralPath $destination).Length -eq 0) { throw "GitHub returned an empty file: $relativePath" }
     }
 
     $module = Import-Module (Join-Path $downloadDirectory 'support/Epp.Setup.psm1') -PassThru -Force

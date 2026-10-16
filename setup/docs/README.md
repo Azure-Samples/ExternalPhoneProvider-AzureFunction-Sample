@@ -1,50 +1,41 @@
 # EPP endpoint setup reference
 
-New to the sample? Follow the [main setup guide](../../README.md). This reference explains the
-permissions, hosting choices, script prompts, and maintenance steps in more detail.
+[Documentation](../../docs/README.md) | [First deployment](../../docs/GETTING-STARTED.md) | [Troubleshooting](Troubleshooting.md)
 
-The three stages in this reference are:
+This reference covers setup choices, reruns, and maintenance. For a first deployment, follow the
+five-step guide above; it handles the required source and Bicep files.
 
-1. [Register a dedicated application](#step-1---manually-create-the-application).
-2. [Run the setup script](#step-2---download-and-run-one-script), after checking
-   [prerequisites](#prerequisites-for-step-2). It downloads its support files and deploys the
-   resources and code; no repository clone or manual Bicep download is needed.
-3. [Validate and activate policy](#step-3---manually-validate-and-activate-policy), with your
-   onboarding owner and policy administrator. The script does not activate policy.
+| Task | Section |
+| --- | --- |
+| Prepare access, tools, and hosting | [Prerequisites](#prerequisites-for-step-2), [permissions](#permissions-are-separate), [plans](#service-plan-selection) |
+| Register the dedicated app | [Step 1](#step-1---manually-create-the-application) |
+| Run or review setup | [Step 2](#step-2---download-and-run-one-script), [certificate choice](#encryption-certificate-selection), [cancel at approval](#reviewing-the-plan-without-deploying) |
+| Use known inputs and versions | [Noninteractive example](#noninteractive-example), [source versioning](#source-versioning) |
+| Find deployment results | [Summary fields](#read-the-deployment-summary) |
+| Validate, activate, and maintain | [Step 3](#step-3---manually-validate-and-activate-policy), [renewal](#encryption-certificate-lifecycle), [rollback](#rollback-and-decommissioning) |
+| Develop setup changes | [Offline checks](#offline-setup-checks) |
 
-Confirm [provider access and the approved Microsoft procedure](../../docs/ONBOARDING.md#before-purchasing-or-deploying)
-before purchasing or deploying. A provider purchase alone does not enable the tenant feature or authorize its API.
+Confirm [provider access and Microsoft's approved procedure](../../docs/ONBOARDING.md#before-purchasing-or-deploying)
+before deployment.
 
-Setup creates **one endpoint in one Azure region**. For multiple regions, use the separate
-[manual Front Door guide](../../docs/FRONTDOOR.md). Running setup again in another region does
-not coordinate encryption keys or Front Door origins.
+Setup creates **one regional endpoint**. See [Front Door](../../docs/FRONTDOOR.md) for regional continuity.
 
 ## Availability
 
-Choose a **Global or EU provider route** (the prompt calls it **Tenant scope**),
-**Telesign or Soprano**, and an
-Azure Function **platform**: Node.js, .NET, or Python, plus a **service plan**: Flex Consumption FC1
-or Premium EP1. By default, setup resolves the source repository's latest stable
-`epp-packages-*` release produced by CI. A public fork's test branch can use its matching fork release.
-There is no package URL or checksum to enter. Setup verifies `SHA256SUMS.txt` automatically and
-performs the required build and publication for the selected language.
-The Function endpoint accepts both SMS and voice; the request body's `channel` selects its provider URL.
-Setup does not prompt for a channel or write a channel restriction to app settings.
+Choose **Telesign or Soprano**, **Global/EU** provider routing (prompt: **Tenant scope**),
+**Node.js/.NET/Python**, and **FC1/EP1** hosting. Setup verifies `SHA256SUMS.txt`, builds as needed,
+and publishes; no package URL/hash input is needed. See [source/package selection](#source-versioning).
 
-Provider profiles contain complete region route objects at `deployment.routes.global` and
-`deployment.routes.eu`. Each route has separate `smsEndpoint` and `voiceEndpoint` URLs plus shared
-authentication and timing settings. The URLs can differ; setup always provisions both as
-`EPP_PROVIDER_SMS_ENDPOINT` and `EPP_PROVIDER_VOICE_ENDPOINT`. Telesign contains its supplied
-route URLs, tenant, authentication, and timings. Soprano contains its provider tenant, Global/EU
-routes, API application ID, scope, authentication, and timings. The provider files contain the
-complete deployment contract.
+Both channels are configured. Profile objects `deployment.routes.global` and
+`deployment.routes.eu` define `smsEndpoint`, `voiceEndpoint`, tenant, authentication, and timing
+values. Setup writes the endpoints to `EPP_PROVIDER_SMS_ENDPOINT` and
+`EPP_PROVIDER_VOICE_ENDPOINT`; Soprano also supplies its API app ID and scope.
 
-Use a Function package that supports these channel-specific settings. Both URLs are configured
-explicitly; neither channel uses a shared endpoint fallback. Older packages must be upgraded.
+Use a package that supports channel-specific settings; neither channel falls back to the other URL.
 
 The current profiles use identical Global/EU URLs, and Soprano uses the same app ID/scope.
-This label is not proof of data residency or a choice of Azure region; confirm processing/routing
-with the provider. Infobip/Sinch are bundled adapters but have no guided deployment profiles.
+The route label is not a residency or Azure-region selection. Infobip and Sinch are bundled
+adapters without guided profiles.
 
 ## Service plan selection
 
@@ -55,143 +46,109 @@ Setup offers these two Linux hosting plans, with the same cache app settings for
 | 1. Flex Consumption (FC1) | On-demand with a free usage grant; zero always-ready instances, 2048 MB, up to 40 on-demand instances | `"false"` | `"false"` |
 | 2. Premium (EP1) | Existing Premium configuration with one warm instance | `"true"` | `"true"` |
 
-**FC1 is not an always-free deployment.** Its on-demand compute has a
+FC1 on-demand compute has a
 [free usage grant](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan#billing);
 usage beyond the grant, Key Vault, storage, telemetry, and provider services can incur charges.
-FC1 can scale to zero and cold-start; these settings do not remove cold-start latency or force a
-new worker on every invocation.
+FC1 can scale to zero and cold-start.
 
-EP1 allocates paid warm capacity even without OTP traffic. Set an Azure Cost Management budget
-and notify the resource owner; a budget notification does not stop spending. Include storage,
-Key Vault, telemetry ingestion/retention, and the provider's charges, not just Function executions.
-Stopping a Function does not necessarily stop its plan or supporting-service charges.
+EP1 allocates paid warm capacity without OTP traffic. Budget for the plan, storage, Key Vault,
+telemetry, and provider services. Budget alerts do not stop spending.
 
-**Deploy a Function package that supports these switches.** Older packages ignore them.
-Each switch independently controls its provider credential cache; unset defaults to `true`.
-With the selected cache disabled, live requests acquire credentials on demand without startup
-preparation, polling, or cross-request reuse. Values must be trimmed, case-insensitive `true` or
-`false`; restart after edits. Rerunning setup restores the selected plan's values.
-The decryption-key Key Vault reference remains platform-managed.
+Each switch controls one provider credential cache; unset defaults to `true`. Disabled caches
+acquire credentials per live request. Values are trimmed, case-insensitive `true` or `false`;
+restart after edits. Rerunning setup restores the plan defaults. Older packages ignore these switches.
 
-Use `-ServicePlan FC1` or `-ServicePlan EP1` to skip the prompt. Unattended setup requires this
-parameter; it never silently chooses a paid plan. The approval and deployment summary include
-the selected plan and both cache settings.
+Use `-ServicePlan FC1` or `-ServicePlan EP1` to skip the prompt. Unattended setup requires it.
 
 **Use a different resource prefix to change plans.** In-place FC1/EP1 migration is not supported.
 Preflight rejects a mismatch with the existing resource-group tag or actual hosting-plan SKU,
 including older EP1 deployments without the new tag. Existing EP1 deployments can be rerun with
 `-ServicePlan EP1`.
-For an active endpoint, onboard a new dedicated Step 1 application as well, or coordinate an
-encryption-key continuity migration with its owner. A new prefix creates a new vault, but reuse of
-the application still requires an explicit certificate decision. Select the existing certificate
-and its Key Vault location to retain key continuity; replacement affects all endpoints sharing the
-application. Setup does not automatically migrate keys or activate the replacement endpoint.
+For an active endpoint, use a new Step 1 app or coordinate key continuity. Reusing an app still
+requires an explicit certificate choice; replacement affects every endpoint sharing the app.
 
 ## Step 1 - manually create the application
 
-Use a dedicated nonproduction tenant/subscription for the first deployment.
+For the first deployment, use a nonproduction tenant and subscription.
 
 1. In the customer tenant's **Microsoft Entra admin center > App registrations**, register a
-   dedicated application with **Accounts in this organizational directory only** as its initial
+   new application for this endpoint with **Accounts in this organizational directory only** as its initial
    supported account type; setup changes it to organizational multi-tenant after approval.
-   No redirect URI, client secret, API permission, app role,
-   or enterprise-application configuration is required manually.
+   No redirect URI, client secret, API permission, or app role is required manually.
 2. Record the **Directory (tenant) ID** and **Application (client) ID**. The script requires the
    client ID, not the application's object ID, and will not create a replacement registration.
-3. Complete provider purchase and account/sender registration, and arrange API onboarding for the selected adapter.
+3. Complete provider purchase, sender registration, and API onboarding.
    Telesign uses `telesign-api-key` and `telesign-customer-id` in Key Vault. Soprano uses OAuth
    client-assertion exchange with the selected provider tenant/scope/application ID. Setup does not
    grant provider API consent or application roles. Finish the
    [provider authentication handoff](../../docs/ONBOARDING.md#complete-provider-authentication)
    after setup creates the vault and identity identifiers needed for those steps.
 
-After the single Step 2 approval, PowerShell makes the dedicated app organizational multi-tenant,
-restricts it through the Entra allowed-tenants preview to its home tenant plus the selected provider
-tenant from the provider JSON,
-adds the `Epp.Invoke` application permission, creates/reuses its enterprise application, requires
-assignment, creates/reuses the Microsoft phone-provider service principal, and assigns `Epp.Invoke`.
-It also grants that Microsoft service principal tenant-wide Microsoft Graph `Application.Read.All`,
-adds the hostname-based identifier URI and public JWE encryption certificate, and configures Easy
-Auth to allow only the Microsoft phone-provider application. Soprano additionally creates the
-disclosed outbound managed-identity federated credential.
+Setup configures:
+
+- Organizational multitenancy and the Microsoft Entra ID allowed-tenants preview: home tenant,
+  selected provider tenant, and preserved existing allowed provider tenants.
+- The app's enterprise application with assignment required, `Epp.Invoke`, and its assignment to
+  the Microsoft phone-provider service principal.
+- That Microsoft principal's tenant-wide Graph `Application.Read.All`, identifier URI, public JWE certificate, and Easy Auth caller restriction.
+- The disclosed outbound managed-identity federated credential for Soprano.
 
 ## Prerequisites for Step 2
 
-- **Windows with PowerShell 7+** is the supported customer deployment environment. Certificate
-  issuance now happens inside Key Vault, without Windows certificate cmdlets or the local certificate
-  store. End-to-end deployment from Linux or Azure Cloud Shell has not been validated.
-- Azure CLI **2.60.0+ for FC1** or **2.48.1+ for EP1** on `PATH`, with access to GitHub, Azure, Microsoft Graph, and Key Vault.
-  Setup installs the Azure CLI Bicep component after confirmation when it is missing. Azure CLI itself
-  must be installed before running the script. FC1 publication and EP1 Python builds also need
-  network access to SCM.
-- Microsoft Graph PowerShell modules `Microsoft.Graph.Authentication` and
-  `Microsoft.Graph.Applications`. Setup installs missing 2.x+ modules from PSGallery for CurrentUser
-  after a separate confirmation.
-- An Azure **user** account permitted to deploy at subscription scope, create the listed resources,
-  and create the scoped Azure role assignments. Bicep grants the operator **Key Vault Certificates
-  Officer** for issuance and **Key Vault Secrets Officer** for provider credentials,
-  scoped to this deployment's vault.
-- **Certificate reuse:** the operator needs ARM read access to the source vault, certificate-read
-  access, and secret-version metadata-read access before approval. For a different vault, the
-  approved plan also requires permission to grant the Function identity secret-read access:
-  role-assignment write for RBAC vaults, or access-policy write for access-policy vaults.
-  The source vault must be in the customer tenant; `-KeyVaultSubscriptionId` identifies a
-  different source subscription. Setup never fetches its private-key value locally.
+- **Azure Cloud Shell in PowerShell mode, or PowerShell 7+**, with an Azure CLI user login.
+  Certificate issuance stays in Key Vault; no local certificate-store cmdlets are needed.
+- Azure CLI **2.60.0+ for FC1** or **2.48.1+ for EP1** on `PATH`, with GitHub, Azure,
+  Microsoft Graph, Key Vault, and required SCM access. Setup can install Bicep after confirmation,
+  but Azure CLI must already be installed.
+- An Azure **user** allowed to deploy at subscription scope and create scoped role assignments.
+  Bicep grants **Key Vault Certificates Officer** and **Key Vault Secrets Officer** on this vault.
+- **Certificate reuse:** the operator needs source-vault ARM read, certificate read, and
+  secret-version metadata read. A different vault also requires permission to grant the Function
+  secret read through RBAC or an access policy. The vault must be in the customer tenant;
+  use `-KeyVaultSubscriptionId` for another subscription. Setup never reads the private key locally.
 - A Microsoft Entra **Privileged Role Administrator** for granting the Microsoft first-party service
-  principal Graph `Application.Read.All`, plus delegated Graph scopes `User.Read`,
-  `Application.ReadWrite.All`, `Application.Read.All`, and `AppRoleAssignment.ReadWrite.All`.
-  `User.Read` is for the setup operator's `/me` lookup; it is not granted to the first-party service
-  principal or the endpoint app.
-- Microsoft Graph **beta** access for the Entra `signInAudienceRestrictions` allowed-tenants preview.
-  The selected provider tenant is allowed in addition to the app's home tenant, which Entra always allows.
-- The selected **Linux Flex Consumption FC1 or Premium EP1** plan available in the chosen region,
-  with sufficient subscription quota. Availability is checked for that plan only; regional service
-  availability and resource-provider registration do not guarantee quota. If deployment reports
-  `SubscriptionIsOverQuotaForSku`, resolve the
-  [regional quota issue](Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku)
-  before retrying. Setup registers missing required Azure
-  resource providers automatically after the single approval. The Azure account needs the
-  providers' subscription-scoped `/register/action` permission (included in Contributor/Owner).
-- **.NET selection only:** install the .NET 8 SDK and allow NuGet access. Setup runs `dotnet publish`
-  automatically for `linux-x64`, packages the publish output, and deploys it. No manual build step
-  or upload is required. JavaScript and Python do not require this SDK.
-- **Python selection:** Azure performs the Linux dependency build. No local Python, pip, or Windows
-  dependency installation is needed. The source archive is never used directly as run-from-package.
+  principal Graph `Application.Read.All`. Microsoft Graph operations use the current Azure CLI
+  user session through `az ad` and `az rest`; Azure subscription roles alone do not grant these
+  directory permissions.
+- Microsoft Graph **beta** access for `signInAudienceRestrictions`. The provider tenant is added;
+  Microsoft Entra ID always allows the home tenant.
+  See the [allowed-tenants schema](https://learn.microsoft.com/en-us/graph/api/resources/allowedtenantsaudience?view=graph-rest-beta).
+- The selected **Linux FC1 or EP1** plan available in the region with enough quota. Resolve
+  [`SubscriptionIsOverQuotaForSku`](Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku)
+  before retrying. The operator needs subscription-scoped `/register/action`.
+- **.NET only:** install the .NET 8 SDK and allow NuGet access. Setup publishes for `linux-x64`,
+  packages, and deploys automatically.
+- **Python:** Azure builds Linux dependencies; no local Python/pip install is required. The source
+  archive is not a run-from-package artifact.
 
 ### Permissions are separate
 
-For an Azure built-in-role example, **Owner at the selected subscription** includes deployment,
-resource-provider registration, and role-assignment rights. **Contributor alone is insufficient**
-for `Microsoft.Authorization/roleAssignments/write`; Contributor plus **Role Based Access Control
-Administrator** at the required scope is another administrator-reviewed option, subject to any
-role-assignment conditions. Setup deploys at subscription scope and creates a new resource group;
-a role on an unrelated existing group is not sufficient. Request only approved scope/duration
-and activate eligible PIM roles before setup. See [Azure roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles).
+**Owner at the selected subscription** includes deployment, provider registration, and
+role-assignment rights. Another option is
+**Contributor** plus **Role Based Access Control Administrator** at the required scope, subject
+to any role-assignment conditions. Setup deploys at subscription scope and creates a new resource
+group, so access to an unrelated group does not cover the deployment. Activate eligible PIM roles before setup. See
+[Azure roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles).
 
 Azure roles do not grant Entra/Graph permissions, and Entra roles do not grant Azure/vault access.
-The Entra Privileged Role Administrator and delegated Graph scopes above are for setup.
-The later Authentication Policy Administrator and policy permissions are a **separate activation**
-step. Setup grants vault data roles to its Azure operator and Function identity; it does not
-automatically grant them to every member of your operations team.
+The signed-in user needs the listed Entra roles for setup. An Authentication Policy Administrator
+handles activation separately. Setup grants vault roles only to its operator and Function identity.
 
 ### Install and check workstation tools
 
-Use the official [PowerShell installation](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows),
-[Azure CLI installation](https://learn.microsoft.com/cli/azure/install-azure-cli-windows), and
+Install missing tools using [PowerShell installation](https://learn.microsoft.com/powershell/scripting/install/installing-powershell),
+[Azure CLI installation](https://learn.microsoft.com/cli/azure/install-azure-cli), and
 [.NET 8 SDK download](https://dotnet.microsoft.com/download/dotnet/8.0) instructions (SDK only for C#).
 Open a new **PowerShell 7** window after installation, then check:
 
 ```powershell
 $PSVersionTable.PSVersion
 az version
-Get-Module -ListAvailable Microsoft.Graph.Authentication, Microsoft.Graph.Applications |
-    Select-Object Name, Version
 # Only when choosing dotnet:
 dotnet --list-sdks
 ```
 
-Missing Graph modules or Bicep can be installed by interactive setup after confirmation.
-These version checks do not establish Azure permissions, quota, feature availability, or provider access.
+Interactive setup can install missing Bicep.
 
 | Choice | Azure runtime | Automatic deployment path |
 |---|---|---|
@@ -199,28 +156,15 @@ These version checks do not establish Azure permissions, quota, feature availabi
 | .NET | .NET 8 isolated, Functions v4 | Verify source ZIP, publish for Linux with .NET 8, repackage and publish |
 | Python | Python 3.11, Functions v4 | Verify source ZIP; One Deploy with remote build on FC1, or validate/download and publish the SCM-built output on EP1 |
 
-Package hashes are still checked; removing the **customer prompt** does not disable integrity
-verification. Source and deployed-package hashes are recorded separately when a build changes the bytes.
-For FC1 Python, One Deploy builds and stores the output inside Azure; the summary records the
-verified source hash and leaves `packageSha256` null rather than reporting it as the built-output hash.
+Setup records source and built-package hashes separately. FC1 Python leaves `packageSha256` null
+because Azure builds the package.
 
-Setup normally detects these automatically. For noninteractive execution, preinstall prerequisites
-or explicitly allow missing Graph/Bicep installation with `-InstallPrerequisites`; see the
-[complete example](#noninteractive-example).
+For [unattended execution](#noninteractive-example), preinstall prerequisites or allow Bicep
+installation with `-InstallPrerequisites`. Azure CLI must already be installed. Sign-in, MFA,
+consent, and installation prompts are separate from deployment approval.
 
-Install Azure CLI through its official installation instructions if necessary. Setup checks the
-explicitly supplied subscription and tenant without changing the CLI's selected subscription. If no
-matching Azure user session exists, it runs `az login --tenant <tenant-id>`. It separately requests
-Graph sign-in before displaying the plan if the delegated session is missing required scopes,
-including `User.Read` for operator identity readback. The
-consent includes broad app-role-management scopes because the approved deployment grants
-`Application.Read.All` to the Microsoft phone-provider service principal. Authentication, module
-installation, Bicep installation, MFA, and consent prompts are not resource-creation approvals.
-
-Use `-ForceAuthentication` when the machine has ambiguous cached identities. It requires interactive
-device-code authentication for Azure CLI and Microsoft Graph, does not clear shared token caches,
-and cannot be combined with `-NonInteractive`. Azure RBAC always uses the selected ARM token's
-validated `oid`; Graph `/me` is tracked separately for application-management operations.
+Use `-ForceAuthentication` for ambiguous cached identities. It requests device-code authentication,
+does not clear shared caches, and cannot be combined with `-NonInteractive`.
 
 ## Step 2 - download and run one script
 
@@ -246,41 +190,46 @@ Force explicit account selection when testing on a shared or multi-account compu
 
 The flow is:
 
-1. **Collect missing customer inputs:** tenant, subscription, existing application client ID, and Azure
-   region. Supplied values are reused without prompts. Credentials are never
-   requested as ordinary string parameters.
-2. **Choose the Global or EU provider route** (shown as **Tenant scope**).
-3. **Choose a provider**, then an Azure Function **platform**: Node.js, .NET, or Python. Setup downloads the provider JSON,
-   resolves one complete regional route containing both SMS and voice endpoints, authentication, app-ID/scope
-   when applicable, timeout, and retry interval. Explicit test values are allowed, shown as test
-   configuration, and passed to Azure settings. It also resolves the latest stable CI package
-   release and looks up the language asset name in `packages/catalog.json`; there are no
-   `PackageUrl` or `PackageSha256` inputs. Use
-   `-PackageReleaseTag epp-packages-<run>-<attempt>` to pin a previous CI release. Malformed or
-   disabled profiles still fail before resource creation.
-4. **Service plan selection:** choose **Flex Consumption FC1** (free usage grant, zero always-ready
+1. **Choose the customer Azure context.** Setup lists cached enabled Azure CLI user subscriptions,
+   then asks for the tenant and subscription. Refresh or start device-code sign-in when the
+   expected account is missing. Explicit `-TenantId` and `-SubscriptionId` values are preserved.
+2. **Choose the dedicated app registration and Azure region.** The application picker shows
+   organizational app names and client IDs, supports bounded name-prefix search and manual client-ID
+   entry, and never substitutes an object ID. The region picker uses Azure's current Recommended
+   metadata for a short list, with all-physical-region and manual-entry options. Supplied values
+   skip these selectors.
+3. **Choose the Global or EU provider route** (shown as **Tenant scope**).
+4. **Choose a provider by name**, then an Azure Function **platform**: Node.js, .NET, or Python.
+   When `-Provider` is omitted, setup reads the application's allowed-tenants configuration:
+   no supported provider prompts for a name, one asks for confirmation, and several require a
+   name. Existing allowed provider tenants are preserved; provider options are never numbered.
+   The selected [profile](#availability) supplies both channel URLs and auth/timing values.
+   The launcher has no endpoint/credential overrides or `PackageUrl`/`PackageSha256` inputs.
+   It uses `packages/catalog.json` and the latest stable CI release, or your
+   `-PackageReleaseTag epp-packages-<run>-<attempt>`. Malformed/disabled profiles fail before resource creation.
+5. **Service plan selection:** choose **Flex Consumption FC1** (free usage grant, zero always-ready
    instances, both cache settings `"false"`) or **Premium EP1** (warm instance, both cache settings `"true"`).
    Supply `-ServicePlan FC1` or `-ServicePlan EP1` to reuse a known selection.
-5. **Enter a resource prefix**, such as `contoso`. All resources created by the script start with
+6. **Enter a resource prefix**, such as `contoso`. All resources created by the script start with
    this prefix. Use 2-8 lowercase letters or digits, starting with a letter. Every top-level
    resource name then adds the meaningful `epp` marker, for example
    `contoso-epp-rg-<suffix>`. A deterministic suffix derived from the
    subscription, application ID, and prefix reduces global-name collisions. Reruns use the same names.
-6. **Check prerequisites and sign in.** Missing Graph modules or Bicep can be installed after a
-   separate confirmation. Azure and Graph interactive sign-in starts only when the supplied tenant
-   and subscription do not already have suitable user contexts.
-7. **Choose encryption certificate handling.** With no registered encryption certificate, use the
+7. **Check prerequisites and revalidate authentication.** Missing Bicep can be installed after a
+   separate confirmation. Graph operations reuse the selected Azure CLI user session; no Graph
+   SDK installation or separate sign-in occurs.
+8. **Choose encryption certificate handling.** With no registered encryption certificate, use the
    normal creation flow. Otherwise choose reuse of one certificate and supply its versioned Key
    Vault location, or replace all encryption credentials with one new certificate. Reuse of one
    among several also removes the others after approval. Enter cancels the certificate decision.
-8. **Review the complete plan**, including resource names, tenant/subscription, language, service plan,
+9. **Review the complete plan**, including resource names, tenant/subscription, language, service plan,
    both cache settings, automatic package verification/build, provider
    settings, scoped roles, the exact encryption key IDs to keep/remove, certificate location or
    staging name, and application configuration. Bicep receives these
    exact names; it does not independently calculate a different naming scheme.
    The plan also lists the six required **Azure resource providers** and their registration states.
    These Azure service registrations are separate from your phone-provider selection.
-9. **Type `Yes` once to deploy.** `No` or Enter cancels without Azure changes. Invalid answers prompt
+10. **Type `Yes` once to deploy.** `No` or Enter cancels without Azure changes. Invalid answers prompt
    again; individual resources do not request additional approvals.
 
 ### Encryption certificate selection
@@ -347,30 +296,21 @@ at `Deploy this complete plan? Type Yes or No [No]`. Do not supply `-ApproveDepl
 that switch authorizes the deployment phase without asking again.
 
 This is a cancellation at the approval gate, not an offline simulation. The existing application
-registration is still required. Before the plan appears, setup can download tools and packages,
-request prerequisite installation, sign in to Azure and Microsoft Graph, perform permission and
-region checks, verify package checksums, build the C# package locally when selected, and compile Bicep.
+registration is still required. Before the plan appears, setup can download tools and packages, request required installation,
+and sign in through Azure CLI. It also checks permissions and regions, verifies package checksums,
+builds the C# package when selected, and compiles Bicep.
 Installation, sign-in, and consent prompts are separate from deployment approval.
 A preflight error is not a successful preview.
 
-The [main guide's terminal captures](../../README.md#3-run-guided-setup) show real input screens,
-with identifying details and provider names hidden. They illustrate the prompts, not deployment
-approval, resource creation, or the final completion summary.
-
 ### After approving the plan
 
-After approval, setup rechecks the selected subscription and registers only missing
-`Microsoft.Web`, `Microsoft.Storage`, `Microsoft.KeyVault`, `Microsoft.OperationalInsights`,
-`Microsoft.Insights`, and `Microsoft.ManagedIdentity` providers. Already registered providers are
-left alone; existing registrations in progress are reused. Registration and regional checks happen
-before certificate creation or Bicep deployment. The read-only preflight does not register anything.
-
-Azure registers providers region by region. Setup does not unnecessarily wait for a global
-`Registered` state when a provider is already `Registering` and exposes the requested region.
-Registration metadata is polled with a bounded limit, and recognized regional registration
-propagation errors are retried during capability checks/deployment. Permission failures and
-unsupported regions remain explicit errors. Registration is subscription-wide and isn't undone
-automatically if a later deployment step fails.
+Setup rechecks the subscription and registers only missing `Microsoft.Web`, `Microsoft.Storage`,
+`Microsoft.KeyVault`, `Microsoft.OperationalInsights`, `Microsoft.Insights`, and
+`Microsoft.ManagedIdentity` providers before certificates or deployment. Preflight registers nothing.
+Existing registrations are reused; `Registering` is sufficient once the requested region is exposed.
+Polling/recognized propagation retries are bounded; permission and unsupported-region errors stop setup.
+Subscription-wide registrations are not undone after later failures. See
+[registration recovery](Troubleshooting.md#a-required-azure-resource-provider-is-not-registered).
 
 Supply known values to shorten the prompts. Replace `<provider-id>` with your selected guided
 provider's ID (`soprano` or `telesign`); neither is a default or recommendation:
@@ -395,20 +335,22 @@ The suffix does not include provider/region, so changing those inputs with the s
 subscription/app/prefix can reconfigure the existing endpoint. See
 [deployment separation and key constraints](../../docs/ONBOARDING.md#inputs-you-supply-to-setup).
 
-The plan creates or updates a dedicated resource group, selected Linux FC1 or EP1 hosting plan, Function App,
-storage account/private package container, Key Vault, Log Analytics workspace, Application Insights,
-outbound managed identity, diagnostics, Easy Auth, and scoped role assignments. Storage/package
-access uses managed identity, not account keys or SAS. Telemetry uses the system identity; the
-outbound identity is selected explicitly, not through a global `AZURE_CLIENT_ID`.
+The plan creates or updates the complete deployment. This includes a dedicated resource group,
+Linux FC1 or EP1 hosting plan, Function App, storage, private package container, and Key Vault.
+It also includes Log Analytics, Application Insights, an outbound managed identity, diagnostics,
+Easy Auth, and scoped role assignments. Storage and package access use managed identity instead
+of account keys or Azure Storage shared access signatures.
+Telemetry uses the system identity; the outbound identity is selected explicitly, not through
+a global `AZURE_CLIENT_ID`.
 
 The Function starts with public ingress disabled. After Bicep creates the vault and permissions,
-setup applies the approved certificate action. New certificates are self-signed, exportable
-RSA-2048 with subject and Entra display name **`CN=ExternalPhoneProvider`**. Initial creation uses
-`phone-provider-encryption`; replacement uses a separate suffixed staging name. Reuse selects the
-approved existing certificate version and preserves its registered key ID and display name.
-Setup pins `EPP_DECRYPTION_KEY_PEM` to the **versioned PEM backing secret**, verifies resolution,
-then writes exactly one `AsymmetricX509Cert` / `Encrypt` entry while preserving other credentials.
-It **reads back and verifies Easy Auth before enabling ingress**.
+setup applies the [approved certificate action](#encryption-certificate-selection).
+New certificates are self-signed, exportable RSA-2048 with subject/display name
+**`CN=ExternalPhoneProvider`**. Initial creation uses `phone-provider-encryption`; replacement uses
+a suffixed staging name; reuse preserves the selected key ID/display name.
+Setup pins `EPP_DECRYPTION_KEY_PEM` to its **versioned PEM backing secret**, verifies resolution,
+and registers one encryption entry without changing other credentials.
+It **verifies Easy Auth before enabling ingress**.
 SCM basic authentication stays disabled for both plans. FC1 uses Entra-authenticated **One Deploy**
 for every language, with remote build for Python. Its `functionAppConfig` defines runtime, scaling,
 and managed-identity deployment storage; setup does not write Premium-only runtime/build or
@@ -419,36 +361,27 @@ It never mounts the unbuilt Python source ZIP. EP1 then restarts and synchronize
 Both plans verify that `SendOtp` is registered before reporting success.
 On publication/startup failure it disables public ingress again; failure to close ingress is reported
 explicitly rather than hidden.
-Setup refreshes and checks the exact decryption-key reference through App Service with bounded
-retries for identity/role propagation. Failure to resolve it stops before changing registered
-encryption credentials; infrastructure and app settings may already have changed. This metadata
-check does not replace the required authorized evaluation of decryption before policy activation.
+Key-reference checks use bounded identity/role propagation retries. Failure stops certificate
+registration, but infrastructure/settings may have changed. Metadata resolution does not replace
+authorized decryption evaluation before activation.
 
-The public certificate and a timestamped identifier
-summary are saved to `epp-output` beside the downloaded script, or to `-OutputDirectory`.
-The summary includes certificate/secret version identifiers, thumbprint, expiry, and manual renewal
-mode. Its service-plan and cache fields record configured settings, not verified runtime cache behavior.
-Setup never downloads, writes, or imports the private key locally: only the Function receives
-it through its managed-identity Key Vault reference. Certificate creation automatically supplies the
-backing secret; setup no longer writes a separate `phone-provider-decryption-key` secret.
-
-For unattended runs, supply every input including `-ServicePlan FC1` or `-ServicePlan EP1`,
-authenticate both clients first, and explicitly authorize
-the whole displayed plan with **both** `-NonInteractive -ApproveDeployment`. `-NonInteractive`
-alone never approves changes. There is no `-Stage`, `-Resume`, `-ConfigPath`, or policy-approval switch.
-Existing encryption credentials also require explicit `-CertificateAction Reuse` or `Replace`.
-Unattended reuse requires both `-EncryptionKeyId` and `-KeyVaultCertificateId`, even if only one
-credential exists. `-ApproveDeployment` alone never selects a certificate or authorizes an
-implicit replacement.
+Find the public certificate and timestamped [summary](#read-the-deployment-summary) in `epp-output`
+beside the script, or `-OutputDirectory`. Plan/cache fields record configuration, not verified
+runtime behavior. Setup never downloads, writes, or imports the private key locally: the Function
+receives it through its managed-identity reference. The certificate supplies its backing secret;
+there is no separate `phone-provider-decryption-key` secret.
 
 ### Noninteractive example
 
-This JavaScript deployment template supports both SMS and voice; it is not a credential script.
-Replace the three application/tenant/subscription IDs and `<provider-id>` (`soprano` or `telesign`),
-and choose the approved provider route, Azure region, prefix, and plan before running.
-The preliminary user sign-ins can require MFA and consent; `-NonInteractive` does not create a
-headless service-principal deployment path. Install the Graph modules/Bicep beforehand using
-interactive setup's prerequisite prompts or your approved installation process.
+Supply every input, including `-ServicePlan`, and **both `-NonInteractive -ApproveDeployment`**
+to authorize the complete reviewed plan. `-NonInteractive` alone approves nothing; there is no
+`-Stage`, `-Resume`, `-ConfigPath`, or policy-approval switch.
+
+Replace the IDs/provider placeholder and choose approved route, region, prefix, and plan.
+This JavaScript example supports both channels. Establish the CLI user session for ARM and Graph
+first; MFA/consent may still be required. There is no headless service-principal path.
+Preinstall Bicep or explicitly allow its installation. In Cloud Shell, reuse the intended
+directory's login instead of the local `az login` below; token checks select the subscription.
 
 ```powershell
 $tenantId = '<customer-tenant-guid>'
@@ -457,8 +390,10 @@ $applicationId = '<dedicated-app-client-guid>'
 
 az login --tenant $tenantId
 if ($LASTEXITCODE -ne 0) { throw 'Azure sign-in failed.' }
-Connect-MgGraph -TenantId $tenantId -ContextScope Process `
-    -Scopes 'User.Read', 'Application.ReadWrite.All', 'Application.Read.All', 'AppRoleAssignment.ReadWrite.All'
+az account get-access-token --subscription $subscriptionId --output none
+if ($LASTEXITCODE -ne 0) { throw 'Azure subscription token acquisition failed.' }
+az account get-access-token --subscription $subscriptionId --resource-type ms-graph --output none
+if ($LASTEXITCODE -ne 0) { throw 'Microsoft Graph token acquisition failed.' }
 
 .\Setup-Epp.ps1 `
     -TenantId $tenantId `
@@ -476,12 +411,17 @@ Connect-MgGraph -TenantId $tenantId -ContextScope Process `
 ```
 
 Use `-InstallPrerequisites` only when authorizing automatic missing-dependency installation.
+It installs the Azure CLI Bicep component only; the Microsoft Graph PowerShell SDK is not used.
 Use the [source/version options](#source-versioning) to pin repeatable deployments.
 Review the corresponding interactive plan first; `-ApproveDeployment` authorizes the complete
 mutation set, not just package upload. Do not use it as a dry run.
 
-The example above assumes the app has **no encryption credentials**. For a rerun, add
-`@reuseCertificate` to the complete setup command using this reviewed parameter set:
+Add `-PassThru` when automation also needs the structured deployment result. The timestamped
+summary JSON is saved regardless.
+
+The example assumes **no encryption credentials**. Otherwise choose `Reuse` or `Replace`;
+approval alone never selects or replaces a certificate. Reuse requires both key ID and exact
+certificate version, even with one credential. Add `@reuseCertificate` using this reviewed set:
 
 ```powershell
 $reuseCertificate = @{
@@ -507,13 +447,14 @@ configuration metadata, not provider credentials or private-key bytes. Keep it a
 | `tenantId`, `subscriptionId`, `applicationId` | Verify the intended customer directory, Azure subscription, and endpoint **client ID**. |
 | `resources.functionApp`, `resources.keyVault`, `resources.applicationInsights`, `resources.logAnalytics` | Find the exact Azure resources; do not guess names or use a different environment's vault. |
 | `provider`, `endpointRegion`, `providerTenantId` | Confirm provider routing, separate from the customer's directory and Azure location. Both SMS and voice use this configuration. |
+| `allowedProviderTenantIds` | Review the complete preserved provider-tenant allowlist, including the selected provider. This does not enable runtime fallback between providers. |
 | `providerSmsEndpoint`, `providerVoiceEndpoint` | Confirm the distinct or identical provider URLs for SMS and voice. These are outbound provider URLs, not the Function's `endpointUrl`. |
 | `endpointUrl`, `identifierUri` | Exact SendOtp URL and registered app audience information for the authorized test/policy operator. |
 | `encryptionKeyId`, `certificateThumbprint`, `certificateId`, `certificateSecretId`, `certificateExpiresUtc` | Public-key identification and version/renewal inventory. A secret **ID** is not its value; do not fetch its private-key contents. |
 | `certificateAction`, `removedEncryptionKeyIds`, `certificateVaultSubscriptionId` | Review whether creation, reuse, or replacement occurred, the exact retired application key IDs, and the source certificate's subscription. |
 | `certificateReferenceResolved` | `true` means the Function's exact secret reference resolved before registration. It is not proof of successful authorized decryption or provider delivery. |
 | `endpointServicePrincipalId`, `microsoftPhoneProviderServicePrincipalId` | Tenant-local enterprise-application Object IDs; neither is the endpoint app client ID. |
-| `source`, `packageUrl`, `sourcePackageSha256`, `packageSha256`, `language`, `servicePlan` | Source/package provenance and runtime/plan. FC1 Python's built hash can be null; source and built hashes describe different artifacts. |
+| `source`, `sourceRevision`, `packageReleaseTag`, `packageUrl`, `sourcePackageSha256`, `packageSha256`, `language`, `servicePlan` | Commit-pinned setup source, package release provenance, and runtime/plan. FC1 Python's built hash can be null; source and built hashes describe different artifacts. |
 | `policyChanged` | Expected `false`: deployment has not activated policy. |
 
 The `provider` field must match your selected provider. For example, a record for the Global route
@@ -524,10 +465,9 @@ Those fields do not prove credentials, delivery, or monitoring work. Follow
 
 ### Encryption certificate lifecycle
 
-The policy for certificates **issued by setup** uses **12-month validity, key reuse, and manual renewal**. It specifies
-`EmailContacts` 30 days before expiry, **not `AutoRenew`**. Email is sent only if the customer
-separately configures Key Vault certificate contacts; setup does not create contacts or guarantee
-notifications. Track the saved expiry and arrange renewal before the certificate expires.
+Certificates **issued by setup** use **12-month validity, key reuse, and manual renewal**.
+`EmailContacts` runs 30 days before expiry, **not `AutoRenew`**, and needs separately configured
+vault contacts. Setup creates no contacts and guarantees no notifications.
 
 In **Key Vault > Certificates > Certificate contacts**, add the approved operations/renewal
 contact and verify the address and ownership. Portal labels can vary; follow
@@ -546,17 +486,16 @@ waits for self-signed issuance. Other errors, including pending-operation confli
 rather than overwriting a disabled, incompatible, or near-expiry staged certificate. Keep more than
 30 days of validity remaining. No Key Vault version is deleted as part of application cleanup.
 
-For renewal, coordinate with the EPP owner before expiry. **Replace** stages a new certificate
-and switches the single-key endpoint under the approved maintenance plan. Alternatively, use the
-supported administrator procedure to synchronize a renewed certificate in Entra and Key Vault,
-then select that exact registered version with **Reuse**. Rerunning setup no longer appends a
-renewed certificate alongside older credentials, even when it has the same RSA key.
+Coordinate renewal with the endpoint owner before expiry. **Replace** stages a new certificate
+and switches the single-key endpoint under approved maintenance. Alternatively, synchronize the
+renewed certificate in Microsoft Entra ID and Key Vault through the supported administrator
+procedure, then **Reuse** that exact registered version. Setup does not append a second encryption
+credential, even for the same RSA key.
 
-Key Vault renewal alone does **not** update Entra or the Function's pinned reference.
-Reuse does not change an external certificate's issuance/renewal policy. Even if that vault
-automatically issues a new version, endpoint synchronization remains manual; this is what the
-summary's `certificateRenewal: manual` records. The Function still decrypts in-process with a
-single private key, so any rotation must account for other endpoints and cached/in-flight requests.
+**Vault renewal alone updates neither the app registration nor the pinned Function reference.**
+Reuse leaves an external vault's issuance policy unchanged; automatic issuance there still
+requires manual endpoint synchronization (`certificateRenewal: manual`). Account for every
+endpoint sharing the key and cached/in-flight requests; decryption uses one in-process private key.
 
 **Legacy deployments require an explicit decision.** A compatible matching Key Vault certificate
 can be reused even if it has an older/custom subject. A standalone PEM secret without a Key Vault
@@ -572,45 +511,56 @@ follow [safe recovery](Troubleshooting.md#recover-without-destructive-cleanup).
 
 ### Source versioning
 
-**For developers testing unpublished changes:** publish to a public fork with a matching stable
-package release, then use `-SourceRepository <owner/repository>` and
-`-SourceRef <branch-or-full-commit-sha>`. Both must identify the same source as the downloaded
-launcher. Use `-PackageReleaseTag` if the fork contains more than one stable package release.
-Unpublished worktree changes are not downloadable from GitHub.
+Defaults are `-SourceRepository Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample` and
+`-SourceRef main`. Setup resolves one commit for supporting PowerShell, Bicep, both catalogs,
+and all catalog-listed profiles. The package catalog names assets from that repository's latest
+stable `epp-packages-*` release; `SHA256SUMS.txt` verifies them. The plan/summary records URLs and hashes.
 
-`-SourceRepository` defaults to `Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample`.
-The small entry point resolves `-SourceRef` (default `main`) to a single commit in that repository. All supporting
-PowerShell, Bicep, the catalog, and the selected provider profile are downloaded from that commit.
-The package catalog supplies asset names, while setup resolves the latest stable `epp-packages-*`
-release from the same repository and verifies the selected asset against that release's
-`SHA256SUMS.txt`. The plan and saved summary record the concrete versioned URL and hashes.
-For a fully repeatable deployment, use both a reviewed full commit SHA and
-`-PackageReleaseTag epp-packages-<run>-<attempt>`. Provider JSON selects data only; it cannot
-redirect execution to another script. Download failures stop setup, and temporary downloads are
-removed on completion or failure. Select only a repository whose code you trust: its supporting
-PowerShell is executed locally.
+For repeatable deployment, pin a reviewed full SHA **and**
+`-PackageReleaseTag epp-packages-<run>-<attempt>`. To test custom source, publish a public fork and
+matching stable release; align both source options with the downloaded launcher. Local unpushed
+changes are not downloadable.
+
+Trust the selected repository: its PowerShell executes locally. Provider JSON selects data, not
+another executable script. Downloads fail closed and temporary files are removed on success/failure.
 
 ### Offline setup checks
 
-From the repository root, run the certificate and provider regression suites, compile the infrastructure, and
-check both service plans without Azure sign-in or resource changes:
+From the repository root, compile the infrastructure and run all setup regression suites without
+Azure sign-in or resource changes:
 
 ```powershell
-pwsh -NoProfile -File .\setup\tests\Certificates.Tests.ps1
-pwsh -NoProfile -File .\setup\tests\Providers.Tests.ps1
-az bicep build --file .\setup\infra\main.bicep --outfile "$env:TEMP\epp-main.json"
-pwsh -NoProfile -File .\setup\tests\ServicePlans.Tests.ps1 -TemplatePath "$env:TEMP\epp-main.json"
+$templatePath = Join-Path ([IO.Path]::GetTempPath()) "epp-main-$([Guid]::NewGuid().ToString('N')).json"
+az bicep build --file .\setup\infra\main.bicep --outfile $templatePath
+if ($LASTEXITCODE -ne 0) { throw 'Bicep compilation failed.' }
+
+$tests = @(
+    'Launcher.Tests.ps1',
+    'Accounts.Tests.ps1',
+    'Graph.Tests.ps1',
+    'ProviderConfiguration.Tests.ps1',
+    'Selections.Tests.ps1',
+    'Certificates.Tests.ps1',
+    'Providers.Tests.ps1'
+)
+foreach ($test in $tests) {
+    pwsh -NoProfile -File (Join-Path '.\setup\tests' $test)
+    if ($LASTEXITCODE -ne 0) { throw "$test failed." }
+}
+
+pwsh -NoProfile -File .\setup\tests\ServicePlans.Tests.ps1 `
+    -TemplatePath $templatePath
+if ($LASTEXITCODE -ne 0) { throw 'ServicePlans.Tests.ps1 failed.' }
+Remove-Item -LiteralPath $templatePath
 ```
 
-The focused tests replace certificate/Graph calls and verify zero/one/multiple-certificate decisions,
-cancellation and unattended inputs, repeatable staging, explicit cleanup, preservation of other
-credentials, exact version matching, validity limits, source-vault permissions, stale-plan rejection,
-and reference resolution before registration. The provider suite checks separate regional SMS/voice URLs,
-channel-independent interactive/unattended setup, and both policy handoff targets.
-The service-plan suite checks selections, approval details, regional checks, CLI requirements,
-migration guards, parameter forwarding, and plan-specific publication
-with mocked Azure calls. CI runs all three suites on Windows and Linux. They do not certify live deployments,
-RBAC propagation, Key Vault issuance, Entra behavior, or provider delivery.
+The suites cover launcher downloads and cleanup; account, subscription, application, and region
+selection; Azure CLI Graph calls; provider discovery; allowlist preservation; and stale-plan
+checks. They also cover certificate choices, provider and package selection, and FC1/EP1
+deployment. GitHub, Azure, Microsoft Graph, certificate, and publication calls are mocked.
+CI runs the same eight suites on Windows and Linux.
+They do not certify live deployments, RBAC propagation,
+Key Vault issuance, Entra behavior, or provider delivery.
 
 ## Step 3 - manually validate and activate policy
 
@@ -629,9 +579,9 @@ configuration APIs alone do not establish EPP feature availability or an EPP upd
 Do not invent a PATCH payload, assume a Graph success means activation, or use the general
 Delete operation as an EPP rollback.
 
-Before a policy change, the **Authentication Policy Administrator** must obtain Microsoft's
-current approved EPP procedure for the selected tenant/channel: tool, API/version and exact
-field placement, required consent/roles, readback, validation, and rollback semantics.
+Before a policy change, the **Authentication Policy Administrator** gets Microsoft's current
+approved EPP procedure for the selected tenant and channel. It must identify the tool, API and
+version, exact field placement, required consent and roles, readback steps, validation, and rollback.
 Delegated `Policy.ReadWrite.AuthenticationMethod` is a policy-management permission, not proof
 of EPP entitlement; confirm the approved procedure's permission requirements separately from setup.
 If this information or the feature is unavailable, leave policy unchanged and record the blocker.
