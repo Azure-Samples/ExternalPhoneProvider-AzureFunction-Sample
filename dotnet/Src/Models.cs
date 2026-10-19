@@ -30,8 +30,7 @@ public sealed record ProviderCredentials(
     string Mode,
     string? Secret = null,
     string? Identity = null,
-    [property: JsonIgnore] string? AccessToken = null,
-    [property: JsonIgnore] DateTimeOffset ExpiresOn = default)
+    [property: JsonIgnore] string? AccessToken = null)
 {
     public override string ToString() => nameof(ProviderCredentials);
 }

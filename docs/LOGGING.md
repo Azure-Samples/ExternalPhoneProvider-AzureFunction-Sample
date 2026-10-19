@@ -55,8 +55,9 @@ Failures emit `request_failed` with stage, reason, and HTTP status (`FailureStag
 `Outcome` and a safe classification: `provider_http_error`, `provider_rejected`, `unrecognized_provider_status`,
 `missing_provider_message_id`, or `invalid_provider_json`. `provider_response_processed` includes
 that classification, upstream HTTP status, and normalized status, never descriptions/bodies.
-Credential acquisition and refresh failures use `credential_refresh_failed`. Unexpected failures use
-`unexpected_error`. No event adds credential reads, acquisition, or send retries.
+Credential acquisition failures use `request_failed` with stage `provider_credentials`, reason
+`credential_unavailable`, and HTTP `502`. There are no background credential-refresh events.
+Unexpected failures use `unexpected_error`. No event adds credential reads, acquisition, or send retries.
 
 `response_prepared` runs before successful and failed returns. It does not prove caller receipt.
 
@@ -72,7 +73,8 @@ Build metadata from validated allowlisted fields. Exclude unknown, tenant, local
 decrypted values.
 
 `providerCredentialSource` is `managed_identity_client_assertion` for app tokens and `key_vault`
-for API keys. Cached resolution does not imply a network fetch or fresh token exchange.
+for API keys. OAuth resolution can reuse the SDK's token cache and does not imply a fresh token
+exchange. API-key resolution reads Key Vault secret values for each live request.
 `providerCredentialElapsedMs` includes resolution and usability checks, not a separate deadline.
 SDK diagnostics remain suppressed.
 

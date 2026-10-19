@@ -95,14 +95,14 @@ measured load result.
 
 Encrypted evaluation requests bypass request-path provider credential resolution and outbound
 provider calls. An evaluation load test covers only the exercised ingress, authentication,
-decryption, and routing path, **not complete live-send capacity**. Background credential refresh
-can still run independently. Its presence does not prove live-path credential capacity.
+decryption, and routing path, **not complete live-send capacity**. There is no background
+credential refresher; evaluation does not establish credential availability or acquisition capacity.
 
 For full-path capacity evidence, test both survivor regions with a **non-delivering,
-provider-approved sandbox or stub**. Exercise the live request path, credential refresh, realistic
+provider-approved sandbox or stub**. Exercise the live request path, credential acquisition, realistic
 provider delay, and quota or throttling behavior. If the test system cannot match part of
-production, record the difference and add provider capacity evidence. Include cold starts, cache
-expiry, and key refresh so warm caches do not hide a regional dependency. Keep this test separate
+production, record the difference and add provider capacity evidence. Include cold starts, SDK token
+expiry, and key resolution so cached tokens do not hide a regional dependency. Keep this test separate
 from the evaluation-only recovery test, and use live sends only through a separately approved test.
 
 <a id="2-prepare-equivalent-independently-provisioned-origins"></a>
@@ -263,8 +263,8 @@ with Microsoft and obtain separate approval for sign-in or delivery tests.
 | Failover from A to B | Follow the recovery test: isolate only approved test origin A while leaving it **enabled in Front Door**. Keep B healthy and evaluation traffic bounded. | Health-based routing to B meets agreed recovery and transition-error limits, without changing the public URL, trust, or encryption key. | Fault/probe/client timestamps, every failure/timeout, and B's request/health signals. |
 | Failover from B to A | After A is fully restored and stable, repeat with B isolated but **enabled in Front Door**. | A meets the same agreed criteria. Both directions must pass. | The same evidence, identifying A as the survivor and confirming B's subsequent restoration. |
 | Sustained survivor capacity | In each direction, maintain the [combined peak offered load plus planned headroom](#capacity-gate-each-region-must-support-the-combined-peak-load) for the agreed soak. | **Each region handles at least double its normal share in the balanced two-region case, plus headroom**, within agreed error/latency and dependency limits. Evaluation proves only the exercised path. | Offered/completed rates, concurrency, latency percentiles, errors/timeouts, saturation/throttling, quotas and available capacity per region. |
-| Restart, cold start, and credential refresh without the failed region | In a separately approved dependency-isolation test environment, make the failed region's storage/vault paths unavailable and start or restart the survivor stack. Exercise key resolution and credential refresh using the non-delivering provider setup below. Do not add a second fault to the basic recovery test. | The survivor starts and serves using its own dependencies. Warm caches do not hide cross-region access. Missing failed-region telemetry is not treated as success. | Dependency configuration/access evidence, startup/key/credential-refresh results, client outcomes, and timestamps captured outside the failed region. |
-| Complete live-path capacity and provider credential failures | Separately use a provider-approved, production-representative **non-delivering sandbox/stub** exercising credential acquisition/refresh and provider latency/quota behavior. Test valid and invalid/expired test credentials without production accounts or recipients. | Both survivor regions meet the capacity criteria on this path. Credential failures are surfaced, not reported as successful sends. Evaluation-only throughput cannot pass this test. | Credential/provider timing, failures/throttling, load results, and provider capacity/quota evidence for behavior the sandbox/stub cannot reproduce. |
+| Restart, cold start, and credential acquisition without the failed region | In a separately approved dependency-isolation test environment, make the failed region's storage/vault paths unavailable and start or restart the survivor stack. Exercise key resolution and request-time credential acquisition using the non-delivering provider setup below. Do not add a second fault to the basic recovery test. | The survivor starts and serves using its own dependencies. SDK token caches do not hide cross-region access. Missing failed-region telemetry is not treated as success. | Dependency configuration/access evidence, startup/key/credential-acquisition results, client outcomes, and timestamps captured outside the failed region. |
+| Complete live-path capacity and provider credential failures | Separately use a provider-approved, production-representative **non-delivering sandbox/stub** exercising credential acquisition, SDK token renewal, and provider latency/quota behavior. Test valid and invalid/expired test credentials without production accounts or recipients. | Both survivor regions meet the capacity criteria on this path. Credential failures are surfaced, not reported as successful sends. Evaluation-only throughput cannot pass this test. | Credential/provider timing, failures/throttling, load results, and provider capacity/quota evidence for behavior the sandbox/stub cannot reproduce. |
 | Restoration and conservative failback | Restore the original approved state even after a failed test. Verify the restored origin's own readiness and successful evaluations, then observe traffic returning for the agreed window. | Both origins are healthy and serving within agreed limits, with original security settings intact, before any next fault. | Restoration confirmation, origin-specific readiness/request evidence and failback latency/errors. |
 
 For every row, record **pass, fail, or not tested**, the approved target, observed outcome, and
@@ -313,7 +313,7 @@ thresholds before starting.
 Stopping a Function App tests routing when one application origin is unavailable. Add separate
 nonproduction tests for regional storage, vault, identity access, network paths, control plane,
 and telemetry. Capture evidence outside the affected region. Include cold startup, credential
-refresh, and restoration so the plan covers more than an already-warm app. Record any scenario
+acquisition, SDK token renewal, and restoration so the plan covers more than an already-warm app. Record any scenario
 that cannot be tested safely and assign an owner and follow-up date.
 
 Use separate approved checks for real Microsoft Entra ID caller timing, provider acceptance, and

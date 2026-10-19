@@ -97,13 +97,13 @@ function config() {
     });
 }
 
-test('real SDK sees one initial Entra exchange and none on concurrent or later warm requests', async () => {
-    let now = Date.now();
-    const manager = new CredentialTokenService({
-        cacheOptions: { now: () => now, schedule: () => ({ unref() {} }), cancel() {} },
-    });
+test('the real SDK reuses its token on concurrent and later requests without application caching', async () => {
+    const manager = new CredentialTokenService();
     const settings = config();
     try {
+        assert.equal(state.tokenCalls, 0);
+        assert.equal(state.miCalls, 0);
+        assert.equal((await manager.resolve({ mode: 'oauth' }, settings)).accessToken, 'PRIVATE-TOKEN');
         const tokens = await Promise.all(Array.from({ length: 20 }, () => manager.resolve({ mode: 'oauth' }, settings)));
         assert.ok(tokens.every((token) => token.accessToken === 'PRIVATE-TOKEN'));
         assert.equal(state.tokenCalls, 1);
@@ -111,67 +111,27 @@ test('real SDK sees one initial Entra exchange and none on concurrent or later w
         await manager.resolve({ mode: 'oauth' }, settings);
         assert.equal(state.tokenCalls, 1);
         assert.equal(state.miCalls, 1);
-        now += 60000;
-        assert.equal((await manager.resolve({ mode: 'oauth' }, settings)).accessToken, 'PRIVATE-TOKEN');
-        await manager.refresh();
-        assert.equal(state.tokenCalls, 1);
-        assert.equal(state.miCalls, 1);
+        assert.equal(state.vaultCalls, 0);
     } finally { manager.close(); }
 });
 
-test('disabled token caching performs a new Entra exchange for each request through the real SDK', async () => {
+test('the request deadline aborts SDK transport without imposing a retry cooldown or returning a late token', async () => {
     const manager = new CredentialTokenService();
     const settings = config();
-    settings.accessTokenCacheEnabled = 'false';
-    settings.keyVaultCacheEnabled = 'PRIVATE-UNUSED';
-    try {
-        for (let i = 0; i < 2; i++) {
-            assert.equal((await manager.resolve({ mode: 'oauth' }, settings)).accessToken, 'PRIVATE-TOKEN');
-        }
-        assert.equal(state.tokenCalls, 2);
-        assert.equal(state.vaultCalls, 0);
-        assert.equal(manager.current, null);
-        assert.equal(manager.timer, null);
-    } finally { manager.close(); }
-});
-
-test('disabled token caching retains the SDK transport deadline without imposing a retry cooldown', async () => {
-    const failures = [];
-    const manager = new CredentialTokenService({ reportFailure: (kind) => failures.push(kind) });
-    const settings = config();
-    settings.accessTokenCacheEnabled = 'false';
     state.wait = 10000;
     try {
         await assert.rejects(manager.resolve({ mode: 'oauth' }, settings), /^Error: provider credential unavailable$/);
         await new Promise(setImmediate);
         assert.ok(state.requests.some((request) => !request.managedIdentity && request.aborted));
-        assert.deepEqual(failures, ['provider_token']);
         state.wait = 5;
         assert.equal((await manager.resolve({ mode: 'oauth' }, settings)).accessToken, 'PRIVATE-TOKEN');
         assert.equal(state.tokenCalls, 2);
-        assert.equal(manager.current, null);
-        assert.equal(manager.timer, null);
+        assert.equal(manager.controllers.size, 0);
     } finally { manager.close(); }
 });
 
-test('the cache-owned acquisition budget aborts actual SDK transport and does not cache a late token', async () => {
-    const failures = [];
-    const manager = new CredentialTokenService({ reportFailure: (kind) => failures.push(kind) });
-    const settings = config();
-    state.wait = 10000;
-    try {
-        await assert.rejects(manager.resolve({ mode: 'oauth' }, settings), /^Error: provider credential unavailable$/);
-        await new Promise(setImmediate);
-        assert.ok(state.requests.some((request) => !request.managedIdentity && request.aborted));
-        assert.deepEqual(failures, ['provider_token']);
-        assert.equal(state.tokenCalls, 1);
-        await assert.rejects(manager.resolve({ mode: 'oauth' }, settings), /unavailable/);
-        assert.equal(state.tokenCalls, 1);
-    } finally { manager.close(); }
-});
-
-test('restarting with new configuration cancels old work without publishing into the replacement cache', async () => {
-    const manager = new CredentialTokenService({ reportFailure: () => {} });
+test('restarting with new configuration cancels old work and creates independent SDK clients', async () => {
+    const manager = new CredentialTokenService();
     const settings = config();
     state.wait = 10000;
     const first = manager.resolve({ mode: 'oauth' }, settings);
@@ -179,7 +139,7 @@ test('restarting with new configuration cancels old work without publishing into
     await waitForRequest(false);
     manager.close();
     state.wait = 5;
-    const replacement = new CredentialTokenService({ reportFailure() {} });
+    const replacement = new CredentialTokenService();
     const result = await replacement.resolve({ mode: 'oauth' }, { ...settings, outboundClientId: crypto.randomUUID() });
     await firstRejected;
     try {
@@ -189,12 +149,8 @@ test('restarting with new configuration cancels old work without publishing into
     } finally { manager.close(); replacement.close(); }
 });
 
-test('the acquisition deadline aborts real managed-identity transport before another refresh starts', async () => {
-    let now = Date.now();
-    const manager = new CredentialTokenService({
-        reportFailure: () => {},
-        cacheOptions: { now: () => now, schedule: () => ({ unref() {} }), cancel() {} },
-    });
+test('the acquisition deadline aborts managed-identity transport and the next request can retry immediately', async () => {
+    const manager = new CredentialTokenService();
     const settings = config();
     state.miWait = 10000;
     try {
@@ -203,7 +159,6 @@ test('the acquisition deadline aborts real managed-identity transport before ano
         assert.equal(state.miCalls, 1);
         assert.ok(state.requests.every((request) => request.completed && request.aborted));
         assert.equal(state.tokenCalls, 0);
-        now += 30000;
         state.miWait = 5;
         assert.equal((await manager.resolve({ mode: 'oauth' }, settings)).accessToken, 'PRIVATE-TOKEN');
         assert.equal(state.miCalls, 2);
@@ -212,7 +167,7 @@ test('the acquisition deadline aborts real managed-identity transport before ano
 });
 
 test('shutdown aborts managed-identity transport and cannot restart acquisition', async () => {
-    const manager = new CredentialTokenService({ reportFailure: () => {} });
+    const manager = new CredentialTokenService();
     const settings = config();
     state.miWait = 10000;
     const pending = manager.resolve({ mode: 'oauth' }, settings);
@@ -233,7 +188,7 @@ test('shutdown aborts managed-identity transport and cannot restart acquisition'
 });
 
 test('Key Vault acquisition also aborts its real managed-identity transport', async () => {
-    const manager = new CredentialTokenService({ reportFailure: () => {} });
+    const manager = new CredentialTokenService();
     const settings = readConfig({
         KEY_VAULT_URL: 'https://unit.vault.azure.net', AZURE_CLIENT_ID: crypto.randomUUID(),
     });
@@ -274,7 +229,7 @@ test('the default Azure HTTP client closes a stalled managed-identity socket on 
             }
             process.env.IDENTITY_ENDPOINT = 'http://127.0.0.1:' + server.address().port + '/identity';
             process.env.IDENTITY_HEADER = 'synthetic-header';
-            const manager = new CredentialTokenService({ reportFailure: () => {} });
+            const manager = new CredentialTokenService();
             try {
                 await assert.rejects(manager.resolve({ mode: 'oauth' }, {
                     providerTenantId: '11111111-1111-1111-1111-111111111111',

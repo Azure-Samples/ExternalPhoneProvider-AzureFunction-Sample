@@ -87,8 +87,8 @@ function Get-EppServicePlan {
     Write-Host "`nService plan selection" -ForegroundColor Cyan
     Write-Host 'Flex Consumption has a free usage grant, not a zero-cost guarantee. Additional usage, Key Vault, storage, and telemetry can incur charges.'
     return Select-EppOption -Entries @(
-        @{ id = 'FC1'; displayName = 'Flex Consumption FC1 (free grant, cold starts, cache settings false)' }
-        @{ id = 'EP1'; displayName = 'Premium EP1 (warm instance, cache settings true)' }
+        @{ id = 'FC1'; displayName = 'Flex Consumption FC1 (free grant, cold starts)' }
+        @{ id = 'EP1'; displayName = 'Premium EP1 (warm instance)' }
     ) -Name ServicePlan -PromptName 'Service plan' -Value $ServicePlan -NonInteractive:$NonInteractive
 }
 
@@ -1182,9 +1182,6 @@ function Show-EppPlan {
     Write-Host "Location:     $($Inputs.Location)"
     Write-Host "Platform:     $($Inputs.Platform)"
     Write-Host "Service plan: $($Inputs.ServicePlan)"
-    $cacheEnabled = ($Inputs.ServicePlan -eq 'EP1').ToString().ToLowerInvariant()
-    Write-Host "Cache app settings: EPP_KEY_VAULT_CACHE_ENABLED=$cacheEnabled; EPP_ACCESS_TOKEN_CACHE_ENABLED=$cacheEnabled"
-    Write-Host 'Cache control requires a Function package that reads these settings; setting them alone does not change runtime caching.' -ForegroundColor Yellow
     Write-Host "Provider:     $($ProviderConfiguration.DisplayName)"
     Write-Host 'Channels:     SMS and voice (selected by each request)'
     $tenantScope = if ($ProviderConfiguration.EndpointRegion -eq 'eu') { 'EU' } else { 'Global' }
@@ -2251,8 +2248,6 @@ function Invoke-EppDeployment {
             providerVoiceEndpoint = $ProviderConfiguration.Settings.EPP_PROVIDER_VOICE_ENDPOINT
             resourcePrefix = $Inputs.ResourcePrefix; resources = $Names
             language = $Inputs.Language; servicePlan = $Inputs.ServicePlan
-            keyVaultCacheEnabled = $Inputs.ServicePlan -eq 'EP1'
-            accessTokenCacheEnabled = $Inputs.ServicePlan -eq 'EP1'
             endpointUrl = $outputs.endpointUrl.value; identifierUri = $outputs.identifierUri.value
             encryptionKeyId = $keyId; certificateThumbprint = $certificate.Thumbprint
             certificateId = $issued.CertificateId; certificateSecretId = $issued.SecretId

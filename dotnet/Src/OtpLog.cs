@@ -103,7 +103,4 @@ internal static partial class OtpLog
     internal static partial void RequestCompleted(
         ILogger logger, int httpStatus, string result, long elapsedMs);
 
-    [LoggerMessage(EventId = 1500, EventName = "credential_refresh_failed", Level = LogLevel.Warning,
-        Message = "Credential refresh failed for {CacheKind}: credential unavailable")]
-    internal static partial void CredentialRefreshFailed(ILogger logger, string cacheKind);
 }

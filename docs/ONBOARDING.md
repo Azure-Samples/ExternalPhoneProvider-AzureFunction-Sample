@@ -82,7 +82,6 @@ the approved plan. `policyChanged: false` is expected because setup does not act
 | `KEY_VAULT_URL` | Vault holding API-key provider credentials | Use the summary's vault URI |
 | `EPP_DECRYPTION_KEY_PEM`, `EPP_ENCRYPTION_KEY_ID` | Versioned encryption key reference and registered key ID | Assign a renewal owner |
 | `EPP_PROVIDER_TIMEOUT_MS`, `EPP_PROVIDER_RETRY_INTERVAL_MS` | Provider timing values | Retry interval metadata does not enable retries |
-| `EPP_KEY_VAULT_CACHE_ENABLED`, `EPP_ACCESS_TOKEN_CACHE_ENABLED` | Credential caching | Setup uses `false` for FC1 and `true` for EP1 |
 | Easy Auth issuer, audience, and caller allowlist | Inbound Microsoft caller validation | Read back the platform configuration |
 
 The trust paths are separate:

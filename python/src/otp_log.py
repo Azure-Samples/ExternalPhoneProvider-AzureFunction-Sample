@@ -111,8 +111,3 @@ def response_prepared(log, http_status, contains_nonce, contains_correlation_id)
 def request_completed(log, http_status, result, elapsed_ms):
     _emit(log, 1401, "request_completed", "OTP request completed",
           httpStatus=http_status, result=result, elapsedMs=elapsed_ms)
-
-
-def credential_refresh_failed(log, cache_kind):
-    _emit(log, 1500, "credential_refresh_failed", "Credential refresh failed",
-          level=logging.WARNING, cacheKind=cache_kind, failureReason="credential_unavailable")

@@ -23,7 +23,6 @@ builder.Services.AddSingleton<PhoneProviderBase, SopranoProvider>();
 builder.Services.AddSingleton<PhoneProviderBase, SinchProvider>();
 
 builder.Services.AddSingleton<CredentialTokenService>();
-builder.Services.AddHostedService(services => services.GetRequiredService<CredentialTokenService>());
 builder.Services.AddSingleton<SendOtp>();
 
 builder.Build().Run();

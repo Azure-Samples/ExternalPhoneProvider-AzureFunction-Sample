@@ -163,16 +163,16 @@ function event(name) {
 }
 
 for (const provider of ['telesign', 'soprano']) {
-    test(`${provider}: disabled cache skips startup and evaluation but acquires for every live request`, async () => {
+    test(`${provider}: only live requests acquire credentials and obsolete cache settings are ignored`, async () => {
         const apiKey = provider === 'telesign';
         process.env.EPP_PROVIDER_NAME = provider;
         process.env.EPP_PROVIDER_AUTH_MODE = apiKey ? 'apiKey' : 'oauth';
-        process.env[apiKey ? 'EPP_KEY_VAULT_CACHE_ENABLED' : 'EPP_ACCESS_TOKEN_CACHE_ENABLED'] = 'false';
-        process.env[apiKey ? 'EPP_ACCESS_TOKEN_CACHE_ENABLED' : 'EPP_KEY_VAULT_CACHE_ENABLED'] = 'PRIVATE-UNUSED';
+        process.env.EPP_KEY_VAULT_CACHE_ENABLED = 'PRIVATE-OBSOLETE';
+        process.env.EPP_ACCESS_TOKEN_CACHE_ENABLED = 'PRIVATE-OBSOLETE';
         if (apiKey) fetchMock.mock.mockImplementation(async () => ({
             ok: true, status: 200, text: async () => JSON.stringify({ status: { code: 3001 } }),
         }));
-        await startHook();
+        assert.equal(startHook, undefined);
         const evaluated = await invoke(await envelope({ mode: 2 }));
         assert.equal(evaluated.status, 200);
         assert.equal(evaluated.jsonBody.nonce, baseDelivery.nonce);
@@ -180,27 +180,24 @@ for (const provider of ['telesign', 'soprano']) {
         for (let i = 0; i < 2; i++) assert.equal((await invoke(await envelope())).status, 200);
         assert.equal(getSecret.mock.callCount(), apiKey ? 4 : 0);
         assert.equal(getToken.mock.callCount(), apiKey ? 0 : 2);
-        assert.equal(service.current, null);
-        assert.equal(service.timer, null);
     });
 }
 
-test('invalid cache settings fail live credentials but leave evaluation and private logs unchanged', async () => {
-    const warnings = mock.method(console, 'warn', () => {});
-    process.env.EPP_KEY_VAULT_CACHE_ENABLED = 'PRIVATE-INVALID';
-    process.env.EPP_ACCESS_TOKEN_CACHE_ENABLED = 'PRIVATE-INVALID';
-    await startHook();
+test('a credential failure is request-correlated and the next live request can recover immediately', async () => {
+    getToken.mock.mockImplementationOnce(async () => { throw new Error('PRIVATE-SDK-FAILURE'); });
     assert.equal((await invoke(await envelope({ mode: 2 }))).status, 200);
     failure(await invoke(await envelope()), 502);
+    assert.equal(event('request_failed').failureStage, 'provider_credentials');
     assert.equal(event('request_failed').failureReason, 'credential_unavailable');
-    assert.deepEqual([getToken.mock.callCount(), getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0, 0]);
-    assert.ok(warnings.mock.callCount() > 0);
-    assert.doesNotMatch(JSON.stringify(warnings.mock.calls.map((call) => call.arguments)), /PRIVATE/);
+    assert.equal(fetchMock.mock.callCount(), 0);
+    assert.equal((await invoke(await envelope())).status, 200);
+    assert.equal(getToken.mock.callCount(), 2);
+    assert.equal(fetchMock.mock.callCount(), 1);
 });
 
-test('startup prewarms only the configured provider and shutdown closes the service', async () => {
-    await startHook();
-    assert.equal(getToken.mock.callCount(), 1);
+test('startup does not warm credentials and shutdown closes pending acquisition', async () => {
+    assert.equal(startHook, undefined);
+    assert.equal(getToken.mock.callCount(), 0);
     assert.equal(getSecret.mock.callCount(), 0);
     assert.equal(fetchMock.mock.callCount(), 0);
     await invoke(await envelope());
@@ -213,7 +210,7 @@ test('startup prewarms only the configured provider and shutdown closes the serv
 
 test('startup without a provider and evaluation perform no provider I/O', async () => {
     delete process.env.EPP_PROVIDER_NAME;
-    await startHook();
+    assert.equal(startHook, undefined);
     const result = await invoke(await envelope({ mode: 'evaluation' }));
     assert.equal(result.status, 200);
     assert.equal(result.jsonBody.nonce, baseDelivery.nonce);

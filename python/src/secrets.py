@@ -36,5 +36,4 @@ class SecretResolver:
     def resolve(self, secret_name: str | None) -> str:
         if not secret_name:
             return ""
-        # ApiKeyCache publishes the complete credential bundle.
         return self._get_client().get_secret(secret_name, logging_enable=False).value or ""
