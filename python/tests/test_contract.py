@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.models import EntraSendOtpPayload, Outcome, OtpDelivery, ProviderResult
+from src.models import DeliveryContext, EntraSendOtpPayload, Outcome, OtpDelivery, ProviderResult
 from src.providers.infobip import InfobipProvider
 from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
@@ -15,7 +15,28 @@ MESSAGE = "  Use 918273; then 1234.\nDo not rewrite + or café.  "
 
 def _delivery(channel="sms"):
     return OtpDelivery(
-        "+15551234567", MESSAGE, channel, "message-id", "correlation-id", "en-US")
+        "+15551234567", MESSAGE, channel, "message-id", "correlation-id", "en-US", otp="918273")
+
+
+@pytest.mark.parametrize("fields,expected", [
+    ({}, None), ({"otp": None}, None), ({"otp": ""}, ""),
+    ({"otp": "001234"}, "001234"), ({"otp": "000000"}, "000000"),
+])
+def test_delivery_models_preserve_optional_otp_without_coercion_or_message_extraction(fields, expected):
+    context = DeliveryContext.from_payload({
+        "nonce": "nonce", "phoneNumber": "+15551234567", "message": MESSAGE, **fields,
+    })
+    assert context.is_complete
+    assert context.otp == expected
+    assert context.message == MESSAGE
+    delivery = OtpDelivery(
+        context.phone_number, context.message, "sms", "message-id", "correlation-id", None,
+        otp=context.otp)
+    assert delivery.otp == expected
+    for value in (context, delivery):
+        assert MESSAGE not in repr(value)
+        if expected:
+            assert expected not in repr(value)
 
 
 @pytest.mark.parametrize("channel", ["sms", "voice"])

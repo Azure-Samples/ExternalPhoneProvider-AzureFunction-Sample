@@ -189,10 +189,12 @@ app.http('SendOtp', {
             const delivery = new OtpDelivery({
                 phoneNumber: decrypted.delivery.phoneNumber,
                 message: decrypted.delivery.message,
+                otp: decrypted.delivery.otp,
                 channel,
                 messageId: msRequestId || requestId,
                 correlationId,
                 locale: decrypted.delivery.locale,
+                riskContext: decrypted.delivery.riskContext,
             });
             let providerRequest;
             try {

@@ -9,6 +9,29 @@ namespace Epp.Otp.Tests;
 public class PayloadAndJweTests
 {
     [Theory]
+    [InlineData(null, null)]
+    [InlineData("null", null)]
+    [InlineData("\"\"", "")]
+    [InlineData("\"001234\"", "001234")]
+    [InlineData("\"000000\"", "000000")]
+    public void DecryptedContextPreservesOptionalOtpString(string? otpJson, string? expected)
+    {
+        using var keys = new TestKeys();
+        var otpProperty = otpJson is null ? "" : $",\"otp\":{otpJson}";
+        const string message = "Your code is 001234.";
+        var plaintext = "{\"nonce\":\"test-nonce\",\"phoneNumber\":\"+15551234567\","
+            + $"\"message\":\"{message}\"{otpProperty}}}";
+        var compact = Jose.JWT.Encode(plaintext, keys.Rsa,
+            Jose.JweAlgorithm.RSA_OAEP_256, Jose.JweEncryption.A256GCM);
+
+        var context = new JweDecryptor(keys.Env).Decrypt<DeliveryContext>(compact).Value;
+        Assert.True(context.IsComplete);
+        Assert.Equal(expected, context.Otp);
+        Assert.Equal(message, context.Message);
+        Assert.Equal(expected, JsonSerializer.SerializeToElement(context).GetProperty("otp").GetString());
+    }
+
+    [Theory]
     [InlineData(true, true)]
     [InlineData(true, false)]
     [InlineData(false, true)]

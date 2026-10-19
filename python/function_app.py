@@ -192,6 +192,8 @@ def send_otp(req: func.HttpRequest, context: func.Context = None) -> func.HttpRe
                 ms_request_id or request_id,
                 correlation_id,
                 delivery_context.locale,
+                otp=delivery_context.otp,
+                risk_context=delivery_context.risk_context,
             )
             provider_status, log = _send_to_provider(delivery, log)
             if provider_status >= 400:

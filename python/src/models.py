@@ -83,17 +83,21 @@ class EntraSendOtpPayload:
 
 @dataclass(frozen=True, repr=False)
 class DeliveryContext:
-    # Keep raw JSON values until is_complete validates the required strings.
+    # Keep required strings and OTP raw until is_complete validates their types.
     nonce: object
     phone_number: object
     message: object
     locale: object = None
     extension: object = None
-    risk_context: object = None
+    risk_context: dict[str, object] | None = None
+    otp: object = None
 
     @classmethod
     def from_payload(cls, payload: object) -> "DeliveryContext | None":
         if not isinstance(payload, dict):
+            return None
+        risk_context = payload.get("riskContext")
+        if risk_context is not None and not isinstance(risk_context, dict):
             return None
         return cls(
             nonce=payload.get("nonce"),
@@ -101,7 +105,8 @@ class DeliveryContext:
             message=payload.get("message"),
             locale=payload.get("locale") if isinstance(payload.get("locale"), str) else None,
             extension=payload.get("extension"),
-            risk_context=payload.get("riskContext"),
+            risk_context=risk_context,
+            otp=payload.get("otp"),
         )
 
     @property
@@ -109,7 +114,7 @@ class DeliveryContext:
         return all(
             isinstance(value, str) and value.strip()
             for value in (self.nonce, self.phone_number, self.message)
-        )
+        ) and (self.otp is None or isinstance(self.otp, str))
 
 
 @dataclass(frozen=True, repr=False)
@@ -120,6 +125,8 @@ class OtpDelivery:
     message_id: str
     correlation_id: str | None
     locale: str | None
+    otp: str | None = None
+    risk_context: dict[str, object] | None = None
 
 
 class Outcome(str, Enum):
