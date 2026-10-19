@@ -67,7 +67,7 @@ Before live use, review [production readiness](TECHNICAL.md#production-readiness
 | Resolve a problem | [Troubleshooting](setup/docs/Troubleshooting.md) |
 | Monitor the endpoint | [Monitoring](docs/MONITORING.md) |
 | Review the API | [Send OTP](docs/CONTRACT.md) |
-| Review CYOT and native isolation | [Isolation model](docs/ISOLATION.md) |
+| Review CYOT and native fallback isolation | [Isolation model](docs/ISOLATION.md) |
 | Add Twilio | [Twilio integration guide](docs/BRING-YOUR-OWN-PROVIDER.md) |
 | Work on a runtime | [JavaScript](javascript/README.md), [C#](dotnet/README.md), or [Python](python/README.md) |
 

@@ -360,7 +360,8 @@ Provider credentials authenticate outbound calls, not incoming requests. Vault a
 Because Core Tools does not provide Easy Auth, bind local hosts to loopback without tunnels.
 [Deployed checks](docs/ONBOARDING.md#validate-the-deployed-endpoint) remain required after offline tests.
 See [CYOT and Microsoft native delivery isolation](docs/ISOLATION.md) for the routing, identity,
-credential, fallback, and monitoring boundaries between the customer endpoint and native delivery.
+credential, fallback, and monitoring boundaries between the customer endpoint and Microsoft
+Entra-managed native fallback.
 
 ## Docs
 
