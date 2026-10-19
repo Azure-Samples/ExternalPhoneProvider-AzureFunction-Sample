@@ -23,6 +23,7 @@ Use the guide that matches your task.
 - [Technical reference](../TECHNICAL.md)
   - [Soprano and Telesign](../TECHNICAL.md#built-in-providers)
 - [Send OTP API](CONTRACT.md)
+- [CYOT and Microsoft native delivery isolation](ISOLATION.md)
 - Runtime guides:
   - [JavaScript](../javascript/README.md)
   - [C#](../dotnet/README.md)
