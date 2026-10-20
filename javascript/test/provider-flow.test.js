@@ -116,6 +116,49 @@ test('payload validation preserves exact shared reasons and order', () => {
     }
 });
 
+test('payload enums preserve numeric values and case-insensitive supported names', () => {
+    for (const [channel, expectedChannel, channelName] of [
+        [1, 1, 'sms'], ['sms', 1, 'sms'], ['SMS', 1, 'sms'], ['sMs', 1, 'sms'],
+        [2, 2, 'voice'], ['voice', 2, 'voice'], ['VOICE', 2, 'voice'], ['VoIcE', 2, 'voice'],
+    ]) {
+        for (const [mode, expectedMode] of [
+            [1, 1], ['live', 1], ['LIVE', 1], ['LiVe', 1],
+            [2, 2], ['evaluation', 2], ['EVALUATION', 2], ['EvAlUaTiOn', 2],
+        ]) {
+            const parsed = parseEntraPayload(envelope({ channel, mode }));
+            assert.equal(parsed.error, undefined);
+            assert.deepEqual([
+                parsed.payload.channel, parsed.payload.mode,
+                parsed.payload.channelName, parsed.payload.isEvaluation,
+            ], [expectedChannel, expectedMode, channelName, expectedMode === 2],
+            JSON.stringify({ channel, mode }));
+        }
+    }
+});
+
+for (const field of ['channel', 'mode']) {
+    for (const value of [
+        'constructor', '__proto__', 'CONSTRUCTOR', '__PROTO__',
+        'toString', 'valueOf', 'hasOwnProperty', 'unsupported',
+    ]) {
+        test(`payload ${field} rejects unsupported enum name ${value}`, () => {
+            assert.deepEqual(parseEntraPayload(envelope({ [field]: value })),
+                { error: `unsupported ${field}` });
+        });
+    }
+
+    test(`payload ${field} rejects invalid enum values without coercion`, () => {
+        for (const value of [
+            undefined, null, true, false, 0, -1, 3, 1.5, {}, [], ['sms'], ['evaluation'],
+            '', '1', '2', ' sms', 'sms ', ' voice', 'voice ',
+            ' live', 'live ', ' evaluation', 'evaluation ',
+        ]) {
+            assert.deepEqual(parseEntraPayload(envelope({ [field]: value })),
+                { error: `unsupported ${field}` }, JSON.stringify(value));
+        }
+    });
+}
+
 test('provider URLs and timeout parsing preserve safety boundaries and cap', () => {
     for (const url of ['http://provider.example', 'https://@provider.example', 'https://provider.example#',
         'https://provider.example:0', 'https://provider.example:-1', 'https://provider.example:65536',

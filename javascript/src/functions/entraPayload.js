@@ -10,7 +10,10 @@ const MODE_BY_NAME = Object.freeze({ live: MODE.LIVE, evaluation: MODE.EVALUATIO
 
 function normalizeEnum(value, names, first, second) {
     if (value === first || value === second) return value;
-    if (typeof value === 'string') return names[value.toLowerCase()] || null;
+    if (typeof value === 'string') {
+        const name = value.toLowerCase();
+        return Object.hasOwn(names, name) ? names[name] : null;
+    }
     return null;
 }
 
