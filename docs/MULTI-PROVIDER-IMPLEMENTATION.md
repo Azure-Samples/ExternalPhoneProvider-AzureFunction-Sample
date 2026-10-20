@@ -85,7 +85,8 @@ The following customer-owned format is not loaded by the sample. Replace each
 ```
 
 This SMS policy requires `EPP_PROVIDER_SMS_ENDPOINT` for each account. Voice uses
-`EPP_PROVIDER_VOICE_ENDPOINT`. The channels do not share an endpoint.
+`EPP_PROVIDER_VOICE_ENDPOINT`. Each channel requires its own setting; the handler does not use
+the other channel's setting when one is missing.
 
 At startup, validate both account configurations before enabling the endpoint. Check for unique
 IDs, the required channel endpoint, matching authentication mode, approved URLs, credential
