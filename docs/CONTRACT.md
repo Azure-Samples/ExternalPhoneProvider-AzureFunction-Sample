@@ -75,7 +75,7 @@ The Function does not forward the bearer token to the phone provider.
 | `channel` | Yes | `1` or `"sms"` for SMS. `2` or `"voice"` for voice. |
 | `mode` | Yes | `1` or `"live"` to send. `2` or `"evaluation"` for no-send validation. |
 | `encryptedDeliveryContext` | Yes | Compact JWE containing the delivery data. |
-| `tenantId` | No | Routing metadata supplied by Microsoft Entra ID. |
+| `tenantId` | No | Tenant metadata supplied by Microsoft Entra ID. The shared handler does not use it to select a provider. |
 | `correlationId` | No | Sign-in correlation value. |
 | `ttlSeconds` | No | Positive integer up to `2147483647`. |
 
@@ -103,14 +103,14 @@ The JWE uses `RSA-OAEP-256` and `A256GCM`. After decryption, the JSON contains:
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `nonce` | Yes | Returned unchanged after evaluation or provider acceptance. |
-| `phoneNumber` | Yes | Recipient phone number. |
-| `message` | Yes | Localized message containing the passcode. |
-| `otp` | No | Separate six-digit passcode. It remains a string so leading zeros are preserved. |
+| `nonce` | Yes | Nonblank string returned unchanged after evaluation or provider acceptance. |
+| `phoneNumber` | Yes | Nonblank recipient phone number. |
+| `message` | Yes | Nonblank localized message containing the passcode. |
+| `otp` | No | Passcode supplied separately as a string. Leading zeros are preserved. |
 | `locale` | No | Voice locale. |
-| `extension` | No | Office-voice data. |
+| `extension` | No | Legacy office-voice data. The shared handler does not forward it to built-in providers. |
 | `riskContext` | No | JSON object containing extensible risk fields; may be `null`. |
-| `textToVoice` | No | Legacy speech data. |
+| `textToVoice` | No | Legacy speech data. The shared handler does not forward it to built-in providers. |
 
 Microsoft Entra ID supplies `otp` for SMS and voice, with a generated test code in evaluation
 mode. It belongs inside the encrypted delivery context, not the outer request body. Requests
@@ -228,8 +228,8 @@ for corrective steps.
 | `401 Unauthorized` | Caller or provider authentication failed. |
 | `403 Forbidden` | Caller access was denied or the provider blocked the request. |
 | `429 Too Many Requests` | Provider throttling. |
-| `500 Internal Server Error` | Unexpected Function failure. |
-| `502 Bad Gateway` | Provider configuration, network, or response failure. |
+| `500 Internal Server Error` | Unexpected Function or provider response-processing failure. |
+| `502 Bad Gateway` | Provider configuration, credential, network, or response failure. |
 | `504 Gateway Timeout` | Provider request timed out. |
 
 Check a timed-out live request before retrying. The provider might already have accepted it.
