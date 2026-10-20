@@ -77,7 +77,7 @@ The Function does not forward the bearer token to the phone provider.
 | `encryptedDeliveryContext` | Yes | Compact JWE containing the delivery data. |
 | `tenantId` | No | Tenant metadata supplied by Microsoft Entra ID. The shared handler does not use it to select a provider. |
 | `correlationId` | No | Sign-in correlation value. |
-| `ttlSeconds` | No | Positive integer up to `2147483647`. |
+| `ttlSeconds` | No | Positive integer up to `2147483647`. The sample validates this value but does not enforce passcode expiry or a delivery deadline. |
 
 Send integer channel, mode, and TTL values in their documented forms for consistent behavior across
 all runtimes. See [request validation and runtime differences](../TECHNICAL.md#request-validation-and-runtime-differences).
@@ -171,12 +171,12 @@ Failures omit `nonce` and `providerStatus`.
 | Status | Description |
 | --- | --- |
 | `200 OK` | Evaluation completed or the provider accepted the request. |
-| `400 Bad Request` | Invalid request or encrypted content. |
+| `400 Bad Request` | Invalid request or encrypted content, an unregistered configured provider, or another mapped provider `4xx` response. |
 | `401 Unauthorized` | Caller or provider authentication failed. |
 | `403 Forbidden` | Caller access was denied or the provider blocked the request. |
 | `429 Too Many Requests` | Provider throttling. |
 | `500 Internal Server Error` | Unexpected Function or provider response-processing failure. |
-| `502 Bad Gateway` | Provider configuration, credential, network, or response failure. |
+| `502 Bad Gateway` | Missing or invalid provider endpoint, authentication-mode mismatch, credential, network, or response failure. |
 | `504 Gateway Timeout` | Provider request timed out. |
 
 Check a timed-out live request before retrying. The provider might already have accepted it.
@@ -200,6 +200,18 @@ The Function returns JSON for application errors:
 | `reason` | Validation detail when it is safe to return. Usually present only for `400` responses. |
 | `correlationId` | Correlation value when available. |
 
+Error categories are:
+
+- `bad_request` for invalid request data or an incomplete decrypted delivery context.
+- `decryption_failed` when the encrypted delivery context cannot be decrypted or parsed.
+- `provider_delivery_failed` for provider selection, configuration, credentials, transport, or
+  mapped provider-response failures.
+- `delivery_failed` for an unexpected handler failure.
+
+These JSON errors come from the SendOtp handler. Easy Auth can reject a request before the handler,
+and the .NET Functions host can reject a binding request before this response shape is created.
+When `reason` is present, it is a fixed validation message rather than an exception message.
+
 Provider configuration, credentials, network failures, and provider response details use the
 public `provider_delivery_failed` category. For example, unavailable provider credentials return
 `502 Bad Gateway`; the safe diagnostic detail is recorded as
@@ -208,7 +220,7 @@ logs, not exposed in the response.
 
 ### Diagnose a credential failure
 
-A current-package credential failure follows this sequence:
+A current-package credential failure is expected to emit this application-event sequence:
 
 | Signal | Meaning |
 | --- | --- |
@@ -217,21 +229,29 @@ A current-package credential failure follows this sequence:
 | `delivery_context_decrypted` | The encrypted delivery context was decrypted. |
 | `provider_selected` | The configured provider was selected. |
 | `provider_credential_resolution_started` | The Function started resolving provider credentials. |
-| `request_failed` with `failureStage=provider_credentials`, `failureReason=credential_unavailable`, and `httpStatus=502` | Credential resolution failed before the provider request started. |
-| `response_prepared`, then `request_completed` with HTTP `502` | The Function returned `provider_delivery_failed`. |
+| `request_failed` with credential stage, unavailable reason, and HTTP `502` | Credential resolution failed before the provider request started. |
+| `response_prepared`, then `request_completed` with HTTP `502` | The handler prepared and completed its `provider_delivery_failed` response path. These events do not prove that the caller received the response. |
 
 This pattern points to provider authentication or credential configuration, not envelope validation,
 decryption, or provider delivery. Check the selected provider's Key Vault secrets or OAuth managed
 identity, federation, tenant, scope, and permissions.
+
+Field names and export shapes vary by runtime. JavaScript uses fields such as `failureStage`,
+`failureReason`, and `httpStatus`; .NET commonly exports `FailureStage`, `FailureReason`, and
+`HttpStatus`; Python logging exporters can place the same values in extra properties. Confirm the
+deployed shape through [runtime-specific log discovery](MONITORING.md#runtime-specific-log-discovery)
+and the [application log reference](LOGGING.md).
 
 Current packages resolve credentials during live requests and do not emit
 `credential_refresh_failed`. Older packages can emit different events. Confirm the deployed
 package version and use its matching documentation before comparing sequences; upgrade only
 through the normal reviewed deployment process.
 
-Use `ResultCode`, `request_failed`, and `request_completed` together. If the platform request
-`Success` value disagrees with `ResultCode=502`, treat the HTTP result and correlated application
-events as the request outcome. See [provider credential acquisition fails](../setup/docs/Troubleshooting.md#provider-credential-acquisition-fails)
+Use the `ResultCode` field on the workspace `AppRequests` row together with correlated
+`request_failed` and `request_completed` application events. The request telemetry records the
+observed HTTP transport result; application events record handler progress. Filters, sampling, and
+ingestion can omit an event, so a missing trace does not prove that the handler skipped that stage.
+See [provider credential acquisition fails](../setup/docs/Troubleshooting.md#provider-credential-acquisition-fails)
 for corrective steps.
 
 ## Related guidance

@@ -203,7 +203,8 @@ The shared outcomes are `Continue`, `Block`, and `Fail`.
 | Provider `429` | `429` |
 | Provider `401` or `403` | `401` |
 | Other provider `4xx` | `400` |
-| Missing configuration, network failure, or unknown response | `502` |
+| Missing or unregistered provider selection | `400` |
+| Missing or invalid endpoint, authentication-mode mismatch, credential or network failure, or unknown response | `502` |
 | Provider timeout | `504` |
 
 Unknown or incomplete provider responses fail closed. Check a timed-out live request before
