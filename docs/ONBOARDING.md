@@ -254,8 +254,8 @@ the deployed validation checks.
 | `identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedApplications` | Nonempty approved Microsoft caller app-ID allowlist |
 | `globalValidation.excludedPaths` | No `SendOtp` or alternate-ingress exemption |
 
-The handler has no fallback token validator. Never use `common` or `organizations` as the issuer,
-derive trust from request fields, or exempt `SendOtp`.
+The handler does not validate bearer tokens itself. Never use `common` or `organizations` as the
+issuer, derive trust from request fields, or exempt `SendOtp`.
 
 Keep the app registration's `tokenEncryptionKeyId` null. Microsoft Entra ID bearer-token encryption
 is separate from the JWE delivery payload and is not supported by this sample.

@@ -31,7 +31,7 @@ Both channels are configured. Profile objects `deployment.routes.global` and
 values. Setup writes the endpoints to `EPP_PROVIDER_SMS_ENDPOINT` and
 `EPP_PROVIDER_VOICE_ENDPOINT`; Soprano also supplies its API app ID and scope.
 
-Use a package that supports channel-specific settings; neither channel falls back to the other URL.
+Use a package that supports channel-specific settings; neither channel uses the other channel's URL.
 
 The current profiles use identical Global/EU URLs, and Soprano uses the same app ID/scope.
 The route label is not a residency or Azure-region selection. Infobip and Sinch are bundled
@@ -447,7 +447,7 @@ configuration metadata, not provider credentials or private-key bytes. Keep it a
 | `tenantId`, `subscriptionId`, `applicationId` | Verify the intended customer directory, Azure subscription, and endpoint **client ID**. |
 | `resources.functionApp`, `resources.keyVault`, `resources.applicationInsights`, `resources.logAnalytics` | Find the exact Azure resources; do not guess names or use a different environment's vault. |
 | `provider`, `endpointRegion`, `providerTenantId` | Confirm provider routing, separate from the customer's directory and Azure location. Both SMS and voice use this configuration. |
-| `allowedProviderTenantIds` | Review the complete preserved provider-tenant allowlist, including the selected provider. This does not enable runtime fallback between providers. |
+| `allowedProviderTenantIds` | Review the complete preserved provider-tenant allowlist, including the selected provider. This does not enable runtime switching between providers. |
 | `providerSmsEndpoint`, `providerVoiceEndpoint` | Confirm the distinct or identical provider URLs for SMS and voice. These are outbound provider URLs, not the Function's `endpointUrl`. |
 | `endpointUrl`, `identifierUri` | Exact SendOtp URL and registered app audience information for the authorized test/policy operator. |
 | `encryptionKeyId`, `certificateThumbprint`, `certificateId`, `certificateSecretId`, `certificateExpiresUtc` | Public-key identification and version/renewal inventory. A secret **ID** is not its value; do not fetch its private-key contents. |

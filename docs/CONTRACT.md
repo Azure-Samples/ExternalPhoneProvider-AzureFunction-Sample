@@ -227,8 +227,9 @@ decryption, or provider delivery. Check the selected provider's Key Vault secret
 identity, federation, tenant, scope, and permissions.
 
 Current packages resolve credentials during live requests and do not emit
-`credential_refresh_failed`. If older deployments show that event, update the deployed package
-before comparing event sequences.
+`credential_refresh_failed`. Older packages can emit different events. Confirm the deployed
+package version and use its matching documentation before comparing sequences; upgrade only
+through the normal reviewed deployment process.
 
 Use `ResultCode`, `request_failed`, and `request_completed` together. If the platform request
 `Success` value disagrees with `ResultCode=502`, treat the HTTP result and correlated application
