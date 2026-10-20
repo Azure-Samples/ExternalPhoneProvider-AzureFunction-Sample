@@ -47,7 +47,7 @@ Authorization: Bearer <access-token>
 | --- | --- |
 | `Authorization` | Required bearer token. Easy Auth consumes it. |
 | `Content-Type` | Required. Use `application/json`. |
-| `x-ms-correlation-id` | Optional correlation fallback. |
+| `x-ms-correlation-id` | Optional correlation value. |
 | `x-ms-client-request-id` | Optional request identifier. |
 
 The Function does not forward the bearer token to the phone provider.
@@ -160,7 +160,7 @@ Content-Type: application/json
 | Field | Description |
 | --- | --- |
 | `nonce` | Original decrypted nonce. |
-| `correlationId` | Request correlation value or generated fallback. |
+| `correlationId` | Request correlation value or generated request ID. |
 | `providerStatus` | `"accepted"` for evaluation or recognized live acceptance. |
 
 Failures omit `nonce` and `providerStatus`.
@@ -233,19 +233,6 @@ for corrective steps.
 | `504 Gateway Timeout` | Provider request timed out. |
 
 Check a timed-out live request before retrying. The provider might already have accepted it.
-
-## Microsoft Entra native fallback
-
-The Function reports only the CYOT attempt:
-
-- `200` means evaluation completed or the configured provider accepted the request.
-- A non-success response reports that CYOT did not complete successfully.
-- Microsoft Entra ID can apply its configured policy and start a separate native-delivery attempt
-  after a qualifying CYOT failure.
-
-The Function does not call or authenticate to Microsoft native delivery. A native fallback attempt
-does not create another invocation of the customer Function. Treat the CYOT response, native
-fallback, provider acceptance, and recipient delivery as separate outcomes.
 
 ## Related guidance
 
