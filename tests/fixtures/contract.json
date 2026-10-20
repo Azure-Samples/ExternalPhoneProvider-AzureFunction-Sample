@@ -67,6 +67,28 @@
     { "alg": "RSA-OAEP-256", "enc": "A128GCM", "accepted": false },
     { "alg": "RSA-OAEP-256", "enc": "A256CBC-HS512", "accepted": false }
   ],
+  "riskContexts": [
+    { "name": "omitted", "overrides": {} },
+    { "name": "null", "overrides": { "riskContext": null } },
+    { "name": "empty", "overrides": { "riskContext": {} } },
+    {
+      "name": "arbitrary nested fields",
+      "overrides": {
+        "riskContext": {
+          "CustomSignal": "PRIVATE-RISK",
+          "enabled": false,
+          "count": 0,
+          "score": 1.25,
+          "code": "0007",
+          "unknown": null,
+          "nested": {
+            "items": ["PRIVATE-RISK-NESTED", true, false, 0, null, {}, []]
+          }
+        }
+      }
+    }
+  ],
+  "invalidRiskContexts": ["PRIVATE-RISK", "", true, false, 0, 1.25, [], ["PRIVATE-RISK"]],
   "badRequests": [
     { "name": "invalid JSON", "rawBody": "{", "reason": "invalid JSON body" },
     { "name": "array envelope", "rawBody": "[]", "reason": "invalid envelope" },

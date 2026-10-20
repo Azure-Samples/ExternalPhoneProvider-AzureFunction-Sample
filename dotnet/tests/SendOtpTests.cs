@@ -31,6 +31,97 @@ public class SendOtpTests
         "request_received", "payload_validated", "delivery_context_decrypted",
         "evaluation_completed", "response_prepared", "request_completed",
     ];
+
+    [Theory]
+    [InlineData("sms", true, "001234")]
+    [InlineData("voice", true, "001234")]
+    [InlineData("sms", false, null)]
+    [InlineData("voice", false, null)]
+    [InlineData("sms", true, null)]
+    [InlineData("voice", true, null)]
+    public async Task OptionalOtpReachesProviderWithoutEvaluationIo(
+        string channel, bool includeOtp, string? otp)
+    {
+        using var rig = new HandlerRig();
+        var message = Message.Replace("918273", "001234");
+        var context = new Dictionary<string, object?> { ["message"] = message };
+        if (includeOtp) context["otp"] = otp;
+        var changes = JsonSerializer.SerializeToElement(context);
+
+        AssertAccepted(await rig.Invoke("evaluation", channel: channel, deliveryOverrides: changes));
+        Assert.Null(rig.Infobip.Delivery);
+        Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
+
+        AssertAccepted(await rig.Invoke(channel: channel, deliveryOverrides: changes));
+        var delivery = Assert.IsType<OtpDelivery>(rig.Infobip.Delivery);
+        Assert.Equal(otp, delivery.Otp);
+        Assert.Equal(message, delivery.Message);
+        Assert.Equal(channel, delivery.Channel);
+        Assert.Equal(nameof(OtpDelivery), delivery.ToString());
+        Assert.Equal((1, 1), (rig.Secrets.Calls, rig.Http.Calls));
+        Assert.DoesNotContain("001234", string.Join("\n", rig.Log.Messages));
+        Assert.DoesNotContain("001234", JsonSerializer.Serialize(rig.Log.Records));
+    }
+
+    [Theory]
+    [InlineData("sms")]
+    [InlineData("voice")]
+    public async Task RiskContextDictionaryReachesAdapterWithoutChangingProviderPayload(string channel)
+    {
+        using var fixtures = ReadContractFixtures();
+        foreach (var fixture in fixtures.RootElement.GetProperty("riskContexts").EnumerateArray())
+        {
+            using var rig = new HandlerRig();
+            var changes = fixture.GetProperty("overrides");
+            AssertAccepted(await rig.Invoke("evaluation", channel: channel, deliveryOverrides: changes));
+            Assert.Null(rig.Infobip.Delivery);
+            Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
+
+            AssertAccepted(await rig.Invoke(channel: channel, deliveryOverrides: changes));
+            var delivery = Assert.IsType<OtpDelivery>(rig.Infobip.Delivery);
+            if (changes.TryGetProperty("riskContext", out var expected) && expected.ValueKind != JsonValueKind.Null)
+            {
+                var riskContext = Assert.IsType<Dictionary<string, JsonElement>>(delivery.RiskContext);
+                Assert.Equal(JsonSerializer.Serialize(expected), JsonSerializer.Serialize(riskContext));
+            }
+            else
+            {
+                Assert.Null(delivery.RiskContext);
+            }
+            Assert.Equal(Message, delivery.Message);
+            Assert.Equal(channel, delivery.Channel);
+            Assert.Equal(nameof(OtpDelivery), delivery.ToString());
+            Assert.Equal((1, 1), (rig.Secrets.Calls, rig.Http.Calls));
+            var sentBody = rig.Http.Body;
+            AssertAccepted(await rig.Invoke(channel: channel));
+            Assert.Equal(sentBody, rig.Http.Body);
+            Assert.DoesNotContain("riskContext", sentBody!);
+            Assert.DoesNotContain("PRIVATE-RISK", string.Join("\n", rig.Log.Messages));
+            Assert.DoesNotContain("PRIVATE-RISK", JsonSerializer.Serialize(rig.Log.Records));
+            Assert.DoesNotContain("riskContext", JsonSerializer.Serialize(rig.Log.Records));
+        }
+    }
+
+    [Theory]
+    [InlineData("live")]
+    [InlineData("evaluation")]
+    public async Task NonObjectRiskContextFailsBeforeProviderWork(string mode)
+    {
+        using var rig = new HandlerRig();
+        using var fixtures = ReadContractFixtures();
+        foreach (var riskContext in fixtures.RootElement.GetProperty("invalidRiskContexts").EnumerateArray())
+        {
+            var changes = JsonSerializer.SerializeToElement(new { riskContext });
+            var result = await rig.Invoke(mode, deliveryOverrides: changes);
+            AssertFailure(rig, result, 400, "decryption_failed");
+            Assert.DoesNotContain("PRIVATE-RISK", JsonSerializer.Serialize(result.Value));
+        }
+        Assert.Null(rig.Infobip.Delivery);
+        Assert.Equal((0, 0), (rig.Secrets.Calls, rig.Http.Calls));
+        Assert.DoesNotContain("PRIVATE-RISK", string.Join("\n", rig.Log.Messages));
+        Assert.DoesNotContain("PRIVATE-RISK", JsonSerializer.Serialize(rig.Log.Records));
+    }
+
     private static void ConfigureSoprano(HandlerRig rig)
     {
         rig.Env["EPP_PROVIDER_NAME"] = "soprano";
@@ -497,6 +588,10 @@ public class SendOtpTests
     [InlineData("{\"nonce\":123,\"phoneNumber\":\"phone\",\"message\":\"message\"}", "decryption_failed", null)]
     [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":false,\"message\":\"message\"}", "decryption_failed", null)]
     [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":\"phone\",\"message\":{}}", "decryption_failed", null)]
+    [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":\"phone\",\"message\":\"message\",\"otp\":123456}", "decryption_failed", null)]
+    [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":\"phone\",\"message\":\"message\",\"otp\":true}", "decryption_failed", null)]
+    [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":\"phone\",\"message\":\"message\",\"otp\":[]}", "decryption_failed", null)]
+    [InlineData("{\"nonce\":\"nonce\",\"phoneNumber\":\"phone\",\"message\":\"message\",\"otp\":{}}", "decryption_failed", null)]
     [InlineData("{\"nonce\":\"nonce\"}", "bad_request", "incomplete delivery context")]
     public async Task AuthenticatedPlaintextUsesTypedDeliveryContextValidation(
         string plaintext, string error, string? reason)
@@ -1002,6 +1097,7 @@ public class SendOtpTests
         public CapturingLogger Log { get; } = new();
         public SendOtp Function { get; }
         public CredentialTokenService Credentials { get; }
+        public CapturingProvider Infobip { get; }
         public HandlerRig(Func<string, TokenCredential>? createIdentity = null,
             Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential>? createOAuth = null)
         {
@@ -1013,9 +1109,10 @@ public class SendOtpTests
                 ["EPP_PROVIDER_TIMEOUT_MS"] = "2500",
                 ["EPP_DECRYPTION_KEY_PEM"] = Keys.Rsa.ExportPkcs8PrivateKeyPem(),
             };
+            Infobip = new CapturingProvider(new InfobipProvider(Secrets));
             PhoneProviderBase[] providers =
             {
-                new InfobipProvider(Secrets),
+                Infobip,
                 new TelesignProvider(Secrets),
                 new SopranoProvider(
                     createIdentity ?? (_ => throw new InvalidOperationException("Unexpected managed identity")),
@@ -1064,6 +1161,26 @@ public class SendOtpTests
             return Assert.IsAssignableFrom<ObjectResult>(await _function.Run(request, payload));
         }
         public void Dispose() { Keys.Dispose(); Http.Dispose(); }
+    }
+
+    private sealed class CapturingProvider(PhoneProviderBase inner) : PhoneProviderBase
+    {
+        public OtpDelivery? Delivery { get; private set; }
+        public override string Name => inner.Name;
+        public override string AuthenticationMode => inner.AuthenticationMode;
+
+        public override Task<ProviderCredentials> FetchCredentialsAsync(
+            AppConfig config, CancellationToken cancellationToken = default) =>
+            inner.FetchCredentialsAsync(config, cancellationToken);
+
+        public override Task<ProviderResult> SendOtpAsync(
+            string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credentials,
+            IEnv env, HttpClient client, int timeoutMs, ILogger? logger = null)
+        {
+            Delivery = delivery;
+            return inner.SendOtpAsync(
+                channel, endpoint, delivery, credentials, env, client, timeoutMs, logger);
+        }
     }
 
     private sealed class TestSecrets : ISecretResolver

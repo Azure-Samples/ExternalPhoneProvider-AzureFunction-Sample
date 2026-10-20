@@ -190,7 +190,9 @@ public sealed class SendOtp
             Channel: payload.ChannelName,
             MessageId: clientRequestId,
             CorrelationId: correlationId,
-            Locale: context.Locale);
+            Locale: context.Locale,
+            Otp: context.Otp,
+            RiskContext: context.RiskContext);
 
         // A nonce acknowledges delivery, not just decryption. Wait for the bounded provider call.
         var providerStatus = await SendToProviderAsync(delivery).ConfigureAwait(false);

@@ -154,6 +154,18 @@ private key, as text or base64. In Azure, use a versioned Key Vault secret refer
 ### Request validation and runtime differences
 
 Required decrypted fields are nonblank `nonce`, `phoneNumber`, and `message` strings.
+The optional `otp` must be a string or `null`. All runtimes carry it unchanged into the
+provider-neutral delivery object (`OtpDelivery.otp` in JavaScript/Python, `OtpDelivery.Otp` in C#).
+It is not converted to a number or extracted from `message`, and is not logged or returned in
+the HTTP response. Existing built-in provider message and voice mappings remain unchanged.
+
+The optional `riskContext` must be a JSON object or `null`. It is passed unchanged to provider
+adapters as `OtpDelivery.riskContext` in JavaScript, `OtpDelivery.RiskContext`
+(`Dictionary<string, JsonElement>`) in C#, and `OtpDelivery.risk_context`
+(`dict[str, object]`) in Python. No individual risk fields are required or interpreted by the
+shared handler. Risk data is not logged or returned in HTTP responses, and built-in adapters
+do not forward it to providers. Outbound risk-field mapping must be explicit and provider-specific.
+
 Validation reasons include:
 
 - `invalid JSON body`

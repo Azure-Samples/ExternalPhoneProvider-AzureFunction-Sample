@@ -8,6 +8,7 @@ const { CompactEncrypt } = require('jose');
 const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const fixtures = require('../../tests/fixtures/contract.json');
+const providers = require('../src/functions/providers');
 const {
     CredentialTokenService,
     credentialTokenService,
@@ -19,6 +20,9 @@ let startHook;
 let stopHook;
 const originalLoad = Module._load;
 const registration = mock.method(Module, '_load', function (name, ...args) {
+    if (name === './providers') {
+        return { selectProvider: (...args) => providers.selectProvider(...args) };
+    }
     if (name === '@azure/functions') {
         return {
             app: {
@@ -160,6 +164,113 @@ function failure(result, status, error = 'provider_delivery_failed') {
 
 function event(name) {
     return records.find((record) => record.eventName === name);
+}
+
+for (const channel of ['sms', 'voice']) {
+    for (const [name, fields] of [
+        ['present', { otp: '001234' }], ['omitted', {}], ['null', { otp: null }],
+    ]) {
+        test(`${channel}: ${name} OTP survives decryption and live delivery without evaluation I/O`, async () => {
+            const provider = providers.selectProvider('soprano');
+            const createRequest = mock.fn((input) => provider.createRequest(input));
+            const selectProvider = mock.method(providers, 'selectProvider',
+                () => ({ ...provider, createRequest }));
+            const context = {
+                ...baseDelivery,
+                message: baseDelivery.message.replace('918273', '001234'),
+                ...fields,
+            };
+            const body = await envelope({ channel }, context);
+            const expected = {
+                nonce: context.nonce, correlationId: body.correlationId, providerStatus: 'accepted',
+            };
+            const evaluated = await invoke({ ...body, mode: 2 });
+            assert.equal(evaluated.status, 200);
+            assert.deepEqual(evaluated.jsonBody, expected);
+            assert.deepEqual([
+                selectProvider.mock.callCount(), getSecret.mock.callCount(),
+                getToken.mock.callCount(), fetchMock.mock.callCount(),
+            ], [0, 0, 0, 0]);
+            assert.doesNotMatch(JSON.stringify(records), /001234|"otp"/);
+
+            const result = await invoke(body);
+            assert.equal(result.status, 200);
+            assert.deepEqual(result.jsonBody, expected);
+            assert.equal(createRequest.mock.callCount(), 1);
+            const delivery = createRequest.mock.calls[0].arguments[0].delivery;
+            assert.equal(delivery.otp, fields.otp);
+            assert.equal(delivery.message, context.message);
+            assert.equal(delivery.channel, channel);
+            assert.equal(fetchMock.mock.callCount(), 1);
+            assert.doesNotMatch(JSON.stringify(records), /001234|"otp"/);
+        });
+    }
+}
+
+test('non-string OTP values fail before provider work', async () => {
+    for (const otp of [123456, true, [], {}]) {
+        const result = await invoke(await envelope({ mode: 2 }, { ...baseDelivery, otp }));
+        failure(result, 400, 'bad_request');
+        assert.equal(result.jsonBody.reason, 'incomplete delivery context');
+        assert.equal(event('request_failed').failureStage, 'delivery_context_validation');
+    }
+    assert.deepEqual([
+        getSecret.mock.callCount(), getToken.mock.callCount(), fetchMock.mock.callCount(),
+    ], [0, 0, 0]);
+});
+
+for (const channel of ['sms', 'voice']) {
+    for (const { name, overrides } of fixtures.riskContexts) {
+        test(`${channel}: ${name} risk context reaches the adapter but not its wire request`, async () => {
+            const provider = providers.selectProvider('soprano');
+            const createRequest = mock.fn((input) => provider.createRequest(input));
+            mock.method(providers, 'selectProvider', () => ({ ...provider, createRequest }));
+            const context = { ...baseDelivery, riskContext: undefined, ...overrides };
+            const body = await envelope({ channel }, context);
+            const expected = {
+                nonce: context.nonce, correlationId: body.correlationId, providerStatus: 'accepted',
+            };
+
+            const evaluated = await invoke({ ...body, mode: 2 });
+            assert.equal(evaluated.status, 200);
+            assert.deepEqual(evaluated.jsonBody, expected);
+            assert.deepEqual([
+                createRequest.mock.callCount(), getSecret.mock.callCount(),
+                getToken.mock.callCount(), fetchMock.mock.callCount(),
+            ], [0, 0, 0, 0]);
+            assert.doesNotMatch(JSON.stringify(records), /riskContext/);
+
+            const result = await invoke(body);
+            assert.equal(result.status, 200);
+            assert.deepEqual(result.jsonBody, expected);
+            assert.equal(createRequest.mock.callCount(), 1);
+            const input = createRequest.mock.calls[0].arguments[0];
+            assert.deepEqual(input.delivery.riskContext, overrides.riskContext);
+            assert.equal(input.delivery.message, context.message);
+            assert.equal(input.delivery.channel, channel);
+            const withoutRisk = provider.createRequest({
+                ...input, delivery: { ...input.delivery, riskContext: undefined },
+            });
+            assert.equal(fetchMock.mock.callCount(), 1);
+            assert.equal(fetchMock.mock.calls[0].arguments[1].body, withoutRisk.body);
+            assert.doesNotMatch(JSON.stringify(records), /riskContext/);
+        });
+    }
+}
+
+for (const mode of [1, 2]) {
+    test(`mode ${mode}: non-object risk context fails before provider work`, async () => {
+        for (const riskContext of fixtures.invalidRiskContexts) {
+            const result = await invoke(await envelope({ mode }, { ...baseDelivery, riskContext }));
+            failure(result, 400, 'bad_request');
+            assert.equal(result.jsonBody.reason, 'incomplete delivery context');
+            assert.equal(event('request_failed').failureStage, 'delivery_context_validation');
+            assert.doesNotMatch(JSON.stringify(result.jsonBody), /PRIVATE-RISK/);
+        }
+        assert.deepEqual([
+            getSecret.mock.callCount(), getToken.mock.callCount(), fetchMock.mock.callCount(),
+        ], [0, 0, 0]);
+    });
 }
 
 for (const provider of ['telesign', 'soprano']) {

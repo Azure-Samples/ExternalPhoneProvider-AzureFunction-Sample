@@ -79,6 +79,107 @@ def _events(caplog):
     return [record for record in caplog.records if hasattr(record, "event_name")]
 
 
+@pytest.mark.parametrize("channel", [1, 2])
+@pytest.mark.parametrize("fields,expected", [
+    ({"otp": "001234"}, "001234"), ({}, None), ({"otp": None}, None),
+])
+def test_optional_otp_reaches_provider_without_evaluation_io(
+    monkeypatch, caplog, channel, fields, expected
+):
+    caplog.set_level(logging.INFO)
+    provider = function_app._providers["soprano"]
+    build_request = Mock(wraps=provider.build_request)
+    monkeypatch.setattr(provider, "build_request", build_request)
+    provider_module.requests.request.return_value = Mock(
+        status_code=201, json=Mock(return_value={"status": "ENROUTE"}))
+    context = {**_CONTEXT, "message": _MESSAGE.replace("123456", "001234"), **fields}
+    payload = _envelope(channel=channel, encryptedDeliveryContext=_encrypt(context=context))
+    response_body = {
+        "nonce": _NONCE, "correlationId": _CORRELATION, "providerStatus": "accepted",
+    }
+
+    evaluated = _HANDLER(_request({**payload, "mode": 2}))
+    assert evaluated.status_code == 200
+    assert json.loads(evaluated.get_body()) == response_body
+    build_request.assert_not_called()
+    function_app._credentials.get_credentials.assert_not_called()
+    provider_module.requests.request.assert_not_called()
+
+    response = _HANDLER(_request(payload))
+    assert response.status_code == 200
+    assert json.loads(response.get_body()) == response_body
+    build_request.assert_called_once()
+    delivery = build_request.call_args.args[2]
+    assert delivery.otp == expected
+    assert delivery.message == context["message"]
+    assert delivery.channel == ("sms" if channel == 1 else "voice")
+    provider_module.requests.request.assert_called_once()
+    assert "001234" not in caplog.text
+    assert all("otp" not in record.__dict__ for record in _events(caplog))
+
+
+@pytest.mark.parametrize("channel", [1, 2])
+@pytest.mark.parametrize("fixture", _FIXTURES["riskContexts"], ids=lambda case: case["name"])
+def test_risk_context_dictionary_reaches_adapter_without_changing_provider_payload(
+    monkeypatch, caplog, channel, fixture
+):
+    caplog.set_level(logging.INFO)
+    provider = function_app._providers["soprano"]
+    build_request = Mock(wraps=provider.build_request)
+    monkeypatch.setattr(provider, "build_request", build_request)
+    provider_module.requests.request.return_value = Mock(
+        status_code=201, json=Mock(return_value={"status": "ENROUTE"}))
+    context = {**_CONTEXT, **fixture["overrides"]}
+    payload = _envelope(channel=channel, encryptedDeliveryContext=_encrypt(context=context))
+    expected = {"nonce": _NONCE, "correlationId": _CORRELATION, "providerStatus": "accepted"}
+
+    evaluated = _HANDLER(_request({**payload, "mode": 2}))
+    assert evaluated.status_code == 200
+    assert json.loads(evaluated.get_body()) == expected
+    build_request.assert_not_called()
+    function_app._credentials.get_credentials.assert_not_called()
+    provider_module.requests.request.assert_not_called()
+
+    response = _HANDLER(_request(payload))
+    assert response.status_code == 200
+    assert json.loads(response.get_body()) == expected
+    build_request.assert_called_once()
+    delivery = build_request.call_args.args[2]
+    assert json.dumps(delivery.risk_context) == json.dumps(context.get("riskContext"))
+    assert delivery.message == _MESSAGE
+    assert delivery.channel == ("sms" if channel == 1 else "voice")
+    assert "PRIVATE-RISK" not in repr(delivery)
+    provider_module.requests.request.assert_called_once()
+    sent_body = provider_module.requests.request.call_args.kwargs["data"]
+    assert _HANDLER(_request(_envelope(channel=channel))).status_code == 200
+    assert provider_module.requests.request.call_args.kwargs["data"] == sent_body
+    assert "riskContext" not in sent_body
+    assert "PRIVATE-RISK" not in caplog.text
+    assert "PRIVATE-RISK" not in json.dumps([vars(record) for record in _events(caplog)], default=str)
+    assert all("riskContext" not in record.__dict__ and "risk_context" not in record.__dict__
+               for record in _events(caplog))
+
+
+@pytest.mark.parametrize("mode", [1, 2])
+@pytest.mark.parametrize("risk_context", _FIXTURES["invalidRiskContexts"])
+def test_non_object_risk_context_fails_before_provider_work(caplog, mode, risk_context):
+    caplog.set_level(logging.INFO)
+    response = _HANDLER(_request(_envelope(
+        mode=mode, encryptedDeliveryContext=_encrypt(context={**_CONTEXT, "riskContext": risk_context}))))
+    result = json.loads(response.get_body())
+    assert response.status_code == 400
+    assert result["error"] == "bad_request"
+    assert result["reason"] == "incomplete delivery context"
+    assert "nonce" not in result
+    assert "PRIVATE-RISK" not in response.get_body().decode()
+    assert "PRIVATE-RISK" not in caplog.text
+    assert "PRIVATE-RISK" not in json.dumps([vars(record) for record in _events(caplog)], default=str)
+    failure = next(record for record in _events(caplog) if record.event_name == "request_failed")
+    assert failure.failureStage == "delivery_context_validation"
+    function_app._credentials.get_credentials.assert_not_called()
+    provider_module.requests.request.assert_not_called()
+
+
 @pytest.mark.parametrize(("provider", "mode"), [
     ("telesign", "apiKey"),
     ("soprano", "oauth"),
@@ -159,6 +260,10 @@ def test_invalid_requests_return_contract_reasons_before_provider_work(caplog):
     {"nonce": "", "phoneNumber": _PHONE, "message": _MESSAGE},
     {"nonce": _NONCE, "phoneNumber": "", "message": _MESSAGE},
     {"nonce": _NONCE, "phoneNumber": _PHONE, "message": ""},
+    {**_CONTEXT, "otp": 123456},
+    {**_CONTEXT, "otp": True},
+    {**_CONTEXT, "otp": []},
+    {**_CONTEXT, "otp": {}},
     False,
     [],
 ])

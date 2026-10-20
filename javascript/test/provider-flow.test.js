@@ -20,6 +20,7 @@ const { createRequestContext } = require('../src/functions/logging');
 const delivery = new OtpDelivery({
     phoneNumber: '+15551234567',
     message: '  Your code is 001234; ref 1234567; alternate 654321.\n',
+    otp: '001234',
     channel: 'sms',
     messageId: 'message-id',
     correlationId: 'correlation-id',
@@ -73,6 +74,36 @@ test('validated Entra payload and delivery models preserve content', () => {
     assert.equal(inspect(context), '[DeliveryContext]');
     assert.equal(inspect(delivery), '[OtpDelivery]');
     for (const value of [null, [], 'text', 1]) assert.equal(DeliveryContext.fromPayload(value), null);
+});
+
+test('delivery models preserve optional OTP strings without coercion or message extraction', () => {
+    for (const fields of [{}, { otp: null }, { otp: '' }, { otp: '001234' }, { otp: '000000' }]) {
+        const context = DeliveryContext.fromPayload({
+            nonce: 'nonce',
+            phoneNumber: delivery.phoneNumber,
+            message: delivery.message,
+            ...fields,
+        });
+        assert.ok(context.isComplete);
+        assert.equal(context.otp, fields.otp);
+        assert.equal(context.message, delivery.message);
+        const request = new OtpDelivery({ ...delivery, otp: context.otp });
+        assert.equal(request.otp, fields.otp);
+        assert.equal(inspect(context), '[DeliveryContext]');
+        assert.equal(inspect(request), '[OtpDelivery]');
+    }
+});
+
+test('delivery models retain arbitrary risk dictionaries without inspecting their fields', () => {
+    for (const { overrides } of fixtures.riskContexts) {
+        const context = DeliveryContext.fromPayload({ ...delivery, nonce: 'nonce', ...overrides });
+        assert.ok(context.isComplete);
+        assert.deepEqual(context.riskContext, overrides.riskContext);
+        const request = new OtpDelivery({ ...delivery, riskContext: context.riskContext });
+        assert.deepEqual(request.riskContext, overrides.riskContext);
+        assert.equal(inspect(context), '[DeliveryContext]');
+        assert.equal(inspect(request), '[OtpDelivery]');
+    }
 });
 
 test('payload validation preserves exact shared reasons and order', () => {

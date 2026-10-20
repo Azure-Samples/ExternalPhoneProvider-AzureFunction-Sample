@@ -78,10 +78,18 @@ The JWE uses `RSA-OAEP-256` and `A256GCM`. After decryption, the JSON contains:
 - **`nonce`** — Required. Returned unchanged after evaluation or provider acceptance.
 - **`phoneNumber`** — Required phone number.
 - **`message`** — Required localized message containing the passcode.
+- **`otp`** — Optional string containing the separate six-digit passcode. Preserve leading zeros.
 - **`locale`** — Optional voice locale.
 - **`extension`** — Optional office-voice data.
-- **`riskContext`** — Optional context data.
+- **`riskContext`** — Optional JSON object containing arbitrary risk fields; may be `null`.
 - **`textToVoice`** — Optional legacy speech data.
+
+Microsoft Entra ID supplies `otp` for SMS and voice, with a generated test code in evaluation
+mode. It belongs inside the encrypted delivery context, not the outer request body. Requests
+that omit it or set it to `null` remain supported.
+
+`riskContext` has no fixed field schema. Unknown keys, nested objects and arrays, and values such
+as `false`, `0`, and `null` are preserved. Missing fields are not filled with defaults.
 
 See [JWE validation and key handling](../TECHNICAL.md#jwe-validation-and-key-handling) for limits,
 algorithms, key settings, and runtime behavior.
