@@ -57,14 +57,27 @@ The Function does not forward the bearer token to the phone provider.
 <a id="epp-request-body-envelope-cleartext-envelope"></a>
 <a id="epp-request-body"></a>
 
-- **`type`** — Required string. Use `microsoft.mfa.otpDeliver.v1`.
-- **`channel`** — Required integer or string. `1` or `"sms"` for SMS. `2` or `"voice"` for voice.
-- **`mode`** — Required integer or string. `1` or `"live"` to send. `2` or `"evaluation"`
-  for no-send validation.
-- **`encryptedDeliveryContext`** — Required compact JWE string.
-- **`tenantId`** — Optional routing metadata.
-- **`correlationId`** — Optional sign-in correlation value.
-- **`ttlSeconds`** — Optional positive integer up to `2147483647`.
+```json
+{
+  "type": "microsoft.mfa.otpDeliver.v1",
+  "channel": 1,
+  "mode": 1,
+  "encryptedDeliveryContext": "<compact JWE>",
+  "tenantId": "<tenant ID>",
+  "correlationId": "<correlation ID>",
+  "ttlSeconds": 30
+}
+```
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `type` | Yes | Use `microsoft.mfa.otpDeliver.v1`. |
+| `channel` | Yes | `1` or `"sms"` for SMS. `2` or `"voice"` for voice. |
+| `mode` | Yes | `1` or `"live"` to send. `2` or `"evaluation"` for no-send validation. |
+| `encryptedDeliveryContext` | Yes | Compact JWE containing the delivery data. |
+| `tenantId` | No | Routing metadata supplied by Microsoft Entra ID. |
+| `correlationId` | No | Sign-in correlation value. |
+| `ttlSeconds` | No | Positive integer up to `2147483647`. |
 
 Send integer channel, mode, and TTL values in their documented forms for consistent behavior across
 all runtimes. See [request validation and runtime differences](../TECHNICAL.md#request-validation-and-runtime-differences).
@@ -75,14 +88,29 @@ all runtimes. See [request validation and runtime differences](../TECHNICAL.md#r
 
 The JWE uses `RSA-OAEP-256` and `A256GCM`. After decryption, the JSON contains:
 
-- **`nonce`** — Required. Returned unchanged after evaluation or provider acceptance.
-- **`phoneNumber`** — Required phone number.
-- **`message`** — Required localized message containing the passcode.
-- **`otp`** — Optional string containing the separate six-digit passcode. Preserve leading zeros.
-- **`locale`** — Optional voice locale.
-- **`extension`** — Optional office-voice data.
-- **`riskContext`** — Optional JSON object containing arbitrary risk fields; may be `null`.
-- **`textToVoice`** — Optional legacy speech data.
+```json
+{
+  "nonce": "<nonce>",
+  "phoneNumber": "+15551234567",
+  "message": "Your verification code is 012345.",
+  "otp": "012345",
+  "locale": "en-US",
+  "riskContext": {
+    "exampleSignal": "exampleValue"
+  }
+}
+```
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `nonce` | Yes | Returned unchanged after evaluation or provider acceptance. |
+| `phoneNumber` | Yes | Recipient phone number. |
+| `message` | Yes | Localized message containing the passcode. |
+| `otp` | No | Separate six-digit passcode. It remains a string so leading zeros are preserved. |
+| `locale` | No | Voice locale. |
+| `extension` | No | Office-voice data. |
+| `riskContext` | No | JSON object containing extensible risk fields; may be `null`. |
+| `textToVoice` | No | Legacy speech data. |
 
 Microsoft Entra ID supplies `otp` for SMS and voice, with a generated test code in evaluation
 mode. It belongs inside the encrypted delivery context, not the outer request body. Requests
@@ -90,6 +118,8 @@ that omit it or set it to `null` remain supported.
 
 `riskContext` has no fixed field schema. Unknown keys, nested objects and arrays, and values such
 as `false`, `0`, and `null` are preserved. Missing fields are not filled with defaults.
+The shared handler does not interpret, log, return, or forward risk fields to the built-in
+providers. A custom adapter must explicitly map any approved fields it needs.
 
 See [JWE validation and key handling](../TECHNICAL.md#jwe-validation-and-key-handling) for limits,
 algorithms, key settings, and runtime behavior.
@@ -135,6 +165,31 @@ Content-Type: application/json
 
 Failures omit `nonce` and `providerStatus`.
 
+## Error response
+
+The Function returns JSON for application errors:
+
+```json
+{
+  "error": "provider_delivery_failed",
+  "requestId": "<request ID>",
+  "correlationId": "<correlation ID>"
+}
+```
+
+| Field | Description |
+| --- | --- |
+| `error` | Stable public error category. |
+| `requestId` | Request identifier for safe log correlation. |
+| `reason` | Validation detail when it is safe to return. Usually present only for `400` responses. |
+| `correlationId` | Correlation value when available. |
+
+Provider configuration, credentials, network failures, and provider response details use the
+public `provider_delivery_failed` category. For example, unavailable provider credentials return
+`502 Bad Gateway`; the safe diagnostic detail is recorded as
+`failureStage=provider_credentials` and `failureReason=credential_unavailable` in application
+logs, not exposed in the response.
+
 ## HTTP status codes
 
 <a id="2-outcome--http-status-mapping"></a>
@@ -146,10 +201,24 @@ Failures omit `nonce` and `providerStatus`.
 | `401 Unauthorized` | Caller or provider authentication failed. |
 | `403 Forbidden` | Caller access was denied or the provider blocked the request. |
 | `429 Too Many Requests` | Provider throttling. |
+| `500 Internal Server Error` | Unexpected Function failure. |
 | `502 Bad Gateway` | Provider configuration, network, or response failure. |
 | `504 Gateway Timeout` | Provider request timed out. |
 
 Check a timed-out live request before retrying. The provider might already have accepted it.
+
+## Microsoft Entra native fallback
+
+The Function reports only the CYOT attempt:
+
+- `200` means evaluation completed or the configured provider accepted the request.
+- A non-success response reports that CYOT did not complete successfully.
+- Microsoft Entra ID can apply its configured policy and start a separate native-delivery attempt
+  after a qualifying CYOT failure.
+
+The Function does not call or authenticate to Microsoft native delivery. A native fallback attempt
+does not create another invocation of the customer Function. Treat the CYOT response, native
+fallback, provider acceptance, and recipient delivery as separate outcomes.
 
 ## Related guidance
 
