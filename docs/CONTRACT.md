@@ -190,6 +190,33 @@ public `provider_delivery_failed` category. For example, unavailable provider cr
 `failureStage=provider_credentials` and `failureReason=credential_unavailable` in application
 logs, not exposed in the response.
 
+### Diagnose a credential failure
+
+A current-package credential failure follows this sequence:
+
+| Signal | Meaning |
+| --- | --- |
+| `request_received` | The Function received the CYOT request. |
+| `envelope_validated` or `payload_validated` | The outer request passed validation. |
+| `delivery_context_decrypted` | The encrypted delivery context was decrypted. |
+| `provider_selected` | The configured provider was selected. |
+| `provider_credential_resolution_started` | The Function started resolving provider credentials. |
+| `request_failed` with `failureStage=provider_credentials`, `failureReason=credential_unavailable`, and `httpStatus=502` | Credential resolution failed before the provider request started. |
+| `response_prepared`, then `request_completed` with HTTP `502` | The Function returned `provider_delivery_failed`. |
+
+This pattern points to provider authentication or credential configuration, not envelope validation,
+decryption, or provider delivery. Check the selected provider's Key Vault secrets or OAuth managed
+identity, federation, tenant, scope, and permissions.
+
+Current packages resolve credentials during live requests and do not emit
+`credential_refresh_failed`. If older deployments show that event, update the deployed package
+before comparing event sequences.
+
+Use `ResultCode`, `request_failed`, and `request_completed` together. If the platform request
+`Success` value disagrees with `ResultCode=502`, treat the HTTP result and correlated application
+events as the request outcome. See [provider credential acquisition fails](../setup/docs/Troubleshooting.md#provider-credential-acquisition-fails)
+for corrective steps.
+
 ## HTTP status codes
 
 <a id="2-outcome--http-status-mapping"></a>
