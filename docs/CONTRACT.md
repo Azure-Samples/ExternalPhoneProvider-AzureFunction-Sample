@@ -165,6 +165,23 @@ Content-Type: application/json
 
 Failures omit `nonce` and `providerStatus`.
 
+## HTTP status codes
+
+<a id="2-outcome--http-status-mapping"></a>
+
+| Status | Description |
+| --- | --- |
+| `200 OK` | Evaluation completed or the provider accepted the request. |
+| `400 Bad Request` | Invalid request or encrypted content. |
+| `401 Unauthorized` | Caller or provider authentication failed. |
+| `403 Forbidden` | Caller access was denied or the provider blocked the request. |
+| `429 Too Many Requests` | Provider throttling. |
+| `500 Internal Server Error` | Unexpected Function or provider response-processing failure. |
+| `502 Bad Gateway` | Provider configuration, credential, network, or response failure. |
+| `504 Gateway Timeout` | Provider request timed out. |
+
+Check a timed-out live request before retrying. The provider might already have accepted it.
+
 ## Error response
 
 The Function returns JSON for application errors:
@@ -216,23 +233,6 @@ Use `ResultCode`, `request_failed`, and `request_completed` together. If the pla
 `Success` value disagrees with `ResultCode=502`, treat the HTTP result and correlated application
 events as the request outcome. See [provider credential acquisition fails](../setup/docs/Troubleshooting.md#provider-credential-acquisition-fails)
 for corrective steps.
-
-## HTTP status codes
-
-<a id="2-outcome--http-status-mapping"></a>
-
-| Status | Description |
-| --- | --- |
-| `200 OK` | Evaluation completed or the provider accepted the request. |
-| `400 Bad Request` | Invalid request or encrypted content. |
-| `401 Unauthorized` | Caller or provider authentication failed. |
-| `403 Forbidden` | Caller access was denied or the provider blocked the request. |
-| `429 Too Many Requests` | Provider throttling. |
-| `500 Internal Server Error` | Unexpected Function or provider response-processing failure. |
-| `502 Bad Gateway` | Provider configuration, credential, network, or response failure. |
-| `504 Gateway Timeout` | Provider request timed out. |
-
-Check a timed-out live request before retrying. The provider might already have accepted it.
 
 ## Related guidance
 
