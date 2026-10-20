@@ -9,6 +9,7 @@ const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure
 const { SecretClient } = require('@azure/keyvault-secrets');
 const fixtures = require('../../tests/fixtures/contract.json');
 const providers = require('../src/functions/providers');
+const jwe = require('../src/functions/jwe');
 const {
     CredentialTokenService,
     credentialTokenService,
@@ -22,6 +23,9 @@ const originalLoad = Module._load;
 const registration = mock.method(Module, '_load', function (name, ...args) {
     if (name === './providers') {
         return { selectProvider: (...args) => providers.selectProvider(...args) };
+    }
+    if (name === './jwe') {
+        return { decryptDeliveryContext: (...args) => jwe.decryptDeliveryContext(...args) };
     }
     if (name === '@azure/functions') {
         return {
@@ -329,6 +333,82 @@ test('startup without a provider and evaluation perform no provider I/O', async 
         [0, 0, 0]);
     assert.equal(event('evaluation_completed').eventName, 'evaluation_completed');
 });
+
+for (const field of ['channel', 'mode']) {
+    for (const value of [
+        'constructor', '__proto__', 'CONSTRUCTOR', '__PROTO__',
+        'toString', 'valueOf', 'hasOwnProperty', 'unsupported',
+    ]) {
+        test(`${field}: unsupported enum ${value} fails before decryption and provider work`, async () => {
+            const decrypt = mock.method(jwe, 'decryptDeliveryContext');
+            const selectProvider = mock.method(providers, 'selectProvider');
+            const result = await invoke(await envelope({ [field]: value }));
+            assert.deepEqual({
+                status: result.status,
+                nonce: result.jsonBody.nonce,
+                decryptionCalls: decrypt.mock.callCount(),
+                providerSelections: selectProvider.mock.callCount(),
+                credentialCalls: credentialTokenService.getCredentials.mock.callCount(),
+                providerCalls: fetchMock.mock.callCount(),
+            }, {
+                status: 400,
+                nonce: undefined,
+                decryptionCalls: 0,
+                providerSelections: 0,
+                credentialCalls: 0,
+                providerCalls: 0,
+            });
+            failure(result, 400, 'bad_request');
+            assert.equal(result.jsonBody.reason, `unsupported ${field}`);
+            assert.equal(event('request_failed').failureStage, 'request_validation');
+            assert.equal(event('envelope_validated'), undefined);
+            assert.deepEqual([getToken.mock.callCount(), getSecret.mock.callCount()], [0, 0]);
+        });
+    }
+}
+
+for (const [channelName, channels] of [
+    ['sms', [1, 'sms', 'SMS', 'sMs']],
+    ['voice', [2, 'voice', 'VOICE', 'VoIcE']],
+]) {
+    for (const [evaluation, modes] of [
+        [false, [1, 'live', 'LIVE', 'LiVe']],
+        [true, [2, 'evaluation', 'EVALUATION', 'EvAlUaTiOn']],
+    ]) {
+        test(`enum variants preserve ${channelName} ${evaluation ? 'evaluation' : 'live'} behavior`, async () => {
+            const selectProvider = mock.method(providers, 'selectProvider');
+            process.env.EPP_PROVIDER_SMS_ENDPOINT = 'https://sms.provider.example/send';
+            process.env.EPP_PROVIDER_VOICE_ENDPOINT = 'https://voice.provider.example/send';
+            let sends = 0;
+            for (const channel of channels) {
+                for (const mode of modes) {
+                    const body = await envelope({ channel, mode });
+                    const result = await invoke(body);
+                    assert.deepEqual(result, {
+                        status: 200,
+                        jsonBody: {
+                            nonce: baseDelivery.nonce,
+                            correlationId: body.correlationId,
+                            providerStatus: 'accepted',
+                        },
+                    });
+                    if (!evaluation) {
+                        sends++;
+                        const [url, init] = fetchMock.mock.calls.at(-1).arguments;
+                        assert.equal(url, channelName === 'voice'
+                            ? process.env.EPP_PROVIDER_VOICE_ENDPOINT : process.env.EPP_PROVIDER_SMS_ENDPOINT);
+                        assert.deepEqual(JSON.parse(init.body).messageTypes, [channelName]);
+                    }
+                    assert.deepEqual([
+                        selectProvider.mock.callCount(), credentialTokenService.getCredentials.mock.callCount(),
+                        getToken.mock.callCount(), getSecret.mock.callCount(), fetchMock.mock.callCount(),
+                    ], [sends, sends, sends, 0, sends]);
+                    assert.equal(event('evaluation_completed') !== undefined, evaluation);
+                }
+            }
+        });
+    }
+}
 
 test('shared invalid requests preserve exact reasons and never perform provider I/O', async () => {
     const valid = {
