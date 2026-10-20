@@ -159,13 +159,16 @@ provider-neutral delivery object (`OtpDelivery.otp` in JavaScript/Python, `OtpDe
 It is not converted to a number or extracted from `message`, and is not logged or returned in
 the HTTP response. Existing built-in provider message and voice mappings remain unchanged.
 
-The optional `riskContext` must be a JSON object or `null`. It can contain integration-approved
-signals such as a scenario name or IP address. It is passed unchanged to provider adapters as
+The optional `riskContext` must be a JSON object or `null`. It can contain signals such as a
+scenario name or IP address. It is passed unchanged to provider adapters as
 `OtpDelivery.riskContext` in JavaScript, `OtpDelivery.RiskContext`
 (`Dictionary<string, JsonElement>`) in C#, and `OtpDelivery.risk_context`
 (`dict[str, object]`) in Python. The shared handler does not require or interpret individual
 fields. Risk data is not logged or returned in HTTP responses, and built-in adapters do not
-forward it to providers. A custom adapter must explicitly map each approved field it uses.
+forward it to providers. A custom adapter must explicitly map each field it uses.
+
+Current runtimes do not read an incoming `textToVoice` property. The Soprano adapters build their
+provider `text2voice` object from `message` and `locale`.
 
 Validation reasons include:
 

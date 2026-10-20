@@ -110,17 +110,15 @@ The JWE uses `RSA-OAEP-256` and `A256GCM`. After decryption, the JSON contains:
 | `otp` | No | Passcode supplied separately as a string. Leading zeros are preserved. |
 | `locale` | No | Voice locale. |
 | `extension` | No | Legacy office-voice data. The shared handler does not forward it to built-in providers. |
-| `riskContext` | No | JSON key-value object containing approved risk signals; may be `null`. |
-| `textToVoice` | No | Legacy speech data. The shared handler does not forward it to built-in providers. |
+| `riskContext` | No | JSON key-value object containing risk signals; may be `null`. |
 
 Microsoft Entra ID supplies `otp` for SMS and voice, with a generated test code in evaluation
 mode. It belongs inside the encrypted delivery context, not the outer request body. Requests
 that omit it or set it to `null` remain supported.
 
-`riskContext` can include signals such as a scenario name or IP address when those fields are
-approved for the integration. The shared handler preserves the supplied object but does not
-interpret, log, return, or forward its fields to the built-in providers. A custom adapter must
-explicitly map any approved fields it needs.
+`riskContext` can include signals such as a scenario name or IP address. The shared handler
+preserves the supplied object but does not interpret, log, return, or forward its fields to the
+built-in providers. A custom adapter must explicitly map any fields it needs.
 
 See [JWE validation and key handling](../TECHNICAL.md#jwe-validation-and-key-handling) for limits,
 algorithms, key settings, and runtime behavior.
