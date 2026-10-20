@@ -79,8 +79,8 @@ The Function does not forward the bearer token to the phone provider.
 | `correlationId` | No | Sign-in correlation value. |
 | `ttlSeconds` | No | Positive integer up to `2147483647`. The sample validates this value but does not enforce passcode expiry or a delivery deadline. |
 
-Send integer channel, mode, and TTL values in their documented forms for consistent behavior across
-all runtimes. See [request validation and runtime differences](../TECHNICAL.md#request-validation-and-runtime-differences).
+Use the documented channel and mode values. When supplying `ttlSeconds`, use an integer. See
+[request validation and runtime differences](../TECHNICAL.md#request-validation-and-runtime-differences).
 
 ### Encrypted delivery context
 
@@ -171,12 +171,12 @@ Failures omit `nonce` and `providerStatus`.
 | Status | Description |
 | --- | --- |
 | `200 OK` | Evaluation completed or the provider accepted the request. |
-| `400 Bad Request` | Invalid request or encrypted content, an unregistered configured provider, or another mapped provider `4xx` response. |
+| `400 Bad Request` | Invalid request or encrypted content, a missing or unrecognized provider setting, or a provider `4xx` response that maps to `400`. Provider authentication failures and throttling map to the statuses listed separately below. |
 | `401 Unauthorized` | Caller or provider authentication failed. |
 | `403 Forbidden` | Caller access was denied or the provider blocked the request. |
 | `429 Too Many Requests` | Provider throttling. |
 | `500 Internal Server Error` | Unexpected Function or provider response-processing failure. |
-| `502 Bad Gateway` | Missing or invalid provider endpoint, authentication-mode mismatch, credential, network, or response failure. |
+| `502 Bad Gateway` | Missing or invalid provider endpoint, mismatched authentication mode, or failure to obtain credentials, reach the provider, or process its response. |
 | `504 Gateway Timeout` | Provider request timed out. |
 
 Check a timed-out live request before retrying. The provider might already have accepted it.
@@ -208,19 +208,19 @@ Error categories are:
   mapped provider-response failures.
 - `delivery_failed` for an unexpected handler failure.
 
-These JSON errors come from the SendOtp handler. Easy Auth can reject a request before the handler,
-and the .NET Functions host can reject a binding request before this response shape is created.
-When `reason` is present, it is a fixed validation message rather than an exception message.
+These JSON errors come from the SendOtp handler. Easy Auth can reject a request before the handler
+runs. The .NET Functions host can also reject a request while binding its input, before the handler
+runs. Those responses can have a different format. When `reason` is present, it is a fixed
+validation message rather than an exception message.
 
-Provider configuration, credentials, network failures, and provider response details use the
-public `provider_delivery_failed` category. For example, unavailable provider credentials return
-`502 Bad Gateway`; the safe diagnostic detail is recorded as
+Unavailable provider credentials, for example, return `502 Bad Gateway`. The safe diagnostic
+detail is recorded as
 `failureStage=provider_credentials` and `failureReason=credential_unavailable` in application
 logs, not exposed in the response.
 
 ### Diagnose a credential failure
 
-A current-package credential failure is expected to emit this application-event sequence:
+When a live request cannot obtain provider credentials, current packages emit the following events:
 
 | Signal | Meaning |
 | --- | --- |
@@ -230,7 +230,7 @@ A current-package credential failure is expected to emit this application-event 
 | `provider_selected` | The configured provider was selected. |
 | `provider_credential_resolution_started` | The Function started resolving provider credentials. |
 | `request_failed` with credential stage, unavailable reason, and HTTP `502` | Credential resolution failed before the provider request started. |
-| `response_prepared`, then `request_completed` with HTTP `502` | The handler prepared and completed its `provider_delivery_failed` response path. These events do not prove that the caller received the response. |
+| `response_prepared`, then `request_completed` with HTTP `502` | The handler prepared a `provider_delivery_failed` response with HTTP `502`. These events do not confirm that the caller received it. |
 
 This pattern points to provider authentication or credential configuration, not envelope validation,
 decryption, or provider delivery. Check the selected provider's Key Vault secrets or OAuth managed
