@@ -74,7 +74,8 @@ try {
             }
         }
         function script:Invoke-EppAz {
-            param([Parameter(ValueFromRemainingArguments)][string[]] $Arguments)
+            [CmdletBinding(PositionalBinding = $false)]
+            param([Parameter(Position = 0, ValueFromRemainingArguments)][string[]] $Arguments, [string] $Activity)
             $command = $Arguments -join ' '
             $script:Calls.Add($command)
             switch -Regex ($command) {
@@ -166,7 +167,7 @@ try {
             $script:Exists = $false
             $script:CreatedCertificate = $certificate
             $inputs = @{
-                TenantId = '11111111-1111-1111-1111-111111111111'
+                TenantId = '11111111-1111-1111-1111-111111111111'; TenantRegionScope = 'NA'
                 SubscriptionId = '33333333-3333-3333-3333-333333333333'; ApplicationId = '22222222-2222-2222-2222-222222222222'
                 ServicePlan = 'FC1'; Language = 'javascript'; ProviderAuthentication = 'apiKey'
                 Location = 'westus2'; ResourcePrefix = 'unit'; PackageSha256 = ('a' * 64); SourcePackageSha256 = ('a' * 64)
@@ -515,6 +516,9 @@ try {
                 AssetDirectory = $Directory; WorkingDirectory = $Directory; Package = @{ RequiresRemoteBuild = $false }; OutputDirectory = $Directory
             }
             foreach ($action in @('Create', 'Reuse', 'Replace')) {
+                $inputs.Language = if ($action -eq 'Reuse') { 'dotnet' } else { 'javascript' }
+                $inputs.PackageFile = if ($inputs.Language -eq 'dotnet') { 'epp-dotnet-source.zip' } else { 'epp-javascript.zip' }
+                $inputs.PackageUrl = "https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/$($inputs.PackageFile)"
                 Set-TestBundle $certificate
                 $script:Application.KeyCredentials = if ($action -eq 'Create') { @($signing) } else { @($first, (New-TestCredential $other $secondId), $signing) }
                 $context.CertificatePlan = if ($action -eq 'Reuse') { Get-EppCertificatePlan @planArgs @reuseArgs -NonInteractive }
@@ -527,8 +531,10 @@ try {
                 $script:ReferenceError = ''; $script:Calls.Clear()
                 $result = Invoke-EppDeployment @deployment
                 Assert ($result.certificateAction -ceq $action -and $result.certificateReferenceResolved -eq $true) 'The persisted result must identify the action and resolved reference.'
+                $expectedLanguage = if ($inputs.Language -eq 'dotnet') { 'csharp' } else { 'javascript' }
+                Assert ($result.language -ceq $expectedLanguage -and $result.tenantRegionScope -ceq 'NA') 'Persist the customer-facing language identifier and detected tenant scope.'
                 Assert ($result.sourceRevision -ceq ('a' * 40) -and $result.source -ceq $inputs.SourceBaseUri -and
-                    $result.packageFile -ceq 'epp-javascript.zip' -and $result.packageUrl -ceq $inputs.PackageUrl -and
+                    $result.packageFile -ceq $inputs.PackageFile -and $result.packageUrl -ceq $inputs.PackageUrl -and
                     $result.packageReleaseTag -ceq $inputs.PackageReleaseTag) 'The persisted result must identify the setup source and downloaded Function release.'
                 Assert ($result.removedEncryptionKeyIds.Count -eq $context.CertificatePlan.RemoveKeyIds.Count) 'Record the exact retired credential IDs.'
                 $trace = $script:Calls.ToArray()
@@ -570,6 +576,7 @@ try {
                 param($Inputs, $AssetDirectory, $Provider, [switch] $NonInteractive)
                 return $Provider
             }
+            function script:Get-EppTenantRegionScope { param($TenantId); return 'NA' }
             function script:Get-EppLanguage {
                 param($AssetDirectory, $Language, $SourceRepository, $PackageReleaseTag, [switch] $NonInteractive)
                 return @{

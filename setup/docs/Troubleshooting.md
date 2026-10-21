@@ -11,7 +11,7 @@ Select the failed stage and keep existing resources. Before rerunning, use
 | --- | --- |
 | Account missing or wrong tenant | [Account picker](#the-expected-cached-account-or-subscription-is-missing), [directory context](#azure-cli-directory-context-does-not-match-the-selected-tenant) |
 | Permission or prerequisite failure | [Preflight](#authentication-permission-or-runtime-preflight-fails), [Graph 403](#az-ad-or-az-rest-returns-403-forbidden), [PrincipalNotFound](#principalnotfound-for-the-azure-operator) |
-| Region or hosting rejected | [Quota](#deployment-fails-with-subscriptionisoverquotaforsku), [plan selection](#service-plan-selection-or-availability-fails), [FC1 object-reference error](#fc1-deployment-preflight-reports-an-object-reference-error), [EP1 location check](#appservice-list-locations-rejects-ep1) |
+| Region or hosting rejected | [Tenant scope and EU recommendations](#tenant-scope-discovery-or-eu-region-recommendations-fail), [quota](#deployment-fails-with-subscriptionisoverquotaforsku), [plan selection](#service-plan-selection-or-availability-fails), [FC1 object-reference error](#fc1-deployment-preflight-reports-an-object-reference-error), [EP1 location check](#appservice-list-locations-rejects-ep1) |
 | Certificate or resource registration fails | [Certificate selection](#certificate-selection-reuse-or-cleanup-fails), [resource providers](#a-required-azure-resource-provider-is-not-registered) |
 | Download, build, or parser failure | [Old package prompts](#setup-still-asks-for-packageurl-or-packagesha256), [checksum/download](#a-checksum-or-package-download-fails), [.NET](#net-build-fails), [Python](#python-remote-build-fails), [CLI JSON](#azure-cli-warnings-break-json-parsing) |
 | Deployment stops after approval | [Publication and startup](#deployment-stops-after-approval) |
@@ -106,6 +106,21 @@ registration. A supported Linux EP1 region can still have zero quota for your su
 **Expected:** the approved quota is visible and sufficient. See
 [quota support](https://learn.microsoft.com/azure/quotas/quotas-overview). Rerun with the reviewed
 inputs after quota is available.
+
+## Tenant scope discovery or EU region recommendations fail
+
+Verify the selected tenant ID and network access to
+`https://login.microsoftonline.com/<tenant-id>/v2.0/.well-known/openid-configuration`.
+Setup requires valid public-cloud tenant metadata and `tenant_region_scope`; it does not infer a
+scope from country or Azure region, and it does not silently fall back to Global on lookup failure.
+If `-EndpointRegion` conflicts with the detected route, omit it or use the matching value.
+
+EU recommendations use the subscription's Azure-recommended physical regions and EU/EFTA
+geography. The United Kingdom is outside the EU Data Boundary even though Azure groups it under
+Europe. If Azure returns no verified EU recommendations, inspect the full region list and your
+organization's residency requirements. An explicit `-Location` or manual selection remains
+possible, but an out-of-boundary or unverifiable selection warns and still requires plan review.
+Non-EU tenants retain the original recommendation behavior.
 
 ## Service plan selection or availability fails
 

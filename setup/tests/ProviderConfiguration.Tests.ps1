@@ -104,14 +104,14 @@ try {
         Reset-TestState @('')
         Assert ($null -eq (Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory)) 'Empty provider input cancels.'
 
-        foreach ($answer in @('Yes', 'No', '')) {
+        foreach ($answer in @('Yes', 'y', ' YES ', 'No', 'n', '')) {
             Reset-TestState @($answer)
             $script:Application.SignInAudience = 'AzureADMultipleOrgs'
             $script:Restriction = New-TestRestriction @($telesign.TenantId)
             $selected = Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory
-            if ($answer -eq 'Yes') { Assert ($selected -ceq 'telesign') 'Confirm the single configured provider.' }
+            if ($answer.Trim() -in @('Yes', 'Y')) { Assert ($selected -ceq 'telesign') 'Confirm the single configured provider.' }
             else { Assert ($null -eq $selected) 'Do not silently accept the single configured provider.' }
-            Assert ($script:Prompts[0] -match 'configured for Telesign.*Yes or No') 'Show the configured provider in the confirmation.'
+            Assert ($script:Prompts[0] -match 'configured for Telesign.*Yes or Y.*No or N') 'Show the configured provider and accepted responses in the confirmation.'
         }
         Reset-TestState @('Soprano')
         $script:Application.SignInAudience = 'AzureADMultipleOrgs'

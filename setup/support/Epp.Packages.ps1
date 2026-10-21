@@ -40,7 +40,7 @@ function Get-EppPackageRelease {
 
 function Get-EppLanguage {
     param(
-        [string] $AssetDirectory, [string] $Language, [string] $SourceRepository,
+        [string] $AssetDirectory, [string] $Language = 'javascript', [string] $SourceRepository,
         [string] $PackageReleaseTag, [switch] $NonInteractive
     )
 
@@ -62,8 +62,15 @@ function Get-EppLanguage {
         }
         $seen[$entry['id']] = $true
     }
-    $entry = Select-EppOption -Entries $entries -Name Language -PromptName Platform `
-        -Value $Language -NonInteractive:$NonInteractive
+    if ([string]::IsNullOrWhiteSpace($Language)) { throw 'Language must not be empty. Use javascript, csharp, or python.' }
+    $languageId = switch ($Language.ToLowerInvariant()) {
+        { $_ -in @('csharp', 'c#', 'dotnet', '.net') } { 'dotnet'; break }
+        { $_ -in @('javascript', 'node.js') } { 'javascript'; break }
+        'python' { 'python'; break }
+        default { throw "Unsupported language '$Language'. Use javascript, csharp, or python." }
+    }
+    $entry = $entries | Where-Object { $_['id'] -ceq $languageId } | Select-Object -First 1
+    if (-not $entry) { throw "The package catalog does not contain the selected language '$Language'." }
     $release = Get-EppPackageRelease -SourceRepository $SourceRepository -Tag $PackageReleaseTag -TagPrefix $tagPrefix
     $releaseTag = [string]$release.tag_name
     $releaseBaseUrl = "https://github.com/$SourceRepository/releases/download/$releaseTag"
@@ -162,12 +169,12 @@ function Build-EppDotNetPackage {
     param([string] $SourcePath, [string] $Directory)
 
     if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
-        throw 'The .NET language needs the .NET 8 SDK on this computer. Install it once; setup performs the build automatically.'
+        throw 'Deploying C# requires the .NET 8 SDK on this computer. Install the SDK; setup builds the package automatically.'
     }
     $versions = @((Invoke-EppDotNet --list-sdks) -split '\r?\n' | ForEach-Object {
         if ($_ -match '^(8\.\d+\.\d+)\s') { [Version]$Matches[1] }
     } | Sort-Object -Descending)
-    if (-not $versions.Count) { throw 'Install the .NET 8 SDK before deploying the .NET language. No Azure resources were changed.' }
+    if (-not $versions.Count) { throw 'Install the .NET 8 SDK before deploying C#. No Azure resources were changed.' }
     $sourceDirectory = Join-Path $Directory 'dotnet-source'
     $publishDirectory = Join-Path $Directory 'dotnet-publish'
     [IO.Compression.ZipFile]::ExtractToDirectory($SourcePath, $sourceDirectory)

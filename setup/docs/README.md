@@ -23,9 +23,13 @@ Setup creates **one regional endpoint**. See [Front Door](../../docs/FRONTDOOR.m
 
 ## Availability
 
-Choose **Telesign or Soprano**, **Global/EU** provider routing (prompt: **Tenant scope**),
-**Node.js/.NET/Python**, and **FC1/EP1** hosting. Setup verifies `SHA256SUMS.txt`, builds as needed,
-and publishes; no package URL/hash input is needed. See [source/package selection](#source-versioning).
+Choose **Telesign or Soprano** and **FC1/EP1** hosting. Setup detects the tenant's replication scope
+and selects the **EU** provider route for EU tenants or **Global** otherwise, without a scope picker.
+**JavaScript** is the default language, without a prompt. To use another language, run
+`.\Setup-Epp.ps1 -Language csharp` or `.\Setup-Epp.ps1 -Language python`.
+The legacy `-Language dotnet` value remains accepted for C#.
+Setup verifies `SHA256SUMS.txt`, builds as needed, and publishes; no package URL/hash input is needed.
+See [source/package selection](#source-versioning).
 
 Both channels are configured. Profile objects `deployment.routes.global` and
 `deployment.routes.eu` define `smsEndpoint`, `voiceEndpoint`, tenant, authentication, and timing
@@ -38,9 +42,35 @@ The current profiles use identical Global/EU URLs, and Soprano uses the same app
 The route label is not a residency or Azure-region selection. Infobip and Sinch are bundled
 adapters without guided profiles.
 
+### Tenant scope and Azure region recommendations
+
+Setup reads `tenant_region_scope` from the selected tenant's public-cloud OpenID Connect discovery
+document before region selection. It does not infer replication scope from the tenant's country,
+the subscription, or the chosen Azure region. Missing or invalid discovery metadata stops setup.
+`-EndpointRegion` is optional in both interactive and unattended runs; an explicit value must match
+the detected EU/Global provider route.
+
+Only tenants with replication scope **EU** receive a filtered shortlist: Azure-recommended physical
+regions within the [EU Data Boundary](https://learn.microsoft.com/privacy/eudb/eu-data-boundary-learn#eu-data-boundary-countries-and-datacenter-locations),
+which includes EU and EFTA countries. Other scopes retain the existing shortlist and ordering.
+The region catalog comes from the subscription's live location metadata, not a separately hosted
+datacenter configuration file. The filter checks Azure **geography**, not the broader
+`geographyGroup`: the [Europe geography](https://learn.microsoft.com/azure/reliability/regions-list)
+contains North Europe (Ireland) and West Europe (Netherlands), while the Europe group also contains
+the United Kingdom, which is outside the boundary.
+
+**Show all regions**, manual entry, and explicit `-Location` remain available. For EU tenants,
+an out-of-boundary selection warns; missing geography metadata produces an unverifiable-location
+warning instead. The selected region remains in the deployment plan for review. An empty EU
+shortlist does not silently fall back to global recommendations. Availability and quota checks
+still apply. These are deployment recommendations, not enforcement or a GDPR compliance guarantee.
+
 ## Service plan selection
 
 Setup offers these two Linux hosting plans:
+
+Review the [Azure hosting and provider cost estimate](../../docs/COST-CALCULATOR.md), also linked
+directly from the service-plan prompt.
 
 | Option | Hosting |
 |---|---|
@@ -118,7 +148,7 @@ Setup configures:
 - The selected **Linux FC1 or EP1** plan available in the region with enough quota. Resolve
   [`SubscriptionIsOverQuotaForSku`](Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku)
   before retrying. The operator needs subscription-scoped `/register/action`.
-- **.NET only:** install the .NET 8 SDK and allow NuGet access. Setup publishes for `linux-x64`,
+- **C# only:** install the .NET 8 SDK and allow NuGet access. Setup publishes for `linux-x64`,
   packages, and deploys automatically.
 - **Python:** Azure builds Linux dependencies; no local Python/pip install is required. The source
   archive is not a run-from-package artifact.
@@ -148,7 +178,7 @@ Open a new **PowerShell 7** window after installation, then check:
 ```powershell
 $PSVersionTable.PSVersion
 az version
-# Only when choosing dotnet:
+# Only when choosing csharp:
 dotnet --list-sdks
 ```
 
@@ -157,7 +187,7 @@ Interactive setup can install missing Bicep.
 | Choice | Azure runtime | Automatic deployment path |
 |---|---|---|
 | JavaScript | Node.js 22, Functions v4 | Verify and publish the ready ZIP with its production dependencies |
-| .NET | .NET 8 isolated, Functions v4 | Verify source ZIP, publish for Linux with .NET 8, repackage and publish |
+| C# | .NET 8 isolated, Functions v4 | Verify source ZIP, publish for Linux with .NET 8, repackage and publish |
 | Python | Python 3.11, Functions v4 | Verify source ZIP; One Deploy with remote build on FC1, or validate/download and publish the SCM-built output on EP1 |
 
 Setup records source and built-package hashes separately. FC1 Python leaves `packageSha256` null
@@ -197,13 +227,16 @@ The flow is:
 1. **Choose the customer Azure context.** Setup lists cached enabled Azure CLI user subscriptions,
    then asks for the tenant and subscription. Refresh or start device-code sign-in when the
    expected account is missing. Explicit `-TenantId` and `-SubscriptionId` values are preserved.
-2. **Choose the dedicated app registration and Azure region.** The application picker shows
+2. **Choose the dedicated app registration.** The application picker shows
    organizational app names and client IDs, supports bounded name-prefix search and manual client-ID
-   entry, and never substitutes an object ID. The region picker uses Azure's current Recommended
-   metadata for a short list, with all-physical-region and manual-entry options. Supplied values
-   skip these selectors.
-3. **Choose the Global or EU provider route** (shown as **Tenant scope**).
-4. **Choose a provider by name**, then an Azure Function **platform**: Node.js, .NET, or Python.
+   entry, and never substitutes an object ID. A supplied client ID skips this selector.
+3. **Detect tenant scope and choose the Azure region.** Setup selects EU/Global provider routing
+   from the tenant metadata, then uses Azure's current Recommended regions for a shortlist.
+   Only EU tenants receive the [EU Data Boundary filter](#tenant-scope-and-azure-region-recommendations).
+   All-region and manual-entry options remain available. `-Location` skips the picker, but EU
+   tenants still receive a boundary check and a warning if appropriate.
+4. **Choose a provider by name.** JavaScript is used unless `-Language csharp` or
+   `-Language python` was supplied; there is no language prompt.
    When `-Provider` is omitted, setup reads the application's allowed-tenants configuration:
    no supported provider prompts for a name, one asks for confirmation, and several require a
    name. Existing allowed provider tenants are preserved; provider options are never numbered.
@@ -214,11 +247,13 @@ The flow is:
 5. **Service plan selection:** choose **Flex Consumption FC1** (free usage grant, zero always-ready
    instances) or **Premium EP1** (warm instance).
    Supply `-ServicePlan FC1` or `-ServicePlan EP1` to reuse a known selection.
-6. **Enter a resource prefix**, such as `contoso`. All resources created by the script start with
+6. **Accept the default resource prefix `epp`, or enter your own**, such as `contoso`.
+   All resources created by the script start with
    this prefix. Use 2-8 lowercase letters or digits, starting with a letter. Every top-level
    resource name then adds the meaningful `epp` marker, for example
    `contoso-epp-rg-<suffix>`. A deterministic suffix derived from the
-   subscription, application ID, and prefix reduces global-name collisions. Reruns use the same names.
+   subscription, application ID, and prefix reduces global-name collisions. Reruns use the same names
+   when given the original prefix. Unattended setup still requires `-ResourcePrefix`.
 7. **Check prerequisites and revalidate authentication.** Missing Bicep can be installed after a
    separate confirmation. Graph operations reuse the selected Azure CLI user session; no Graph
    SDK installation or separate sign-in occurs.
@@ -233,8 +268,15 @@ The flow is:
    exact names; it does not independently calculate a different naming scheme.
    The plan also lists the six required **Azure resource providers** and their registration states.
    These Azure service registrations are separate from your phone-provider selection.
-10. **Type `Yes` once to deploy.** `No` or Enter cancels without Azure changes. Invalid answers prompt
-   again; individual resources do not request additional approvals.
+10. **Enter `Yes` or `Y` to deploy.** `No`, `N`, or Enter cancels without Azure changes. Responses
+    are case-insensitive. Invalid answers prompt again; individual resources do not request
+    additional approvals.
+
+Azure resource deployment and Function publication can each take several minutes; sign-in, builds,
+and permission propagation can add time. Keep the session open until deployment completes.
+A rotating activity indicator identifies long-running deployment operations without displaying
+elapsed time, a percentage, or a completion estimate. Redirected output and `-NonInteractive` runs
+use static status messages.
 
 ### Encryption certificate selection
 
@@ -295,8 +337,9 @@ before activation or returning the endpoint to service.
 ### Reviewing the plan without deploying
 
 `Setup-Epp.ps1` does not implement `-DryRun`, `-WhatIf`, or PowerShell `ShouldProcess`.
-To review a real plan, run interactively, complete preflight, then answer **No** or press Enter
-at `Deploy this complete plan? Type Yes or No [No]`. Do not supply `-ApproveDeployment`:
+To review a real plan, run interactively, complete preflight, then answer **No**, **N**, or press Enter
+at `Proceed with deployment? Enter Yes or Y to deploy, or No or N to cancel [No]`.
+Do not supply `-ApproveDeployment`:
 that switch authorizes the deployment phase without asking again.
 
 This is a cancellation at the approval gate, not an offline simulation. The existing application
@@ -328,11 +371,12 @@ provider's ID (`soprano` or `telesign`); neither is a default or recommendation:
     -Language javascript `
     -ServicePlan FC1 `
     -Provider '<provider-id>' `
-    -EndpointRegion global `
     -ResourcePrefix contoso
 ```
 
-Replace the ID placeholders with quoted GUID strings before execution. The `-Channel` parameter
+Replace the ID placeholders with quoted GUID strings before execution. Provider routing is detected
+from the tenant; omit `-EndpointRegion` unless you need to assert an expected matching route.
+The `-Channel` parameter
 has been removed; omit it from existing setup commands. For an independent second provider
 deployment, use a different prefix **and a dedicated app**.
 The suffix does not include provider/region, so changing those inputs with the same
@@ -377,11 +421,13 @@ there is no separate `phone-provider-decryption-key` secret.
 
 ### Noninteractive example
 
-Supply every input, including `-ServicePlan`, and **both `-NonInteractive -ApproveDeployment`**
+Supply the required inputs, including `-ServicePlan` and `-ResourcePrefix`, and
+**both `-NonInteractive -ApproveDeployment`**
 to authorize the complete reviewed plan. `-NonInteractive` alone approves nothing; there is no
 `-Stage`, `-Resume`, `-ConfigPath`, or policy-approval switch.
 
-Replace the IDs/provider placeholder and choose approved route, region, prefix, and plan.
+Replace the IDs/provider placeholder and choose an approved region, prefix, and plan.
+Language defaults to JavaScript; provider routing is detected from the tenant scope.
 This JavaScript example supports both channels. Establish the CLI user session for ARM and Graph
 first; MFA/consent may still be required. There is no headless service-principal path.
 Preinstall Bicep or explicitly allow its installation. In Cloud Shell, reuse the intended
@@ -405,7 +451,6 @@ if ($LASTEXITCODE -ne 0) { throw 'Microsoft Graph token acquisition failed.' }
     -ApplicationId $applicationId `
     -Location westus2 `
     -Provider '<provider-id>' `
-    -EndpointRegion global `
     -Language javascript `
     -ServicePlan FC1 `
     -ResourcePrefix contoso `
@@ -445,12 +490,14 @@ already registered.
 
 Open the timestamped JSON under `epp-output` in a private editor. It contains identifiers and
 configuration metadata, not provider credentials or private-key bytes. Keep it access-controlled.
+**Save the output: the endpoint URL and Application (client) ID are required for policy updates.**
 
 | Summary field | How to use it |
 |---|---|
 | `tenantId`, `subscriptionId`, `applicationId` | Verify the intended customer directory, Azure subscription, and endpoint **client ID**. |
+| `tenantRegionScope` | Detected tenant replication scope used to select the provider route and apply EU-only region recommendations. |
 | `resources.functionApp`, `resources.keyVault`, `resources.applicationInsights`, `resources.logAnalytics` | Find the exact Azure resources; do not guess names or use a different environment's vault. |
-| `provider`, `endpointRegion`, `providerTenantId` | Confirm provider routing, separate from the customer's directory and Azure location. Both SMS and voice use this configuration. |
+| `provider`, `endpointRegion`, `providerTenantId` | Confirm the tenant-derived provider route, separate from Azure location. Both SMS and voice use this configuration. |
 | `allowedProviderTenantIds` | Review the complete preserved provider-tenant allowlist, including the selected provider. This does not enable runtime switching between providers. |
 | `providerSmsEndpoint`, `providerVoiceEndpoint` | Confirm the distinct or identical provider URLs for SMS and voice. These are outbound provider URLs, not the Function's `endpointUrl`. |
 | `endpointUrl`, `identifierUri` | Exact SendOtp URL and registered app audience information for the authorized test/policy operator. |
@@ -458,7 +505,7 @@ configuration metadata, not provider credentials or private-key bytes. Keep it a
 | `certificateAction`, `removedEncryptionKeyIds`, `certificateVaultSubscriptionId` | Review whether creation, reuse, or replacement occurred, the exact retired application key IDs, and the source certificate's subscription. |
 | `certificateReferenceResolved` | `true` means the Function's exact secret reference resolved before registration. It is not proof of successful authorized decryption or provider delivery. |
 | `endpointServicePrincipalId`, `microsoftPhoneProviderServicePrincipalId` | Tenant-local enterprise-application Object IDs; neither is the endpoint app client ID. |
-| `source`, `sourceRevision`, `packageReleaseTag`, `packageUrl`, `sourcePackageSha256`, `packageSha256`, `language`, `servicePlan` | Commit-pinned setup source, package release provenance, and runtime/plan. FC1 Python's built hash can be null; source and built hashes describe different artifacts. |
+| `source`, `sourceRevision`, `packageReleaseTag`, `packageUrl`, `sourcePackageSha256`, `packageSha256`, `language`, `servicePlan` | Commit-pinned setup source, package release provenance, and language/plan. C# is recorded as `csharp`; older summaries can contain `dotnet`. FC1 Python's built hash can be null; source and built hashes describe different artifacts. |
 | `policyChanged` | Expected `false`: deployment has not activated policy. |
 
 The `provider` field must match your selected provider. For example, a record for the Global route
@@ -544,6 +591,7 @@ $tests = @(
     'Graph.Tests.ps1',
     'ProviderConfiguration.Tests.ps1',
     'Selections.Tests.ps1',
+    'Progress.Tests.ps1',
     'Certificates.Tests.ps1',
     'Providers.Tests.ps1'
 )
@@ -560,9 +608,11 @@ Remove-Item -LiteralPath $templatePath
 
 The suites cover launcher downloads and cleanup; account, subscription, application, and region
 selection; Azure CLI Graph calls; provider discovery; allowlist preservation; and stale-plan
-checks. They also cover certificate choices, provider and package selection, and FC1/EP1
-deployment. GitHub, Azure, Microsoft Graph, certificate, and publication calls are mocked.
-CI runs the same eight suites on Windows and Linux.
+checks. They also cover tenant-scope discovery, EU-only recommendations, language and prefix
+defaults, confirmation aliases, certificate choices, provider and package selection, and FC1/EP1
+deployment. Progress checks use a local CLI stand-in to verify animation, output handling, and
+cancellation. GitHub, Azure, Microsoft Graph, certificate, and publication calls are mocked.
+CI runs the same nine suites on Windows and Linux.
 They do not certify live deployments, RBAC propagation,
 Key Vault issuance, Entra behavior, or provider delivery.
 

@@ -85,6 +85,8 @@ function Get-EppServicePlan {
     param([string] $ServicePlan, [switch] $NonInteractive)
 
     Write-Host "`nService plan selection" -ForegroundColor Cyan
+    Write-Host 'Review estimated Azure hosting and provider costs:'
+    Write-Host 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/blob/main/docs/COST-CALCULATOR.md'
     Write-Host 'Flex Consumption has a free usage grant, not a zero-cost guarantee. Additional usage, Key Vault, storage, and telemetry can incur charges.'
     return Select-EppOption -Entries @(
         @{ id = 'FC1'; displayName = 'Flex Consumption FC1 (free grant, cold starts)' }
@@ -99,18 +101,22 @@ function Read-EppInput {
         [string] $Kind = 'Text',
         [switch] $NonInteractive, [switch] $AllowCancel,
         [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
-        [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample'
+        [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample',
+        [string] $PromptName, [string] $DefaultValue
     )
 
     $supplied = -not [string]::IsNullOrWhiteSpace($Value)
     while ($true) {
         if (-not $supplied) {
             if ($NonInteractive) { throw "-$Name is required in noninteractive mode." }
-            $prompt = if ($Hint) { "$Name - $Hint" } else { $Name }
+            $displayName = if ($PromptName) { $PromptName } else { $Name }
+            $prompt = if ($Hint) { "$displayName - $Hint" } else { $displayName }
+            if ($DefaultValue) { $prompt += " [$DefaultValue]" }
             $Value = [string](Read-Host $prompt)
         }
         $Value = $Value.Trim()
         if (-not $supplied -and $AllowCancel -and (-not $Value -or $Value -ieq 'Cancel')) { return $null }
+        if (-not $supplied -and -not $Value -and $DefaultValue) { $Value = $DefaultValue }
         try {
             if (-not $Value -or $Value -match '[\x00-\x1f<>]') { throw 'A nonempty value without placeholders is required.' }
             switch ($Kind) {
@@ -224,10 +230,10 @@ function Resolve-EppApplicationProvider {
     if ($configured.Count -eq 1) {
         $entry = $configured[0]
         while ($true) {
-            $answer = ([string](Read-Host "Application is configured for $($entry['displayName']). Use this provider? Type Yes or No [No]")).Trim()
-            if ($answer -ieq 'Yes') { return [string]$entry['id'] }
-            if (-not $answer -or $answer -ieq 'No') { return $null }
-            Write-Warning 'Type Yes to use the configured provider, or No/Enter to cancel.'
+            $answer = ([string](Read-Host "Application is configured for $($entry['displayName']). Use this provider? Enter Yes or Y, or No or N to cancel [No]")).Trim()
+            if ($answer -in @('Yes', 'Y')) { return [string]$entry['id'] }
+            if (-not $answer -or $answer -in @('No', 'N')) { return $null }
+            Write-Warning 'Enter Yes or Y to use the configured provider, or No or N to cancel. Press Enter to cancel.'
         }
     }
     Write-Host 'Multiple providers are configured on this application. Enter the provider name to use for this deployment.'
@@ -366,8 +372,16 @@ function Get-EppResourceNames {
     }
 }
 
+function Test-EppAnimationEnabled {
+    return $ProgressPreference -eq 'Continue' -and $Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected
+}
+
 function Invoke-EppAz {
-    param([Parameter(ValueFromRemainingArguments)][string[]] $Arguments)
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        [Parameter(Position = 0, ValueFromRemainingArguments)][string[]] $Arguments,
+        [string] $Activity
+    )
 
     $PSNativeCommandUseErrorActionPreference = $false
     if ($Arguments[0] -eq 'login') {
@@ -380,13 +394,57 @@ function Invoke-EppAz {
     }
     $errorPath = Join-Path ([IO.Path]::GetTempPath()) "epp-az-$([Guid]::NewGuid().ToString('N')).stderr"
     try {
-        $output = & az @Arguments --only-show-errors 2> $errorPath
-        $exitCode = $LASTEXITCODE
+        if ($Activity -and (Test-EppAnimationEnabled)) {
+            $command = Get-Command az -CommandType Application, ExternalScript -ErrorAction Stop
+            $worker = [PowerShell]::Create()
+            $line = ''
+            try {
+                # Keep native invocation in PowerShell so az.cmd and argument quoting work on Windows too.
+                $null = $worker.AddScript({
+                    param($CommandPath, $Arguments, $ErrorPath)
+                    $ErrorActionPreference = 'Stop'
+                    $PSNativeCommandUseErrorActionPreference = $false
+                    $output = & $CommandPath @Arguments --only-show-errors 2> $ErrorPath
+                    @{ Output = $output; ExitCode = $LASTEXITCODE }
+                }).AddArgument($command.Source).AddArgument($Arguments).AddArgument($errorPath)
+                $pending = $worker.BeginInvoke()
+                $frames = @('|', '/', '-', '\')
+                $frame = 0
+                while (-not $pending.IsCompleted) {
+                    $line = "$($frames[$frame % $frames.Count]) $Activity..."
+                    Write-Host "`r$line" -NoNewline -ForegroundColor Cyan
+                    $frame++
+                    Start-Sleep -Milliseconds 150
+                }
+                $completed = $worker.EndInvoke($pending)
+                if ($worker.Streams.Error.Count) { throw $worker.Streams.Error[0] }
+                if ($completed.Count -ne 1 -or $null -eq $completed[0].ExitCode) {
+                    throw 'Azure CLI did not return an operation result.'
+                }
+                $output = $completed[0].Output
+                $exitCode = $completed[0].ExitCode
+            }
+            finally {
+                try {
+                    if ($worker.InvocationStateInfo.State -eq 'Running') { $worker.Stop() }
+                }
+                finally {
+                    $worker.Dispose()
+                    if ($line) { Write-Host ("`r" + (' ' * $line.Length) + "`r") -NoNewline }
+                }
+            }
+        }
+        else {
+            if ($Activity) { Write-Host "$Activity..." -ForegroundColor Cyan }
+            $output = & az @Arguments --only-show-errors 2> $errorPath
+            $exitCode = $LASTEXITCODE
+        }
         $errorText = if (Test-Path -LiteralPath $errorPath) { [string](Get-Content -LiteralPath $errorPath -Raw) } else { '' }
         $message = (($output -join "`n") + "`n" + $errorText) -replace '(?i)([?&](?:sig|token|code|client_secret|password)=)[^&\s]+', '$1[REDACTED]'
         $message = $message -replace '(?i)(Bearer\s+)[^\s,;]+', '$1[REDACTED]'
         if ($exitCode -ne 0) {
-            throw "Azure CLI operation '$($Arguments[0]) $($Arguments[1])' failed (exit $exitCode): $message"
+            $operation = ($Arguments | Select-Object -First 2) -join ' '
+            throw "Azure CLI operation '$operation' failed (exit $exitCode): $message"
         }
         if (-not [string]::IsNullOrWhiteSpace($errorText)) {
             $warning = $errorText -replace '(?i)([?&](?:sig|token|code|client_secret|password)=)[^&\s]+', '$1[REDACTED]'
@@ -416,10 +474,10 @@ function Confirm-EppPrerequisiteInstall {
     if ($InstallPrerequisites) { return }
     if ($NonInteractive) { throw "$Description is missing. Rerun with -InstallPrerequisites or install it manually." }
     while ($true) {
-        $answer = ([string](Read-Host "Install $Description now? Type Yes or No [No]")).Trim()
-        if ($answer -ieq 'Yes') { return }
-        if (-not $answer -or $answer -ieq 'No') { throw "$Description is required. No Azure or tenant resources were changed." }
-        Write-Warning 'Type Yes to install the prerequisite, or No/Enter to stop.'
+        $answer = ([string](Read-Host "Install $Description now? Enter Yes or Y to install, or No or N to cancel [No]")).Trim()
+        if ($answer -in @('Yes', 'Y')) { return }
+        if (-not $answer -or $answer -in @('No', 'N')) { throw "$Description is required. No Azure or tenant resources were changed." }
+        Write-Warning 'Enter Yes or Y to install the prerequisite, or No or N to cancel. Press Enter to cancel.'
     }
 }
 
@@ -728,6 +786,54 @@ function Select-EppApplication {
     }
 }
 
+function Get-EppTenantRegionScope {
+    param([string] $TenantId)
+
+    $tenantId = ConvertTo-EppGuid $TenantId
+    $authority = "https://login.microsoftonline.com/$tenantId/v2.0"
+    $metadata = Invoke-RestMethod -Uri "$authority/.well-known/openid-configuration" -TimeoutSec 60 -MaximumRedirection 0
+    if ($null -eq $metadata -or $metadata -is [Array]) {
+        throw 'Microsoft Entra returned invalid tenant discovery metadata. Setup cannot determine the tenant replication scope.'
+    }
+    $issuer = $metadata.PSObject.Properties['issuer']
+    if (-not $issuer -or $issuer.Value -isnot [string] -or $issuer.Value -ine $authority) {
+        throw 'Tenant discovery did not return the selected tenant in the Azure public cloud. Verify the tenant ID; this setup supports Azure public cloud only.'
+    }
+    $scope = $metadata.PSObject.Properties['tenant_region_scope']
+    if (-not $scope -or $scope.Value -isnot [string] -or $scope.Value -notmatch '\A[A-Za-z][A-Za-z0-9]{1,15}\z') {
+        throw 'Microsoft Entra did not return a valid tenant replication scope. Setup cannot determine provider routing; verify the tenant ID and retry.'
+    }
+    return $scope.Value.ToUpperInvariant()
+}
+
+function Resolve-EppEndpointRegion {
+    param([string] $TenantRegionScope, [string] $EndpointRegion)
+
+    if ([string]::IsNullOrWhiteSpace($TenantRegionScope)) { throw 'The tenant replication scope must be determined before selecting provider routing.' }
+    $expected = if ($TenantRegionScope -eq 'EU') { 'eu' } else { 'global' }
+    if ($EndpointRegion) {
+        if ($EndpointRegion -notin @('eu', 'global')) { throw "Unknown EndpointRegion '$EndpointRegion'. Use eu or global, or omit the parameter for automatic detection." }
+        if ($EndpointRegion -ine $expected) {
+            throw "-EndpointRegion '$EndpointRegion' is incompatible with tenant replication scope '$TenantRegionScope'. Omit the parameter or use '$expected'."
+        }
+    }
+    return $expected
+}
+
+function Test-EppEuDataBoundaryGeography {
+    param([string] $Geography)
+
+    if ([string]::IsNullOrWhiteSpace($Geography)) { return $null }
+    # EU/EFTA membership: https://learn.microsoft.com/privacy/eudb/eu-data-boundary-learn
+    # Azure's Europe geography is Ireland/Netherlands, not the Europe geographyGroup (which includes the UK).
+    return $Geography -in @(
+        'Europe', 'Austria', 'Belgium', 'Bulgaria', 'Croatia', 'Cyprus', 'Czechia', 'Czech Republic',
+        'Denmark', 'Estonia', 'Finland', 'France', 'Germany', 'Greece', 'Hungary', 'Ireland', 'Italy',
+        'Latvia', 'Lithuania', 'Luxembourg', 'Malta', 'Netherlands', 'Poland', 'Portugal', 'Romania',
+        'Slovakia', 'Slovenia', 'Spain', 'Sweden', 'Iceland', 'Liechtenstein', 'Norway', 'Switzerland'
+    )
+}
+
 function Get-EppRegionOptions {
     param([hashtable] $Inputs)
 
@@ -745,7 +851,8 @@ function Get-EppRegionOptions {
             throw 'Azure returned invalid region metadata.'
         }
         if ($region.metadata['regionType'] -isnot [string] -or [string]::IsNullOrWhiteSpace($region.metadata['regionType']) -or
-            ($null -ne $region.metadata['regionCategory'] -and $region.metadata['regionCategory'] -isnot [string])) {
+            ($null -ne $region.metadata['regionCategory'] -and $region.metadata['regionCategory'] -isnot [string]) -or
+            ($null -ne $region.metadata['geography'] -and $region.metadata['geography'] -isnot [string])) {
             throw 'Azure returned invalid region classification metadata.'
         }
         if ($region.metadata['regionType'] -ne 'Physical') { continue }
@@ -758,36 +865,50 @@ function Get-EppRegionOptions {
         $seen[$id] = $true
         $recommended = $region.metadata['regionCategory'] -eq 'Recommended'
         $label = if ($recommended) { "$name ($id) - Azure recommended" } else { "$name ($id)" }
-        @{ id = $id; displayName = $label; recommended = $recommended }
+        @{
+            id = $id; name = $name; displayName = $label; recommended = $recommended
+            euDataBoundary = Test-EppEuDataBoundaryGeography -Geography $region.metadata['geography']
+        }
     }
 }
 
 function Select-EppLocation {
     param([hashtable] $Inputs, [string] $Location, [switch] $NonInteractive, [switch] $ForceAuthentication)
 
+    $euTenant = $Inputs['TenantRegionScope'] -eq 'EU'
     if (-not [string]::IsNullOrWhiteSpace($Location) -or $NonInteractive) {
-        return Read-EppInput -Name Location -Value $Location -Kind Location -NonInteractive
+        $Location = Read-EppInput -Name Location -Value $Location -Kind Location -NonInteractive
+        if (-not $euTenant) { return $Location }
     }
     if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
         throw 'Azure CLI is not installed or not on PATH. Install Azure CLI, open a new PowerShell 7 window, and rerun setup.'
     }
-    $null = Connect-EppAzureAccount -Inputs $Inputs `
+    $null = Connect-EppAzureAccount -Inputs $Inputs -NonInteractive:$NonInteractive `
         -ForceAuthentication:($ForceAuthentication -and -not $Inputs['AzureSelectionAuthenticated'])
     $Inputs.AzureSelectionAuthenticated = $true
     $regions = @(Get-EppRegionOptions -Inputs $Inputs)
     $preferred = @('eastus', 'westus2', 'centralus', 'westeurope', 'northeurope', 'southeastasia', 'australiaeast', 'japaneast')
-    $recommended = @($regions | Where-Object { $_.recommended })
+    $recommended = @($regions | Where-Object { $_.recommended -and (-not $euTenant -or $_.euDataBoundary -eq $true) })
     $ordered = @(
         foreach ($id in $preferred) { $recommended | Where-Object { $_.id -ceq $id } }
         $recommended | Where-Object { $_.id -notin $preferred } | Sort-Object { $_.displayName }
     )
     $shortlist = @($ordered | Select-Object -First 8)
-    Write-Host "`nChoose a region near your users and consistent with your data-residency requirements." -ForegroundColor Cyan
-    Write-Host 'The shortlist uses Azure Recommended metadata, not a latency/cost ranking or a guarantee of FC1/EP1 availability or quota. Existing preflight and deployment checks still apply.' -ForegroundColor Yellow
+    if (-not $Location) {
+        if ($euTenant) { Write-Host "`nRecommended Azure regions within the EU Data Boundary:" -ForegroundColor Cyan }
+        else { Write-Host "`nChoose a region near your users and consistent with your data-residency requirements." -ForegroundColor Cyan }
+        Write-Host 'The shortlist uses Azure Recommended metadata, not a latency/cost ranking or a guarantee of FC1/EP1 availability or quota. Existing preflight and deployment checks still apply.' -ForegroundColor Yellow
+    }
     $showAll = $false
-    while ($true) {
+    while (-not $Location) {
         $entries = @(if ($showAll) { $regions | Sort-Object { $_.displayName } } else { $shortlist })
-        if (-not $entries.Count) { Write-Warning 'No regions are available in this view. Show all regions or enter a region name manually.' }
+        if (-not $entries.Count) {
+            $message = if ($euTenant -and -not $showAll) {
+                'Azure returned no recommended regions with verified EU Data Boundary geography. Show all regions or enter a region name manually; verify the selection before deployment.'
+            }
+            else { 'No regions are available in this view. Show all regions or enter a region name manually.' }
+            Write-Warning $message
+        }
         $entries += if ($showAll) {
             @{ id = 'shortlist'; displayName = 'Back to recommended regions' }
         }
@@ -801,11 +922,24 @@ function Select-EppLocation {
             'all' { $showAll = $true }
             'shortlist' { $showAll = $false }
             'manual' {
-                return Read-EppInput -Name Location -Kind Location -Hint 'Programmatic region name, for example westus2; Enter cancels' -AllowCancel
+                $example = if ($euTenant) { 'westeurope' } else { 'westus2' }
+                $Location = Read-EppInput -Name Location -Kind Location -Hint "Programmatic region name, for example $example; Enter cancels" -AllowCancel
+                if (-not $Location) { return $null }
             }
-            default { return $selection.id }
+            default { $Location = $selection.id }
         }
     }
+    $selectedRegion = $regions | Where-Object { $_.id -ceq $Location } | Select-Object -First 1
+    $selectedName = if ($selectedRegion) { "$($selectedRegion.name) ($Location)" } else { $Location }
+    Write-Host "Selected Azure region: $selectedName"
+    if ($euTenant -and (-not $selectedRegion -or $selectedRegion.euDataBoundary -ne $true)) {
+        $message = if (-not $selectedRegion -or $null -eq $selectedRegion.euDataBoundary) {
+            'The selected region could not be verified as an EU Data Boundary location.'
+        }
+        else { 'The selected region is outside the EU Data Boundary.' }
+        Write-Warning "$message Verify that this selection meets your organization's data-residency requirements. The selected region will be included in the deployment plan for review."
+    }
+    return $Location
 }
 
 function Get-EppSignInAudienceRestrictions {
@@ -1180,12 +1314,13 @@ function Show-EppPlan {
     Write-Host "Subscription: $($Inputs.SubscriptionId)"
     Write-Host "Application:  $($Inputs.ApplicationId)"
     Write-Host "Location:     $($Inputs.Location)"
-    Write-Host "Platform:     $($Inputs.Platform)"
+    Write-Host "Language:     $($Inputs.Platform)"
     Write-Host "Service plan: $($Inputs.ServicePlan)"
     Write-Host "Provider:     $($ProviderConfiguration.DisplayName)"
     Write-Host 'Channels:     SMS and voice (selected by each request)'
-    $tenantScope = if ($ProviderConfiguration.EndpointRegion -eq 'eu') { 'EU' } else { 'Global' }
-    Write-Host "Tenant scope: $tenantScope"
+    if ($Inputs['TenantRegionScope']) { Write-Host "Tenant replication scope: $($Inputs.TenantRegionScope)" }
+    $providerRoute = if ($ProviderConfiguration.EndpointRegion -eq 'eu') { 'EU' } else { 'Global' }
+    Write-Host "Provider route: $providerRoute"
     Write-Host "Provider auth: $($ProviderConfiguration.AuthenticationMode)"
     Write-Host "Provider tenant: $($ProviderConfiguration.Settings.EPP_PROVIDER_TENANT_ID)"
     if ($Inputs['ProviderAllowedTenantIds']) {
@@ -1250,12 +1385,13 @@ function Show-EppPlan {
 
     Write-Host "`nDeployment notes" -ForegroundColor Cyan
     Write-Host '  - Deploy the verified package, synchronize Function triggers, and enable HTTPS ingress after Easy Auth is verified.'
+    Write-Host '  - Azure resource and Function deployment may each take several minutes. Keep this session open until deployment completes.'
     if ($Inputs.ServicePlan -eq 'FC1') {
-        Write-Host '  - Flex Consumption: publish through One Deploy; Python builds remotely in Azure. No always-ready instances.'
+        Write-Host '  - Flex Consumption: publish through One Deploy. No always-ready instances.'
         Write-Host '  - FC1 includes a free usage grant. Usage beyond the grant, Key Vault, storage, and telemetry can incur charges.' -ForegroundColor Yellow
     }
-    elseif ($Inputs.BuildStrategy -eq 'remote-build') {
-        Write-Host '  - Python: use the Entra-protected SCM endpoint for remote build, then save only the built output in private package storage.'
+    if ($Inputs.BuildStrategy -eq 'remote-build') {
+        Write-Host '  - Azure installs Python dependencies and prepares the Function deployment package. No local Python installation is required.'
     }
     if ($Inputs.ServicePlan -eq 'EP1') {
         Write-Host '  - Premium EP1, Key Vault, storage, and telemetry incur Azure charges.' -ForegroundColor Yellow
@@ -1271,10 +1407,10 @@ function Confirm-EppDeployment {
     if ($ApproveDeployment) { return $true }
     if ($NonInteractive) { throw 'Deployment requires -ApproveDeployment in noninteractive mode. No Azure resources were changed.' }
     while ($true) {
-        $answer = ([string](Read-Host 'Deploy this complete plan? Type Yes or No [No]')).Trim()
-        if ($answer -ieq 'Yes') { return $true }
-        if (-not $answer -or $answer -ieq 'No') { return $false }
-        Write-Warning 'Type Yes to deploy, or No/Enter to cancel.'
+        $answer = ([string](Read-Host 'Proceed with deployment? Enter Yes or Y to deploy, or No or N to cancel [No]')).Trim()
+        if ($answer -in @('Yes', 'Y')) { return $true }
+        if (-not $answer -or $answer -in @('No', 'N')) { return $false }
+        Write-Warning 'Enter Yes or Y to deploy, or No or N to cancel. Press Enter to cancel.'
     }
 }
 
@@ -1323,7 +1459,8 @@ function Show-EppDeploymentResult {
         [string] $EndpointUrl, [string] $ResultPath
     )
 
-    Write-Host "`nDeployment completed" -ForegroundColor Green
+    Write-Host "`nDeployment completed successfully." -ForegroundColor Green
+    Write-Host 'IMPORTANT: Save this output. The endpoint URL and Application (client) ID are required for policy updates.' -ForegroundColor Yellow
     Write-Host "`nAzure resources created or updated" -ForegroundColor Cyan
     Get-EppResourceRows -Names $Names -ServicePlan $Inputs.ServicePlan |
         Format-Table Resource, Name -AutoSize | Out-String -Width 160 | Write-Host
@@ -1352,6 +1489,8 @@ function Show-EppDeploymentResult {
     Write-Host '   appId: ' -NoNewline
     Write-Host $Inputs.ApplicationId -ForegroundColor Yellow
     Write-Host '   The setup script did not change the External Phone Provider policy.'
+    Write-Host '   Policy configuration and validation guidance:'
+    Write-Host '   https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/blob/main/docs/GETTING-STARTED.md#4-connect-your-provider-and-test'
 }
 
 function Get-EppServicePrincipal {
@@ -2104,8 +2243,8 @@ function Set-EppPackageSettings {
 function Build-EppPythonPackage {
     param([hashtable] $Inputs, [Collections.IDictionary] $Names, [string] $SiteId, [string] $SourcePath, [string] $Directory)
 
-    Write-Host 'Building Python and its Linux dependencies in Azure automatically...' -ForegroundColor Cyan
-    Invoke-EppAz functionapp deployment source config-zip --resource-group $Names.resourceGroup --name $Names.functionApp `
+    Invoke-EppAz -Activity 'Preparing the Python deployment package in Azure' `
+        functionapp deployment source config-zip --resource-group $Names.resourceGroup --name $Names.functionApp `
         --subscription $Inputs.SubscriptionId --src $SourcePath --build-remote true --timeout 1800 --output none | Out-Null
     $site = Invoke-EppAz rest --method get --url "https://management.azure.com$SiteId`?api-version=2024-04-01" `
         --subscription $Inputs.SubscriptionId --output json | ConvertFrom-Json -AsHashtable
@@ -2196,10 +2335,10 @@ function Invoke-EppDeployment {
     $parameterPath = Join-Path $WorkingDirectory 'deployment.parameters.json'
     @{ '$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'; contentVersion = '1.0.0.0'; parameters = $parameters } |
         ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $parameterPath -Encoding utf8NoBOM
-    Write-Host 'Deploying the compiled ARM template with your approved parameters...' -ForegroundColor Cyan
+    Write-Host 'Deployment may take several minutes. Keep this session open.' -ForegroundColor Cyan
     $deploymentName = "epp-$($Inputs.ResourcePrefix)-$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
     $outputs = Invoke-EppRegistrationRetry -Operation {
-        Invoke-EppAz deployment sub create --name $deploymentName `
+        Invoke-EppAz -Activity 'Deploying Azure resources' deployment sub create --name $deploymentName `
             --subscription $Inputs.SubscriptionId --location $Inputs.Location --template-file (Join-Path $AssetDirectory 'main.json') `
             --parameters "@$parameterPath" --query properties.outputs --output json
     } | ConvertFrom-Json
@@ -2240,6 +2379,7 @@ function Invoke-EppDeployment {
             -SiteId $siteId -Package $Package -Directory $WorkingDirectory
         $result = [ordered]@{
             tenantId = $Inputs.TenantId; subscriptionId = $Inputs.SubscriptionId; applicationId = $Inputs.ApplicationId
+            tenantRegionScope = $Inputs['TenantRegionScope']
             provider = $ProviderConfiguration.Id
             endpointRegion = $ProviderConfiguration.EndpointRegion; providerAuthentication = $Inputs.ProviderAuthentication
             providerTenantId = $Inputs.ProviderTenantId
@@ -2247,7 +2387,7 @@ function Invoke-EppDeployment {
             providerSmsEndpoint = $ProviderConfiguration.Settings.EPP_PROVIDER_SMS_ENDPOINT
             providerVoiceEndpoint = $ProviderConfiguration.Settings.EPP_PROVIDER_VOICE_ENDPOINT
             resourcePrefix = $Inputs.ResourcePrefix; resources = $Names
-            language = $Inputs.Language; servicePlan = $Inputs.ServicePlan
+            language = $(if ($Inputs.Language -eq 'dotnet') { 'csharp' } else { $Inputs.Language }); servicePlan = $Inputs.ServicePlan
             endpointUrl = $outputs.endpointUrl.value; identifierUri = $outputs.identifierUri.value
             encryptionKeyId = $keyId; certificateThumbprint = $certificate.Thumbprint
             certificateId = $issued.CertificateId; certificateSecretId = $issued.SecretId
@@ -2290,9 +2430,12 @@ function Publish-EppFunction {
         if ($Inputs.ServicePlan -eq 'FC1') {
             $ingressOpened = $true
             Set-EppPublicAccess -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId -Access Enabled
-            Write-Host 'Publishing the Function package through Flex Consumption One Deploy...' -ForegroundColor Cyan
+            if ($Package.RequiresRemoteBuild) {
+                Write-Host 'Azure installs Python dependencies and prepares the Function deployment package. No local Python installation is required.'
+            }
             $remoteBuild = ([bool]$Package.RequiresRemoteBuild).ToString().ToLowerInvariant()
-            Invoke-EppAz functionapp deployment source config-zip --resource-group $Names.resourceGroup --name $Names.functionApp `
+            Invoke-EppAz -Activity 'Deploying the Azure Function' `
+                functionapp deployment source config-zip --resource-group $Names.resourceGroup --name $Names.functionApp `
                 --subscription $Inputs.SubscriptionId --src $Package.Path --build-remote $remoteBuild --timeout 1800 --output none | Out-Null
             # One Deploy builds and stores Python output in Azure; its bytes are not downloaded or hashed locally.
             if ($Package.RequiresRemoteBuild) { $deployedHash = $null }
@@ -2305,9 +2448,9 @@ function Publish-EppFunction {
                 $packagePath = Build-EppPythonPackage -Inputs $Inputs -Names $Names -SiteId $SiteId -SourcePath $Package.Path -Directory $Directory
                 $deployedHash = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
             }
-            Write-Host 'Publishing the ready-to-run Function package...' -ForegroundColor Cyan
             Invoke-EppDataOperation {
-                Invoke-EppAz storage blob upload --account-name $Names.storageAccount --container-name packages `
+                Invoke-EppAz -Activity 'Publishing the Azure Function package' `
+                    storage blob upload --account-name $Names.storageAccount --container-name packages `
                     --name "$deployedHash.zip" --file $packagePath --auth-mode login --overwrite true `
                     --subscription $Inputs.SubscriptionId --output none
             } | Out-Null
@@ -2323,7 +2466,7 @@ function Publish-EppFunction {
                 $ingressOpened = $true
                 Set-EppPublicAccess -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId -Access Enabled
             }
-            Invoke-EppAz functionapp restart --resource-group $Names.resourceGroup --name $Names.functionApp `
+            Invoke-EppAz -Activity 'Starting the Azure Function' functionapp restart --resource-group $Names.resourceGroup --name $Names.functionApp `
                 --subscription $Inputs.SubscriptionId --output none | Out-Null
             Sync-EppFunctionTriggers -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId
         }
@@ -2372,7 +2515,16 @@ function Invoke-EppSetup {
     .PARAMETER Location
         Azure region name. When omitted interactively, choose an Azure-recommended shortlist,
         show all physical regions returned for the subscription, or enter the name manually.
+        EU tenants receive EU Data Boundary recommendations; explicit out-of-boundary choices warn.
         Recommendations do not guarantee plan availability or quota. Required noninteractively.
+    .PARAMETER EndpointRegion
+        Optional eu/global provider route assertion. Setup detects the tenant replication scope
+        and rejects a conflicting value. Omit to use the detected route.
+    .PARAMETER Language
+        JavaScript by default, without a prompt. Use csharp or python to select another language.
+        The legacy dotnet value remains supported for C#.
+    .PARAMETER ResourcePrefix
+        Interactive resource-name prefix, defaulting to epp on Enter. Required noninteractively.
     .PARAMETER PackageReleaseTag
         Latest stable package release by default. Supply an epp-packages-<run>-<attempt> tag
         to pin a reviewed Function release.
@@ -2396,7 +2548,8 @@ function Invoke-EppSetup {
         Return the structured deployment summary. By default, only the ordered human-readable
         result is displayed, ending with Next steps; the summary JSON is always saved.
     .PARAMETER NonInteractive
-        Require explicit settings and existing user authentication. Does not approve deployment.
+        Require mandatory settings and existing user authentication. Language defaults to JavaScript
+        and provider routing is detected from the tenant. Does not approve deployment.
     .PARAMETER ApproveDeployment
         Authorize the displayed deployment plan without another prompt. This changes Azure
         resources and application configuration; it is not a preview.
@@ -2413,7 +2566,7 @@ function Invoke-EppSetup {
         [string] $TenantId, [string] $SubscriptionId, [string] $ApplicationId, [string] $Location,
         [string] $Provider, [string] $EndpointRegion,
         [string] $ResourcePrefix,
-        [string] $Language,
+        [string] $Language = 'javascript',
         [string] $PackageReleaseTag,
         [string] $ServicePlan,
         [ValidateSet('Create', 'Reuse', 'Replace')]
@@ -2430,6 +2583,7 @@ function Invoke-EppSetup {
     if ($NonInteractive -and $ForceAuthentication) {
         throw '-ForceAuthentication requires interactive device-code sign-in and cannot be combined with -NonInteractive.'
     }
+    if ($NonInteractive) { $ProgressPreference = 'SilentlyContinue' }
     if (-not (Test-Path -LiteralPath $AssetDirectory -PathType Container)) {
         throw 'Setup assets are missing. Run Setup-Epp.ps1 instead of invoking the temporary helper directly.'
     }
@@ -2465,17 +2619,19 @@ function Invoke-EppSetup {
             Write-Host 'Cancelled. No Azure resources or application credentials were changed.' -ForegroundColor Yellow
             return
         }
+        if (-not [string]::IsNullOrWhiteSpace($Location) -or $NonInteractive) {
+            $Location = Read-EppInput -Name Location -Value $Location -Kind Location -NonInteractive
+        }
+        $inputs.TenantRegionScope = Get-EppTenantRegionScope -TenantId $inputs.TenantId
+        $endpointRegion = Resolve-EppEndpointRegion -TenantRegionScope $inputs.TenantRegionScope -EndpointRegion $EndpointRegion
+        Write-Host "Tenant replication scope: $($inputs.TenantRegionScope)"
+        Write-Host "Provider route: $(if ($endpointRegion -eq 'eu') { 'EU' } else { 'Global' })"
         $inputs.Location = Select-EppLocation -Inputs $inputs -Location $Location -NonInteractive:$NonInteractive `
             -ForceAuthentication:$ForceAuthentication
         if (-not $inputs.Location) {
             Write-Host 'Cancelled. No Azure resources or application credentials were changed.' -ForegroundColor Yellow
             return
         }
-        $tenantScopeSelection = Select-EppOption -Entries @(
-            @{ id = 'global'; displayName = 'Global' }
-            @{ id = 'eu'; displayName = 'EU' }
-        ) -Name EndpointRegion -PromptName 'Tenant scope' -Value $EndpointRegion -NonInteractive:$NonInteractive
-
         if (-not $NonInteractive -and [string]::IsNullOrWhiteSpace($Provider)) {
             $null = Connect-EppGraphAccount -Inputs $inputs -ForceAuthentication:$ForceAuthentication
         }
@@ -2485,19 +2641,20 @@ function Invoke-EppSetup {
             return
         }
         $providerConfiguration = Get-EppProvider -AssetDirectory $assetDirectory -Provider $providerName `
-            -EndpointRegion $tenantScopeSelection['id'] -NonInteractive:$NonInteractive
+            -EndpointRegion $endpointRegion -NonInteractive:$NonInteractive
         $inputs.ProviderAuthentication = $providerConfiguration.AuthenticationMode
         $inputs.ProviderTenantId = $providerConfiguration.Settings.EPP_PROVIDER_TENANT_ID
         $selection = Get-EppLanguage -AssetDirectory $assetDirectory -Language $Language -SourceRepository $SourceRepository `
             -PackageReleaseTag $PackageReleaseTag -NonInteractive:$NonInteractive
         $inputs.Language = $selection.Id
         $inputs.Platform = $selection.DisplayName
+        Write-Host "Programming language: $($selection.DisplayName)"
         $inputs.PackageFile = ([Uri]$selection.Url).Segments[-1]
         $inputs.BuildStrategy = $selection.BuildStrategy
         $plan = Get-EppServicePlan -ServicePlan $ServicePlan -NonInteractive:$NonInteractive
         $inputs.ServicePlan = $plan.id
         $inputs.ResourcePrefix = Read-EppInput ResourcePrefix $ResourcePrefix -Kind Prefix `
-            -Hint 'All resources created by setup will start with this prefix' -NonInteractive:$NonInteractive
+            -PromptName 'Resource name prefix' -DefaultValue 'epp' -NonInteractive:$NonInteractive
         $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix $inputs.ResourcePrefix
 
         Write-Host "`nChecking prerequisites and the selected Azure context (no resource changes)..." -ForegroundColor Cyan

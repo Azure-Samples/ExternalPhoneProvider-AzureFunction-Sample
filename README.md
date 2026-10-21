@@ -1,7 +1,7 @@
 # External Phone Provider Azure Function Sample
 
 Connect Microsoft Entra ID to a phone provider for SMS and voice one-time passwords.
-Guided setup deploys **one regional endpoint** using JavaScript, C#, or Python.
+Guided setup deploys **one regional endpoint** using JavaScript by default, with C# and Python options.
 
 > [!IMPORTANT]
 > Start in a separate nonproduction environment. Confirm provider access and Microsoft's approved
@@ -50,7 +50,7 @@ Follow the **[five-step setup guide](docs/GETTING-STARTED.md)** in order:
 
 1. <a id="1-get-ready"></a>[Get ready](docs/GETTING-STARTED.md#1-get-ready): confirm access, approvals, permissions, and budget.
 2. <a id="2-register-your-application"></a>[Register the app](docs/GETTING-STARTED.md#2-register-your-application): save the tenant and client IDs.
-3. <a id="3-run-guided-setup"></a>[Deploy](docs/GETTING-STARTED.md#3-run-guided-setup): choose the provider, runtime, and plan.
+3. <a id="3-run-guided-setup"></a>[Deploy](docs/GETTING-STARTED.md#3-run-guided-setup): choose the provider and hosting plan.
 4. <a id="4-connect-your-provider-and-test"></a>[Connect and test](docs/GETTING-STARTED.md#4-connect-your-provider-and-test): configure provider access and run approved checks.
 5. <a id="5-activate-and-hand-over"></a>[Activate and hand over](docs/GETTING-STARTED.md#5-activate-and-hand-over): activate after validation and assign owners.
 

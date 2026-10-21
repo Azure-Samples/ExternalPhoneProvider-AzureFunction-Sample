@@ -35,6 +35,9 @@ jobs:
       - name: Test application and region selection without Azure access
         shell: pwsh
         run: ./setup/tests/Selections.Tests.ps1
+      - name: Test deployment progress without Azure access
+        shell: pwsh
+        run: ./setup/tests/Progress.Tests.ps1
       - name: Compile Bicep without deploying
         shell: pwsh
         run: |

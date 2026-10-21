@@ -27,10 +27,16 @@ try {
         $script:Messages = [Collections.Generic.List[string]]::new()
         $script:Prompts = [Collections.Generic.List[string]]::new()
         $script:Answers = [Collections.Generic.Queue[string]]::new()
+        $script:Warnings = [Collections.Generic.List[string]]::new()
+        $script:Highlights = [Collections.Generic.List[string]]::new()
         function script:Write-Host {
             param([Parameter(ValueFromPipeline)] $Object, $ForegroundColor, [switch] $NoNewline)
-            process { $script:Messages.Add([string]$Object) }
+            process {
+                $script:Messages.Add([string]$Object)
+                if ($ForegroundColor -eq 'Yellow') { $script:Highlights.Add([string]$Object) }
+            }
         }
+        function script:Write-Warning { param($Message); $script:Warnings.Add($Message) }
         function script:Read-Host {
             param($Prompt)
             $script:Prompts.Add($Prompt)
@@ -70,6 +76,24 @@ try {
                         $selection.ReleaseTag -ceq 'epp-packages-42-1') 'Resolve concrete, validated package and checksum URLs from the stable release.'
                 }
             }
+        }
+        foreach ($noninteractive in @($false, $true)) {
+            $selection = Get-EppLanguage -AssetDirectory $SetupDirectory -SourceRepository 'unit/epp-fork' `
+                -PackageReleaseTag $script:PackageRelease.tag_name -NonInteractive:$noninteractive
+            Assert ($selection.Id -ceq 'javascript' -and $selection.DisplayName -ceq 'JavaScript') 'Default to JavaScript without asking in either mode.'
+        }
+        foreach ($name in @('csharp', 'CSharp', 'C#', 'dotnet', '.NET')) {
+            $selection = Get-EppLanguage -AssetDirectory $SetupDirectory -Language $name -SourceRepository 'unit/epp-fork' `
+                -PackageReleaseTag $script:PackageRelease.tag_name
+            Assert ($selection.Id -ceq 'dotnet' -and $selection.DisplayName -ceq 'C#') 'Expose C# while preserving the existing .NET package/runtime and legacy aliases.'
+        }
+        Assert-Throws {
+            Get-EppLanguage -AssetDirectory $SetupDirectory -Language unknown -SourceRepository 'unit/epp-fork'
+        } 'Use javascript, csharp, or python'
+        foreach ($emptyLanguage in @('', ' ')) {
+            Assert-Throws {
+                Get-EppLanguage -AssetDirectory $SetupDirectory -Language $emptyLanguage -SourceRepository 'unit/epp-fork'
+            } 'Language must not be empty'
         }
         foreach ($url in @(
             'http://github.com/unit/epp-fork/releases/download/epp-packages-42-1/epp-javascript.zip',
@@ -149,15 +173,23 @@ try {
 
         function script:Get-EppLanguage {
             param($AssetDirectory, $Language, $SourceRepository, $PackageReleaseTag, [switch] $NonInteractive)
+            $script:SelectedLanguage = $Language
             return @{
-                Id = 'javascript'; DisplayName = 'Node.js'; BuildStrategy = 'ready'
+                Id = 'javascript'; DisplayName = 'JavaScript'; BuildStrategy = 'ready'
                 Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
                 ReleaseTag = 'epp-packages-1-1'
             }
         }
         function script:Connect-EppContext {
             param($Inputs, $Names, [switch] $NonInteractive, [switch] $InstallPrerequisites, [switch] $ForceAuthentication)
+            $script:PreflightInputs = @{} + $Inputs
             throw 'preflight-reached'
+        }
+        $script:TenantScope = 'NA'
+        function script:Get-EppTenantRegionScope { param($TenantId); return $script:TenantScope }
+        function script:Select-EppLocation {
+            param($Inputs, $Location, [switch] $NonInteractive, [switch] $ForceAuthentication)
+            return Read-EppInput -Name Location -Value $Location -Kind Location -NonInteractive
         }
         $script:GraphConnections = 0
         function script:Connect-EppGraphAccount {
@@ -181,23 +213,61 @@ try {
         }
         foreach ($id in @('telesign', 'soprano')) {
             foreach ($region in @('global', 'eu')) {
+                $script:TenantScope = if ($region -eq 'eu') { 'EU' } else { 'NA' }
                 Assert-Throws {
                     Invoke-EppSetup @inputs -Provider $id -EndpointRegion $region -OutputDirectory $Directory -NonInteractive
                 } '^preflight-reached$'
             }
         }
         Assert ($script:Prompts.Count -eq 0) 'Unattended setup must reach preflight without any channel input.'
+        $script:TenantScope = 'NA'
         Assert-Throws {
             Invoke-EppSetup @inputs -EndpointRegion global -OutputDirectory $Directory -NonInteractive
         } '\-Provider is required'
         Assert ($script:GraphConnections -eq 0) 'Reject a missing unattended provider before contacting Graph.'
-        $script:Answers.Enqueue('2')
         $script:Answers.Enqueue('soprano')
         Assert-Throws {
             Invoke-EppSetup @inputs -OutputDirectory $Directory
         } '^preflight-reached$'
-        Assert (($script:Prompts -join ',') -ceq 'Tenant scope number or name,Provider name (Enter cancels)') 'Provider selection must use a name rather than a numbered ranking.'
+        Assert (($script:Prompts -join ',') -ceq 'Provider name (Enter cancels)') 'Detect tenant scope without a picker; provider selection must use a name.'
         Assert ($script:Answers.Count -eq 0) 'All expected prompt answers must be consumed.'
+
+        $defaults = @{} + $inputs
+        $defaults.Remove('ResourcePrefix')
+        $defaults.Remove('Language')
+        $script:Answers.Enqueue('')
+        Assert-Throws { Invoke-EppSetup @defaults -Provider telesign -OutputDirectory $Directory } '^preflight-reached$'
+        Assert ($script:PreflightInputs.ResourcePrefix -ceq 'epp' -and $script:SelectedLanguage -ceq 'javascript') 'The setup entry point must use the agreed prefix and language defaults.'
+        Assert ($script:Prompts[-1] -ceq 'Resource name prefix [epp]') 'Show the prefix default with a customer-facing label.'
+        foreach ($prefix in @('epp', 'contoso')) {
+            Assert ((Read-EppInput -Name ResourcePrefix -Value $prefix -Kind Prefix -DefaultValue epp -NonInteractive) -ceq $prefix) 'Preserve explicitly supplied prefixes.'
+        }
+        Assert-Throws { Read-EppInput -Name ResourcePrefix -Kind Prefix -DefaultValue epp -NonInteractive } 'ResourcePrefix is required'
+        Assert-Throws { Read-EppInput -Name ResourcePrefix -Value 'Bad-Prefix' -Kind Prefix -DefaultValue epp } 'Invalid -ResourcePrefix'
+        $script:Answers.Enqueue('bad-prefix'); $script:Answers.Enqueue('myapp')
+        Assert ((Read-EppInput -Name ResourcePrefix -Kind Prefix -DefaultValue epp) -ceq 'myapp') 'Reprompt invalid interactive prefixes instead of silently using the default.'
+        foreach ($answer in @('Yes', 'yes', 'Y', ' y ')) {
+            $script:Answers.Enqueue($answer)
+            Assert (Confirm-EppDeployment) 'Accept the documented case-insensitive approval responses.'
+        }
+        foreach ($answer in @('No', 'no', 'N', ' n ', '', '  ')) {
+            $script:Answers.Enqueue($answer)
+            Assert (-not (Confirm-EppDeployment)) 'Accept cancellation aliases and keep Enter as cancel.'
+        }
+        $script:Warnings.Clear()
+        $script:Answers.Enqueue('continue'); $script:Answers.Enqueue('n')
+        Assert (-not (Confirm-EppDeployment) -and $script:Warnings.Count -eq 1) 'Invalid confirmation responses must reprompt.'
+        Assert-Throws { Confirm-EppDeployment -NonInteractive } 'requires -ApproveDeployment'
+        Assert (Confirm-EppDeployment -NonInteractive -ApproveDeployment) 'Keep explicit unattended approval.'
+        foreach ($answer in @('Yes', 'y', ' YES ')) {
+            $script:Answers.Enqueue($answer)
+            Confirm-EppPrerequisiteInstall -Description Bicep
+        }
+        foreach ($answer in @('No', 'n', '')) {
+            $script:Answers.Enqueue($answer)
+            Assert-Throws { Confirm-EppPrerequisiteInstall -Description Bicep } 'Bicep is required'
+        }
+        Assert ($script:Answers.Count -eq 0) 'Consume every expected input without adding language or save-output prompts.'
 
         $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix $inputs.ResourcePrefix
         $configuration = Get-EppProvider -AssetDirectory $Directory -Provider telesign -EndpointRegion global -NonInteractive
@@ -210,6 +280,8 @@ try {
         }
         Assert ($result.Contains('each channel you intend to enable')) 'Policy activation must remain an explicit per-channel choice.'
         Assert ($result.Contains('did not change the External Phone Provider policy')) 'Setup must not claim policy activation.'
+        Assert ($script:Highlights -contains 'IMPORTANT: Save this output. The endpoint URL and Application (client) ID are required for policy updates.') 'Highlight the save-output reminder in yellow.'
+        Assert ($result.Contains('docs/GETTING-STARTED.md#4-connect-your-provider-and-test')) 'Link the existing provider, policy, and testing guidance from the completion output.'
     } $setupDirectory $directory
     Write-Host 'Provider profiles, channel-independent setup, prompts, and policy handoff checks passed.'
 }

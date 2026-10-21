@@ -4,13 +4,13 @@
   "packages": [
     {
       "id": "javascript",
-      "displayName": "Node.js",
+      "displayName": "JavaScript",
       "assetName": "epp-javascript.zip",
       "buildStrategy": "ready"
     },
     {
       "id": "dotnet",
-      "displayName": ".NET",
+      "displayName": "C#",
       "assetName": "epp-dotnet-source.zip",
       "buildStrategy": "dotnet-publish"
     },
