@@ -36,7 +36,7 @@ Authentication failures return **401 or 403**.
 ## Resiliency and business continuity
 
 The [Azure Front Door design](docs/FRONTDOOR.md) adds regional origins behind one public URL.
-It covers capacity, shared keys, dependencies, readiness, failover drills, and rollback.
+It covers capacity, shared keys, dependencies, readiness, regional recovery drills, and rollback.
 
 ## Implementations
 
@@ -159,12 +159,16 @@ provider-neutral delivery object (`OtpDelivery.otp` in JavaScript/Python, `OtpDe
 It is not converted to a number or extracted from `message`, and is not logged or returned in
 the HTTP response. Existing built-in provider message and voice mappings remain unchanged.
 
-The optional `riskContext` must be a JSON object or `null`. It is passed unchanged to provider
-adapters as `OtpDelivery.riskContext` in JavaScript, `OtpDelivery.RiskContext`
+The optional `riskContext` must be a JSON object or `null`. It can contain signals such as a
+scenario name or IP address. It is passed unchanged to provider adapters as
+`OtpDelivery.riskContext` in JavaScript, `OtpDelivery.RiskContext`
 (`Dictionary<string, JsonElement>`) in C#, and `OtpDelivery.risk_context`
-(`dict[str, object]`) in Python. No individual risk fields are required or interpreted by the
-shared handler. Risk data is not logged or returned in HTTP responses, and built-in adapters
-do not forward it to providers. Outbound risk-field mapping must be explicit and provider-specific.
+(`dict[str, object]`) in Python. The shared handler does not require or interpret individual
+fields. Risk data is not logged or returned in HTTP responses, and built-in adapters do not
+forward it to providers. A custom adapter must explicitly map each field it uses.
+
+Current runtimes do not read an incoming `textToVoice` property. The Soprano adapters build their
+provider `text2voice` object from `message` and `locale`.
 
 Validation reasons include:
 
@@ -199,7 +203,8 @@ The shared outcomes are `Continue`, `Block`, and `Fail`.
 | Provider `429` | `429` |
 | Provider `401` or `403` | `401` |
 | Other provider `4xx` | `400` |
-| Missing configuration, network failure, or unknown response | `502` |
+| Missing or unregistered provider selection | `400` |
+| Missing or invalid endpoint, authentication-mode mismatch, credential or network failure, or unknown response | `502` |
 | Provider timeout | `504` |
 
 Unknown or incomplete provider responses fail closed. Check a timed-out live request before
@@ -247,13 +252,13 @@ The provider timeout defaults to `1500` and is capped at `2500` milliseconds.
 
 Each live request uses the endpoint for its selected channel. Endpoints must be absolute HTTPS
 URLs with a hostname, valid port, no user information, and no fragment. Redirects are not followed.
-Each channel uses only its configured endpoint. Provider failover requires the
-[advanced fallback design](docs/MULTI-PROVIDER-IMPLEMENTATION.md).
+Each channel uses only its configured endpoint. A secondary provider requires the
+[advanced secondary-provider design](docs/MULTI-PROVIDER-IMPLEMENTATION.md).
 
 All runtimes acquire provider credentials on demand for each live request:
 
-- **API keys:** read the required secret values from Key Vault each time. Failed reads never
-  fall back to a previous secret bundle.
+- **API keys:** read the required secret values from Key Vault each time. A failed read does not
+  reuse a previous secret bundle.
 - **OAuth:** reuse Azure Identity SDK credential instances and call their token API for each
   request. The SDK owns token caching and renewal; a usable cached token does not require
   another token exchange. Managed-identity assertions are obtained only when the SDK needs them.
@@ -365,7 +370,8 @@ Before live use:
 **Easy Auth is the caller-authentication gate before the Function runs.**
 Follow the [exact trust checklist](docs/ONBOARDING.md#manual-deployment-trust-checklist) for HTTPS,
 issuer, audience, caller allowlist, and unauthenticated rejection. Never disable it or exempt SendOtp.
-There is no handler token validator or function-key fallback.
+The handler does not validate bearer tokens itself and does not accept a function key as an
+alternative.
 
 JWE encryption and the nonce do not identify the caller. Anyone with the public key can encrypt.
 Provider credentials authenticate outbound calls, not incoming requests. Vault access uses managed identity.
