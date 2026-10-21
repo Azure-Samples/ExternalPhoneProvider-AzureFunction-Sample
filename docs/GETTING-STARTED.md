@@ -107,7 +107,7 @@ Select the tenant, subscription, application **client ID**, and region. Then cho
   [plan details](../setup/docs/README.md#service-plan-selection).
 - **Resource prefix:** 2-8 lowercase letters/digits, starting with a letter.
 
-![Azure Cloud Shell prompts for region, tenant scope, platform, hosting plan, and prerequisites](images/onboarding/cloud-shell-choose-options.png)
+![Azure Cloud Shell prompts for platform, hosting plan, and resource prefix](images/onboarding/cloud-shell-choose-options.png)
 
 *Provider-specific prompts are omitted from this focused crop. The selections and resource prefix
 are illustrative.*
@@ -133,7 +133,7 @@ identifies the resources, endpoint, app, and encryption key. No private key is d
 Cloud Shell sessions are ephemeral, so securely download or otherwise retain the private
 `epp-output` deployment summary and public certificate before closing the session.
 
-![Azure Cloud Shell deployment completion summary listing created resource types and next steps](images/onboarding/cloud-shell-deployment-complete.png)
+![Azure Cloud Shell deployment completion summary showing created resource types, endpoint, and output path](images/onboarding/cloud-shell-deployment-complete.png)
 
 *Resource names, the endpoint, and the output path are illustrative replacements. An actual
 deployment summary contains private values and must remain private.*
