@@ -92,6 +92,10 @@ Review the downloaded script, then run it:
 .\Setup-Epp.ps1
 ```
 
+![Azure Cloud Shell in PowerShell mode downloading and starting the setup script](images/onboarding/cloud-shell-run-setup.png)
+
+*Cloud Shell account and directory details are hidden. Review the downloaded script before running it.*
+
 On a shared workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` for a fresh sign-in.
 
 Select the tenant, subscription, application **client ID**, and region. Then choose:
@@ -102,6 +106,10 @@ Select the tenant, subscription, application **client ID**, and region. Then cho
 - **Hosting:** FC1 can scale to zero and cold-start. EP1 has paid warm capacity. Review
   [plan details](../setup/docs/README.md#service-plan-selection).
 - **Resource prefix:** 2-8 lowercase letters/digits, starting with a letter.
+
+![Azure Cloud Shell prompts for region, tenant scope, platform, hosting plan, and prerequisites](images/onboarding/cloud-shell-choose-options.png)
+
+*The example selections illustrate the prompt sequence; the resource prefix is hidden.*
 
 Complete required sign-in, MFA, or administrator consent. Resolve preflight errors before approval.
 
@@ -121,6 +129,11 @@ Wait for **Deployment completed** and the saved summary before Step 4. Setup cre
 App, storage, Key Vault, identities, and monitoring. Do not precreate these resources.
 Keep `epp-output` private. Its [summary](../setup/docs/README.md#read-the-deployment-summary)
 identifies the resources, endpoint, app, and encryption key. No private key is downloaded.
+
+![Azure Cloud Shell deployment completion summary with private deployment values hidden](images/onboarding/cloud-shell-deployment-complete.png)
+
+*The completion summary identifies the resources and next steps. Resource names, identifiers,
+paths, certificate details, and endpoint values are hidden.*
 
 Setup verifies the private-key reference and **Easy Auth** before opening public access. Keep
 Easy Auth enabled. If setup fails, use the
