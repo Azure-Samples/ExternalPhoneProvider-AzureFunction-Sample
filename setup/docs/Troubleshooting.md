@@ -83,10 +83,10 @@ Follow the [Front Door guide](../../docs/FRONTDOOR.md), including readiness and 
 
 - A 401/403/404 probe is unhealthy. Check the readiness path, origin host header, and profile-pinned
   network restriction. Never exempt SendOtp or disable Easy Auth.
-- An authenticated SendOtp 403 is a failure, not proof of failover. Check origin, ingress, and auth.
+- An authenticated SendOtp 403 is a failure, not proof of regional recovery. Check origin, ingress, and auth.
 - A shared-URL success does not prove every origin works; verify each with safe regional telemetry.
 - Distinguish delayed aggregate metrics from event timestamps and client observations. Review
-  [failover behavior](../../docs/FRONTDOOR.md#failover-behavior) before setting recovery expectations.
+  [regional recovery behavior](../../docs/FRONTDOOR.md#regional-recovery-behavior) before setting recovery expectations.
 
 ## Deployment fails with SubscriptionIsOverQuotaForSku
 
@@ -146,12 +146,14 @@ and HTTP `502`. The request has not reached the provider.
 provider secret names. For OAuth, verify the attached outbound managed identity, application
 federation, provider tenant/scope, and provider permissions using the
 [authentication handoff](../../docs/ONBOARDING.md#complete-provider-authentication).
-Removing a refresher does not correct missing permissions or invalid identity configuration.
+Match diagnostics to the deployed package version. Regardless of event names, verify permissions
+and identity configuration.
 
 Current packages acquire credentials only during live requests, retain SDK token caching, and
-have no custom failure cooldown. The next live request can retry acquisition. Deploy the updated
-package to remove older refresher behavior; obsolete cache switches have no effect on current
-packages. Restart after configuration changes. See
+have no custom failure cooldown. The next live request can retry acquisition. Confirm the deployed
+package version before comparing event sequences. If moving to current behavior, upgrade through
+the normal reviewed deployment process; obsolete cache switches have no effect on current packages.
+Restart after configuration changes. See
 [credential acquisition](../../TECHNICAL.md#provider-settings-and-credential-acquisition).
 Evaluation does not prove provider credentials work.
 
@@ -340,7 +342,7 @@ Setup closes public ingress after persistent publication failure.
    Keep Easy Auth enabled and app `tokenEncryptionKeyId` null; bearer validation and payload JWE are separate.
 2. **After invocation:** correlate [runtime events](../../docs/MONITORING.md#runtime-specific-log-discovery).
    Confirm `EPP_PROVIDER_SMS_ENDPOINT` or `EPP_PROVIDER_VOICE_ENDPOINT` and account access.
-   The selected URL is required and has no shared/other-channel fallback; deploy a supporting package.
+   The selected URL is required and the handler does not use the other channel's URL; deploy a supporting package.
 3. Complete [provider authentication](../../docs/ONBOARDING.md#complete-provider-authentication):
    exact vault secrets for Telesign, provider-side authorization for Soprano.
    Arrange [authorized evaluation, then controlled live checks](../../docs/ONBOARDING.md#validate-the-deployed-endpoint).

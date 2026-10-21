@@ -71,7 +71,7 @@ Build and test the regional design outside live traffic. Review the
 
 Follow this regional procedure rather than rerunning `Setup-Epp.ps1` against the same
 application. The setup script creates one region. The steps below coordinate Front Door, shared
-key material, regional registrations, and failover without replacing an existing endpoint's
+key material, regional registrations, and recovery routing without replacing an existing endpoint's
 application configuration or certificate unexpectedly.
 
 <a id="capacity-gate-each-region-must-support-the-combined-peak-load"></a>
@@ -88,7 +88,7 @@ Record the workload mix, offered and completed request rates, concurrency, paylo
 duration, per-region latency percentiles, errors/timeouts, resource saturation, and dependency
 throttling. Verify hosting/subscription quotas, available warm capacity and scale-out delay,
 storage and vault limits, identity/token-service capacity, and provider account/rate limits.
-Use measured load results in both failover directions. Autoscale limits, instance counts, and
+Use measured load results in both recovery directions. Autoscale limits, instance counts, and
 approved quotas are inputs, while sustained request rate, latency, errors, and saturation show
 whether the design meets the agreed capacity target. Validate the target deployment with its own
 measured load result.
@@ -174,7 +174,7 @@ Readiness confirms that the handler and decryption key are usable. Validate prov
 and handset delivery separately. Point probes to the implemented readiness handler, return a live
 result rather than a cached static `200`, and keep Easy Auth enabled for SendOtp. Front Door treats
 only a `200` probe response as healthy.
-Review [failover behavior](#failover-behavior) before setting recovery expectations.
+Review [regional recovery behavior](#regional-recovery-behavior) before setting expectations.
 
 ## 4. Configure Front Door manually
 
@@ -253,25 +253,25 @@ Approve synthetic data, bounded load, and the
 nonproduction. Agree load, headroom, recovery, error, latency, soak, and restoration targets first.
 
 Use an authorized harness, **not a real Microsoft Entra ID sign-in flow**. Evaluation suppresses
-sends only inside this endpoint. Caller fallback or retries can still deliver. Confirm caller behavior
-with Microsoft and obtain separate approval for sign-in or delivery tests.
+sends only inside this endpoint. Caller retries or other delivery paths can still deliver. Confirm
+caller behavior with Microsoft and obtain separate approval for sign-in or delivery tests.
 
 | What to test | How and where to test safely | Expected outcome / acceptance | Evidence to keep |
 |---|---|---|---|
 | Baseline encrypted evaluation | Send synthetic encrypted `mode: 2` requests through Front Door with both origins healthy. Confirm each origin serves requests. | Matching nonce checked locally, no delivery, and agreed baseline error/latency limits met. | Offered/completed rates, latency/errors, safe correlation IDs, and serving region. Exclude nonce values and request bodies. |
 | Bad caller credentials, unauthorized callers, and direct-origin access | From the test harness, try missing/invalid/wrong-audience tokens, an unauthorized app, and direct-origin requests including a spoofed `X-Azure-FDID`. Send valid evaluations before and after. | Invalid calls are rejected while valid evaluations still work. Authentication and ingress restrictions remain enabled. | Response status and sanitized access diagnostics identifying the rejection, plus successful surrounding evaluations. |
-| Failover from A to B | Follow the recovery test: isolate only approved test origin A while leaving it **enabled in Front Door**. Keep B healthy and evaluation traffic bounded. | Health-based routing to B meets agreed recovery and transition-error limits, without changing the public URL, trust, or encryption key. | Fault/probe/client timestamps, every failure/timeout, and B's request/health signals. |
-| Failover from B to A | After A is fully restored and stable, repeat with B isolated but **enabled in Front Door**. | A meets the same agreed criteria. Both directions must pass. | The same evidence, identifying A as the survivor and confirming B's subsequent restoration. |
+| Recovery from A to B | Follow the recovery test: isolate only approved test origin A while leaving it **enabled in Front Door**. Keep B healthy and evaluation traffic bounded. | Health-based routing to B meets agreed recovery and transition-error limits, without changing the public URL, trust, or encryption key. | Fault/probe/client timestamps, every failure/timeout, and B's request/health signals. |
+| Recovery from B to A | After A is fully restored and stable, repeat with B isolated but **enabled in Front Door**. | A meets the same agreed criteria. Both directions must pass. | The same evidence, identifying A as the survivor and confirming B's subsequent restoration. |
 | Sustained survivor capacity | In each direction, maintain the [combined peak offered load plus planned headroom](#capacity-gate-each-region-must-support-the-combined-peak-load) for the agreed soak. | **Each region handles at least double its normal share in the balanced two-region case, plus headroom**, within agreed error/latency and dependency limits. Evaluation proves only the exercised path. | Offered/completed rates, concurrency, latency percentiles, errors/timeouts, saturation/throttling, quotas and available capacity per region. |
 | Restart, cold start, and credential acquisition without the failed region | In a separately approved dependency-isolation test environment, make the failed region's storage/vault paths unavailable and start or restart the survivor stack. Exercise key resolution and request-time credential acquisition using the non-delivering provider setup below. Do not add a second fault to the basic recovery test. | The survivor starts and serves using its own dependencies. SDK token caches do not hide cross-region access. Missing failed-region telemetry is not treated as success. | Dependency configuration/access evidence, startup/key/credential-acquisition results, client outcomes, and timestamps captured outside the failed region. |
 | Complete live-path capacity and provider credential failures | Separately use a provider-approved, production-representative **non-delivering sandbox/stub** exercising credential acquisition, SDK token renewal, and provider latency/quota behavior. Test valid and invalid/expired test credentials without production accounts or recipients. | Both survivor regions meet the capacity criteria on this path. Credential failures are surfaced, not reported as successful sends. Evaluation-only throughput cannot pass this test. | Credential/provider timing, failures/throttling, load results, and provider capacity/quota evidence for behavior the sandbox/stub cannot reproduce. |
-| Restoration and conservative failback | Restore the original approved state even after a failed test. Verify the restored origin's own readiness and successful evaluations, then observe traffic returning for the agreed window. | Both origins are healthy and serving within agreed limits, with original security settings intact, before any next fault. | Restoration confirmation, origin-specific readiness/request evidence and failback latency/errors. |
+| Restoration and controlled traffic return | Restore the original approved state even after a failed test. Verify the restored origin's own readiness and successful evaluations, then observe traffic returning for the agreed window. | Both origins are healthy and serving within agreed limits, with original security settings intact, before any next fault. | Restoration confirmation, origin-specific readiness/request evidence, and traffic-return latency/errors. |
 
 For every row, record **pass, fail, or not tested**, the approved target, observed outcome, and
 evidence location. Assign an owner and retest date to gaps. A successful routing test is useful,
 but is not a substitute for the separate capacity and dependency tests.
 
-<a id="6-regional-failover-fire-drill"></a>
+<a id="6-regional-recovery-test"></a>
 ## 6. Validate recovery
 
 Run this test in an approved nonproduction environment built for recovery validation. It checks
@@ -287,8 +287,8 @@ thresholds before starting.
    verify a restoration timer or backup operator.
 3. **Set the baseline and gates.** Save the approved routing, authentication, ingress, package,
    key, and dependency state. Confirm both origins are healthy and serving. Agree survivor load,
-   soak time, recovery target, allowed failures/timeouts, latency/resource limits, failback window,
-   and abort thresholds before injecting a fault.
+   soak time, recovery target, allowed failures/timeouts, latency/resource limits,
+   traffic-return window, and abort thresholds before injecting a fault.
 4. **Isolate one origin without disabling it in Front Door.** Apply an approved reversible fault,
    such as stopping the test Function App, and timestamp request and confirmation separately.
    Keep the survivor unchanged. Do not weaken Easy Auth or ingress. Probe health is not a security boundary.
@@ -299,9 +299,9 @@ thresholds before starting.
 6. **Restore on completion or abort.** Stop unsafe load and restore the saved state at the deadline,
    any abort threshold, or completion. Cleanup must run even if assertions or the test runner fail.
    Escalate immediately if restoration cannot be confirmed.
-7. **Verify failback, then reverse direction.** Check the restored origin's dependencies, key and
-   credential resolution, readiness, and evaluation responses. Wait through the agreed stable
-   observation window before testing the other origin. Both directions must pass.
+7. **Verify restored traffic, then reverse direction.** Check the restored origin's dependencies,
+   key and credential resolution, readiness, and evaluation responses. Wait through the agreed
+   stable observation window before testing the other origin. Both directions must pass.
 8. **Record results and gaps.** Keep sanitized approvals, configuration/package identifiers,
    workload limits, timestamps, rates, latency/errors, dependency evidence, aborts, and restoration.
    Mark each criterion pass/fail/not tested with an owner and retest date. Never attach secrets,
@@ -319,8 +319,8 @@ that cannot be tested safely and assign an owner and follow-up date.
 Use separate approved checks for real Microsoft Entra ID caller timing, provider acceptance, and
 handset delivery. Define retry and availability targets with the provider and onboarding owner.
 
-<a id="observed-failover-results-and-limitations"></a>
-## Failover behavior
+<a id="regional-recovery-behavior"></a>
+## Regional recovery behavior
 
 Front Door selects from eligible healthy origins using priority, latency, and weight. Health status
 uses a sliding sample of probe results, and only HTTP `200` counts as healthy. Detection and routing

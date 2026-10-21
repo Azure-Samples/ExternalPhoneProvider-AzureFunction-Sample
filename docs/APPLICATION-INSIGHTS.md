@@ -119,7 +119,7 @@ and [Microsoft Entra-authenticated ingestion](https://learn.microsoft.com/azure/
 ## Multiple regions
 
 Each region has its own Function App and identity. Validate telemetry for every origin.
-Application Insights does not provide application routing or failover.
+Application Insights does not route traffic or implement regional recovery.
 
 | Layout | Use |
 | --- | --- |
