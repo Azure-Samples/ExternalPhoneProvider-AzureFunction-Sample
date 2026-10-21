@@ -32,7 +32,9 @@ Use the [cost estimate](COST-CALCULATOR.md), then confirm rates and fees with th
 
 Prepare:
 
-- **Provider account:** complete account and sender registration for SMS or voice.
+- **Provider access:** confirm the selected integration, intended channels, account prerequisites,
+  and the approved onboarding route. Complete steps that do not require deployment-generated
+  identifiers; finish provider authentication in Step 4.
 - **Shell:** Azure Cloud Shell in PowerShell mode, or PowerShell 7+ with an Azure CLI user login.
   Azure CLI 2.60.0+ is required for Flex Consumption (FC1), or 2.48.1+ for Premium (EP1).
   Allow access to GitHub, Azure, Microsoft Graph, Key Vault, and the deployment endpoints.
@@ -70,11 +72,14 @@ Use these labels to find the IDs:
 *Use **Application (client) ID** for `-ApplicationId` and **Directory (tenant) ID** for `-TenantId`.
 The **Object ID** is not either of these setup inputs. All ID values are hidden in this example.*
 
-Let setup add the required API permission and app role. No client secret is needed.
+Do not add a client secret, redirect URI, EPP app role, or Microsoft Graph application permission
+manually. Setup reviews and applies its required application and enterprise-application changes
+only after deployment approval.
 See [application registration details](../setup/docs/README.md#step-1---manually-create-the-application).
 
 Keep the Azure subscription ID handy. The [setup values worksheet](ONBOARDING.md#inputs-you-supply-to-setup)
-lists every input. Use a new app and prefix for an independent endpoint.
+lists every input. Use a new app and prefix for an independent endpoint. After the app exists,
+complete provider onboarding steps that require its application client ID.
 
 ## 3. Run guided setup
 
@@ -94,11 +99,12 @@ Review the downloaded script, then run it:
 
 On a shared workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` for a fresh sign-in.
 
-Select the tenant, subscription, application **client ID**, and region. Then choose:
+Select the tenant, subscription, existing application **client ID**, and Azure region. Then choose:
 
 - **Provider and route:** enter or confirm the provider by name. **Tenant scope** means Global/EU
   provider routing, not Azure region or a data-residency guarantee.
-- **Platform:** JavaScript, C#, or Python.
+- **Platform:** Node.js, .NET, or Python. Setup downloads the matching stable release asset,
+  verifies `SHA256SUMS.txt`, and builds when required.
 - **Hosting:** FC1 can scale to zero and cold-start. EP1 has paid warm capacity. Review
   [plan details](../setup/docs/README.md#service-plan-selection).
 - **Resource prefix:** 2-8 lowercase letters/digits, starting with a letter.
@@ -117,13 +123,16 @@ principal. `No` or Enter cancels.
 **Plan review:** run interactively and choose **No** at the final prompt. See
 [plan review](../setup/docs/README.md#reviewing-the-plan-without-deploying).
 
-Wait for **Deployment completed** and the saved summary before Step 4. Setup creates the Function
-App, storage, Key Vault, identities, and monitoring. Do not precreate these resources.
+Wait for **Deployment completed** and the saved summary before Step 4. Setup creates or updates
+the Function App, hosting plan, storage, Key Vault, identities, Log Analytics, Application
+Insights, diagnostics, Easy Auth, and scoped role assignments. Do not precreate these resources.
 Keep `epp-output` private. Its [summary](../setup/docs/README.md#read-the-deployment-summary)
-identifies the resources, endpoint, app, and encryption key. No private key is downloaded.
+records the selected tenant, subscription, provider route, runtime, plan, resource names, endpoint,
+application, package provenance, and encryption certificate references. No private key is downloaded.
 
 Setup verifies the private-key reference and **Easy Auth** before opening public access. Keep
-Easy Auth enabled. If setup fails, use the
+Easy Auth enabled. It also verifies that `SendOtp` is registered before reporting success. If setup
+fails, use the
 [troubleshooting guide](../setup/docs/Troubleshooting.md) rather than deleting resources and starting over.
 
 To find the deployed resources, open **Azure portal > Resource groups** and select the group
@@ -153,21 +162,31 @@ Complete the [approved endpoint checks](ONBOARDING.md#validate-the-deployed-endp
 
 1. Confirm that missing or unauthorized caller credentials are rejected.
 2. Run an authorized **evaluation** to check authentication and decryption without a provider send.
-3. Run a separately approved **live test for each channel you intend to activate** and confirm
-   both provider acceptance and receipt of the SMS or voice call. Acceptance alone is not proof of delivery.
+3. If the approved pre-activation procedure requires it, run one controlled **live test for each
+   channel you intend to activate** and confirm provider acceptance and recipient delivery separately.
 4. Check that the request and relevant logs appear in Application Insights.
 
 Use Microsoft's approved caller and test procedure for these checks. An ordinary Azure CLI token
 cannot represent that caller. Activate the endpoint after every required check passes. If a live
 send times out, investigate its outcome before trying again because the provider may already have
-accepted it.
+accepted it. Retain only safe evidence: resource IDs, UTC times, status, latency, correlation IDs,
+and sanitized outcomes.
 
 ## 5. Activate and hand over
 
 Have an **Authentication Policy Administrator** follow the
-[supported activation procedure](../setup/docs/README.md#step-3---manually-validate-and-activate-policy).
-They save the existing policy, apply the approved endpoint URL and application client ID,
-preserve other settings, and validate the result.
+[supported Graph Explorer activation procedure](../setup/docs/README.md#step-3---manually-validate-and-activate-policy):
+
+1. Verify Graph Explorer shows the deployment summary's tenant, select **beta** and the approved
+   SMS or voice endpoint, then consent only to `Policy.ReadWrite.AuthenticationMethod`.
+2. GET and save the current policy before changing it. Preserve its state, targeting, and unrelated
+   properties; when the approved procedure changes targeting, use its dedicated pilot group.
+3. PATCH only the exact EPP changes and field locations in Microsoft's current approved procedure.
+   Include the documented `@odata.type`; do not construct an EPP payload from this repository.
+4. Expect `204 No Content`, immediately GET the policy again, and compare the approved EPP values
+   and every preserved setting with the saved snapshot.
+5. Test the pilot in evaluation first, then perform a separately authorized controlled live
+   delivery. Restore the saved prior policy if policy readback, evaluation, or delivery fails.
 
 Repeat for each authentication method you intend to enable. SMS and voice can share the same
 Function endpoint URL and application client ID. No additional setup run is needed for the second channel.
@@ -175,7 +194,8 @@ Function endpoint URL and application client ID. No additional setup run is need
 Before handing over, confirm:
 
 - [ ] Provider authentication, authorized testing, and recipient delivery are verified.
-- [ ] Policy is backed up, activated, and checked, with a [rollback plan](../setup/docs/README.md#rollback-and-decommissioning).
+- [ ] Policy is backed up, read back after activation, and checked through the pilot, with a
+  [rollback plan](../setup/docs/README.md#rollback-and-decommissioning).
 - [ ] [Monitoring and alert notifications](MONITORING.md) work for your chosen runtime.
 - [ ] Owners are assigned for provider credentials, [certificate renewal](../setup/docs/README.md#encryption-certificate-lifecycle),
   support, and costs.

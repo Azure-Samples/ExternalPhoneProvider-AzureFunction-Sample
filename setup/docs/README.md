@@ -3,7 +3,8 @@
 [Documentation](../../docs/README.md) | [First deployment](../../docs/GETTING-STARTED.md) | [Troubleshooting](Troubleshooting.md)
 
 This reference covers setup choices, reruns, and maintenance. For a first deployment, follow the
-five-step guide above; it handles the required source and Bicep files.
+linked [five-step deployment guide](../../docs/GETTING-STARTED.md); it keeps preparation,
+deployment, provider validation, policy activation, and handoff in order.
 
 | Task | Section |
 | --- | --- |
@@ -47,7 +48,7 @@ Setup offers these two Linux hosting plans:
 | 2. Premium (EP1) | Existing Premium configuration with one warm instance |
 
 FC1 on-demand compute has a
-[free usage grant](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan#billing);
+[free usage grant](https://learn.microsoft.com/en-us/azure/azure-functions/flex-consumption-plan#billing);
 usage beyond the grant, Key Vault, storage, telemetry, and provider services can incur charges.
 FC1 can scale to zero and cold-start.
 
@@ -112,7 +113,8 @@ Setup configures:
   directory permissions.
 - Microsoft Graph **beta** access for `signInAudienceRestrictions`. The provider tenant is added;
   Microsoft Entra ID always allows the home tenant.
-  See the [allowed-tenants schema](https://learn.microsoft.com/en-us/graph/api/resources/allowedtenantsaudience?view=graph-rest-beta).
+  See the
+  [allowed-tenants schema](https://learn.microsoft.com/en-us/graph/api/resources/allowedtenantsaudience?view=graph-rest-beta).
 - The selected **Linux FC1 or EP1** plan available in the region with enough quota. Resolve
   [`SubscriptionIsOverQuotaForSku`](Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku)
   before retrying. The operator needs subscription-scoped `/register/action`.
@@ -128,7 +130,7 @@ role-assignment rights. Another option is
 **Contributor** plus **Role Based Access Control Administrator** at the required scope, subject
 to any role-assignment conditions. Setup deploys at subscription scope and creates a new resource
 group, so access to an unrelated group does not cover the deployment. Activate eligible PIM roles before setup. See
-[Azure roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles).
+[Azure roles](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles).
 
 Azure roles do not grant Entra/Graph permissions, and Entra roles do not grant Azure/vault access.
 The signed-in user needs the listed Entra roles for setup. An Authentication Policy Administrator
@@ -136,9 +138,11 @@ handles activation separately. Setup grants vault roles only to its operator and
 
 ### Install and check workstation tools
 
-Install missing tools using [PowerShell installation](https://learn.microsoft.com/powershell/scripting/install/installing-powershell),
-[Azure CLI installation](https://learn.microsoft.com/cli/azure/install-azure-cli), and
-[.NET 8 SDK download](https://dotnet.microsoft.com/download/dotnet/8.0) instructions (SDK only for C#).
+Install missing tools using
+[PowerShell installation](https://learn.microsoft.com/en-us/powershell/scripting/install/install-powershell),
+[Azure CLI installation](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli?view=azure-cli-latest),
+and [.NET 8 SDK download](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) instructions
+(SDK only for C#).
 Open a new **PowerShell 7** window after installation, then check:
 
 ```powershell
@@ -471,7 +475,7 @@ vault contacts. Setup creates no contacts and guarantees no notifications.
 
 In **Key Vault > Certificates > Certificate contacts**, add the approved operations/renewal
 contact and verify the address and ownership. Portal labels can vary; follow
-[certificate renewal and contacts](https://learn.microsoft.com/azure/key-vault/certificates/overview-renew-certificate).
+[certificate renewal and contacts](https://learn.microsoft.com/en-us/azure/key-vault/certificates/overview-renew-certificate).
 Record `certificateExpiresUtc` in your inventory and create an independent scheduled reminder
 before the 30-day window, with an escalation owner. EmailContacts is not an Azure Monitor alert
 rule, and setup does not test email delivery. Monitor both the vault certificate's and Entra
@@ -590,7 +594,7 @@ blocker.
 
 Once that procedure is available:
 
-1. Open [Graph Explorer](https://developer.microsoft.com/graph/graph-explorer/), sign in, and verify
+1. Open [Graph Explorer](https://developer.microsoft.com/en-us/graph/graph-explorer), sign in, and verify
    that the tenant shown in its header matches `tenantId` in the saved deployment summary.
 2. Select **beta** and choose the approved channel endpoint:
    - SMS: `GET /beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/sms`
