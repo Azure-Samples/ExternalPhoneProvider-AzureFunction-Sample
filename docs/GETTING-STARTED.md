@@ -58,14 +58,14 @@ In the customer tenant's **Microsoft Entra admin center > App registrations > Ne
 3. On **Overview**, save the **Directory (tenant) ID** and **Application (client) ID** privately.
    Use the client ID, not the Object ID.
 
-![App registration form with an example name, Single tenant only selected, and no redirect URI](images/onboarding/app-registration.png)
+![App registration form with CYOT-CONSTO, the test directory, Single tenant only selected, and no redirect URI](images/onboarding/app-registration.png)
 
 *Some portal versions label the account type **Single tenant only**. Select the customer directory.
-The example above is an unsaved form and cannot be reused.*
+The CYOT-CONSTO example above uses a nonproduction test directory.*
 
 Use these labels to find the IDs:
 
-![App registration Overview with Application client ID and Directory tenant ID identified for setup and Object ID marked DO NOT USE](images/onboarding/app-registration-overview.png)
+![CYOT-CONSTO App registration Overview with Application client ID and Directory tenant ID identified for setup and Object ID marked DO NOT USE](images/onboarding/app-registration-overview.png)
 
 *Use **Application (client) ID** for `-ApplicationId` and **Directory (tenant) ID** for `-TenantId`.
 The **Object ID** is not either of these setup inputs. All ID values are hidden in this example.*
@@ -146,9 +146,9 @@ Easy Auth enabled. If setup fails, use the
 To find the deployed resources, open **Azure portal > Resource groups** and select the group
 listed in your deployment summary.
 
-![Example regional resource group showing a Function App, monitoring, Key Vault, managed identity, hosting plan, and storage](images/onboarding/resource-group.png)
+![CYOT-CONSTO regional resource group showing the consto Function App, monitoring, Key Vault, managed identity, FC1 hosting plan, and storage](images/onboarding/resource-group.png)
 
-*This Premium test deployment shows the expected resource types. Your list can differ.*
+*This FC1 nonproduction deployment shows the actual CYOT-CONSTO resource names. Your list can differ.*
 
 ## 4. Connect your provider and test
 
@@ -162,9 +162,10 @@ In your Function App, open **Settings > Authentication**. Check that authenticat
 **Enabled**, access is set to **Require authentication**, and unauthenticated requests receive
 **HTTP 401 Unauthorized**. These are checks, not instructions to change the approved caller.
 
-![Function Authentication page showing Enabled, Require authentication, and Return HTTP 401 Unauthorized](images/onboarding/authentication.png)
+![CYOT-CONSTO Function Authentication page showing Enabled, Require authentication, and Return HTTP 401 Unauthorized](images/onboarding/authentication.png)
 
-*The **Microsoft** identity provider validates the caller. It is not the SMS or voice provider.*
+*The Function and identity-provider labels remain visible. Only the client ID is hidden. The
+**Microsoft Entra ID** identity provider validates the caller; it is not the SMS or voice provider.*
 
 Complete the [approved endpoint checks](ONBOARDING.md#validate-the-deployed-endpoint):
 

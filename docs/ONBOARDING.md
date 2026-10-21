@@ -113,7 +113,7 @@ Infobip and Sinch adapters are bundled but do not have guided setup profiles. Tw
 2. Open that vault in **Azure portal > Key vaults**.
 3. Select **Objects > Secrets > Generate/Import**.
 
-   ![Key Vault Objects menu with Secrets selected and the Generate/Import action visible](images/onboarding/key-vault-secrets.png)
+  ![CYOT-CONSTO Key Vault Objects menu with the consto vault name, Secrets selected, and Generate/Import visible](images/onboarding/key-vault-secrets.png)
 
 4. Create `telesign-api-key` with the raw API key.
 5. Create `telesign-customer-id` with the matching raw Customer ID.
