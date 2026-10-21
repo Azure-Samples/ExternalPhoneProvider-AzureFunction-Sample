@@ -94,7 +94,7 @@ Review the downloaded script, then run it:
 
 ![Azure Cloud Shell in PowerShell mode downloading and starting the setup script](images/onboarding/cloud-shell-run-setup.png)
 
-*Cloud Shell account and directory details are hidden. Review the downloaded script before running it.*
+*The tenant ID and shell path are illustrative replacements. Review the downloaded script before running it.*
 
 On a shared workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` for a fresh sign-in.
 
@@ -109,8 +109,8 @@ Select the tenant, subscription, application **client ID**, and region. Then cho
 
 ![Azure Cloud Shell prompts for region, tenant scope, platform, hosting plan, and prerequisites](images/onboarding/cloud-shell-choose-options.png)
 
-*The example selections illustrate the prompt sequence; provider-specific confirmation and the
-resource prefix are hidden.*
+*Provider-specific prompts are omitted from this focused crop. The selections and resource prefix
+are illustrative.*
 
 Complete required sign-in, MFA, or administrator consent. Resolve preflight errors before approval.
 
@@ -133,10 +133,10 @@ identifies the resources, endpoint, app, and encryption key. No private key is d
 Cloud Shell sessions are ephemeral, so securely download or otherwise retain the private
 `epp-output` deployment summary and public certificate before closing the session.
 
-![Azure Cloud Shell deployment completion summary with private deployment values hidden](images/onboarding/cloud-shell-deployment-complete.png)
+![Azure Cloud Shell deployment completion summary listing created resource types and next steps](images/onboarding/cloud-shell-deployment-complete.png)
 
-*The completion summary identifies the resources and next steps. Resource names, identifiers,
-paths, certificate details, endpoint values, and provider-specific credential labels are hidden.*
+*Resource names, the endpoint, and the output path are illustrative replacements. An actual
+deployment summary contains private values and must remain private.*
 
 Setup verifies the private-key reference and **Easy Auth** before opening public access. Keep
 Easy Auth enabled. If setup fails, use the
