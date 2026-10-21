@@ -574,33 +574,63 @@ both policy targets; validate and activate only the channels you intend to enabl
 **Activation is an assisted, product-specific gate, not an executable public Graph recipe.**
 The public beta [SMS](https://learn.microsoft.com/en-us/graph/api/resources/smsauthenticationmethodconfiguration?view=graph-rest-beta)
 and [Voice](https://learn.microsoft.com/en-us/graph/api/resources/voiceauthenticationmethodconfiguration?view=graph-rest-beta)
-resource definitions do **not** document EPP `url` and `appId` fields. The general method
-configuration APIs alone do not establish EPP feature availability or an EPP update contract.
-Do not invent a PATCH payload, assume a Graph success means activation, or use the general
-Delete operation as an EPP rollback.
+resource definitions do **not** document the EPP extension fields or their placement. The general
+method configuration APIs alone do not establish EPP feature availability or an EPP update
+contract. Do not invent a PATCH payload, assume a Graph success means activation, or use the
+general Delete operation as an EPP rollback.
 
 Before a policy change, the **Authentication Policy Administrator** gets Microsoft's current
 approved EPP procedure for the selected tenant and channel. It must identify the tool, API and
 version, exact field placement, required consent and roles, readback steps, validation, and rollback.
-Delegated `Policy.ReadWrite.AuthenticationMethod` is a policy-management permission, not proof
-of EPP entitlement; confirm the approved procedure's permission requirements separately from setup.
-If this information or the feature is unavailable, leave policy unchanged and record the blocker.
+The public beta update documentation lists delegated `Policy.ReadWrite.AuthenticationMethod` as
+the least-privileged permission and Authentication Policy Administrator as the least-privileged
+supported delegated role. Those grants allow policy management; they do not prove EPP entitlement.
+If the approved EPP procedure or feature is unavailable, leave policy unchanged and record the
+blocker.
 
 Once that procedure is available:
 
-1. Save the existing selected-channel configuration, including EPP settings if present, target
-   groups, state, and other properties, with the tenant ID, UTC time, and change owner. Protect
-   the snapshot as tenant configuration. Agree on a maintenance window and rollback trigger.
-2. Re-read immediately before changing; stop if another administrator changed the policy.
-   Use conditional updates only where the approved endpoint documents their support.
-3. Apply only the reviewed EPP changes using `endpointUrl` and `applicationId` from the saved
-   deployment summary in the **approved field locations**. Preserve other policy properties
-   and group targeting. Setup's endpoint Service Principal Object ID is not `applicationId`.
-4. Read back and compare both changed values and preserved settings. Have the authorized
-   operator verify the selected channel through an actual controlled Entra flow; record
-   acceptance and separate recipient delivery, not secrets or OTPs.
-5. If validation fails, execute the agreed rollback below. Do not leave a broken channel
-   activated while deleting its resources or changing authentication to debug it.
+1. Open [Graph Explorer](https://developer.microsoft.com/graph/graph-explorer/), sign in, and verify
+   that the tenant shown in its header matches `tenantId` in the saved deployment summary.
+2. Select **beta**, choose the approved channel, and run its documented GET request:
+   - SMS: `GET /beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/sms`
+   - Voice: `GET /beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/voice`
+3. In **Modify permissions**, consent only to `Policy.ReadWrite.AuthenticationMethod` for this
+   update. Confirm the operator has the Authentication Policy Administrator role. Graph Explorer
+   displays the response status and body; save the `200 OK` policy response in restricted storage
+   with the tenant ID, UTC time, and change owner.
+4. Record all current EPP settings, target groups, state, and unrelated properties. Agree on a
+   maintenance window and rollback trigger. Re-run the GET immediately before changing and stop if
+   another administrator changed the policy.
+5. Change the method to PATCH and keep the same approved endpoint:
+   - SMS: `PATCH /beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/sms`
+   - Voice: `PATCH /beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/voice`
+6. Build the request only from Microsoft's current approved EPP procedure. Include the documented
+   `@odata.type`, use `endpointUrl` and `applicationId` from the saved deployment summary only in
+   the **approved field locations**, and send no guessed or undocumented properties. Setup's
+   endpoint Service Principal Object ID is not `applicationId`.
+7. Preserve the existing state, targeting, and unrelated settings unless the approved change
+   explicitly modifies them. Use a dedicated pilot group instead of replacing targeting with all
+   users. Public PATCH documentation says omitted documented properties remain unchanged or can be
+   recalculated from other changes; review the channel's update documentation before omitting one.
+8. Run the PATCH. The documented success response is `204 No Content`, with no response body.
+   This confirms that Graph accepted the request, not that EPP is active or delivery works.
+9. Immediately switch back to GET and compare the complete response with the saved snapshot.
+   Confirm the approved EPP values and every setting that should have been preserved. If the
+   extension values cannot be read back exactly as required by the approved procedure, stop and
+   restore the prior policy.
+10. Follow the approved procedure to test the pilot in evaluation first, then perform a separately
+    authorized controlled live delivery. Record provider acceptance and recipient delivery
+    separately, without secrets, phone data, or OTPs.
+11. If any policy, readback, evaluation, or delivery check fails, execute the agreed rollback
+    below. Do not leave a broken channel activated while deleting resources or changing
+    authentication to debug it.
+
+Microsoft Graph `/beta` APIs are subject to change and are not supported for production
+applications. Recheck the public [SMS update](https://learn.microsoft.com/en-us/graph/api/smsauthenticationmethodconfiguration-update?view=graph-rest-beta),
+[Voice update](https://learn.microsoft.com/en-us/graph/api/voiceauthenticationmethodconfiguration-update?view=graph-rest-beta),
+and [Graph Explorer](https://learn.microsoft.com/en-us/graph/graph-explorer/graph-explorer-features)
+documentation when performing the approved administrator procedure.
 
 ### Rollback and decommissioning
 
