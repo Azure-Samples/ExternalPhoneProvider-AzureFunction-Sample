@@ -602,6 +602,46 @@ Once that procedure is available:
 5. If validation fails, execute the agreed rollback below. Do not leave a broken channel
    activated while deleting its resources or changing authentication to debug it.
 
+<a id="evaluation-and-percentage-rollout"></a>
+### Evaluation and percentage rollout
+
+Evaluation and migration percentage answer different questions:
+
+- **Evaluation** checks that Microsoft Entra ID can call the endpoint and that the Function can
+  authenticate, validate, and decrypt the request. The request uses evaluation mode and does not
+  read provider credentials or send an SMS or voice call.
+- **Migration percentage** is a Microsoft Entra rollout control for eligible production
+  authentication traffic. It is not a request field, Function setting, provider setting, or
+  percentage implemented by this sample.
+
+Microsoft's public [telephony provider FAQ](https://learn.microsoft.com/entra/identity/authentication/phone-providers-faq#migration-and-evaluation)
+describes evaluation as validation before production traffic is gradually enabled.
+Use the exact percentage control, eligible population, and channel scope defined by Microsoft's
+current approved procedure. Public Microsoft Graph SMS and voice resource definitions do not
+document the EPP field placement or traffic-selection algorithm. Do not invent a Graph property or
+assume a percentage guarantees an exact request count or a stable set of users.
+
+Plan the rollout in these stages:
+
+| Stage | Test | Evidence before continuing |
+| --- | --- | --- |
+| Evaluation | For each intended channel, have the authorized Microsoft caller send a valid encrypted evaluation request. | `200`, matching nonce, correlated evaluation events, and no provider credential or send events. |
+| Controlled live test | Before increasing production traffic, send separately approved live requests to controlled recipients. | Provider acceptance, recipient delivery, correlated telemetry, and no unresolved timeout or duplicate-send concern. |
+| Initial percentage | Apply the smallest percentage and population approved for the rollout. Hold the setting long enough to observe representative traffic. | Expected Entra routing, Function success/error/latency, provider acceptance, recipient delivery, support signals, and no rollback trigger. |
+| Percentage increase | Change one rollout control at a time. Repeat the same checks at every approved increment. | Results remain within the agreed thresholds for the full observation window. |
+| Full rollout | Move to the approved final percentage only after every intended channel and population passes. | Policy readback, sustained telemetry, provider capacity, operational ownership, and tested rollback readiness. |
+
+Evaluation success is necessary but does not validate provider credentials, provider capacity,
+production percentage selection, provider acceptance, or recipient delivery. A configured
+percentage is also not proof that the expected requests reached this endpoint. Correlate Microsoft
+Entra rollout evidence, Function telemetry, provider records, and controlled recipient results.
+
+Before each increase, record the current policy readback, percentage, eligible population,
+channels, UTC start time, observation window, owners, success thresholds, and rollback triggers.
+If a threshold is breached, stop increasing traffic and restore the reviewed prior policy through
+the approved procedure. Changing the percentage does not roll back the Function package,
+credentials, or Azure resources.
+
 ### Rollback and decommissioning
 
 Policy rollback, package/configuration rollback, and resource deletion are different operations.

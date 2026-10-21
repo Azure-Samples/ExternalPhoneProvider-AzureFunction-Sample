@@ -199,6 +199,13 @@ Evaluation validates the authorized encrypted request path without sending a mes
 validate provider credentials, provider acceptance, or recipient delivery. For live requests,
 `200` means provider acceptance. Confirm delivery separately and do not blindly retry timeouts.
 
+Evaluation also does not test a production migration percentage. That percentage is controlled by
+Microsoft Entra ID through the approved rollout procedure; the Function does not read or apply it.
+Before increasing production traffic, complete the authorized evaluation and controlled live tests
+for each intended channel. At every approved percentage, verify Entra routing evidence, Function
+telemetry, provider acceptance, recipient delivery, and rollback thresholds for the agreed
+observation window. See [evaluation and percentage rollout](../setup/docs/README.md#evaluation-and-percentage-rollout).
+
 Repeat deployed checks after package, authentication, credential, key, or routing changes.
 
 <a id="activate-operate-and-retire"></a>
