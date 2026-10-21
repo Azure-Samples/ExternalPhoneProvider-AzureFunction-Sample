@@ -109,7 +109,8 @@ Select the tenant, subscription, application **client ID**, and region. Then cho
 
 ![Azure Cloud Shell prompts for region, tenant scope, platform, hosting plan, and prerequisites](images/onboarding/cloud-shell-choose-options.png)
 
-*The example selections illustrate the prompt sequence; the resource prefix is hidden.*
+*The example selections illustrate the prompt sequence; provider-specific confirmation and the
+resource prefix are hidden.*
 
 Complete required sign-in, MFA, or administrator consent. Resolve preflight errors before approval.
 
@@ -129,11 +130,13 @@ Wait for **Deployment completed** and the saved summary before Step 4. Setup cre
 App, storage, Key Vault, identities, and monitoring. Do not precreate these resources.
 Keep `epp-output` private. Its [summary](../setup/docs/README.md#read-the-deployment-summary)
 identifies the resources, endpoint, app, and encryption key. No private key is downloaded.
+Cloud Shell sessions are ephemeral, so securely download or otherwise retain the private
+`epp-output` deployment summary and public certificate before closing the session.
 
 ![Azure Cloud Shell deployment completion summary with private deployment values hidden](images/onboarding/cloud-shell-deployment-complete.png)
 
 *The completion summary identifies the resources and next steps. Resource names, identifiers,
-paths, certificate details, and endpoint values are hidden.*
+paths, certificate details, endpoint values, and provider-specific credential labels are hidden.*
 
 Setup verifies the private-key reference and **Easy Auth** before opening public access. Keep
 Easy Auth enabled. If setup fails, use the
