@@ -92,9 +92,10 @@ Review the downloaded script, then run it:
 .\Setup-Epp.ps1
 ```
 
-![Azure Cloud Shell in PowerShell mode downloading and starting the setup script](images/onboarding/cloud-shell-run-setup.png)
+![Azure Cloud Shell in PowerShell mode downloading and starting setup for CYOT-CONSTO](images/onboarding/cloud-shell-run-setup.svg)
 
-*The tenant ID and shell path are illustrative replacements. Review the downloaded script before running it.*
+*This CYOT-CONSTO nonproduction walkthrough keeps the recognizable application name and shell path visible.
+Only the tenant ID is hidden. Review the downloaded script before running it.*
 
 On a shared workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` for a fresh sign-in.
 
@@ -107,10 +108,10 @@ Select the tenant, subscription, application **client ID**, and region. Then cho
   [plan details](../setup/docs/README.md#service-plan-selection).
 - **Resource prefix:** 2-8 lowercase letters/digits, starting with a letter.
 
-![Azure Cloud Shell prompts for platform, hosting plan, and resource prefix](images/onboarding/cloud-shell-choose-options.png)
+![Azure Cloud Shell shows the CYOT-CONSTO provider, platform, hosting plan, and resource prefix choices](images/onboarding/cloud-shell-choose-options.svg)
 
-*Provider-specific prompts are omitted from this focused crop. The selections and resource prefix
-are illustrative.*
+*The walkthrough selected Telesign Global routing, Node.js, Flex Consumption FC1, and the
+`consto` resource prefix. These are example choices, not recommendations for every deployment.*
 
 Complete required sign-in, MFA, or administrator consent. Resolve preflight errors before approval.
 
@@ -133,10 +134,10 @@ identifies the resources, endpoint, app, and encryption key. No private key is d
 Cloud Shell sessions are ephemeral, so securely download or otherwise retain the private
 `epp-output` deployment summary and public certificate before closing the session.
 
-![Azure Cloud Shell deployment completion summary showing created resource types, endpoint, and output path](images/onboarding/cloud-shell-deployment-complete.png)
+![Azure Cloud Shell deployment completion summary showing the CYOT-CONSTO resources and hidden endpoint](images/onboarding/cloud-shell-deployment-complete.svg)
 
-*Resource names, the endpoint, and the output path are illustrative replacements. An actual
-deployment summary contains private values and must remain private.*
+*The nonproduction CYOT-CONSTO resource names are shown so readers can recognize the naming
+pattern. The endpoint is hidden, and the full deployment summary remains private.*
 
 Setup verifies the private-key reference and **Easy Auth** before opening public access. Keep
 Easy Auth enabled. If setup fails, use the

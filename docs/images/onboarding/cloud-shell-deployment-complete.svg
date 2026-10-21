@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="430" viewBox="0 0 900 430" role="img" aria-labelledby="title desc">
+  <title id="title">Completed CYOT-CONSTO nonproduction deployment</title>
+  <desc id="desc">Azure Cloud Shell lists the created FC1 resources. Resource names remain visible, while the Function endpoint is hidden.</desc>
+  <rect width="900" height="430" fill="#062f63"/>
+  <g font-family="Consolas, monospace" font-size="14" fill="#f1f6fb">
+    <text x="8" y="25" fill="#62ec71">Deployment completed</text>
+    <text x="8" y="55" fill="#36d7e9">Azure resources created or updated</text>
+    <text x="8" y="88">Resource</text><text x="238" y="88">Name</text>
+    <text x="8" y="108">--------</text><text x="238" y="108">----</text>
+    <text x="8" y="130">Resource group</text><text x="238" y="130">consto-epp-rg-5a7680d1</text>
+    <text x="8" y="151">Function App</text><text x="238" y="151">consto-epp-func-5a7680d1</text>
+    <text x="8" y="172">Hosting plan</text><text x="238" y="172">consto-epp-plan-5a7680d1</text>
+    <text x="8" y="193">Storage account</text><text x="238" y="193">constoeppsa5a7680d1</text>
+    <text x="8" y="214">Blob container</text><text x="238" y="214">packages</text>
+    <text x="8" y="235">Key Vault</text><text x="238" y="235">consto-epp-kv-5a7680d1</text>
+    <text x="8" y="256">Function App identity</text><text x="238" y="256">System-assigned</text>
+    <text x="8" y="277">Outbound identity</text><text x="238" y="277">consto-epp-outbound-5a7680d1</text>
+    <text x="8" y="298">Log Analytics</text><text x="238" y="298">consto-epp-logs-5a7680d1</text>
+    <text x="8" y="319">Application Insights</text><text x="238" y="319">consto-epp-insights-5a7680d1</text>
+    <text x="8" y="340">Diagnostic settings</text><text x="238" y="340">Configured</text>
+    <text x="8" y="370">Application: <tspan fill="#62ec71">CYOT-CONSTO</tspan></text>
+    <text x="8" y="394">Function endpoint:</text><rect x="172" y="378" width="155" height="21" rx="2" fill="#111827"/><text x="188" y="394">endpoint hidden</text>
+    <text x="365" y="394">Service plan: FC1</text>
+    <text x="8" y="418" fill="#fff100">Certificate renewal is manual. Retain the private deployment summary securely.</text>
+  </g>
+</svg>

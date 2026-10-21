@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="312" viewBox="0 0 1100 312" role="img" aria-labelledby="title desc">
+  <title id="title">Azure Cloud Shell starting setup for CYOT-CONSTO</title>
+  <desc id="desc">Cloud Shell downloads and starts the setup script. The tenant ID is hidden; the non-sensitive application name and shell path remain visible.</desc>
+  <rect width="1100" height="312" fill="#062f63"/>
+  <rect width="1100" height="39" fill="#ffffff"/>
+  <line x1="0" y1="39" x2="1100" y2="39" stroke="#c7d0d9"/>
+  <g font-family="Segoe UI, sans-serif" font-size="13" fill="#4b5865">
+    <text x="16" y="25">↔ Switch to Bash</text><text x="128" y="25">↻ Restart</text><text x="214" y="25">☁ Manage files⌄</text>
+    <text x="337" y="25">▣ New session</text><text x="442" y="25">✎ Editor</text><text x="510" y="25">Open in VS Code for the Web</text>
+    <text x="728" y="25">Web preview⌄</text><text x="847" y="25">⚙ Settings⌄</text><text x="954" y="25">? Help⌄</text>
+  </g>
+  <g font-family="Consolas, monospace" font-size="13" fill="#f1f6fb">
+    <text x="5" y="58" fill="#36d7e9">Requesting a Cloud Shell.<tspan fill="#62ec71">Succeeded.</tspan></text>
+    <text x="5" y="77">Connecting terminal...</text>
+    <text x="5" y="107">Welcome to Azure Cloud Shell</text>
+    <text x="5" y="132">Type "az" to use Azure CLI</text><text x="5" y="150">Type "help" to learn about Cloud Shell</text>
+    <text x="5" y="178" fill="#fff100">Your Cloud Shell session will be ephemeral so no files or system changes will persist beyond your current session.</text>
+    <text x="5" y="204" fill="#b7d3ed">MOTD: You can now copy &amp; paste in Cloud Shell using Ctrl+C/Ctrl+V (Linux/Windows) or Cmd+C/Cmd+V (Mac).</text>
+    <text x="5" y="229" fill="#fff100">WARNING: TenantId '</text>
+    <rect x="142" y="214" width="88" height="19" rx="2" fill="#111827"/>
+    <text x="161" y="229" fill="#ffffff">hidden</text>
+    <text x="232" y="229" fill="#fff100">' contains more than one active subscription. Confirm the intended subscription.</text>
+    <text x="5" y="248" fill="#fff100">WARNING: Confirm the intended Azure subscription before continuing.</text>
+    <text x="5" y="268">Application: <tspan fill="#62ec71">CYOT-CONSTO</tspan></text>
+    <text x="5" y="287">PS ~/setup&gt; Invoke-WebRequest 'https://raw.githubusercontent.com/.../Setup-Epp.ps1' -OutFile ./Setup-Epp.ps1</text>
+    <text x="5" y="306">PS ~/setup&gt; ./Setup-Epp.ps1</text>
+  </g>
+</svg>
