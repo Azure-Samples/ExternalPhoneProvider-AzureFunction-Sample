@@ -3,7 +3,8 @@
 [Documentation](../../docs/README.md) | [First deployment](../../docs/GETTING-STARTED.md) | [Troubleshooting](Troubleshooting.md)
 
 This reference covers setup choices, reruns, and maintenance. For a first deployment, follow the
-five-step guide above; it handles the required source and Bicep files.
+linked [five-step deployment guide](../../docs/GETTING-STARTED.md); it keeps preparation,
+deployment, provider validation, policy activation, and handoff in order.
 
 | Task | Section |
 | --- | --- |
@@ -47,7 +48,7 @@ Setup offers these two Linux hosting plans:
 | 2. Premium (EP1) | Existing Premium configuration with one warm instance |
 
 FC1 on-demand compute has a
-[free usage grant](https://learn.microsoft.com/azure/azure-functions/flex-consumption-plan#billing);
+[free usage grant](https://learn.microsoft.com/en-us/azure/azure-functions/flex-consumption-plan#billing);
 usage beyond the grant, Key Vault, storage, telemetry, and provider services can incur charges.
 FC1 can scale to zero and cold-start.
 
@@ -112,7 +113,8 @@ Setup configures:
   directory permissions.
 - Microsoft Graph **beta** access for `signInAudienceRestrictions`. The provider tenant is added;
   Microsoft Entra ID always allows the home tenant.
-  See the [allowed-tenants schema](https://learn.microsoft.com/en-us/graph/api/resources/allowedtenantsaudience?view=graph-rest-beta).
+  See the
+  [allowed-tenants schema](https://learn.microsoft.com/en-us/graph/api/resources/allowedtenantsaudience?view=graph-rest-beta).
 - The selected **Linux FC1 or EP1** plan available in the region with enough quota. Resolve
   [`SubscriptionIsOverQuotaForSku`](Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku)
   before retrying. The operator needs subscription-scoped `/register/action`.
@@ -128,7 +130,7 @@ role-assignment rights. Another option is
 **Contributor** plus **Role Based Access Control Administrator** at the required scope, subject
 to any role-assignment conditions. Setup deploys at subscription scope and creates a new resource
 group, so access to an unrelated group does not cover the deployment. Activate eligible PIM roles before setup. See
-[Azure roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles).
+[Azure roles](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles).
 
 Azure roles do not grant Entra/Graph permissions, and Entra roles do not grant Azure/vault access.
 The signed-in user needs the listed Entra roles for setup. An Authentication Policy Administrator
@@ -136,9 +138,11 @@ handles activation separately. Setup grants vault roles only to its operator and
 
 ### Install and check workstation tools
 
-Install missing tools using [PowerShell installation](https://learn.microsoft.com/powershell/scripting/install/installing-powershell),
-[Azure CLI installation](https://learn.microsoft.com/cli/azure/install-azure-cli), and
-[.NET 8 SDK download](https://dotnet.microsoft.com/download/dotnet/8.0) instructions (SDK only for C#).
+Install missing tools using
+[PowerShell installation](https://learn.microsoft.com/en-us/powershell/scripting/install/install-powershell),
+[Azure CLI installation](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli?view=azure-cli-latest),
+and [.NET 8 SDK download](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) instructions
+(SDK only for C#).
 Open a new **PowerShell 7** window after installation, then check:
 
 ```powershell
@@ -471,7 +475,7 @@ vault contacts. Setup creates no contacts and guarantees no notifications.
 
 In **Key Vault > Certificates > Certificate contacts**, add the approved operations/renewal
 contact and verify the address and ownership. Portal labels can vary; follow
-[certificate renewal and contacts](https://learn.microsoft.com/azure/key-vault/certificates/overview-renew-certificate).
+[certificate renewal and contacts](https://learn.microsoft.com/en-us/azure/key-vault/certificates/overview-renew-certificate).
 Record `certificateExpiresUtc` in your inventory and create an independent scheduled reminder
 before the 30-day window, with an escalation owner. EmailContacts is not an Azure Monitor alert
 rule, and setup does not test email delivery. Monitor both the vault certificate's and Entra
@@ -574,33 +578,64 @@ both policy targets; validate and activate only the channels you intend to enabl
 **Activation is an assisted, product-specific gate, not an executable public Graph recipe.**
 The public beta [SMS](https://learn.microsoft.com/en-us/graph/api/resources/smsauthenticationmethodconfiguration?view=graph-rest-beta)
 and [Voice](https://learn.microsoft.com/en-us/graph/api/resources/voiceauthenticationmethodconfiguration?view=graph-rest-beta)
-resource definitions do **not** document EPP `url` and `appId` fields. The general method
-configuration APIs alone do not establish EPP feature availability or an EPP update contract.
-Do not invent a PATCH payload, assume a Graph success means activation, or use the general
-Delete operation as an EPP rollback.
+resource definitions do **not** document the EPP extension fields or their placement. The general
+method configuration APIs alone do not establish EPP feature availability or an EPP update
+contract. Do not invent a PATCH payload, assume a Graph success means activation, or use the
+general Delete operation as an EPP rollback.
 
 Before a policy change, the **Authentication Policy Administrator** gets Microsoft's current
 approved EPP procedure for the selected tenant and channel. It must identify the tool, API and
 version, exact field placement, required consent and roles, readback steps, validation, and rollback.
-Delegated `Policy.ReadWrite.AuthenticationMethod` is a policy-management permission, not proof
-of EPP entitlement; confirm the approved procedure's permission requirements separately from setup.
-If this information or the feature is unavailable, leave policy unchanged and record the blocker.
+The public beta update documentation lists delegated `Policy.ReadWrite.AuthenticationMethod` as
+the least-privileged permission and Authentication Policy Administrator as the least-privileged
+supported delegated role. Those grants allow policy management; they do not prove EPP entitlement.
+If the approved EPP procedure or feature is unavailable, leave policy unchanged and record the
+blocker.
 
 Once that procedure is available:
 
-1. Save the existing selected-channel configuration, including EPP settings if present, target
-   groups, state, and other properties, with the tenant ID, UTC time, and change owner. Protect
-   the snapshot as tenant configuration. Agree on a maintenance window and rollback trigger.
-2. Re-read immediately before changing; stop if another administrator changed the policy.
-   Use conditional updates only where the approved endpoint documents their support.
-3. Apply only the reviewed EPP changes using `endpointUrl` and `applicationId` from the saved
-   deployment summary in the **approved field locations**. Preserve other policy properties
-   and group targeting. Setup's endpoint Service Principal Object ID is not `applicationId`.
-4. Read back and compare both changed values and preserved settings. Have the authorized
-   operator verify the selected channel through an actual controlled Entra flow; record
-   acceptance and separate recipient delivery, not secrets or OTPs.
-5. If validation fails, execute the agreed rollback below. Do not leave a broken channel
-   activated while deleting its resources or changing authentication to debug it.
+1. Open [Graph Explorer](https://developer.microsoft.com/en-us/graph/graph-explorer), sign in, and verify
+   that the tenant shown in its header matches `tenantId` in the saved deployment summary.
+2. Select **beta** and choose the approved channel endpoint:
+   - SMS: `GET /beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/sms`
+   - Voice: `GET /beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/voice`
+3. In **Modify permissions**, consent only to `Policy.ReadWrite.AuthenticationMethod` for this
+   update, and confirm the operator has the Authentication Policy Administrator role.
+4. Run the GET. Graph Explorer displays the response status and body; save the successful `200 OK`
+   current-policy response in restricted storage with the tenant ID, UTC time, and change owner.
+5. Record all current EPP settings, target groups, state, and unrelated properties. Agree on a
+   maintenance window and rollback trigger. Re-run the GET immediately before changing and stop if
+   another administrator changed the policy.
+6. Change the method to PATCH and keep the same approved endpoint:
+   - SMS: `PATCH /beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/sms`
+   - Voice: `PATCH /beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/voice`
+7. Build the request only from Microsoft's current approved EPP procedure. Include the documented
+   `@odata.type`, use `endpointUrl` and `applicationId` from the saved deployment summary only in
+   the **approved field locations**, and send no guessed or undocumented properties. Setup's
+   endpoint Service Principal Object ID is not `applicationId`.
+8. Preserve the existing state, targeting, and unrelated settings unless the approved change
+   explicitly modifies them. When the approved procedure changes targeting, use its dedicated
+   pilot group; do not replace existing targeting with all users. Public PATCH documentation says
+   omitted documented properties remain unchanged or can be recalculated from other changes;
+   review the channel's update documentation before omitting one.
+9. Run the PATCH. The documented success response is `204 No Content`, with no response body.
+   This confirms that Graph accepted the request, not that EPP is active or delivery works.
+10. Immediately switch back to GET and compare the complete response with the saved snapshot.
+   Confirm the approved EPP values and every setting that should have been preserved. If the
+   extension values cannot be read back exactly as required by the approved procedure, stop and
+   restore the prior policy.
+11. Follow the approved procedure to test the pilot in evaluation first, then perform a separately
+    authorized controlled live delivery. Record provider acceptance and recipient delivery
+    separately, without secrets, phone data, or OTPs.
+12. If any policy, readback, evaluation, or delivery check fails, execute the agreed rollback
+    below. Do not leave a broken channel activated while deleting resources or changing
+    authentication to debug it.
+
+Microsoft Graph `/beta` APIs are subject to change and are not supported for production
+applications. Recheck the public [SMS update](https://learn.microsoft.com/en-us/graph/api/smsauthenticationmethodconfiguration-update?view=graph-rest-beta),
+[Voice update](https://learn.microsoft.com/en-us/graph/api/voiceauthenticationmethodconfiguration-update?view=graph-rest-beta),
+and [Graph Explorer](https://learn.microsoft.com/en-us/graph/graph-explorer/graph-explorer-features)
+documentation when performing the approved administrator procedure.
 
 <a id="evaluation-and-percentage-rollout"></a>
 ### Evaluation and percentage rollout
