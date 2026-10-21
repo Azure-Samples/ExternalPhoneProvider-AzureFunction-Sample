@@ -13,8 +13,8 @@ The guide separates the estimate into two parts:
 ## 1. Estimate telecom-provider costs
 
 > [!IMPORTANT]
-> This is not a billing report. Confirm retries, fallback, message segments, destinations, taxes,
-> fees, and pricing with the provider.
+> This is not a billing report. Confirm retries, secondary-provider attempts, message segments,
+> destinations, taxes, fees, and pricing with the provider.
 
 | Step | Task |
 | --- | --- |
@@ -202,7 +202,7 @@ Estimated SMS/voice requests = 10,000
 
 Apply the provider's destination-specific rates to those estimated requests. Use separate
 rows when rates differ by destination, sender type, route, or message category. Include a
-contingency for growth, retries, fallback behavior, and seasonal peaks.
+contingency for growth, retries, approved secondary-provider behavior, and seasonal peaks.
 
 <a id="confirm-the-final-estimate-with-your-provider"></a>
 ### Confirm provider rates
@@ -265,7 +265,7 @@ Include these resources:
 | Function App | Hosts the application and its HTTPS endpoint. | There is no separate base charge; compute is charged through the selected Functions hosting plan. |
 | Application Insights and Log Analytics | Provides operational monitoring, request diagnostics, provider latency, failure data, and troubleshooting telemetry. | Telemetry volume and retention. |
 | Storage account | Stores Function host information and the deployment package. | Stored capacity, transactions, and LRS versus ZRS replication. Zone-redundant deployments require ZRS storage. |
-| Key Vault | Protects provider credentials, secrets, and the encryption certificate. | Secret and certificate operations. This is normally a small cost because credentials are cached. |
+| Key Vault | Protects provider credentials, secrets, and the encryption certificate. | Secret and certificate operations. Current packages read API-key secrets on each live request; OAuth token caching is owned by the Azure Identity SDK. |
 | Outbound bandwidth | Carries API requests and responses between Azure Functions and the provider. | Outbound data after the applicable Azure allowance. This is usually small for provider API payloads. |
 | Traffic Manager or equivalent global routing | Routes traffic in an optional multi-region disaster-recovery deployment. | DNS queries or requests, depending on the selected routing service. |
 
@@ -274,7 +274,7 @@ Collect these inputs before creating your estimate:
 - Monthly SMS and voice authentication requests, including authentication, enrollment,
   recovery, and test traffic.
 - Average Function execution duration, including provider API latency.
-- Expected retry and failover allowance.
+- Expected retry and regional-recovery allowance.
 - Function memory allocation and operational logging generated per request.
 - Required region, availability-zone resilience, and regional disaster recovery.
 - Your Azure pricing, discounts, free grants, taxes, and currency.
@@ -282,7 +282,7 @@ Collect these inputs before creating your estimate:
 Use adjusted request volume consistently across the estimate:
 
 ```text
-Adjusted monthly requests = monthly authentication requests x retry/failover multiplier
+Adjusted monthly requests = monthly authentication requests x retry/recovery multiplier
 Execution GB-seconds      = adjusted monthly requests x execution seconds x memory in GB
 Monitoring data in GB     = adjusted monthly requests x logging KB per request / 1,048,576
 Estimated Azure total     = Functions + monitoring + storage + Key Vault
@@ -312,5 +312,5 @@ the Function cold-start portion. Zone redundancy protects against a datacenter-z
 failure within one region; it does not provide regional disaster recovery.
 
 For a multi-region design, also account for globally unique idempotency, provider-aware
-failover, shared fraud and spend limits, and an emergency stop. Autoscaling Azure compute
+regional recovery, shared fraud and spend limits, and an emergency stop. Autoscaling Azure compute
 must not create unlimited telecom spend.

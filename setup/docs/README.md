@@ -31,7 +31,7 @@ Both channels are configured. Profile objects `deployment.routes.global` and
 values. Setup writes the endpoints to `EPP_PROVIDER_SMS_ENDPOINT` and
 `EPP_PROVIDER_VOICE_ENDPOINT`; Soprano also supplies its API app ID and scope.
 
-Use a package that supports channel-specific settings; neither channel falls back to the other URL.
+Use a package that supports channel-specific settings; neither channel uses the other channel's URL.
 
 The current profiles use identical Global/EU URLs, and Soprano uses the same app ID/scope.
 The route label is not a residency or Azure-region selection. Infobip and Sinch are bundled
@@ -447,7 +447,7 @@ configuration metadata, not provider credentials or private-key bytes. Keep it a
 | `tenantId`, `subscriptionId`, `applicationId` | Verify the intended customer directory, Azure subscription, and endpoint **client ID**. |
 | `resources.functionApp`, `resources.keyVault`, `resources.applicationInsights`, `resources.logAnalytics` | Find the exact Azure resources; do not guess names or use a different environment's vault. |
 | `provider`, `endpointRegion`, `providerTenantId` | Confirm provider routing, separate from the customer's directory and Azure location. Both SMS and voice use this configuration. |
-| `allowedProviderTenantIds` | Review the complete preserved provider-tenant allowlist, including the selected provider. This does not enable runtime fallback between providers. |
+| `allowedProviderTenantIds` | Review the complete preserved provider-tenant allowlist, including the selected provider. This does not enable runtime switching between providers. |
 | `providerSmsEndpoint`, `providerVoiceEndpoint` | Confirm the distinct or identical provider URLs for SMS and voice. These are outbound provider URLs, not the Function's `endpointUrl`. |
 | `endpointUrl`, `identifierUri` | Exact SendOtp URL and registered app audience information for the authorized test/policy operator. |
 | `encryptionKeyId`, `certificateThumbprint`, `certificateId`, `certificateSecretId`, `certificateExpiresUtc` | Public-key identification and version/renewal inventory. A secret **ID** is not its value; do not fetch its private-key contents. |
@@ -601,6 +601,46 @@ Once that procedure is available:
    acceptance and separate recipient delivery, not secrets or OTPs.
 5. If validation fails, execute the agreed rollback below. Do not leave a broken channel
    activated while deleting its resources or changing authentication to debug it.
+
+<a id="evaluation-and-percentage-rollout"></a>
+### Evaluation and percentage rollout
+
+Evaluation and migration percentage answer different questions:
+
+- **Evaluation** checks that Microsoft Entra ID can call the endpoint and that the Function can
+  authenticate, validate, and decrypt the request. The request uses evaluation mode and does not
+  read provider credentials or send an SMS or voice call.
+- **Migration percentage** is a Microsoft Entra rollout control for eligible production
+  authentication traffic. It is not a request field, Function setting, provider setting, or
+  percentage implemented by this sample.
+
+Microsoft's public [telephony provider FAQ](https://learn.microsoft.com/entra/identity/authentication/phone-providers-faq#migration-and-evaluation)
+describes evaluation as validation before production traffic is gradually enabled.
+Use the exact percentage control, eligible population, and channel scope defined by Microsoft's
+current approved procedure. Public Microsoft Graph SMS and voice resource definitions do not
+document the EPP field placement or traffic-selection algorithm. Do not invent a Graph property or
+assume a percentage guarantees an exact request count or a stable set of users.
+
+Plan the rollout in these stages:
+
+| Stage | Test | Evidence before continuing |
+| --- | --- | --- |
+| Evaluation | For each intended channel, have the authorized Microsoft caller send a valid encrypted evaluation request. | `200`, matching nonce, correlated evaluation events, and no provider credential or send events. |
+| Controlled live test | Before increasing production traffic, send separately approved live requests to controlled recipients. | Provider acceptance, recipient delivery, correlated telemetry, and no unresolved timeout or duplicate-send concern. |
+| Initial percentage | Apply the smallest percentage and population approved for the rollout. Hold the setting long enough to observe representative traffic. | Expected Entra routing, Function success/error/latency, provider acceptance, recipient delivery, support signals, and no rollback trigger. |
+| Percentage increase | Change one rollout control at a time. Repeat the same checks at every approved increment. | Results remain within the agreed thresholds for the full observation window. |
+| Full rollout | Move to the approved final percentage only after every intended channel and population passes. | Policy readback, sustained telemetry, provider capacity, operational ownership, and tested rollback readiness. |
+
+Evaluation success is necessary but does not validate provider credentials, provider capacity,
+production percentage selection, provider acceptance, or recipient delivery. A configured
+percentage is also not proof that the expected requests reached this endpoint. Correlate Microsoft
+Entra rollout evidence, Function telemetry, provider records, and controlled recipient results.
+
+Before each increase, record the current policy readback, percentage, eligible population,
+channels, UTC start time, observation window, owners, success thresholds, and rollback triggers.
+If a threshold is breached, stop increasing traffic and restore the reviewed prior policy through
+the approved procedure. Changing the percentage does not roll back the Function package,
+credentials, or Azure resources.
 
 ### Rollback and decommissioning
 

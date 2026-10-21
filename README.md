@@ -39,6 +39,8 @@ Guided setup deploys **one regional endpoint** using JavaScript, C#, or Python.
 *Easy Auth checks the Microsoft caller before the Function decrypts the request.
 Live success confirms provider acceptance. Confirm delivery separately. Evaluation validates the
 request without sending a message.
+The diagram is a topology overview; current packages read API-key secrets for each live request,
+while Azure Identity owns OAuth token caching.
 See [architecture details](TECHNICAL.md#single-region-architecture).
 [Open the full-size diagram](docs/images/single-region-architecture.png).*
 
@@ -74,7 +76,7 @@ Before live use, review [production readiness](TECHNICAL.md#production-readiness
 ### Advanced topics
 
 - [Multi-region routing](docs/FRONTDOOR.md)
-- [Provider fallback](docs/MULTI-PROVIDER-IMPLEMENTATION.md)
+- [Secondary-provider design](docs/MULTI-PROVIDER-IMPLEMENTATION.md)
 
 ## Getting help
 

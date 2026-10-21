@@ -199,6 +199,13 @@ Evaluation validates the authorized encrypted request path without sending a mes
 validate provider credentials, provider acceptance, or recipient delivery. For live requests,
 `200` means provider acceptance. Confirm delivery separately and do not blindly retry timeouts.
 
+Evaluation also does not test a production migration percentage. That percentage is controlled by
+Microsoft Entra ID through the approved rollout procedure; the Function does not read or apply it.
+Before increasing production traffic, complete the authorized evaluation and controlled live tests
+for each intended channel. At every approved percentage, verify Entra routing evidence, Function
+telemetry, provider acceptance, recipient delivery, and rollback thresholds for the agreed
+observation window. See [evaluation and percentage rollout](../setup/docs/README.md#evaluation-and-percentage-rollout).
+
 Repeat deployed checks after package, authentication, credential, key, or routing changes.
 
 <a id="activate-operate-and-retire"></a>
@@ -254,8 +261,8 @@ the deployed validation checks.
 | `identityProviders.azureActiveDirectory.validation.defaultAuthorizationPolicy.allowedApplications` | Nonempty approved Microsoft caller app-ID allowlist |
 | `globalValidation.excludedPaths` | No `SendOtp` or alternate-ingress exemption |
 
-The handler has no fallback token validator. Never use `common` or `organizations` as the issuer,
-derive trust from request fields, or exempt `SendOtp`.
+The handler does not validate bearer tokens itself. Never use `common` or `organizations` as the
+issuer, derive trust from request fields, or exempt `SendOtp`.
 
 Keep the app registration's `tokenEncryptionKeyId` null. Microsoft Entra ID bearer-token encryption
 is separate from the JWE delivery payload and is not supported by this sample.

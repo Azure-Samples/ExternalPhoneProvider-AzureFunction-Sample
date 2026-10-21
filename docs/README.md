@@ -42,7 +42,7 @@ Use the guide that matches your task.
 ## Advanced topics
 
 - [Multi-region routing](FRONTDOOR.md)
-- [Provider fallback](MULTI-PROVIDER-IMPLEMENTATION.md)
+- [Secondary-provider design](MULTI-PROVIDER-IMPLEMENTATION.md)
 
 <a id="get-help"></a>
 ## Support
