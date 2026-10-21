@@ -592,37 +592,38 @@ Once that procedure is available:
 
 1. Open [Graph Explorer](https://developer.microsoft.com/graph/graph-explorer/), sign in, and verify
    that the tenant shown in its header matches `tenantId` in the saved deployment summary.
-2. Select **beta**, choose the approved channel, and run its documented GET request:
+2. Select **beta** and choose the approved channel endpoint:
    - SMS: `GET /beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/sms`
    - Voice: `GET /beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/voice`
 3. In **Modify permissions**, consent only to `Policy.ReadWrite.AuthenticationMethod` for this
-   update. Confirm the operator has the Authentication Policy Administrator role. Graph Explorer
-   displays the response status and body; save the `200 OK` policy response in restricted storage
-   with the tenant ID, UTC time, and change owner.
-4. Record all current EPP settings, target groups, state, and unrelated properties. Agree on a
+   update, and confirm the operator has the Authentication Policy Administrator role.
+4. Run the GET. Graph Explorer displays the response status and body; save the successful `200 OK`
+   current-policy response in restricted storage with the tenant ID, UTC time, and change owner.
+5. Record all current EPP settings, target groups, state, and unrelated properties. Agree on a
    maintenance window and rollback trigger. Re-run the GET immediately before changing and stop if
    another administrator changed the policy.
-5. Change the method to PATCH and keep the same approved endpoint:
+6. Change the method to PATCH and keep the same approved endpoint:
    - SMS: `PATCH /beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/sms`
    - Voice: `PATCH /beta/policies/authenticationMethodsPolicy/authenticationMethodConfigurations/voice`
-6. Build the request only from Microsoft's current approved EPP procedure. Include the documented
+7. Build the request only from Microsoft's current approved EPP procedure. Include the documented
    `@odata.type`, use `endpointUrl` and `applicationId` from the saved deployment summary only in
    the **approved field locations**, and send no guessed or undocumented properties. Setup's
    endpoint Service Principal Object ID is not `applicationId`.
-7. Preserve the existing state, targeting, and unrelated settings unless the approved change
-   explicitly modifies them. Use a dedicated pilot group instead of replacing targeting with all
-   users. Public PATCH documentation says omitted documented properties remain unchanged or can be
-   recalculated from other changes; review the channel's update documentation before omitting one.
-8. Run the PATCH. The documented success response is `204 No Content`, with no response body.
+8. Preserve the existing state, targeting, and unrelated settings unless the approved change
+   explicitly modifies them. When the approved procedure changes targeting, use its dedicated
+   pilot group; do not replace existing targeting with all users. Public PATCH documentation says
+   omitted documented properties remain unchanged or can be recalculated from other changes;
+   review the channel's update documentation before omitting one.
+9. Run the PATCH. The documented success response is `204 No Content`, with no response body.
    This confirms that Graph accepted the request, not that EPP is active or delivery works.
-9. Immediately switch back to GET and compare the complete response with the saved snapshot.
+10. Immediately switch back to GET and compare the complete response with the saved snapshot.
    Confirm the approved EPP values and every setting that should have been preserved. If the
    extension values cannot be read back exactly as required by the approved procedure, stop and
    restore the prior policy.
-10. Follow the approved procedure to test the pilot in evaluation first, then perform a separately
+11. Follow the approved procedure to test the pilot in evaluation first, then perform a separately
     authorized controlled live delivery. Record provider acceptance and recipient delivery
     separately, without secrets, phone data, or OTPs.
-11. If any policy, readback, evaluation, or delivery check fails, execute the agreed rollback
+12. If any policy, readback, evaluation, or delivery check fails, execute the agreed rollback
     below. Do not leave a broken channel activated while deleting resources or changing
     authentication to debug it.
 
