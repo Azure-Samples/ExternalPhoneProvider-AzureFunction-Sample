@@ -26,8 +26,8 @@ Guided setup deploys **one regional endpoint** using JavaScript by default, with
 
 ## Requirements
 
-- Use a separate test environment with a Microsoft Entra ID tenant, Azure subscription, app
-  registration, and unique resource name prefix.
+- Use a separate test environment with a Microsoft Entra ID tenant, Azure subscription, and
+  unique resource name prefix. Supply a dedicated app registration or create one during guided setup.
 - Check [roles, permissions, tools, regional availability, and quota](setup/docs/README.md#prerequisites-for-step-2).
 - Plan for Azure, telemetry, and provider charges. The [cost estimate](docs/COST-CALCULATOR.md) is not a bill.
 - Use Easy Auth to allow only the approved Microsoft caller.
@@ -49,7 +49,7 @@ See [architecture details](TECHNICAL.md#single-region-architecture).
 Follow the **[five-step setup guide](docs/GETTING-STARTED.md)** in order:
 
 1. <a id="1-get-ready"></a>[Get ready](docs/GETTING-STARTED.md#1-get-ready): confirm access, approvals, permissions, and budget.
-2. <a id="2-register-your-application"></a>[Register the app](docs/GETTING-STARTED.md#2-register-your-application): save the tenant and client IDs.
+2. <a id="2-register-your-application"></a>[Choose the app](docs/GETTING-STARTED.md#2-register-your-application): use an existing registration or create one during setup.
 3. <a id="3-run-guided-setup"></a>[Deploy](docs/GETTING-STARTED.md#3-run-guided-setup): choose the provider and hosting plan.
 4. <a id="4-connect-your-provider-and-test"></a>[Connect and test](docs/GETTING-STARTED.md#4-connect-your-provider-and-test): configure provider access and run approved checks.
 5. <a id="5-activate-and-hand-over"></a>[Activate and hand over](docs/GETTING-STARTED.md#5-activate-and-hand-over): activate after validation and assign owners.

@@ -171,6 +171,53 @@ try {
         $invalid = @{} + $credential; $invalid.key = 'invalid-base64'
         Assert-Throws { ConvertFrom-EppGraphApplication @{ id = $script:ObjectId; appId = $script:ApplicationId; keyCredentials = @($invalid) } } 'invalid base64'
 
+        $newApplication = @{
+            id = $script:ObjectId; appId = $script:ApplicationId
+            displayName = "O'Reilly & Co EPP"; signInAudience = 'AzureADMyOrg'
+        }
+        Reset-TestState
+        $script:Responses.Enqueue($newApplication)
+        $created = New-EppApplication -Inputs $inputs -DisplayName " O'Reilly & Co EPP "
+        Assert ($created.AppId -ceq $script:ApplicationId -and $created.Id -ceq $script:ObjectId) 'Return the new client and object IDs separately.'
+        Assert ($script:Calls.Count -eq 1 -and $script:Calls[0].Method -ceq 'post' -and
+            $script:Calls[0].Url -ceq 'https://graph.microsoft.com/v1.0/applications') 'Create exactly one application without a name lookup or automatic retry.'
+        $body = $script:Calls[0].Body
+        Assert (($body.Keys | Sort-Object) -join ',' -ceq 'displayName,signInAudience') 'Do not create credentials, redirect URIs, roles, or API permissions with the registration.'
+        Assert ($body.displayName -ceq "O'Reilly & Co EPP" -and $body.signInAudience -ceq 'AzureADMyOrg') 'Preserve the approved name through JSON and start with a single-tenant app.'
+        foreach ($path in $script:Files) { Assert (-not (Test-Path -LiteralPath $path)) 'Remove the application creation request file.' }
+
+        foreach ($name in @('x', ('x' * 256))) {
+            Reset-TestState
+            $response = @{} + $newApplication; $response.displayName = $name
+            $script:Responses.Enqueue($response)
+            Assert ((New-EppApplication -Inputs $inputs -DisplayName $name).DisplayName -ceq $name) 'Accept both ends of the 1-256 character display-name range.'
+        }
+        foreach ($name in @('', ' ', ('x' * 257), "bad`nname", "bad$([char]0x7f)name", '<application>')) {
+            Reset-TestState
+            Assert-Throws { New-EppApplication -Inputs $inputs -DisplayName $name } 'ApplicationDisplayName'
+            Assert ($script:Calls.Count -eq 0) 'Reject invalid application names before a Graph write.'
+        }
+        Reset-TestState
+        $script:CurrentTenant = $script:Subscription
+        Assert-Throws { New-EppApplication -Inputs $inputs -DisplayName $newApplication.displayName } 'does not match'
+        Assert ($script:Calls.Count -eq 0) 'Never create an application in a different CLI tenant.'
+        foreach ($change in @(
+            @{ displayName = 'different name' }, @{ signInAudience = 'AzureADMultipleOrgs' },
+            @{ appId = 'invalid' }, @{ keyCredentials = @($credential) },
+            @{ api = @{ requestedAccessTokenVersion = 2 } }
+        )) {
+            Reset-TestState
+            $response = @{} + $newApplication
+            foreach ($entry in $change.GetEnumerator()) { $response[$entry.Key] = $entry.Value }
+            $script:Responses.Enqueue($response)
+            Assert-Throws { New-EppApplication -Inputs $inputs -DisplayName $newApplication.displayName } 'approved new registration|nonempty GUID'
+            Assert ($script:Calls.Count -eq 1) 'An invalid creation response must not trigger another create request.'
+        }
+        Reset-TestState
+        $script:Failure = 'Authorization_RequestDenied: application creation denied'
+        Assert-Throws { New-EppApplication -Inputs $inputs -DisplayName $newApplication.displayName } 'Authorization_RequestDenied'
+        Assert ($script:Calls.Count -eq 1) 'Surface creation failures without retrying a non-idempotent POST.'
+
         Reset-TestState
         Set-EppProviderTenantRestriction -Inputs $inputs -ApplicationObjectId $script:ObjectId -ProviderTenantId $script:User
         Assert ($script:Calls[0].Method -ceq 'patch' -and $script:Calls[0].Url -like '*/beta/applications/*') 'Use beta only for the allowed-tenants preview.'
@@ -215,6 +262,6 @@ try {
         Assert-Throws { Invoke-EppGraphRequest -Inputs $inputs -Method PATCH -Path "/v1.0/applications/$script:ObjectId" -Body @{ displayName = 'test' } } 'Authorization_RequestDenied'
         foreach ($path in $script:Files) { Assert (-not (Test-Path -LiteralPath $path)) 'Clean up after permission failures without swallowing the error.' }
     }
-    Write-Host 'CLI Graph identity, audience, tenant guards, requests, pagination, credentials, exact grants, federation, and failure checks passed.'
+    Write-Host 'CLI Graph identity, audience, tenant guards, application creation, requests, pagination, credentials, exact grants, federation, and failure checks passed.'
 }
 finally { Remove-Module -ModuleInfo $module -Force }

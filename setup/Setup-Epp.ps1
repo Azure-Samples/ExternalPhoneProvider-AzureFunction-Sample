@@ -6,10 +6,15 @@
     Download only this file. Supporting PowerShell, Bicep, and provider JSON files come from
     the selected public GitHub repository (Azure-Samples by default).
     Microsoft Graph operations reuse the Azure CLI user session through az ad and az rest.
-    Interactive setup can select cached tenants, subscriptions, applications, and Azure regions.
+    Interactive setup can select cached tenants, subscriptions, applications, and Azure regions,
+    or create a dedicated app registration after final deployment approval.
     The endpoint supports SMS and voice, selected by each request.
-    Application registration and policy activation are manual steps.
-    No Azure resources are changed until you approve the complete plan.
+    Policy activation remains manual.
+    No Azure resources or app registrations are changed until you approve the complete plan.
+.PARAMETER ApplicationId
+    Existing application client ID. Omit interactively to select, enter, or plan a new application.
+    New applications use an alphabetized provider list and are created only after deployment approval.
+    Required for unattended setup.
 .PARAMETER SourceRepository
     Public GitHub owner/repository containing the setup files. Use with SourceRef to test a fork.
 .PARAMETER PackageReleaseTag

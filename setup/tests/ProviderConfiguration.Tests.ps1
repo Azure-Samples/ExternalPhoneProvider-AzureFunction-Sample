@@ -46,6 +46,8 @@ try {
             foreach ($answer in $Answers) { $script:Answers.Enqueue($answer) }
             $script:Restriction = $null
             $script:ApplicationReads = 0; $script:RestrictionReads = 0; $script:EnsureCalls = 0
+            $script:ApplicationReadErrors = [Collections.Generic.Queue[string]]::new()
+            $script:Sleeps = 0
             $script:Application = [pscustomobject]@{
                 Id = $script:ObjectId; AppId = $script:AppId; SignInAudience = 'AzureADMyOrg'
                 TokenEncryptionKeyId = $null; KeyCredentials = @(); IdentifierUris = @()
@@ -74,6 +76,7 @@ try {
         function script:Get-EppApplication {
             param($Inputs, $ClientId, $ObjectId)
             $script:ApplicationReads++
+            if ($script:ApplicationReadErrors.Count) { throw $script:ApplicationReadErrors.Dequeue() }
             return $script:Application
         }
         function script:Get-EppSignInAudienceRestrictions {
@@ -92,11 +95,17 @@ try {
             throw 'provider-configuration-finished'
         }
         function script:Invoke-EppAz { throw 'Unexpected Azure operation.' }
+        function script:Start-Sleep {
+            param($Seconds)
+            Assert ($Seconds -eq 5) 'Use a bounded app-registration propagation delay.'
+            $script:Sleeps++
+        }
 
         Reset-TestState @('Telesign')
         $selected = Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory
         Assert ($selected -ceq 'telesign' -and $script:Prompts[0] -ceq 'Provider name (Enter cancels)') 'No configuration must prompt for a provider name.'
         Assert (($script:Messages -join "`n").Contains('configuration is included in the deployment approval')) 'Do not configure an existing app before deployment approval.'
+        Assert ($script:Messages -contains 'Provider names: Soprano, Telesign') 'List provider names alphabetically, independently of catalog order.'
         Assert ($script:Patches.Count -eq 0) 'Provider resolution is read-only.'
         Reset-TestState @('1', 'soprano')
         Assert ((Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory) -ceq 'soprano') 'Reject a provider number, then accept a name.'
@@ -190,6 +199,29 @@ try {
             $script:Application.SignInAudience = 'AzureADMyOrg'
             Assert-Throws { Initialize-EppGraphAccess -Inputs $inputs -Context $context } 'changed after preflight'
             Assert ($script:Patches.Count -eq 0) 'Do not re-expose an app whose sign-in audience changed after review.'
+        }
+
+        foreach ($case in @(
+            @{ New = $true; Error = 'Request_ResourceNotFound'; Failures = 2; Reads = 3; Sleeps = 2; Expected = '^provider-configuration-finished$' },
+            @{ New = $true; Error = 'Request_ResourceNotFound'; Failures = 12; Reads = 12; Sleeps = 11; Expected = 'Request_ResourceNotFound' },
+            @{ New = $true; Error = 'Authorization_RequestDenied'; Failures = 1; Reads = 1; Sleeps = 0; Expected = 'Authorization_RequestDenied' },
+            @{ New = $false; Error = 'Request_ResourceNotFound'; Failures = 1; Reads = 1; Sleeps = 0; Expected = 'Request_ResourceNotFound' }
+        )) {
+            Reset-TestState
+            $inputs = New-TestInputs
+            $inputs.ProviderAllowedTenantIds = @($telesign.TenantId)
+            if ($case.New) { $inputs.NewApplicationDisplayName = 'New EPP application' }
+            for ($index = 0; $index -lt $case.Failures; $index++) { $script:ApplicationReadErrors.Enqueue($case.Error) }
+            $context = @{
+                Application = @{ Id = $script:ObjectId; SignInAudience = $script:Application.SignInAudience }
+                CertificatePlan = @{ Snapshot = Get-EppKeyCredentialSnapshot @() }
+                ProviderRestrictionState = $null
+            }
+            Assert-Throws { Initialize-EppGraphAccess -Inputs $inputs -Context $context } $case.Expected
+            Assert ($script:ApplicationReads -eq $case.Reads -and $script:Sleeps -eq $case.Sleeps) 'Retry only bounded new-application read propagation, not permission errors or existing-app failures.'
+            if ($case.Expected -ne '^provider-configuration-finished$') {
+                Assert ($script:Patches.Count -eq 0 -and $script:EnsureCalls -eq 0) 'Failed readback must stop before any application configuration.'
+            }
         }
     } $ModulePath
     Write-Host 'Named provider input, zero/one/multiple app configurations, confirmation, preservation, and stale-plan checks passed.'
