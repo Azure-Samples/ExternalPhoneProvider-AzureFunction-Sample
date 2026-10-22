@@ -47,7 +47,9 @@ Keep nonce-match **booleans**, statuses, latency, safe IDs, and delivery outcome
    the error and **resource group > Deployments**.
 2. **Fix, then rerun with the same inputs:** tenant, subscription, app, runtime, plan, prefix,
    provider/route, and source/package versions. Active endpoints need a change window; setup has
-   no checkpoint resume or automatic undo.
+   no checkpoint resume or automatic undo. If setup created the app, find its client ID in the
+   printed output or `application-<client-id>.json` and rerun with `-ApplicationId` and the same
+   prefix. Do not choose **Create a new application** again for that deployment.
 3. **Verify the failed stage and complete acceptance checks.** Keep resource-group deletion,
    vault purge/recreation, encryption-credential removal, and shared-grant revocation out of
    retry steps. Use the separate [rollback procedure](README.md#rollback-and-decommissioning)
@@ -336,6 +338,12 @@ app to another runtime with the same prefix.
 **Check:** the named deployment and original error. Partial resources remain; setup does not
 delete, purge/recover vaults, activate policy, or roll back. Follow
 [safe recovery](#recover-without-destructive-cleanup) before a same-input rerun.
+
+For **Create a new application**, a successful registration can remain even if later steps fail.
+Its `application-<client-id>.json` record is not proof of deployment success. If the creation request
+itself fails or times out, inspect the selected tenant before retrying; setup does not automatically
+repeat that non-idempotent request. A permission error requires app-registration rights in addition
+to the [other setup permissions](README.md#prerequisites-for-step-2).
 
 Recognized storage/Key Vault RBAC propagation errors are retried for at most twelve attempts.
 Transient Function startup errors also have bounded retries. This includes the specific ARM

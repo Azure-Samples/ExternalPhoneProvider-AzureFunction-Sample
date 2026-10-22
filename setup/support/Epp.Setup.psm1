@@ -97,7 +97,7 @@ function Get-EppServicePlan {
 function Read-EppInput {
     param(
         [string] $Name, [string] $Value, [string] $Hint,
-        [ValidateSet('Text', 'Guid', 'Location', 'Prefix', 'PackageUrl')]
+        [ValidateSet('Text', 'Guid', 'Location', 'Prefix', 'PackageUrl', 'ApplicationName')]
         [string] $Kind = 'Text',
         [switch] $NonInteractive, [switch] $AllowCancel,
         [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
@@ -121,6 +121,11 @@ function Read-EppInput {
             if (-not $Value -or $Value -match '[\x00-\x1f<>]') { throw 'A nonempty value without placeholders is required.' }
             switch ($Kind) {
                 'Guid' { $Value = ConvertTo-EppGuid $Value }
+                'ApplicationName' {
+                    if ($Value.Length -gt 256 -or $Value -match '[\x7f-\x9f]') {
+                        throw 'Use an application display name of 1-256 characters without control characters.'
+                    }
+                }
                 'Location' {
                     if ($Value -cnotmatch '^[a-z][a-z0-9]+$') { throw 'Use an Azure region name such as westus2.' }
                 }
@@ -212,6 +217,10 @@ function Resolve-EppApplicationProvider {
     $entries = @(Get-EppProviderCatalog -AssetDirectory $AssetDirectory)
     if (-not [string]::IsNullOrWhiteSpace($Provider) -or $NonInteractive) {
         return Read-EppProviderName -Entries $entries -Provider $Provider -NonInteractive:$NonInteractive
+    }
+    if ($Inputs['NewApplicationDisplayName']) {
+        Write-Host 'Choose a provider for the new application. The application and its provider configuration will be created only after deployment approval.'
+        return Read-EppProviderName -Entries $entries
     }
     $application = Get-EppApplication -Inputs $Inputs -ClientId $Inputs.ApplicationId
     $restriction = Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
@@ -353,13 +362,20 @@ function ConvertTo-EppProviderSettings {
 }
 
 function Get-EppResourceNames {
-    param([string] $SubscriptionId, [string] $ApplicationId, [string] $ResourcePrefix)
+    param([string] $SubscriptionId, [string] $ApplicationId, [string] $ResourcePrefix, [switch] $PendingApplication)
 
     if ($ResourcePrefix -cnotmatch '^[a-z][a-z0-9]{1,7}$') { throw 'ResourcePrefix must be 2-8 lowercase letters/digits, starting with a letter.' }
-    $seed = "$(ConvertTo-EppGuid $SubscriptionId)|$(ConvertTo-EppGuid $ApplicationId)|$ResourcePrefix"
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try { $suffix = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($seed))) -replace '-', '').Substring(0, 8).ToLowerInvariant() }
-    finally { $sha.Dispose() }
+    $SubscriptionId = ConvertTo-EppGuid $SubscriptionId
+    if ($PendingApplication) {
+        if ($ApplicationId) { throw 'Pending application names cannot include an application client ID.' }
+        $suffix = '<app-id-hash>'
+    }
+    else {
+        $seed = "$SubscriptionId|$(ConvertTo-EppGuid $ApplicationId)|$ResourcePrefix"
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $suffix = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($seed))) -replace '-', '').Substring(0, 8).ToLowerInvariant() }
+        finally { $sha.Dispose() }
+    }
     return [ordered]@{
         resourceGroup = "$ResourcePrefix-epp-rg-$suffix"
         functionApp = "$ResourcePrefix-epp-func-$suffix"
@@ -756,8 +772,8 @@ function Select-EppApplication {
         return Read-EppInput -Name ApplicationId -Value $ApplicationId -Kind Guid -NonInteractive
     }
     $null = Connect-EppGraphAccount -Inputs $Inputs -ForceAuthentication:$ForceAuthentication
-    Write-Host "`nSelect the dedicated EPP app registration created in Step 1, not a shared application." -ForegroundColor Yellow
-    Write-Host 'Application (client) IDs are shown below, not application object IDs. No app is created by this picker.'
+    Write-Host "`nSelect a dedicated EPP app registration, or create a new application. Do not use a shared application." -ForegroundColor Yellow
+    Write-Host 'Application (client) IDs are shown below, not application object IDs. New applications are created only after deployment approval.'
     $search = ''
     while ($true) {
         $entries = @(Get-EppApplicationOptions -Inputs $Inputs -SearchPrefix $search)
@@ -768,6 +784,7 @@ function Select-EppApplication {
             @{ id = 'search'; displayName = 'Search by application name prefix' }
             @{ id = 'refresh'; displayName = 'Refresh application list' }
             @{ id = 'manual'; displayName = 'Enter an application (client) ID manually' }
+            @{ id = 'create'; displayName = 'Create a new application' }
         )
         $selection = Select-EppOption -Entries $entries -Name ApplicationId -PromptName 'Application' -AllowCancel
         if (-not $selection) { return $null }
@@ -1189,6 +1206,25 @@ function Initialize-EppResourceProviders {
     }
 }
 
+function Assert-EppResourceGroup {
+    param([hashtable] $Inputs, [Collections.IDictionary] $Names)
+
+    $null = ConvertTo-EppGuid $Inputs.ApplicationId
+    $groupExists = Invoke-EppAz group exists --name $Names.resourceGroup --subscription $Inputs.SubscriptionId --output tsv
+    if ($groupExists -eq 'true') {
+        $tags = Invoke-EppAz group show --name $Names.resourceGroup --subscription $Inputs.SubscriptionId --query tags --output json |
+            ConvertFrom-Json -AsHashtable
+        if (-not $tags -or $tags['eppApplicationId'] -ne $Inputs.ApplicationId -or $tags['managedBy'] -ne 'EPP-Setup') {
+            throw "Resource group '$($Names.resourceGroup)' is not owned by this EPP application. Choose another prefix; existing resources will not be adopted."
+        }
+        if ($tags['eppLanguage'] -and $tags['eppLanguage'] -ne $Inputs.Language) {
+            throw "This prefix already hosts '$($tags['eppLanguage'])'. Use a different prefix for '$($Inputs.Language)' instead of switching a running app's runtime."
+        }
+        Assert-EppExistingServicePlan -Inputs $Inputs -Names $Names -Tags $tags
+    }
+    elseif ($groupExists -ne 'false') { throw 'Azure returned an invalid resource-group existence result.' }
+}
+
 function Connect-EppContext {
     param(
         [hashtable] $Inputs, [Collections.IDictionary] $Names,
@@ -1214,13 +1250,23 @@ function Connect-EppContext {
     $graphAccount = Connect-EppGraphAccount -Inputs $Inputs -NonInteractive:$NonInteractive
     $graph = $graphAccount.Context
     $graphOperator = $graphAccount.Operator
-    $application = Get-EppApplication -Inputs $Inputs -ClientId $Inputs.ApplicationId
+    $pendingApplication = $Inputs['NewApplicationDisplayName'] -and -not $Inputs['ApplicationId']
+    $application = if ($pendingApplication) {
+        [pscustomobject]@{
+            Id = $null; AppId = $null; DisplayName = $Inputs.NewApplicationDisplayName
+            SignInAudience = 'AzureADMyOrg'; Api = @{ RequestedAccessTokenVersion = $null }
+            AppRoles = @(); IdentifierUris = @(); KeyCredentials = @(); TokenEncryptionKeyId = $null
+        }
+    }
+    else { Get-EppApplication -Inputs $Inputs -ClientId $Inputs.ApplicationId }
     if ($application.SignInAudience -notin @('AzureADMyOrg', 'AzureADMultipleOrgs')) {
-        throw 'The existing EPP application must be an organizational single- or multi-tenant app. Create a dedicated organizational app in manual Step 1.'
+        throw 'The existing EPP application must be an organizational single- or multi-tenant app. Choose Create a new application or register a dedicated organizational app manually.'
     }
     if ($application.TokenEncryptionKeyId) { throw 'Clear tokenEncryptionKeyId manually on the endpoint app. Easy Auth requires signed, not encrypted, bearer access tokens.' }
 
-    $endpointPrincipals = @(Get-EppServicePrincipal -Inputs $Inputs -AppId $Inputs.ApplicationId -Description endpoint)
+    $endpointPrincipals = @(if (-not $pendingApplication) {
+        Get-EppServicePrincipal -Inputs $Inputs -AppId $Inputs.ApplicationId -Description endpoint
+    })
     $callerPrincipals = @(Get-EppServicePrincipal -Inputs $Inputs -AppId $script:MicrosoftPhoneProviderAppId -Description 'Microsoft phone-provider')
     $graphPrincipals = @(Get-EppServicePrincipal -Inputs $Inputs -AppId $script:MicrosoftGraphAppId -Description 'Microsoft Graph')
     if ($graphPrincipals.Count -ne 1) { throw 'Microsoft Graph has no unique service principal in this tenant.' }
@@ -1239,26 +1285,16 @@ function Connect-EppContext {
             $invokeRoles[0].AllowedMemberTypes -notcontains 'Application'))) {
         throw "The endpoint application has a conflicting '$script:EppInvokeAppRoleValue' app role or role ID."
     }
-    $tenantRestriction = Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
+    $tenantRestriction = if (-not $pendingApplication) {
+        Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
+    } else { $null }
     $providerRestrictionState = Get-EppProviderRestrictionState -Restriction $tenantRestriction
     $allowedTenants = @(if ($providerRestrictionState) { $providerRestrictionState.allowedTenantIds })
     $Inputs.ProviderAllowedTenantIds = @(($allowedTenants + @($Inputs.ProviderTenantId)) | Sort-Object -Unique)
     $version = if ($application.Api -and $application.Api.RequestedAccessTokenVersion) { [int]$application.Api.RequestedAccessTokenVersion } else { 1 }
     if ($version -notin @(1, 2)) { throw 'The endpoint application has an unsupported access-token version.' }
 
-    $groupExists = Invoke-EppAz group exists --name $Names.resourceGroup --subscription $Inputs.SubscriptionId --output tsv
-    if ($groupExists -eq 'true') {
-        $tags = Invoke-EppAz group show --name $Names.resourceGroup --subscription $Inputs.SubscriptionId --query tags --output json |
-            ConvertFrom-Json -AsHashtable
-        if (-not $tags -or $tags['eppApplicationId'] -ne $Inputs.ApplicationId -or $tags['managedBy'] -ne 'EPP-Setup') {
-            throw "Resource group '$($Names.resourceGroup)' is not owned by this EPP application. Choose another prefix; existing resources will not be adopted."
-        }
-        if ($tags['eppLanguage'] -and $tags['eppLanguage'] -ne $Inputs.Language) {
-            throw "This prefix already hosts '$($tags['eppLanguage'])'. Use a different prefix for '$($Inputs.Language)' instead of switching a running app's runtime."
-        }
-        Assert-EppExistingServicePlan -Inputs $Inputs -Names $Names -Tags $tags
-    }
-    elseif ($groupExists -ne 'false') { throw 'Azure returned an invalid resource-group existence result.' }
+    if (-not $pendingApplication) { Assert-EppResourceGroup -Inputs $Inputs -Names $Names }
 
     $resourceProviders = @(Get-EppResourceProviders -SubscriptionId $Inputs.SubscriptionId)
     Assert-EppProviderLocations -Providers $resourceProviders -Location $Inputs.Location
@@ -1312,7 +1348,10 @@ function Show-EppPlan {
     Write-Host "`nDeployment plan (create or update)" -ForegroundColor Cyan
     Write-Host "Tenant:       $($Inputs.TenantId)"
     Write-Host "Subscription: $($Inputs.SubscriptionId)"
-    Write-Host "Application:  $($Inputs.ApplicationId)"
+    if ($Inputs['NewApplicationDisplayName'] -and -not $Inputs['ApplicationId']) {
+        Write-Host "Application:  Create '$($Inputs.NewApplicationDisplayName)' after approval (client ID not yet assigned)"
+    }
+    else { Write-Host "Application:  $($Inputs.ApplicationId)" }
     Write-Host "Location:     $($Inputs.Location)"
     Write-Host "Language:     $($Inputs.Platform)"
     Write-Host "Service plan: $($Inputs.ServicePlan)"
@@ -1347,6 +1386,10 @@ function Show-EppPlan {
     Write-Host "`nAzure resources and configuration" -ForegroundColor Cyan
     Get-EppResourceRows -Names $Names -ServicePlan $Inputs.ServicePlan |
         Format-Table Resource, Name, Description -AutoSize | Out-String -Width 240 | Write-Host
+    if ($Inputs['NewApplicationDisplayName'] -and -not $Inputs['ApplicationId']) {
+        Write-Host '  - <app-id-hash> is a name placeholder, not an actual resource name. The new client ID determines the eight-character suffix after approval.'
+        Write-Host '  - Final resource names and ownership are checked before Azure resource deployment. Reruns use the new client ID and this same prefix.'
+    }
     Write-Host '  - Required Azure resource providers are checked before deployment; existing registrations are reused.'
     $Context.ResourceProviders | Select-Object Namespace, RegistrationState | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
 
@@ -1359,6 +1402,10 @@ function Show-EppPlan {
     Write-Host '  - Setup operator, scoped to this Key Vault:'
     Write-Host '      Key Vault Certificates Officer - issue and inspect the encryption certificate.'
     Write-Host '      Key Vault Secrets Officer - manage provider credentials.'
+    if ($Inputs['NewApplicationDisplayName'] -and -not $Inputs['ApplicationId']) {
+        Write-Host "  - Create a dedicated Microsoft Entra app registration named '$($Inputs.NewApplicationDisplayName)' in the selected tenant."
+        Write-Host '      No client secret or redirect URI is created. An existing app with the same name is not adopted.'
+    }
     if ($Context.Application.SignInAudience -ne 'AzureADMultipleOrgs') {
         Write-Host '  - Change the endpoint application from single-tenant to organizational multi-tenant.'
     }
@@ -1551,7 +1598,18 @@ function Ensure-EppAppRoleAssignment {
 function Initialize-EppGraphAccess {
     param([hashtable] $Inputs, $Context)
 
-    $application = Get-EppApplication -Inputs $Inputs -ObjectId $Context.Application.Id
+    for ($attempt = 1; $attempt -le 12; $attempt++) {
+        try {
+            $application = Get-EppApplication -Inputs $Inputs -ObjectId $Context.Application.Id
+            break
+        }
+        catch {
+            if (-not $Inputs['NewApplicationDisplayName'] -or $attempt -eq 12 -or
+                $_.Exception.Message -notmatch 'Request_ResourceNotFound|ResourceNotFound') { throw }
+            Write-Warning "Waiting for the new app registration to propagate ($attempt/12)."
+            Start-Sleep -Seconds 5
+        }
+    }
     if ($application.AppId -ne $Inputs.ApplicationId -or
         $application.SignInAudience -notin @('AzureADMyOrg', 'AzureADMultipleOrgs') -or
         $application.SignInAudience -cne $Context.Application.SignInAudience -or
@@ -2313,9 +2371,33 @@ function Invoke-EppDeployment {
     }
     # The single setup approval covers these planned writes, including certificate issuance.
     $ConfirmPreference = 'None'
+    New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+    if ($Inputs['NewApplicationDisplayName'] -and -not $Inputs['ApplicationId']) {
+        $application = New-EppApplication -Inputs $Inputs -DisplayName $Inputs.NewApplicationDisplayName
+        $Inputs.ApplicationId = $application.AppId
+        $Context.Application = $application
+        Write-Host "`nCreated app registration: $($application.DisplayName)" -ForegroundColor Cyan
+        Write-Host "Application (client) ID: $($Inputs.ApplicationId)"
+        Write-Host "For reruns, use -ApplicationId '$($Inputs.ApplicationId)' -ResourcePrefix '$($Inputs.ResourcePrefix)' instead of creating another application." -ForegroundColor Yellow
+
+        $Names = Get-EppResourceNames -SubscriptionId $Inputs.SubscriptionId -ApplicationId $Inputs.ApplicationId -ResourcePrefix $Inputs.ResourcePrefix
+        $Context.CertificatePlan.VaultName = $Names.keyVault
+        $Context.CertificatePlan.VaultResourceId = "/subscriptions/$($Inputs.SubscriptionId)/resourceGroups/$($Names.resourceGroup)/providers/Microsoft.KeyVault/vaults/$($Names.keyVault)"
+        $applicationPath = Join-Path $OutputDirectory "application-$($Inputs.ApplicationId).json"
+        [ordered]@{
+            tenantId = $Inputs.TenantId; subscriptionId = $Inputs.SubscriptionId
+            applicationId = $Inputs.ApplicationId; applicationObjectId = $application.Id
+            displayName = $application.DisplayName; provider = $ProviderConfiguration.Id
+            resourcePrefix = $Inputs.ResourcePrefix; resources = $Names
+        } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $applicationPath -Encoding utf8NoBOM
+        Write-Host "Application registration details saved to: $applicationPath"
+        Assert-EppResourceGroup -Inputs $Inputs -Names $Names
+        Write-Host "`nResolved Azure resource names" -ForegroundColor Cyan
+        Get-EppResourceRows -Names $Names -ServicePlan $Inputs.ServicePlan |
+            Format-Table Resource, Name, Description -AutoSize | Out-String -Width 240 | Write-Host
+    }
     $graphAccess = Initialize-EppGraphAccess -Inputs $Inputs -Context $Context
     Initialize-EppResourceProviders -Inputs $Inputs
-    New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     $settings = @{} + $ProviderConfiguration.Settings
     $settings.EPP_PROVIDER_AUTH_MODE = $Inputs.ProviderAuthentication
     $parameters = @{
@@ -2492,8 +2574,9 @@ function Invoke-EppSetup {
         Setup-Epp.ps1. Downloads and verifies the selected Function ZIP from a stable GitHub release.
         Azure CLI is required. The .NET selection also needs the .NET 8 SDK and NuGet access;
         Python dependencies are built in Azure. The Azure CLI Bicep component is also required
-        and can be installed after confirmation. Application registration and policy activation
-        remain manual. Review the complete plan before approving resource or tenant changes.
+        and can be installed after confirmation. Interactive setup can create a dedicated app
+        registration after deployment approval. Policy activation remains manual.
+        Review the complete plan before approving resource or tenant changes.
         Microsoft Graph calls reuse the existing Azure CLI user session through az ad and az rest.
         No Microsoft Graph PowerShell SDK or separate Graph sign-in is required.
         Interactive setup discovers cached Azure CLI accounts before asking for other settings.
@@ -2506,12 +2589,13 @@ function Invoke-EppSetup {
         in the chosen tenant. Required in noninteractive mode.
     .PARAMETER ApplicationId
         Existing application client ID. When omitted interactively, use the current CLI tenant
-        to choose/search an app registration, or enter its client ID.
-        The picker does not create applications. Required in noninteractive mode.
+        to choose/search an app registration, enter its client ID, or plan a new application.
+        A new application is created only after final deployment approval. Required in noninteractive mode.
     .PARAMETER Provider
         Provider name, never a numbered selection. When omitted interactively, read the app's
         allowed-tenants configuration: enter a name if none match, confirm one match, or choose
-        by name among multiple matches. Explicit input confirms the choice; required unattended.
+        by name among multiple matches. New applications show supported providers alphabetically.
+        Explicit input confirms the choice; required unattended.
     .PARAMETER Location
         Azure region name. When omitted interactively, choose an Azure-recommended shortlist,
         show all physical regions returned for the subscription, or enter the name manually.
@@ -2619,6 +2703,15 @@ function Invoke-EppSetup {
             Write-Host 'Cancelled. No Azure resources or application credentials were changed.' -ForegroundColor Yellow
             return
         }
+        if ($inputs.ApplicationId -ceq 'create') {
+            $inputs.ApplicationId = $null
+            $inputs.NewApplicationDisplayName = Read-EppInput -Name ApplicationDisplayName -Kind ApplicationName `
+                -PromptName 'New application display name' -Hint 'Enter cancels' -AllowCancel
+            if (-not $inputs.NewApplicationDisplayName) {
+                Write-Host 'Cancelled. No Azure resources or app registrations were changed.' -ForegroundColor Yellow
+                return
+            }
+        }
         if (-not [string]::IsNullOrWhiteSpace($Location) -or $NonInteractive) {
             $Location = Read-EppInput -Name Location -Value $Location -Kind Location -NonInteractive
         }
@@ -2655,7 +2748,8 @@ function Invoke-EppSetup {
         $inputs.ServicePlan = $plan.id
         $inputs.ResourcePrefix = Read-EppInput ResourcePrefix $ResourcePrefix -Kind Prefix `
             -PromptName 'Resource name prefix' -DefaultValue 'epp' -NonInteractive:$NonInteractive
-        $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix $inputs.ResourcePrefix
+        $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId `
+            -ResourcePrefix $inputs.ResourcePrefix -PendingApplication:([bool]$inputs['NewApplicationDisplayName'])
 
         Write-Host "`nChecking prerequisites and the selected Azure context (no resource changes)..." -ForegroundColor Cyan
         $context = Connect-EppContext -Inputs $inputs -Names $names -NonInteractive:$NonInteractive `
@@ -2676,7 +2770,7 @@ function Invoke-EppSetup {
             --outfile (Join-Path $assetDirectory 'main.json') | Out-Null
         Show-EppPlan -Inputs $inputs -Names $names -ProviderConfiguration $providerConfiguration -Context $context
         if (-not (Confirm-EppDeployment -NonInteractive:$NonInteractive -ApproveDeployment:$ApproveDeployment)) {
-            Write-Host 'Cancelled. No Azure resources were changed.' -ForegroundColor Yellow
+            Write-Host 'Cancelled. No Azure resources or app registrations were changed.' -ForegroundColor Yellow
             return
         }
         try {
@@ -2685,7 +2779,15 @@ function Invoke-EppSetup {
             if ($PassThru) { return $result }
         }
         catch {
-            Write-Warning 'Deployment did not complete. Previously created resources are left in place; no rollback or policy activation was attempted. Correct the reported failure and rerun with the same inputs and prefix.'
+            Write-Warning 'Deployment did not complete. Previously created app registrations and Azure resources are left in place; no rollback or policy activation was attempted. Correct the reported failure and rerun with the same inputs and prefix.'
+            if ($inputs['NewApplicationDisplayName']) {
+                if ($inputs.ApplicationId) {
+                    Write-Warning "Reuse the created app with -ApplicationId '$($inputs.ApplicationId)' -ResourcePrefix '$($inputs.ResourcePrefix)'. Do not create another app for this deployment."
+                }
+                else {
+                    Write-Warning "If app creation was attempted, check the selected tenant for '$($inputs.NewApplicationDisplayName)' before retrying; a failed response does not prove that no app was created."
+                }
+            }
             throw
         }
     }

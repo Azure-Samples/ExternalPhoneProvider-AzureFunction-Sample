@@ -46,7 +46,7 @@ renewal.
 | --- | --- | --- |
 | Customer tenant ID | Microsoft Entra admin center > Overview | `-TenantId` |
 | Azure subscription ID | Azure portal > Subscriptions | `-SubscriptionId` |
-| Endpoint application client ID | Microsoft Entra admin center > App registrations > application > Overview | `-ApplicationId` |
+| Endpoint application | Existing dedicated app's client ID from Microsoft Entra admin center, or a new display name | `-ApplicationId`, or choose **Create a new application** interactively |
 | Azure region | Available Linux FC1/EP1 region that meets quota and organization requirements | `-Location` |
 | Provider | Approved Security Store integration | `-Provider telesign` or `soprano` |
 | Provider route | Detected from the tenant's replication scope; EU for EU tenants, Global otherwise | Optional `-EndpointRegion eu` or `global` must match the detected route |
@@ -59,6 +59,11 @@ Use the application **client ID**, not its Object ID. The customer tenant ID and
 are different values. Global or EU identifies provider routing, not Azure location or data residency.
 EU tenants receive an EU Data Boundary region shortlist; other tenants retain the existing
 recommendations. Explicit region overrides remain available with a warning for EU tenants.
+
+New registrations are created only after final deployment approval. Choose their provider from
+the alphabetized guided-provider list. Unattended runs still require an existing `-ApplicationId`.
+If setup creates an app and deployment later fails, use the client ID saved in
+`application-<client-id>.json` and the original prefix for a rerun, rather than creating another app.
 
 One guided deployment uses one provider and supports both SMS and voice. Each request selects its
 channel. Reusing the same subscription, application, and prefix reconfigures that deployment.

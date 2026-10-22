@@ -162,6 +162,24 @@ function Get-EppApplication {
     return $application
 }
 
+function New-EppApplication {
+    param([hashtable] $Inputs, [string] $DisplayName)
+
+    $DisplayName = Read-EppInput -Name ApplicationDisplayName -Value $DisplayName -Kind ApplicationName -NonInteractive
+    $raw = Invoke-EppGraphRequest -Inputs $Inputs -Method POST -Path '/v1.0/applications' -Body @{
+        displayName = $DisplayName
+        signInAudience = 'AzureADMyOrg'
+    }
+    $application = ConvertFrom-EppGraphApplication -Application $raw
+    if ($application.DisplayName -cne $DisplayName -or $application.SignInAudience -cne 'AzureADMyOrg' -or
+        $application.KeyCredentials.Count -or $application.AppRoles.Count -or $application.IdentifierUris.Count -or
+        $application.TokenEncryptionKeyId -or
+        ($application.Api.RequestedAccessTokenVersion -and $application.Api.RequestedAccessTokenVersion -ne 1)) {
+        throw "Created application '$($application.AppId)' does not match the approved new registration. Inspect it before rerunning setup."
+    }
+    return $application
+}
+
 function ConvertTo-EppGraphKeyCredentials {
     param([object[]] $Credentials)
 
