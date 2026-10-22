@@ -224,7 +224,7 @@ function Resolve-EppApplicationProvider {
     }
     $application = Get-EppApplication -Inputs $Inputs -ClientId $Inputs.ApplicationId
     $restriction = Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
-    $state = Get-EppProviderRestrictionState -Restriction $restriction
+    $state = Get-EppProviderRestrictionState -Restriction $restriction -SignInAudience $application.SignInAudience
     $configured = @()
     if ($application.SignInAudience -eq 'AzureADMultipleOrgs' -and $state -and $state.isHomeTenantAllowed) {
         foreach ($entry in $entries) {
@@ -968,9 +968,16 @@ function Get-EppSignInAudienceRestrictions {
 }
 
 function Get-EppProviderRestrictionState {
-    param($Restriction)
+    param($Restriction, [string] $SignInAudience)
 
     if ($null -eq $Restriction) { return $null }
+    # Graph can return unrestrictedAudience instead of null for a new single-tenant app. The
+    # app's sign-in audience still prevents external tenants, so this is equivalent to having no
+    # provider allowlist yet. Never normalize the same shape for a multitenant application.
+    if ($Restriction -is [Collections.IDictionary] -and $Restriction['kind'] -ceq 'unrestricted' -and
+        $SignInAudience -ceq 'AzureADMyOrg') {
+        return $null
+    }
     if ($Restriction -isnot [Collections.IDictionary] -or $Restriction['kind'] -cne 'allowedTenants' -or
         $Restriction['isHomeTenantAllowed'] -isnot [bool] -or $Restriction['allowedTenantIds'] -isnot [Array]) {
         throw 'The application has an unsupported provider-tenant restriction. Review it before running setup.'
@@ -1288,7 +1295,8 @@ function Connect-EppContext {
     $tenantRestriction = if (-not $pendingApplication) {
         Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
     } else { $null }
-    $providerRestrictionState = Get-EppProviderRestrictionState -Restriction $tenantRestriction
+    $providerRestrictionState = Get-EppProviderRestrictionState -Restriction $tenantRestriction `
+        -SignInAudience $application.SignInAudience
     $allowedTenants = @(if ($providerRestrictionState) { $providerRestrictionState.allowedTenantIds })
     $Inputs.ProviderAllowedTenantIds = @(($allowedTenants + @($Inputs.ProviderTenantId)) | Sort-Object -Unique)
     $version = if ($application.Api -and $application.Api.RequestedAccessTokenVersion) { [int]$application.Api.RequestedAccessTokenVersion } else { 1 }
@@ -1618,7 +1626,8 @@ function Initialize-EppGraphAccess {
     }
     Assert-EppCertificatePlanUnchanged -Application $application -Plan $Context.CertificatePlan
     $restriction = Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
-    $currentProviderState = Get-EppProviderRestrictionState -Restriction $restriction
+    $currentProviderState = Get-EppProviderRestrictionState -Restriction $restriction `
+        -SignInAudience $application.SignInAudience
     if (-not (Test-EppJsonEqual $currentProviderState $Context.ProviderRestrictionState)) {
         throw 'The application provider configuration changed after the plan was reviewed. Rerun setup; no provider tenants will be removed.'
     }

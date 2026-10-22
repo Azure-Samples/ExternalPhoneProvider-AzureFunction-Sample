@@ -139,6 +139,9 @@ try {
         Assert (Test-EppProviderTenantRestriction -Restriction $both -ProviderTenantId $telesign.TenantId) 'A configured provider can coexist with other allowed providers.'
         Assert (Test-EppProviderTenantRestriction -Restriction $both -ProviderTenantId $telesign.TenantId -ExpectedAllowedTenantIds @($telesign.TenantId, $soprano.TenantId)) 'Compare allowed tenants independently of ordering.'
         Assert (-not (Test-EppProviderTenantRestriction -Restriction $both -ProviderTenantId $telesign.TenantId -ExpectedAllowedTenantIds @($telesign.TenantId))) 'Readback must match the complete approved allowlist.'
+        $unrestricted = @{ '@odata.type' = '#microsoft.graph.unrestrictedAudience'; kind = 'unrestricted'; allowedTenantIds = @($script:Tenant) }
+        Assert ($null -eq (Get-EppProviderRestrictionState -Restriction $unrestricted -SignInAudience 'AzureADMyOrg')) 'Treat Graph unrestrictedAudience as an empty provider configuration only while the app is single tenant.'
+        Assert-Throws { Get-EppProviderRestrictionState -Restriction $unrestricted -SignInAudience 'AzureADMultipleOrgs' } 'unsupported provider-tenant restriction'
         Assert-Throws { Get-EppProviderRestrictionState (New-TestRestriction @($telesign.TenantId, $telesign.TenantId)) } 'duplicate allowed'
         Assert-Throws { Get-EppProviderRestrictionState @{ kind = 'unexpected'; isHomeTenantAllowed = $true; allowedTenantIds = @() } } 'unsupported provider-tenant restriction'
         Assert-Throws { Get-EppProviderRestrictionState (New-TestRestriction @('invalid')) } 'nonempty GUID'
@@ -174,6 +177,11 @@ try {
             $expected = @((@($existing) + @($telesign.TenantId)) | Sort-Object -Unique)
             Assert (($inputs.ProviderAllowedTenantIds -join ',') -ceq ($expected -join ',')) 'Preflight must preserve existing known and unknown allowed tenants while adding the selected provider.'
         }
+        Reset-TestState
+        $script:Restriction = $unrestricted
+        $inputs = New-TestInputs
+        Assert-Throws { Connect-EppContext -Inputs $inputs -Names @{ resourceGroup = 'unit' } -NonInteractive } '^provider-preflight-boundary$'
+        Assert (($inputs.ProviderAllowedTenantIds -join ',') -ceq $telesign.TenantId) 'Single-tenant unrestrictedAudience must enter preflight as an empty provider configuration.'
         foreach ($alreadyConfigured in @($false, $true)) {
             Reset-TestState
             $script:Application.SignInAudience = 'AzureADMultipleOrgs'
@@ -210,7 +218,10 @@ try {
             Reset-TestState
             $inputs = New-TestInputs
             $inputs.ProviderAllowedTenantIds = @($telesign.TenantId)
-            if ($case.New) { $inputs.NewApplicationDisplayName = 'New EPP application' }
+            if ($case.New) {
+                $inputs.NewApplicationDisplayName = 'New EPP application'
+                $script:Restriction = $unrestricted
+            }
             for ($index = 0; $index -lt $case.Failures; $index++) { $script:ApplicationReadErrors.Enqueue($case.Error) }
             $context = @{
                 Application = @{ Id = $script:ObjectId; SignInAudience = $script:Application.SignInAudience }
