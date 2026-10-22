@@ -60,7 +60,9 @@ Keep nonce-match **booleans**, statuses, latency, safe IDs, and delivery outcome
 
 **Check:** compare the application key ID and exact vault version using
 [certificate selection](README.md#encryption-certificate-selection).
-Existing credentials require explicit **Reuse** or **Replace**, not an automatic new certificate.
+For existing credentials, the interactive default is **Replace** (clean up registered encryption
+credentials and create a new certificate after final approval). Select **Reuse** explicitly to keep
+one, or **0/Cancel** to stop. Unattended runs still require an explicit **Reuse** or **Replace**.
 
 | Failure | Safe recovery |
 |---|---|

@@ -8,11 +8,15 @@
     Microsoft Graph operations reuse the Azure CLI user session through az ad and az rest.
     Interactive setup can select cached tenants, subscriptions, applications, and Azure regions,
     or create a dedicated app registration after final deployment approval.
+    Press Enter to accept a displayed default; use 0 or Cancel where offered to cancel.
+    Provider selection has no default. Deployment approval still defaults to No.
     The endpoint supports SMS and voice, selected by each request.
     Policy activation remains manual.
     No Azure resources or app registrations are changed until you approve the complete plan.
 .PARAMETER ApplicationId
     Existing application client ID. Omit interactively to select, enter, or plan a new application.
+    Enter at the application picker or manual client-ID prompt defaults to creating a new application.
+    Press Enter at the new application name prompt to use EPP Application.
     New applications use an alphabetized provider list and are created only after deployment approval.
     Required for unattended setup.
 .PARAMETER SourceRepository
@@ -21,7 +25,7 @@
     Optional stable epp-packages release tag. By default, setup uses the latest stable CI package release.
 .PARAMETER ServicePlan
     FC1 for Flex Consumption with a free usage grant, or EP1 for Premium with a warm instance.
-    Prompts when omitted; required for unattended setup.
+    Prompts with FC1 as the interactive default when omitted; required for unattended setup.
 .PARAMETER Language
     JavaScript by default, without a prompt. Use csharp or python to select another language.
     The legacy dotnet value remains supported for C#.
@@ -39,7 +43,9 @@
     saved whether or not this switch is supplied.
 .PARAMETER CertificateAction
     Create when no encryption certificate is registered, Reuse a selected certificate, or Replace
-    all registered encryption certificates. Existing certificates require an explicit choice.
+    all registered encryption certificates. Interactive selection defaults to Replace when
+    encryption certificates exist; changes still require final deployment approval.
+    An explicit choice is required for existing certificates in unattended mode.
 .PARAMETER EncryptionKeyId
     App-registration key ID to keep when reusing a certificate. Required for unattended reuse.
 .PARAMETER KeyVaultCertificateId

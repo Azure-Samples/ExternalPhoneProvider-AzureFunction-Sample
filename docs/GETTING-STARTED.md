@@ -4,7 +4,8 @@
 
 [Documentation](README.md) | [Setup reference](../setup/docs/README.md) | [Troubleshooting](../setup/docs/Troubleshooting.md)
 
-Deploy one regional endpoint for Microsoft Entra ID SMS and voice requests.
+**External Phone Provider (EPP)** connects Microsoft Entra ID to your phone provider for SMS
+and voice one-time passwords. This guide deploys one regional endpoint for that integration.
 
 | Step | Task |
 | --- | --- |
@@ -53,8 +54,10 @@ Assign an **onboarding owner** and review [production readiness](../TECHNICAL.md
 
 You can create the dedicated application during guided setup or register it manually.
 
-**Create during setup:** in Step 3, choose **Create a new application**, enter its display name,
-and choose a provider by name from the alphabetized list (**Soprano, Telesign**).
+**Create during setup:** in Step 3, press Enter to choose **Create a new application**, then Enter to use
+**EPP Application** or enter your own display name, and choose a provider by name from the
+alphabetized list (**Soprano, Telesign**). Blank provider-name input prompts again instead of
+canceling or selecting a default.
 Setup creates the registration only after you approve the final deployment plan.
 Canceling before approval creates no application. The signed-in user must be allowed to register
 applications in the customer tenant.
@@ -114,18 +117,22 @@ JavaScript is used by default, without a language prompt. To deploy another lang
 `.\Setup-Epp.ps1 -Language csharp` or `.\Setup-Epp.ps1 -Language python`.
 
 Select the tenant and subscription, then select an existing application, enter its **client ID**,
-or choose **Create a new application** and enter its display name. Setup detects the tenant's
-replication scope and selects the corresponding provider route; it does not ask you to choose EU or
-Global. Select the Azure region, then complete the remaining settings:
+or choose **Create a new application** and accept **EPP Application** or enter your own display name.
+Enter accepts the displayed menu default rather than canceling: the current CLI tenant/subscription
+when eligible (otherwise the first eligible option), and **Create a new application** for the app.
+Use **0** or **Cancel** where offered to stop.
+Setup detects the tenant's replication scope and selects the corresponding provider route;
+it does not ask you to choose EU or Global. Select the Azure region, then complete the remaining settings:
 
 - **Azure region:** EU tenants receive recommendations within the EU Data Boundary (EU/EFTA).
+  Enter selects the first displayed region.
   Other tenants retain the existing Azure-recommended shortlist. All-region and manual selection,
   including `-Location`, remain available; EU tenants receive a warning for an out-of-boundary or
   unverifiable choice. Recommendations are not a data-residency or GDPR compliance guarantee.
 - **Provider:** enter or confirm the provider by name. New applications show all guided providers
   in alphabetical order, with no default selection. Setup downloads the language's matching
   stable release asset, verifies `SHA256SUMS.txt`, and builds when required.
-- **Hosting:** FC1 can scale to zero and cold-start. EP1 has paid warm capacity. Review
+- **Hosting:** Enter defaults to FC1, which can scale to zero and cold-start. EP1 has paid warm capacity. Review
   [plan details](../setup/docs/README.md#service-plan-selection) and the [cost estimate](COST-CALCULATOR.md).
 - **Resource prefix:** press Enter to use `epp`, or enter 2-8 lowercase letters/digits, starting
   with a letter. When rerunning an existing deployment, use its original prefix.
@@ -133,8 +140,10 @@ Global. Select the Azure region, then complete the remaining settings:
 Complete required sign-in, MFA, or administrator consent. Resolve preflight errors before approval.
 
 For existing encryption credentials, follow
-[certificate selection](../setup/docs/README.md#encryption-certificate-selection). Coordinate
-changes across every endpoint sharing the application.
+[certificate selection](../setup/docs/README.md#encryption-certificate-selection).
+**Enter defaults to replacing all registered encryption credentials with one new certificate.**
+Select **Reuse** explicitly to keep a certificate. Coordinate changes across every endpoint
+sharing the application; no cleanup or creation occurs before final deployment approval.
 
 **Review the deployment plan before typing `Yes` or `Y`.** Check accounts, region, provider URLs,
 runtime, plan, resource names, permissions, certificate key IDs, and vault access.

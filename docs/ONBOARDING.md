@@ -46,13 +46,13 @@ renewal.
 | --- | --- | --- |
 | Customer tenant ID | Microsoft Entra admin center > Overview | `-TenantId` |
 | Azure subscription ID | Azure portal > Subscriptions | `-SubscriptionId` |
-| Endpoint application | Existing dedicated app's client ID from Microsoft Entra admin center, or a new display name | `-ApplicationId`, or choose **Create a new application** interactively |
+| Endpoint application | Existing dedicated app's client ID, or Enter to create a new app (default name `EPP Application`) | `-ApplicationId`, or the interactive **Create a new application** default |
 | Azure region | Available Linux FC1/EP1 region that meets quota and organization requirements | `-Location` |
 | Provider | Approved Security Store integration | `-Provider telesign` or `soprano` |
 | Provider route | Detected from the tenant's replication scope; EU for EU tenants, Global otherwise | Optional `-EndpointRegion eu` or `global` must match the detected route |
-| Language and plan | JavaScript by default; C# or Python by parameter, with FC1 or EP1 | `-Language csharp` or `python`, `-ServicePlan` |
+| Language and plan | JavaScript by default; C# or Python by parameter; Enter defaults to FC1 hosting | `-Language csharp` or `python`, `-ServicePlan` |
 | Resource prefix | Interactive default `epp`, or a unique 2-8 character lowercase label that starts with a letter | `-ResourcePrefix` (required unattended) |
-| Encryption certificate | Existing registered key or approved replacement | `-CertificateAction` and certificate options |
+| Encryption certificate | Enter defaults to replacing registered encryption credentials; explicitly choose Reuse to keep one | `-CertificateAction` and certificate options; final approval is still required |
 | Output and source versions | Private output folder and reviewed source/release versions | Optional output and version options |
 
 Use the application **client ID**, not its Object ID. The customer tenant ID and provider tenant ID

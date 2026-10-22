@@ -1,6 +1,7 @@
 # External Phone Provider Azure Function Sample
 
-Connect Microsoft Entra ID to a phone provider for SMS and voice one-time passwords.
+This **External Phone Provider (EPP)** sample connects Microsoft Entra ID to a phone provider
+for SMS and voice one-time passwords.
 Guided setup deploys **one regional endpoint** using JavaScript by default, with C# and Python options.
 
 > [!IMPORTANT]

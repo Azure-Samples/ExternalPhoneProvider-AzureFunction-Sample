@@ -56,7 +56,7 @@ function Assert-EppHttpsUrl {
 function Select-EppOption {
     param(
         [object[]] $Entries, [string] $Name, [string] $Value,
-        [string] $PromptName, [switch] $NonInteractive, [switch] $AllowCancel
+        [string] $PromptName, [string] $DefaultValue, [switch] $NonInteractive, [switch] $AllowCancel
     )
 
     $ids = @($Entries | ForEach-Object { $_['id'] })
@@ -67,12 +67,24 @@ function Select-EppOption {
         return $selected
     }
     if ($NonInteractive) { throw "-$Name is required. Choose: $($ids -join ', ')." }
+    $defaultIndex = -1
+    if ($DefaultValue) {
+        $default = $Entries | Where-Object { $_['id'] -ieq $DefaultValue -or $_['displayName'] -ieq $DefaultValue } | Select-Object -First 1
+        if (-not $default) { throw "Unknown default $Name '$DefaultValue'. Choose: $($ids -join ', ')." }
+        $defaultIndex = [Array]::IndexOf($ids, $default['id'])
+    }
     Write-Host "`nChoose your $($displayName.ToLowerInvariant()):" -ForegroundColor Cyan
-    for ($index = 0; $index -lt $Entries.Count; $index++) { Write-Host "  [$($index + 1)] $($Entries[$index]['displayName'])" }
-    if ($AllowCancel) { Write-Host '  [0] Cancel (also Enter)' }
+    for ($index = 0; $index -lt $Entries.Count; $index++) {
+        $label = if ($index -eq $defaultIndex) { ' (default)' } else { '' }
+        Write-Host "  [$($index + 1)] $($Entries[$index]['displayName'])$label"
+    }
+    if ($AllowCancel) { Write-Host '  [0] Cancel' }
+    $prompt = "$displayName number or name"
+    if ($defaultIndex -ge 0) { $prompt += " [$($defaultIndex + 1)]" }
     while ($true) {
-        $answer = ([string](Read-Host "$displayName number or name")).Trim()
-        if ($AllowCancel -and (-not $answer -or $answer -in @('0', 'Cancel'))) { return $null }
+        $answer = ([string](Read-Host $prompt)).Trim()
+        if ($AllowCancel -and $answer -in @('0', 'Cancel')) { return $null }
+        if (-not $answer -and $defaultIndex -ge 0) { return $Entries[$defaultIndex] }
         $number = 0
         if ([int]::TryParse($answer, [ref] $number) -and $number -ge 1 -and $number -le $Entries.Count) { return $Entries[$number - 1] }
         $selected = $Entries | Where-Object { $_['id'] -ieq $answer -or $_['displayName'] -ieq $answer } | Select-Object -First 1
@@ -91,7 +103,7 @@ function Get-EppServicePlan {
     return Select-EppOption -Entries @(
         @{ id = 'FC1'; displayName = 'Flex Consumption FC1 (free grant, cold starts)' }
         @{ id = 'EP1'; displayName = 'Premium EP1 (warm instance)' }
-    ) -Name ServicePlan -PromptName 'Service plan' -Value $ServicePlan -NonInteractive:$NonInteractive
+    ) -Name ServicePlan -PromptName 'Service plan' -Value $ServicePlan -DefaultValue FC1 -NonInteractive:$NonInteractive
 }
 
 function Read-EppInput {
@@ -115,7 +127,7 @@ function Read-EppInput {
             $Value = [string](Read-Host $prompt)
         }
         $Value = $Value.Trim()
-        if (-not $supplied -and $AllowCancel -and (-not $Value -or $Value -ieq 'Cancel')) { return $null }
+        if (-not $supplied -and $AllowCancel -and $Value -ieq 'Cancel') { return $null }
         if (-not $supplied -and -not $Value -and $DefaultValue) { $Value = $DefaultValue }
         try {
             if (-not $Value -or $Value -match '[\x00-\x1f<>]') { throw 'A nonempty value without placeholders is required.' }
@@ -180,10 +192,13 @@ function Read-EppProviderName {
     while ($true) {
         if (-not $supplied) {
             Write-Host "Provider names: $(($Entries | ForEach-Object { $_['displayName'] } | Sort-Object) -join ', ')"
-            $Provider = [string](Read-Host 'Provider name (Enter cancels)')
+            $Provider = [string](Read-Host 'Provider name')
         }
         $Provider = $Provider.Trim()
-        if (-not $Provider -and -not $supplied) { return $null }
+        if (-not $Provider) {
+            Write-Warning 'A provider name is required. Choose one of the listed providers.'
+            continue
+        }
         $selected = @($Entries | Where-Object { $_['id'] -ieq $Provider -or $_['displayName'] -ieq $Provider })
         if ($selected.Count -eq 1) { return [string]$selected[0]['id'] }
         $message = "Unknown provider '$Provider'. Supply a provider name, not a selection number."
@@ -581,6 +596,7 @@ function Select-EppAzureContext {
     $refresh = $false
     while ($true) {
         $subscriptions = @(Get-EppAzureSubscriptions -Refresh:$refresh)
+        $currentSubscription = $subscriptions | Where-Object IsDefault | Select-Object -First 1
         $refresh = $false
         $tenant = $TenantId
         $selection = $null
@@ -599,7 +615,7 @@ function Select-EppAzureContext {
                 return @{ TenantId = $subscription.TenantId; SubscriptionId = $SubscriptionId }
             }
             Write-Warning "The supplied subscription '$SubscriptionId' is not in the eligible cached accounts. It will not be replaced with another subscription."
-            $selection = Select-EppOption -Entries $actions -Name AzureAccount -PromptName 'Azure account action' -AllowCancel
+            $selection = Select-EppOption -Entries $actions -Name AzureAccount -PromptName 'Azure account action' -DefaultValue refresh -AllowCancel
         }
         else {
             if (-not $tenant) {
@@ -608,7 +624,10 @@ function Select-EppAzureContext {
                     $label = if ($name) { "$name [$($_.Name)]" } else { "$($_.Name) (tenant name unavailable)" }
                     @{ id = $_.Name; displayName = $label }
                 } | Sort-Object { $_.displayName })
-                $selection = Select-EppOption -Entries ($tenants + $actions) -Name TenantId -PromptName 'Azure tenant' -AllowCancel
+                $defaultTenant = if ($currentSubscription) { $currentSubscription.TenantId }
+                    elseif ($tenants.Count) { $tenants[0].id } else { 'signin' }
+                $selection = Select-EppOption -Entries ($tenants + $actions) -Name TenantId -PromptName 'Azure tenant' `
+                    -DefaultValue $defaultTenant -AllowCancel
                 if (-not $selection) { return $null }
                 if ($selection.id -notin @('refresh', 'signin')) { $tenant = $selection.id }
             }
@@ -621,7 +640,10 @@ function Select-EppAzureContext {
                 if (-not $options.Count) {
                     Write-Warning "No eligible subscriptions are cached for tenant '$tenant'. Refresh or sign in to this tenant."
                 }
-                $selection = Select-EppOption -Entries ($options + $actions) -Name SubscriptionId -PromptName 'Azure subscription' -AllowCancel
+                $defaultSubscription = if ($currentSubscription -and $currentSubscription.TenantId -eq $tenant) { $currentSubscription.Id }
+                    elseif ($options.Count) { $options[0].id } else { 'signin' }
+                $selection = Select-EppOption -Entries ($options + $actions) -Name SubscriptionId -PromptName 'Azure subscription' `
+                    -DefaultValue $defaultSubscription -AllowCancel
                 if (-not $selection) { return $null }
                 if ($selection.id -notin @('refresh', 'signin')) {
                     return @{ TenantId = $tenant; SubscriptionId = $selection.id }
@@ -786,17 +808,24 @@ function Select-EppApplication {
             @{ id = 'manual'; displayName = 'Enter an application (client) ID manually' }
             @{ id = 'create'; displayName = 'Create a new application' }
         )
-        $selection = Select-EppOption -Entries $entries -Name ApplicationId -PromptName 'Application' -AllowCancel
+        $selection = Select-EppOption -Entries $entries -Name ApplicationId -PromptName 'Application' -DefaultValue create -AllowCancel
         if (-not $selection) { return $null }
         switch ($selection.id) {
             'search' {
-                $search = Read-EppInput -Name ApplicationSearch -Kind Text -Hint 'Beginning of the display name; Enter cancels setup' -AllowCancel
+                $search = Read-EppInput -Name ApplicationSearch -Kind Text -DefaultValue $search `
+                    -Hint 'Beginning of the display name; type Cancel to cancel' -AllowCancel
                 if ($null -eq $search) { return $null }
             }
             'refresh' { continue }
             'manual' {
-                return Read-EppInput -Name ApplicationId -Kind Guid `
-                    -Hint 'Application (client) ID from App registrations, not Object ID; Enter cancels' -AllowCancel
+                while ($true) {
+                    $clientId = Read-EppInput -Name ApplicationId -DefaultValue 'Create a new application' `
+                        -Hint 'Application (client) ID, not Object ID; type Cancel to cancel' -AllowCancel
+                    if ($null -eq $clientId) { return $null }
+                    if ($clientId -ieq 'Create a new application') { return 'create' }
+                    try { return ConvertTo-EppGuid $clientId }
+                    catch { Write-Warning "ApplicationId : $($_.Exception.Message)" }
+                }
             }
             default { return $selection.id }
         }
@@ -919,6 +948,7 @@ function Select-EppLocation {
     $showAll = $false
     while (-not $Location) {
         $entries = @(if ($showAll) { $regions | Sort-Object { $_.displayName } } else { $shortlist })
+        $defaultRegion = if ($entries.Count) { [string]$entries[0].id } else { '' }
         if (-not $entries.Count) {
             $message = if ($euTenant -and -not $showAll) {
                 'Azure returned no recommended regions with verified EU Data Boundary geography. Show all regions or enter a region name manually; verify the selection before deployment.'
@@ -933,14 +963,16 @@ function Select-EppLocation {
             @{ id = 'all'; displayName = 'Show all physical regions returned for this subscription' }
         }
         $entries += @{ id = 'manual'; displayName = 'Enter an Azure region name manually' }
-        $selection = Select-EppOption -Entries $entries -Name Location -PromptName 'Azure region' -AllowCancel
+        $defaultSelection = if ($defaultRegion) { $defaultRegion } elseif ($showAll) { 'shortlist' } else { 'all' }
+        $selection = Select-EppOption -Entries $entries -Name Location -PromptName 'Azure region' -DefaultValue $defaultSelection -AllowCancel
         if (-not $selection) { return $null }
         switch ($selection.id) {
             'all' { $showAll = $true }
             'shortlist' { $showAll = $false }
             'manual' {
                 $example = if ($euTenant) { 'westeurope' } else { 'westus2' }
-                $Location = Read-EppInput -Name Location -Kind Location -Hint "Programmatic region name, for example $example; Enter cancels" -AllowCancel
+                $Location = Read-EppInput -Name Location -Kind Location -DefaultValue $defaultRegion `
+                    -Hint "Programmatic region name, for example $example; type Cancel to cancel" -AllowCancel
                 if (-not $Location) { return $null }
             }
             default { $Location = $selection.id }
@@ -1900,7 +1932,8 @@ function Get-EppCertificatePlan {
             $option = Select-EppOption -Entries @(
                 @{ id = 'Reuse'; displayName = 'Keep one existing certificate and remove any other encryption credentials' }
                 @{ id = 'Replace'; displayName = 'Create a new certificate and remove all existing encryption credentials' }
-            ) -Name CertificateAction -PromptName 'Encryption certificate action' -Value $action -AllowCancel -NonInteractive:$NonInteractive
+            ) -Name CertificateAction -PromptName 'Encryption certificate action' -Value $action -DefaultValue Replace `
+                -AllowCancel -NonInteractive:$NonInteractive
             if (-not $option) { return $null }
             $action = $option.id
         }
@@ -1933,11 +1966,11 @@ function Get-EppCertificatePlan {
         $selectedId = $EncryptionKeyId
         if (-not $selectedId -and -not $NonInteractive -and $encryptionKeys.Count -eq 1) { $selectedId = [string]$encryptionKeys[0].KeyId }
         $selected = Select-EppOption -Entries $choices -Name EncryptionKeyId -PromptName 'Certificate to keep' `
-            -Value $selectedId -AllowCancel -NonInteractive:$NonInteractive
+            -Value $selectedId -DefaultValue $choices[0].id -AllowCancel -NonInteractive:$NonInteractive
         if (-not $selected) { return $null }
         $selectedKey = $encryptionKeys | Where-Object { [string]$_.KeyId -eq $selected.id }
         $location = Read-EppInput -Name KeyVaultCertificateId -Value $KeyVaultCertificateId `
-            -Hint 'Versioned certificate URL; Enter cancels' -AllowCancel -NonInteractive:$NonInteractive
+            -Hint 'Versioned certificate URL; type Cancel to cancel' -AllowCancel -NonInteractive:$NonInteractive
         if (-not $location) { return $null }
         $issued = $null
         try {
@@ -2601,24 +2634,32 @@ function Invoke-EppSetup {
         No Microsoft Graph PowerShell SDK or separate Graph sign-in is required.
         Interactive setup discovers cached Azure CLI accounts before asking for other settings.
         Choose a tenant and subscription, or explicitly refresh/sign in when the list is incomplete.
+        Enter accepts the displayed default; 0 or Cancel cancels where offered.
+        Provider selection has no default, and final deployment approval defaults to No.
     .PARAMETER TenantId
         Customer tenant ID. When omitted interactively, select from cached Azure subscriptions,
         or resolve it from an explicitly supplied subscription. Required in noninteractive mode.
+        The interactive default is the current CLI tenant, or the first eligible tenant.
     .PARAMETER SubscriptionId
         Azure subscription ID. When omitted interactively, select an enabled user subscription
         in the chosen tenant. Required in noninteractive mode.
+        Defaults to the current CLI subscription in that tenant, or its first eligible subscription.
     .PARAMETER ApplicationId
         Existing application client ID. When omitted interactively, use the current CLI tenant
         to choose/search an app registration, enter its client ID, or plan a new application.
+        Enter at the picker or manual client-ID prompt defaults to creating a new application.
+        The new application display name defaults to EPP Application when Enter is pressed.
         A new application is created only after final deployment approval. Required in noninteractive mode.
     .PARAMETER Provider
         Provider name, never a numbered selection. When omitted interactively, read the app's
         allowed-tenants configuration: enter a name if none match, confirm one match, or choose
         by name among multiple matches. New applications show supported providers alphabetically.
+        Blank provider-name input prompts again; there is no default provider.
         Explicit input confirms the choice; required unattended.
     .PARAMETER Location
         Azure region name. When omitted interactively, choose an Azure-recommended shortlist,
         show all physical regions returned for the subscription, or enter the name manually.
+        Enter accepts the first region in the displayed list.
         EU tenants receive EU Data Boundary recommendations; explicit out-of-boundary choices warn.
         Recommendations do not guarantee plan availability or quota. Required noninteractively.
     .PARAMETER EndpointRegion
@@ -2637,6 +2678,8 @@ function Invoke-EppSetup {
     .PARAMETER CertificateAction
         Create when no encryption certificate is registered, Reuse a selected certificate,
         or Replace all registered encryption certificates after explicit approval.
+        Interactive selection defaults to Replace when encryption certificates exist.
+        Unattended runs with existing certificates still require an explicit action.
     .PARAMETER EncryptionKeyId
         App-registration key ID to keep when reusing a certificate. Required for unattended reuse.
     .PARAMETER KeyVaultCertificateId
@@ -2705,6 +2748,8 @@ function Invoke-EppSetup {
     $workingDirectory = Join-Path ([IO.Path]::GetTempPath()) "epp-setup-$([Guid]::NewGuid().ToString('N'))"
     try {
         New-Item -ItemType Directory -Path $workingDirectory | Out-Null
+        Write-Host "`nExternal Phone Provider (EPP) setup" -ForegroundColor Cyan
+        Write-Host 'Connect Microsoft Entra ID to your phone provider for SMS and voice one-time passwords.'
         $azureContext = Select-EppAzureContext -TenantId $TenantId -SubscriptionId $SubscriptionId -NonInteractive:$NonInteractive
         if (-not $azureContext) {
             Write-Host 'Cancelled. No Azure resources or application credentials were changed.' -ForegroundColor Yellow
@@ -2726,11 +2771,7 @@ function Invoke-EppSetup {
         if ($inputs.ApplicationId -ceq 'create') {
             $inputs.ApplicationId = $null
             $inputs.NewApplicationDisplayName = Read-EppInput -Name ApplicationDisplayName -Kind ApplicationName `
-                -PromptName 'New application display name' -Hint 'Enter cancels' -AllowCancel
-            if (-not $inputs.NewApplicationDisplayName) {
-                Write-Host 'Cancelled. No Azure resources or app registrations were changed.' -ForegroundColor Yellow
-                return
-            }
+                -PromptName 'New application display name' -DefaultValue 'EPP Application'
         }
         if (-not [string]::IsNullOrWhiteSpace($Location) -or $NonInteractive) {
             $Location = Read-EppInput -Name Location -Value $Location -Kind Location -NonInteractive

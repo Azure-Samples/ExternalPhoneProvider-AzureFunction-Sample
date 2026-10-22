@@ -115,7 +115,7 @@ try {
                 $script:Restriction = $restriction
                 $script:Application.SignInAudience = $audience
                 $selected = Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory
-                Assert ($selected -ceq 'telesign' -and $script:Prompts[0] -ceq 'Provider name (Enter cancels)') 'No configuration must prompt for a provider name.'
+                Assert ($selected -ceq 'telesign' -and $script:Prompts[0] -ceq 'Provider name') 'No configuration must prompt for a provider name.'
                 Assert (($script:Messages -join "`n").Contains('configuration is included in the deployment approval')) 'Do not configure an existing app before deployment approval.'
                 Assert ($script:Messages -contains 'Provider names: Soprano, Telesign') 'List provider names alphabetically, independently of catalog order.'
                 Assert ($script:Patches.Count -eq 0) 'Provider resolution is read-only.'
@@ -124,8 +124,9 @@ try {
         Reset-TestState @('1', 'soprano')
         Assert ((Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory) -ceq 'soprano') 'Reject a provider number, then accept a name.'
         Assert ($script:Warnings.Count -eq 1 -and -not (($script:Messages -join "`n") -match '\[\d+\]')) 'Do not number or rank provider choices.'
-        Reset-TestState @('')
-        Assert ($null -eq (Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory)) 'Empty provider input cancels.'
+        Reset-TestState @('', '  ', 'telesign')
+        Assert ((Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory) -ceq 'telesign') 'Blank provider input must prompt again, not cancel or select a default.'
+        Assert ($script:Warnings.Count -eq 2 -and $script:Prompts.Count -eq 3 -and $script:Patches.Count -eq 0) 'Require a provider choice without changing application configuration.'
 
         foreach ($answer in @('Yes', 'y', ' YES ', 'No', 'n', '')) {
             Reset-TestState @($answer)
@@ -136,12 +137,12 @@ try {
             else { Assert ($null -eq $selected) 'Do not silently accept the single configured provider.' }
             Assert ($script:Prompts[0] -match 'configured for Telesign.*Yes or Y.*No or N') 'Show the configured provider and accepted responses in the confirmation.'
         }
-        Reset-TestState @('Soprano')
+        Reset-TestState @('', 'Soprano')
         $script:Application.SignInAudience = 'AzureADMultipleOrgs'
         $script:Restriction = New-TestRestriction @($telesign.TenantId, $soprano.TenantId)
         $selected = Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory
-        Assert ($selected -ceq 'soprano' -and $script:Prompts.Count -eq 1 -and
-            $script:Prompts[0] -ceq 'Provider name (Enter cancels)') 'Choose among multiple configured providers by name, not number.'
+        Assert ($selected -ceq 'soprano' -and $script:Prompts.Count -eq 2 -and $script:Warnings.Count -eq 1 -and
+            $script:Prompts[0] -ceq 'Provider name') 'Require a name when choosing among multiple configured providers.'
         Assert (-not (($script:Messages -join "`n") -match '\[\d+\]')) 'Configured providers must not be numbered.'
         Reset-TestState
         $selected = Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory -Provider ' TELESIGN ' -NonInteractive

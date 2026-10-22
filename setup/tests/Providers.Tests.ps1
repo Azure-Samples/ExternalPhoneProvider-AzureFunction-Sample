@@ -229,7 +229,7 @@ try {
         Assert-Throws {
             Invoke-EppSetup @inputs -OutputDirectory $Directory
         } '^preflight-reached$'
-        Assert (($script:Prompts -join ',') -ceq 'Provider name (Enter cancels)') 'Detect tenant scope without a picker; provider selection must use a name.'
+        Assert (($script:Prompts -join ',') -ceq 'Provider name') 'Detect tenant scope without a picker; provider selection must use a name.'
         Assert ($script:Answers.Count -eq 0) 'All expected prompt answers must be consumed.'
 
         $defaults = @{} + $inputs

@@ -78,6 +78,10 @@ try {
         Assert-Throws { Get-EppServicePlan -ServicePlan Y1 -NonInteractive } 'Unknown ServicePlan'
         $script:Answers.Enqueue('1')
         Assert ((Get-EppServicePlan).id -ceq 'FC1') 'Option 1 must select Flex Consumption.'
+        foreach ($blank in @('', '  ')) {
+            $script:Answers.Enqueue($blank)
+            Assert ((Get-EppServicePlan).id -ceq 'FC1') 'Enter must accept the Flex Consumption default.'
+        }
         $script:Answers.Enqueue('2')
         Assert ((Get-EppServicePlan).id -ceq 'EP1') 'Option 2 must select Premium.'
         Assert (($script:Messages -join "`n") -match 'Service plan selection') 'The selection section must have its requested heading.'

@@ -137,6 +137,26 @@ try {
             return ,$script:DiscoveryMetadata
         }
 
+        $options = @(@{ id = 'first'; displayName = 'Alpha' }, @{ id = 'second'; displayName = 'Beta' })
+        foreach ($blank in @('', '  ')) {
+            Reset-TestState @($blank)
+            Assert ((Select-EppOption -Entries $options -Name Choice -DefaultValue second -AllowCancel).id -ceq 'second') 'Enter must select the specified default, not always the first entry.'
+            Assert ($script:Prompts[0] -ceq 'Choice number or name [2]' -and
+                $script:Messages -contains '  [2] Beta (default)' -and $script:Messages -contains '  [0] Cancel') 'Mark the default and keep cancellation explicit.'
+            Reset-TestState @($blank)
+            Assert ((Read-EppInput -Name Prefix -Kind Prefix -DefaultValue epp -AllowCancel) -ceq 'epp') 'A text-input default must also take precedence over blank-input cancellation.'
+        }
+        Reset-TestState @('', 'first')
+        Assert ((Select-EppOption -Entries $options -Name Choice -AllowCancel).id -ceq 'first' -and
+            $script:Warnings.Count -eq 1) 'When no default is supplied, require a choice rather than canceling.'
+        Reset-TestState @('', 'prefix')
+        Assert ((Read-EppInput -Name Search -AllowCancel) -ceq 'prefix' -and $script:Warnings.Count -eq 1) 'Required text without a known default must reprompt on Enter.'
+        Reset-TestState
+        Assert-Throws { Select-EppOption -Entries $options -Name Choice -DefaultValue invalid } 'Unknown default'
+        Assert-Throws { Select-EppOption -Entries $options -Name Choice -DefaultValue first -NonInteractive } 'Choice is required'
+        Assert ((Select-EppOption -Entries $options -Name Choice -Value second -DefaultValue first -NonInteractive).id -ceq 'second') 'Explicit and unattended inputs must not be replaced by interactive defaults.'
+        Assert ($script:Prompts.Count -eq 0) 'Invalid defaults and unattended inputs must not prompt.'
+
         foreach ($scope in @('EU', 'NA', 'AS', 'OC', 'AF', 'SA', 'AN', 'JPR', 'WW')) {
             Reset-TestState
             $script:DiscoveryMetadata.tenant_region_scope = $scope.ToLowerInvariant()
@@ -233,14 +253,23 @@ try {
         Reset-TestState
         $script:GraphError = 'application lookup denied'
         Assert-Throws { Select-EppApplication -Inputs (New-TestInputs) } 'application lookup denied'
-        foreach ($answers in @(@(''), @('manual', ''), @('search', ''))) {
+        foreach ($answers in @(@(''), @('  '), @('manual', ''))) {
+            Reset-TestState $answers
+            Assert ((Select-EppApplication -Inputs (New-TestInputs)) -ceq 'create') 'Blank application selection or manual client-ID input must default to creating a new app.'
+        }
+        Reset-TestState @('')
+        $script:Applications = @()
+        Assert ((Select-EppApplication -Inputs (New-TestInputs)) -ceq 'create' -and
+            $script:Prompts[0] -ceq 'Application number or name [4]') 'The create default must follow the menu entry even when no existing apps are listed.'
+        foreach ($answers in @(@('0'), @('Cancel'), @('manual', 'Cancel'), @('search', 'Cancel'))) {
             Reset-TestState $answers
             Assert ($null -eq (Select-EppApplication -Inputs (New-TestInputs))) 'Application picker/manual/search cancellation must stop setup.'
         }
 
-        Reset-TestState @('westus2')
+        Reset-TestState @('')
         $inputs = New-TestInputs
-        Assert ((Select-EppLocation -Inputs $inputs -ForceAuthentication) -ceq 'westus2') 'Choose a canonical recommended region.'
+        Assert ((Select-EppLocation -Inputs $inputs -ForceAuthentication) -ceq 'westus2') 'Enter chooses the first available recommended region.'
+        Assert ($script:Prompts[0] -ceq 'Azure region number or name [1]') 'Show the region default in the prompt.'
         $text = $script:Messages -join "`n"
         Assert ($text.Contains('WESTUS2 (westus2) - Azure recommended') -and -not $text.Contains('EASTUS2 (eastus2)')) 'The shortlist must use live Recommended classification, not hardcoded claims.'
         Assert ($text.Contains('not a latency/cost ranking') -and $text.Contains('quota')) 'Do not imply a recommendation guarantees capacity or price.'
@@ -248,6 +277,8 @@ try {
         Reset-TestState @('all', 'eastus2')
         Assert ((Select-EppLocation -Inputs (New-TestInputs)) -ceq 'eastus2') 'Allow other physical subscription regions through the all-regions view.'
         Assert (-not ($script:Messages -join "`n").Contains('GLOBAL (global)')) 'Logical locations must not be offered.'
+        Reset-TestState @('all', '')
+        Assert ((Select-EppLocation -Inputs (New-TestInputs)) -ceq 'centralus') 'The all-regions view must default to its own first displayed region, not the shortlist default.'
         Reset-TestState @('all', 'shortlist', 'westus2')
         Assert ((Select-EppLocation -Inputs (New-TestInputs)) -ceq 'westus2') 'Return from all regions to the recommended shortlist.'
         $euRegions = @(
@@ -262,10 +293,10 @@ try {
             (New-TestRegion unclassified -Geography '' -GeographyGroup Europe),
             (New-TestRegion franceother Other -Geography France -GeographyGroup Europe)
         )
-        Reset-TestState @('westeurope')
+        Reset-TestState @('')
         $inputs = New-TestInputs; $inputs.TenantRegionScope = 'EU'
         $script:RegionsJson = @{ value = $euRegions } | ConvertTo-Json -Depth 8
-        Assert ((Select-EppLocation -Inputs $inputs) -ceq 'westeurope') 'EU tenants can select the dynamic EU Data Boundary shortlist.'
+        Assert ((Select-EppLocation -Inputs $inputs) -ceq 'westeurope') 'The EU default must come from the filtered EU Data Boundary shortlist.'
         $text = $script:Messages -join "`n"
         foreach ($region in @('WESTEUROPE', 'NORTHEUROPE', 'FRANCECENTRAL', 'NORWAYEAST', 'SWITZERLANDNORTH', 'BELGIUMCENTRAL')) {
             Assert ($text.Contains($region)) 'Use live EU/EFTA geography metadata, including new region names.'
@@ -297,7 +328,10 @@ try {
         Reset-TestState @('manual', 'eastus')
         $null = Select-EppLocation -Inputs $inputs
         Assert ($script:Warnings[0].Contains('no recommended regions with verified EU Data Boundary geography')) 'An empty EU shortlist must not silently fall back to global recommendations.'
-        Assert (@($script:Messages | Where-Object { $_ -match ' - Azure recommended$' }).Count -eq 0) 'Do not present global regions as EU recommendations.'
+        Assert (@($script:Messages | Where-Object { $_ -match ' - Azure recommended(?: \(default\))?$' }).Count -eq 0) 'Do not present global regions as EU recommendations.'
+        Reset-TestState @('', 'Cancel')
+        $null = Select-EppLocation -Inputs $inputs
+        Assert ($script:Prompts.Count -eq 2 -and $script:Warnings[0].Contains('no recommended regions')) 'An empty EU shortlist defaults to showing all regions, not silently selecting a global region.'
         foreach ($scope in @('NA', 'AS', 'OC', 'AF', 'SA', 'AN', 'JPR', 'WW')) {
             Reset-TestState @('westus2')
             $inputs = New-TestInputs; $inputs.TenantRegionScope = $scope
@@ -308,6 +342,8 @@ try {
         }
         Reset-TestState @('manual', 'customregion5')
         Assert ((Select-EppLocation -Inputs (New-TestInputs)) -ceq 'customregion5') 'Allow a typed canonical region for later existing availability validation.'
+        Reset-TestState @('manual', '')
+        Assert ((Select-EppLocation -Inputs (New-TestInputs)) -ceq 'westus2') 'Manual region entry must show and accept the same available region default.'
         Reset-TestState @('manual', 'West US 2', 'westus2')
         Assert ((Select-EppLocation -Inputs (New-TestInputs)) -ceq 'westus2' -and $script:Warnings.Count -eq 1) 'Validate and reprompt malformed manual locations.'
         foreach ($regions in @(@(), @((New-TestRegion eastus2 Other)), @((New-TestRegion westus2)))) {
@@ -320,7 +356,7 @@ try {
             ForEach-Object { New-TestRegion $_ }
         $script:RegionsJson = @{ value = @($many) } | ConvertTo-Json -Depth 8
         $null = Select-EppLocation -Inputs (New-TestInputs)
-        Assert (@($script:Messages | Where-Object { $_ -match ' - Azure recommended$' }).Count -eq 8) 'Bound the common recommendation shortlist to eight regions.'
+        Assert (@($script:Messages | Where-Object { $_ -match ' - Azure recommended(?: \(default\))?$' }).Count -eq 8) 'Bound the common recommendation shortlist to eight regions.'
         foreach ($response in @('[]', '{"value":null}', '{"value":[{}]}')) {
             Reset-TestState
             $script:RegionsJson = $response
@@ -343,7 +379,7 @@ try {
         $script:CliAvailable = $false
         Assert-Throws { Select-EppLocation -Inputs (New-TestInputs) } 'Azure CLI is not installed'
         Assert ($script:Calls.Count -eq 0) 'Missing Azure CLI must fail before attempting authentication.'
-        foreach ($answers in @(@(''), @('manual', ''))) {
+        foreach ($answers in @(@('0'), @('Cancel'), @('manual', 'Cancel'))) {
             Reset-TestState $answers
             Assert ($null -eq (Select-EppLocation -Inputs (New-TestInputs))) 'Region picker/manual cancellation must stop setup.'
         }
@@ -381,7 +417,7 @@ try {
         }
         Reset-TestState @($script:AppId, 'westus2')
         Assert-Throws { Invoke-EppSetup @setup -ForceAuthentication } '^selection-preflight-boundary$'
-        Assert (($script:Prompts -join ',') -ceq 'Application number or name,Azure region number or name') 'Use application and region selection instead of raw-ID/location prompts.'
+        Assert (($script:Prompts -join ',') -ceq 'Application number or name [5],Azure region number or name [1]') 'Use application and region selection with displayed defaults.'
         Assert ($script:PreflightInputs.ApplicationId -ceq $script:AppId -and $script:PreflightInputs.Location -ceq 'westus2') 'Forward selected values to the existing preflight and deployment inputs.'
         Assert ($script:PreflightInputs.TenantRegionScope -ceq 'NA' -and $script:DiscoveryCalls.Count -eq 1) 'Discover and preserve tenant scope before selecting a location.'
         Assert ($script:PreflightInputs.AzureSelectionAuthenticated) 'Pass the shared CLI authentication state.'

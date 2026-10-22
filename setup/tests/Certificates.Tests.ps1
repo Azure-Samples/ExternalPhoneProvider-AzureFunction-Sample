@@ -318,7 +318,14 @@ try {
             Assert-Throws { Get-EppCertificatePlan @planArgs -CertificateAction Reuse -EncryptionKeyId $keyId -NonInteractive } '\-KeyVaultCertificateId is required'
             $script:Answers.Enqueue('')
             $script:Calls.Clear()
-            Assert ($null -eq (Get-EppCertificatePlan @planArgs)) 'Enter must cancel without choosing a certificate.'
+            $beforeWrites = $script:GraphWrites
+            $defaultPlan = Get-EppCertificatePlan @planArgs
+            Assert ($defaultPlan.Action -ceq 'Replace' -and $defaultPlan.RemoveKeyIds.Count -eq 1 -and
+                $defaultPlan.RemoveKeyIds[0] -ceq $keyId) 'Enter must plan cleanup and a new encryption certificate, preserving non-encryption credentials.'
+            Assert ($script:Prompts[-1] -ceq 'Encryption certificate action number or name [2]') 'Display replacement as the certificate default.'
+            Assert ($script:Calls.Count -eq 0 -and $script:GraphWrites -eq $beforeWrites) 'Accepting the replacement default must not change Azure or Graph before final approval.'
+            $script:Answers.Enqueue('0')
+            Assert ($null -eq (Get-EppCertificatePlan @planArgs)) 'An explicit cancellation must stop certificate selection.'
             Assert ($script:Calls.Count -eq 0) 'Cancelling the decision must not contact Key Vault.'
             $script:Answers.Enqueue('Reuse'); $script:Answers.Enqueue($certificateId)
             $singlePlan = Get-EppCertificatePlan @planArgs
@@ -326,7 +333,11 @@ try {
             Assert ($script:Answers.Count -eq 0) 'Single-certificate reuse should only ask for the action and location.'
 
             $script:Application.KeyCredentials = @($first, (New-TestCredential $other $secondId), (New-TestCredential $certificate $thirdId), $signing)
-            $script:Answers.Enqueue('Reuse'); $script:Answers.Enqueue($keyId); $script:Answers.Enqueue($certificateId)
+            $script:Answers.Enqueue('  ')
+            $defaultPlan = Get-EppCertificatePlan @planArgs
+            Assert ($defaultPlan.Action -ceq 'Replace' -and $defaultPlan.RemoveKeyIds.Count -eq 3 -and
+                $defaultPlan.RemoveKeyIds -notcontains $signing.KeyId) 'The replacement default must plan removal of all encryption credentials and no signing credentials.'
+            $script:Answers.Enqueue('Reuse'); $script:Answers.Enqueue(''); $script:Answers.Enqueue($certificateId)
             $multiplePlan = Get-EppCertificatePlan @planArgs
             Assert ($multiplePlan.RemoveKeyIds.Count -eq 2 -and $multiplePlan.RemoveKeyIds -contains $secondId -and
                 $multiplePlan.RemoveKeyIds -contains $thirdId) 'Keep the selected key ID even when another entry has the same thumbprint.'
@@ -595,9 +606,12 @@ try {
             }
             Set-TestBundle $certificate
             $script:Application.KeyCredentials = @($first, $signing)
-            $script:Answers.Enqueue(''); $script:Calls.Clear()
+            $script:Answers.Enqueue('0'); $script:Calls.Clear()
             Invoke-EppSetup @setupInputs
             Assert ($script:Calls.Count -eq 0 -and $null -eq $context.CertificatePlan) 'Cancelling certificate onboarding must stop before package preparation or deployment.'
+            $script:Answers.Enqueue('')
+            Assert-Throws { Invoke-EppSetup @setupInputs } '^package-boundary$'
+            Assert ($context.CertificatePlan.Action -ceq 'Replace' -and $script:Calls.Count -eq 0) 'The setup entry point must stage the replacement default without making changes.'
             Assert-Throws { Invoke-EppSetup @setupInputs -NonInteractive -ApproveDeployment } '\-CertificateAction is required'
             Assert-Throws { Invoke-EppSetup @setupInputs @reuseArgs -NonInteractive } '^package-boundary$'
             Assert ($context.CertificatePlan.Action -ceq 'Reuse' -and $context.CertificatePlan.KeyId -ceq $keyId) 'The entry point must forward the explicit reuse inputs to preflight.'
