@@ -32,10 +32,11 @@ try {
         }
         $script:Answers = [Collections.Generic.Queue[string]]::new()
         $script:Calls = [Collections.Generic.List[string]]::new()
+        $script:Prompts = [Collections.Generic.List[string]]::new()
         $script:Messages = [Collections.Generic.List[string]]::new()
         $script:Warnings = [Collections.Generic.List[string]]::new()
         function script:Reset-TestState([string[]] $Answers = @()) {
-            $script:Answers.Clear(); $script:Calls.Clear(); $script:Messages.Clear(); $script:Warnings.Clear()
+            $script:Answers.Clear(); $script:Calls.Clear(); $script:Prompts.Clear(); $script:Messages.Clear(); $script:Warnings.Clear()
             foreach ($answer in $Answers) { $script:Answers.Enqueue($answer) }
             $script:Approved = $false; $script:EmptyApplications = $false; $script:ChangedOperator = $false
             $script:CreationFailure = ''; $script:PackageFailure = ''; $script:GroupExists = $false
@@ -56,6 +57,7 @@ try {
         }
         function script:Read-Host {
             param($Prompt)
+            $script:Prompts.Add($Prompt)
             Assert ($script:Answers.Count -gt 0) "Unexpected prompt: $Prompt"
             $answer = $script:Answers.Dequeue()
             if ($Prompt -like 'Proceed with deployment?*') {
@@ -76,9 +78,9 @@ try {
             return @{ Id = $id; Account = 'operator@contoso.test' }
         }
         function script:Get-EppTenantRegionScope { param($TenantId); return 'NA' }
-        function script:New-TestApplication([string] $ClientId) {
+        function script:New-TestApplication([string] $ClientId, [string] $DisplayName = $script:ApplicationName) {
             return @{
-                id = $script:ObjectId; appId = $ClientId; displayName = $script:ApplicationName
+                id = $script:ObjectId; appId = $ClientId; displayName = $DisplayName
                 signInAudience = 'AzureADMyOrg'; api = @{ requestedAccessTokenVersion = $null }
                 appRoles = @(); identifierUris = @(); keyCredentials = @(); tokenEncryptionKeyId = $null
             }
@@ -91,10 +93,10 @@ try {
                 return @{ value = @(if (-not $script:EmptyApplications) { New-TestApplication $script:ExistingAppId }) }
             }
             Assert ($Method -ceq 'POST' -and $script:Approved) 'Application creation requires final deployment approval.'
-            Assert ($Body.displayName -ceq $script:ApplicationName -and $Body.signInAudience -ceq 'AzureADMyOrg') 'Create the exact approved application.'
+            Assert ($Body.displayName -ceq $script:PlanInputs.NewApplicationDisplayName -and $Body.signInAudience -ceq 'AzureADMyOrg') 'Create the exact approved application.'
             $script:Calls.Add('create'); $script:Creates++
             if ($script:CreationFailure) { throw $script:CreationFailure }
-            return New-TestApplication $script:AppId
+            return New-TestApplication -ClientId $script:AppId -DisplayName $Body.displayName
         }
         function script:Get-EppApplication {
             param($Inputs, $ClientId, $ObjectId)
@@ -255,10 +257,18 @@ try {
             Assert (($script:Messages -join "`n").Contains("Create '$script:ApplicationName' after approval")) 'Show the exact application creation action in the final plan.'
             Assert ($script:Answers.Count -eq 0 -and -not (Test-Path -LiteralPath $Directory)) 'Do not write deployment output before approval.'
         }
-        foreach ($answers in @(@(''), @('create', ''), @('create', $script:ApplicationName, ''))) {
-            Reset-TestState $answers
-            Assert ($null -eq (Invoke-EppSetup @setup)) 'Allow cancellation at application, name, and provider selection.'
-            Assert ($null -eq $script:PlanInputs -and $script:Creates -eq 0) 'Early cancellation must stop before plan approval or creation.'
+        Reset-TestState @('0')
+        Assert ($null -eq (Invoke-EppSetup @setup)) 'Allow cancellation in the application picker.'
+        Assert ($null -eq $script:PlanInputs -and $script:Creates -eq 0) 'Early cancellation must stop before plan approval or creation.'
+        foreach ($blank in @('', '  ')) {
+            Reset-TestState @($blank, $blank, '', '  ', 'soprano', 'No')
+            $null = Invoke-EppSetup @setup
+            Assert ($script:Prompts -contains 'Application number or name [5]') 'Enter at the application picker must choose the displayed create-new default.'
+            Assert ($script:PlanInputs.NewApplicationDisplayName -ceq 'EPP Application') 'Blank application names must accept the displayed default instead of canceling.'
+            Assert ($script:Prompts -contains 'New application display name [EPP Application]') 'Display the application-name default without a cancellation hint.'
+            Assert (@($script:Prompts | Where-Object { $_ -ceq 'Provider name' }).Count -eq 3 -and
+                $script:Warnings.Count -eq 2) 'Blank provider input must prompt again until a provider is selected.'
+            Assert ($script:Answers.Count -eq 0 -and $script:Creates -eq 0) 'Continue to the final approval without creating an app early.'
         }
         Reset-TestState @('create', ('x' * 257), "bad`nname", $script:ApplicationName, '1', 'TELESIGN', 'No')
         $null = Invoke-EppSetup @setup
@@ -338,7 +348,10 @@ try {
         Assert (Test-Path -LiteralPath (Join-Path $setup.OutputDirectory "application-$script:AppId.json")) 'Keep the new client ID available if resolved resource names conflict.'
 
         foreach ($provider in @('soprano', 'telesign')) {
-            Reset-TestState @('create', $script:ApplicationName, $provider, 'Yes')
+            $nameAnswer = if ($provider -eq 'soprano') { '' } else { $script:ApplicationName }
+            $expectedName = if ($provider -eq 'soprano') { 'EPP Application' } else { $script:ApplicationName }
+            $applicationAnswer = if ($provider -eq 'soprano') { '' } else { 'create' }
+            Reset-TestState @($applicationAnswer, $nameAnswer, $provider, 'Yes')
             $setup.OutputDirectory = Join-Path $Directory "complete-$provider"
             $script:StopAtInitialization = $false
             $result = Invoke-EppSetup @setup -PassThru
@@ -348,6 +361,7 @@ try {
             Assert ($summaries.Count -eq 1) 'Persist a separate deployment success summary.'
             $summary = Read-EppJson $summaries[0].FullName
             $record = Read-EppJson (Join-Path $setup.OutputDirectory "application-$script:AppId.json")
+            Assert ($record.displayName -ceq $expectedName) 'Create and persist either the accepted default name or the supplied custom name.'
             Assert ($summary.applicationId -ceq $record.applicationId -and $summary.provider -ceq $provider -and
                 $summary.packageSha256 -ceq ('b' * 64)) 'Record the deployed client ID, provider, and final package hash.'
             foreach ($key in $record.resources.Keys) {

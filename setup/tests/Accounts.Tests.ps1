@@ -198,13 +198,36 @@ exit $ExitCode
         Reset-TestState @($a, $b, $c) @('1', '2')
         $selected = Select-EppAzureContext
         Assert ($selected.TenantId -ceq $tenantA -and $selected.SubscriptionId -ceq $subB) 'Select a tenant, then its nondefault subscription.'
-        Assert (($script:Prompts -join ',') -ceq 'Azure tenant number or name,Azure subscription number or name') 'Ask for tenant and subscription before other settings.'
+        Assert (($script:Prompts -join ',') -ceq 'Azure tenant number or name [1],Azure subscription number or name [1]') 'Show the defaults while asking for tenant and subscription before other settings.'
         $messages = $script:Messages -join "`n"
         foreach ($text in @("Contoso [$tenantA]", $subA, $subB, 'current CLI default', 'operator@contoso.test')) {
             Assert ($messages.Contains($text)) "Selection must show '$text'."
         }
         Assert (-not $messages.Contains($subC)) 'Do not offer subscriptions from another tenant.'
         Assert ($script:Calls.Count -eq 1) 'Selecting a cached account must not refresh, sign in, or change the CLI default.'
+
+        foreach ($blank in @('', '  ')) {
+            $current = @{} + $c; $current.isDefault = $true
+            $notCurrent = @{} + $a; $notCurrent.isDefault = $false
+            Reset-TestState @($notCurrent, $b, $current) @($blank, $blank)
+            $selected = Select-EppAzureContext
+            Assert ($selected.TenantId -ceq $tenantB -and $selected.SubscriptionId -ceq $subC) 'Enter must prefer the current CLI context, not the first alphabetic tenant.'
+            Assert ($script:Prompts[0] -ceq 'Azure tenant number or name [2]' -and $script:Calls.Count -eq 1) 'Display the actual default option without changing the CLI account.'
+            Reset-TestState @($notCurrent, $b, $current) @($blank)
+            $selected = Select-EppAzureContext -TenantId $tenantA
+            Assert ($selected.TenantId -ceq $tenantA -and $selected.SubscriptionId -ceq $subA) 'Within an explicit tenant, default to its first eligible subscription rather than another tenant.'
+            Reset-TestState @($notCurrent, $b, $c) @($blank, $blank)
+            $selected = Select-EppAzureContext
+            Assert ($selected.TenantId -ceq $tenantA -and $selected.SubscriptionId -ceq $subA) 'With no current CLI default, use the first listed eligible tenant and subscription.'
+        }
+        Reset-TestState @($a, $b) @('', '')
+        $selected = Select-EppAzureContext
+        Assert ($selected.SubscriptionId -ceq $subA) 'Enter must accept the current default subscription.'
+        Assert (-not ($script:Messages -join "`n").Contains('also Enter')) 'Cancel must be an explicit choice, not the blank-input default.'
+        $current = @{} + $b; $current.isDefault = $true
+        Reset-TestState @($notCurrent, $current) @('', '')
+        $selected = Select-EppAzureContext
+        Assert ($selected.SubscriptionId -ceq $subB -and $script:Prompts[1] -ceq 'Azure subscription number or name [2]') 'Prefer a nonfirst current subscription and display its correct default number.'
 
         Reset-TestState @($a) @('1', '1')
         $selected = Select-EppAzureContext
@@ -255,10 +278,10 @@ exit $ExitCode
         $selected = Select-EppAzureContext -TenantId $tenantA
         Assert ($selected.SubscriptionId -ceq $subB -and $script:Prompts.Count -eq 2) 'Refresh the subscription menu while preserving an explicit tenant.'
 
-        Reset-TestState @() @('signin', $tenantA, $subA)
+        Reset-TestState @() @('', '', '')
         $script:LoginJson = ConvertTo-Json -InputObject @($a) -Depth 8
         $selected = Select-EppAzureContext
-        Assert ($selected.SubscriptionId -ceq $subA -and $script:Calls.Count -eq 3) 'An empty cache can be populated through an explicit sign-in choice.'
+        Assert ($selected.SubscriptionId -ceq $subA -and $script:Calls.Count -eq 3) 'With no eligible accounts, Enter accepts the displayed sign-in action before selecting the populated defaults.'
         Assert ($script:Calls[1] -ceq 'login --use-device-code --output none') 'Do not guess a tenant before the user can select one.'
         Reset-TestState @($a) @('signin', $subC)
         $script:LoginJson = ConvertTo-Json -InputObject @($a, $c) -Depth 8
@@ -273,7 +296,7 @@ exit $ExitCode
             Assert-Throws { Select-EppAzureContext } 'sign-in rejected|refresh denied'
             Assert ($script:Answers.Count -eq 0) 'A failed account operation must surface its error, not silently choose another context.'
         }
-        foreach ($cancel in @('', '0', 'Cancel')) {
+        foreach ($cancel in @('0', 'Cancel')) {
             Reset-TestState @($a) @($cancel)
             Assert ($null -eq (Select-EppAzureContext)) 'Tenant cancellation must return no selection.'
             Reset-TestState @($a) @($tenantA, $cancel)
@@ -317,10 +340,12 @@ exit $ExitCode
         $setup.ApplicationId = $applicationId
         Reset-TestState @($a, $b) @($tenantA, $subB)
         Assert-Throws { Invoke-EppSetup @setup -ForceAuthentication } '^preflight-boundary$'
-        Assert (($script:Prompts -join ',') -ceq 'Azure tenant number or name,Azure subscription number or name') 'Account selection must run while explicit application and region inputs skip their pickers.'
+        Assert ($script:Messages[0].Trim() -ceq 'External Phone Provider (EPP) setup') 'Spell out EPP before account selection introduces the acronym.'
+        Assert ($script:Messages[1] -ceq 'Connect Microsoft Entra ID to your phone provider for SMS and voice one-time passwords.') 'Explain the purpose of setup in customer-facing language.'
+        Assert (($script:Prompts -join ',') -ceq 'Azure tenant number or name [1],Azure subscription number or name [1]') 'Account selection must run while explicit application and region inputs skip their pickers.'
         Assert ($script:ContextInputs.TenantId -ceq $tenantA -and $script:ContextInputs.SubscriptionId -ceq $subB -and
             $script:ContextInputs.ApplicationId -ceq $applicationId -and $script:ForceAuthentication) 'Forward the selected IDs and authentication choice to existing preflight.'
-        Reset-TestState @($a) @('')
+        Reset-TestState @($a) @('0')
         $result = Invoke-EppSetup @setup
         Assert ($null -eq $result -and $script:ContextCalls -eq 0 -and $script:Prompts.Count -eq 1) 'Cancellation must stop before remaining inputs, Graph sign-in, or deployment.'
         Reset-TestState @($a)

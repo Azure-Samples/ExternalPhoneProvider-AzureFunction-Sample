@@ -2,8 +2,8 @@
 
 [Documentation](../../docs/README.md) | [First deployment](../../docs/GETTING-STARTED.md) | [Troubleshooting](Troubleshooting.md)
 
-This reference covers setup choices, reruns, and maintenance. For a first deployment, follow the
-linked [five-step deployment guide](../../docs/GETTING-STARTED.md); it keeps preparation,
+**EPP** stands for **External Phone Provider**. This reference covers setup choices, reruns, and
+maintenance. For a first deployment, follow the linked [five-step deployment guide](../../docs/GETTING-STARTED.md); it keeps preparation,
 deployment, provider validation, policy activation, and handoff in order.
 
 | Task | Section |
@@ -89,23 +89,26 @@ Both plans use the same [request-time credential acquisition](../../TECHNICAL.md
 API-key secrets are read on each live request, and Azure Identity manages its own token cache.
 Setup does not configure custom credential caches or refreshers.
 
-Use `-ServicePlan FC1` or `-ServicePlan EP1` to skip the prompt. Unattended setup requires it.
+Press Enter to accept **FC1**, or use `-ServicePlan FC1` or `-ServicePlan EP1` to skip the prompt.
+Unattended setup still requires an explicit service plan.
 
 **Use a different resource prefix to change plans.** In-place FC1/EP1 migration is not supported.
 Preflight rejects a mismatch with the existing resource-group tag or actual hosting-plan SKU,
 including older EP1 deployments without the new tag. Existing EP1 deployments can be rerun with
 `-ServicePlan EP1`.
 For an active endpoint, use a new Step 1 app or coordinate key continuity. Reusing an app still
-requires an explicit certificate choice; replacement affects every endpoint sharing the app.
+requires reviewing the certificate action; the interactive default is replacement, which affects
+every endpoint sharing the app. Select **Reuse** explicitly when keeping the current certificate.
 
 <a id="step-1---manually-create-the-application"></a>
 ## Step 1 - choose an application registration
 
 For the first deployment, use a nonproduction tenant and subscription.
 
-**Create during guided setup:** choose **Create a new application** in the application picker,
-enter a display name (1-256 characters), and choose a provider by name from the alphabetized
-list (**Soprano, Telesign**). An explicit `-Provider` skips that provider prompt.
+**Create during guided setup:** press Enter to accept **Create a new application** in the application picker,
+press Enter to accept **EPP Application** or enter a display name (1-256 characters), and choose
+a provider by name from the alphabetized list (**Soprano, Telesign**). Blank provider-name input
+prompts again; there is no default provider. An explicit `-Provider` skips that provider prompt.
 The new registration is only planned at this point: setup creates it after final deployment
 approval, not when you choose the menu option. Canceling before approval creates nothing.
 An existing app with the same display name is never adopted automatically.
@@ -243,34 +246,47 @@ Force explicit account selection when testing on a shared or multi-account compu
 .\Setup-Epp.ps1 -ForceAuthentication
 ```
 
+Selection menus mark the default and show its number in brackets. **Enter accepts that default**;
+choose **0** or **Cancel** where offered to stop instead. Required text inputs without a known
+default, such as a versioned certificate URL, prompt again on blank input. Provider selection
+never has a default. Installation and final deployment confirmations still default to **No**.
+
 The flow is:
 
 1. **Choose the customer Azure context.** Setup lists cached enabled Azure CLI user subscriptions,
    then asks for the tenant and subscription. Refresh or start device-code sign-in when the
    expected account is missing. Explicit `-TenantId` and `-SubscriptionId` values are preserved.
+   Enter prefers the current CLI tenant/subscription when eligible, otherwise the first listed
+   tenant/subscription within the chosen context. With no eligible entries, the displayed default
+   is sign-in; a missing explicit subscription instead defaults to refreshing the list.
 2. **Choose the dedicated app registration.** The application picker shows
    organizational app names and client IDs, supports bounded name-prefix search and manual client-ID
-   entry, and offers **Create a new application**. That option asks for a display name and stages
-   creation for final deployment approval. The picker never substitutes an object ID.
+   entry, and defaults to **Create a new application** on Enter, including at the manual client-ID
+   prompt. That option asks for a display name, defaulting
+   to **EPP Application** on Enter, and stages creation for final deployment approval.
+   The picker never substitutes an object ID.
    A supplied client ID skips this selector.
 3. **Detect tenant scope and choose the Azure region.** Setup selects EU/Global provider routing
    from the tenant metadata, then uses Azure's current Recommended regions for a shortlist.
    Only EU tenants receive the [EU Data Boundary filter](#tenant-scope-and-azure-region-recommendations).
    All-region and manual-entry options remain available. `-Location` skips the picker, but EU
    tenants still receive a boundary check and a warning if appropriate.
+   Enter selects the first displayed region, respecting the EU shortlist. An empty shortlist
+   defaults to showing all regions, not to selecting a region outside the shortlist automatically.
 4. **Choose a provider by name.** JavaScript is used unless `-Language csharp` or
    `-Language python` was supplied; there is no language prompt.
    When `-Provider` is omitted, setup reads the application's allowed-tenants configuration:
    no supported provider prompts for a name, one asks for confirmation, and several require a
    name. For a new application, it shows all supported provider names in alphabetical order,
    without reading a nonexistent registration or selecting a default.
+   Blank provider-name input prompts again until a provider is selected.
    Existing allowed provider tenants are preserved; provider options are never numbered.
    The selected [profile](#availability) supplies both channel URLs and auth/timing values.
    The launcher has no endpoint/credential overrides or `PackageUrl`/`PackageSha256` inputs.
    It uses `packages/catalog.json` and the latest stable CI release, or your
    `-PackageReleaseTag epp-packages-<run>-<attempt>`. Malformed/disabled profiles fail before resource creation.
 5. **Service plan selection:** choose **Flex Consumption FC1** (free usage grant, zero always-ready
-   instances) or **Premium EP1** (warm instance).
+   instances, the Enter default) or **Premium EP1** (warm instance).
    Supply `-ServicePlan FC1` or `-ServicePlan EP1` to reuse a known selection.
 6. **Accept the default resource prefix `epp`, or enter your own**, such as `contoso`.
    All resources created by the script start with
@@ -283,9 +299,10 @@ The flow is:
    separate confirmation. Graph operations reuse the selected Azure CLI user session; no Graph
    SDK installation or separate sign-in occurs.
 8. **Choose encryption certificate handling.** With no registered encryption certificate, use the
-   normal creation flow. Otherwise choose reuse of one certificate and supply its versioned Key
-   Vault location, or replace all encryption credentials with one new certificate. Reuse of one
-   among several also removes the others after approval. Enter cancels the certificate decision.
+   normal creation flow. Otherwise Enter defaults to **Replace**: remove the registered encryption
+   credentials and create one new certificate after final approval. To keep a certificate instead,
+   select **Reuse** and supply its versioned Key Vault location. Reuse of one among several also
+   removes the others after approval. Use **0** or **Cancel** to stop the certificate decision.
 9. **Review the complete plan**, including resource names, tenant/subscription, language, service plan,
    automatic package verification/build, provider
    settings, scoped roles, the exact encryption key IDs to keep/remove, certificate location or
@@ -316,12 +333,19 @@ certificates are not encryption candidates, and unsupported encryption credentia
 | Existing encryption credentials | Choice | Result after successful deployment |
 |---|---|---|
 | None | Creation is automatic; optional `-CertificateAction Create`. | Register one certificate from the setup vault. |
-| One | `Reuse` and provide its Key Vault certificate version, or `Replace`. | Keep the existing key ID, or replace it with one new credential. |
-| Several | `Reuse`, select the key ID to keep, and provide its certificate version; or `Replace`. | Remove only the other encryption entries, or replace all encryption entries with one new credential. |
+| One | Enter accepts `Replace`; select `Reuse` explicitly to provide its Key Vault certificate version. | Replace the existing credential with one new credential, or keep the existing key ID when reusing. |
+| Several | Enter accepts `Replace`; select `Reuse` explicitly to choose a key ID and provide its certificate version. | Replace all encryption entries with one new credential, or remove only the other encryption entries when reusing. |
 
-Interactive selection never defaults to the newest certificate or to cleanup. Enter/Cancel
-stops before deployment; invalid locations can be corrected or followed by another choice.
-Selecting an action does not apply it: the complete deployment approval lists the exact removals.
+**Interactive Enter defaults to cleanup and replacement, not reuse.** This affects every endpoint
+sharing the registration; coordinate maintenance for active applications. If you explicitly choose
+Reuse and several credentials exist, the key picker defaults to the first displayed key, not the
+newest certificate. You must still provide its exact versioned Key Vault location.
+Use **0** or **Cancel** at a menu, or type **Cancel** at a text prompt, to stop.
+Invalid locations can be corrected or followed by another choice; the action menu again defaults
+to Replace. Selecting an action does not apply it: the complete deployment approval lists the exact
+removals, and **Enter at final approval still means No**. Cleanup does not delete Key Vault objects
+or signing credentials. Unattended runs with existing encryption credentials still require an
+explicit `-CertificateAction`.
 
 For reuse, open **Azure portal > Key Vault > Certificates > certificate > version** and copy
 **Certificate Identifier**, of the form
@@ -587,7 +611,7 @@ Reuse leaves an external vault's issuance policy unchanged; automatic issuance t
 requires manual endpoint synchronization (`certificateRenewal: manual`). Account for every
 endpoint sharing the key and cached/in-flight requests; decryption uses one in-process private key.
 
-**Legacy deployments require an explicit decision.** A compatible matching Key Vault certificate
+**Review the replacement default for legacy deployments.** A compatible matching Key Vault certificate
 can be reused even if it has an older/custom subject. A standalone PEM secret without a Key Vault
 certificate is not a reuse input: arrange an approved secure certificate import with a PEM backing
 secret, or choose replacement. Setup never exports the private key locally. Do not manually delete
