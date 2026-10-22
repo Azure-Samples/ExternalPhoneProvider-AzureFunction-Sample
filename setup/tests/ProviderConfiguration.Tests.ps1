@@ -27,6 +27,12 @@ try {
         $telesign = Get-EppProviderDefinition -AssetDirectory $script:AssetDirectory -Provider Telesign
         $soprano = Get-EppProviderDefinition -AssetDirectory $script:AssetDirectory -Provider Soprano
         $unknownTenant = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
+        $unconfiguredRestrictions = @(
+            $null
+            @{ kind = 'unrestricted' }
+            @{ '@odata.type' = '#microsoft.graph.unrestrictedAudience'; kind = 'unrestricted' }
+            @{ '@odata.type' = '#microsoft.graph.unrestrictedAudience' }
+        )
         $script:Answers = [Collections.Generic.Queue[string]]::new()
         $script:Prompts = [Collections.Generic.List[string]]::new()
         $script:Messages = [Collections.Generic.List[string]]::new()
@@ -101,12 +107,20 @@ try {
             $script:Sleeps++
         }
 
-        Reset-TestState @('Telesign')
-        $selected = Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory
-        Assert ($selected -ceq 'telesign' -and $script:Prompts[0] -ceq 'Provider name (Enter cancels)') 'No configuration must prompt for a provider name.'
-        Assert (($script:Messages -join "`n").Contains('configuration is included in the deployment approval')) 'Do not configure an existing app before deployment approval.'
-        Assert ($script:Messages -contains 'Provider names: Soprano, Telesign') 'List provider names alphabetically, independently of catalog order.'
-        Assert ($script:Patches.Count -eq 0) 'Provider resolution is read-only.'
+        foreach ($restriction in $unconfiguredRestrictions) {
+            Assert ($null -eq (Get-EppProviderRestrictionState -Restriction $restriction)) 'Null and unrestricted audiences must normalize to the same unconfigured state.'
+            Assert (-not (Test-EppProviderTenantRestriction -Restriction $restriction -ProviderTenantId $telesign.TenantId)) 'An unrestricted audience must never satisfy provider-restriction readback.'
+            foreach ($audience in @('AzureADMyOrg', 'AzureADMultipleOrgs')) {
+                Reset-TestState @('Telesign')
+                $script:Restriction = $restriction
+                $script:Application.SignInAudience = $audience
+                $selected = Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory
+                Assert ($selected -ceq 'telesign' -and $script:Prompts[0] -ceq 'Provider name (Enter cancels)') 'No configuration must prompt for a provider name.'
+                Assert (($script:Messages -join "`n").Contains('configuration is included in the deployment approval')) 'Do not configure an existing app before deployment approval.'
+                Assert ($script:Messages -contains 'Provider names: Soprano, Telesign') 'List provider names alphabetically, independently of catalog order.'
+                Assert ($script:Patches.Count -eq 0) 'Provider resolution is read-only.'
+            }
+        }
         Reset-TestState @('1', 'soprano')
         Assert ((Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory) -ceq 'soprano') 'Reject a provider number, then accept a name.'
         Assert ($script:Warnings.Count -eq 1 -and -not (($script:Messages -join "`n") -match '\[\d+\]')) 'Do not number or rank provider choices.'
@@ -139,8 +153,31 @@ try {
         Assert (Test-EppProviderTenantRestriction -Restriction $both -ProviderTenantId $telesign.TenantId) 'A configured provider can coexist with other allowed providers.'
         Assert (Test-EppProviderTenantRestriction -Restriction $both -ProviderTenantId $telesign.TenantId -ExpectedAllowedTenantIds @($telesign.TenantId, $soprano.TenantId)) 'Compare allowed tenants independently of ordering.'
         Assert (-not (Test-EppProviderTenantRestriction -Restriction $both -ProviderTenantId $telesign.TenantId -ExpectedAllowedTenantIds @($telesign.TenantId))) 'Readback must match the complete approved allowlist.'
+        $typedAllowlist = @{
+            '@odata.type' = '#microsoft.graph.allowedTenantsAudience'
+            isHomeTenantAllowed = $true; allowedTenantIds = @($telesign.TenantId)
+        }
+        Assert (Test-EppProviderTenantRestriction -Restriction $typedAllowlist -ProviderTenantId $telesign.TenantId) 'Recognize the documented type when the optional kind is omitted.'
         Assert-Throws { Get-EppProviderRestrictionState (New-TestRestriction @($telesign.TenantId, $telesign.TenantId)) } 'duplicate allowed'
-        Assert-Throws { Get-EppProviderRestrictionState @{ kind = 'unexpected'; isHomeTenantAllowed = $true; allowedTenantIds = @() } } 'unsupported provider-tenant restriction'
+        foreach ($invalid in @(
+            'unrestricted'
+            @{}
+            @{ kind = 'unknownFutureValue' }
+            @{ kind = 'Unrestricted' }
+            @{ kind = @('unrestricted') }
+            @{ '@odata.type' = @('#microsoft.graph.unrestrictedAudience') }
+            @{ '@odata.type' = '#microsoft.graph.unknownAudience' }
+            @{ '@odata.type' = '#microsoft.graph.unknownAudience'; kind = 'unrestricted' }
+            @{ '@odata.type' = '#microsoft.graph.allowedTenantsAudience'; kind = 'unrestricted' }
+            @{ '@odata.type' = '#microsoft.graph.unrestrictedAudience'; kind = 'allowedTenants'; isHomeTenantAllowed = $true; allowedTenantIds = @($telesign.TenantId) }
+            @{ kind = 'unrestricted'; allowedTenantIds = @($telesign.TenantId) }
+            @{ kind = 'unrestricted'; isHomeTenantAllowed = $false }
+            @{ kind = 'unexpected'; isHomeTenantAllowed = $true; allowedTenantIds = @() }
+            @{ kind = 'allowedTenants'; isHomeTenantAllowed = 'true'; allowedTenantIds = @($telesign.TenantId) }
+            @{ kind = 'allowedTenants'; isHomeTenantAllowed = $true; allowedTenantIds = $telesign.TenantId }
+        )) {
+            Assert-Throws { Get-EppProviderRestrictionState -Restriction $invalid } 'unsupported provider-tenant restriction'
+        }
         Assert-Throws { Get-EppProviderRestrictionState (New-TestRestriction @('invalid')) } 'nonempty GUID'
 
         function script:Get-Command { param($Name, $ErrorAction); return @{ Name = $Name } }
@@ -174,6 +211,35 @@ try {
             $expected = @((@($existing) + @($telesign.TenantId)) | Sort-Object -Unique)
             Assert (($inputs.ProviderAllowedTenantIds -join ',') -ceq ($expected -join ',')) 'Preflight must preserve existing known and unknown allowed tenants while adding the selected provider.'
         }
+        foreach ($restriction in $unconfiguredRestrictions) {
+            Reset-TestState
+            $script:Restriction = $restriction
+            $inputs = New-TestInputs
+            Assert-Throws { Connect-EppContext -Inputs $inputs -Names @{ resourceGroup = 'unit' } -NonInteractive } '^provider-preflight-boundary$'
+            Assert ($inputs.ProviderAllowedTenantIds.Count -eq 1 -and $inputs.ProviderAllowedTenantIds[0] -ceq $telesign.TenantId) 'Preflight must plan the selected provider allowlist for an unrestricted application.'
+            Assert ($script:Patches.Count -eq 0) 'Preflight must not change an unrestricted application.'
+            $context = @{
+                Application = @{ Id = $script:ObjectId; SignInAudience = $script:Application.SignInAudience }
+                CertificatePlan = @{ Snapshot = Get-EppKeyCredentialSnapshot @() }
+                ProviderRestrictionState = $null
+            }
+            foreach ($newApplication in @($false, $true)) {
+                $script:Patches.Clear()
+                if ($newApplication) { $inputs.NewApplicationDisplayName = 'New EPP application' }
+                Assert-Throws { Initialize-EppGraphAccess -Inputs $inputs -Context $context } '^provider-configuration-finished$'
+                Assert ($script:Patches.Count -eq 1) 'Configure both existing and newly created unrestricted applications after approval.'
+                $patch = $script:Patches[0]
+                Assert ($patch.signInAudience -ceq 'AzureADMultipleOrgs' -and
+                    $patch.signInAudienceRestrictions.kind -ceq 'allowedTenants' -and
+                    $patch.signInAudienceRestrictions.isHomeTenantAllowed -eq $true -and
+                    $patch.signInAudienceRestrictions.allowedTenantIds.Count -eq 1 -and
+                    $patch.signInAudienceRestrictions.allowedTenantIds[0] -ceq $telesign.TenantId) 'Replace the unrestricted audience with only the approved provider tenant plus the home tenant.'
+            }
+            $script:Patches.Clear(); $script:EnsureCalls = 0
+            $script:Restriction = New-TestRestriction @($unknownTenant)
+            Assert-Throws { Initialize-EppGraphAccess -Inputs $inputs -Context $context } 'provider configuration changed'
+            Assert ($script:Patches.Count -eq 0 -and $script:EnsureCalls -eq 0) 'Do not overwrite an allowlist added after approval, including on a newly created app.'
+        }
         foreach ($alreadyConfigured in @($false, $true)) {
             Reset-TestState
             $script:Application.SignInAudience = 'AzureADMultipleOrgs'
@@ -193,9 +259,11 @@ try {
                 Assert (($allowed -join ',') -ceq (@($inputs.ProviderAllowedTenantIds | Sort-Object) -join ',')) 'Keep the existing provider when adding another.'
             }
             $script:Patches.Clear(); $script:EnsureCalls = 0
-            $script:Restriction = New-TestRestriction @($soprano.TenantId, $unknownTenant)
-            Assert-Throws { Initialize-EppGraphAccess -Inputs $inputs -Context $context } 'provider configuration changed'
-            Assert ($script:Patches.Count -eq 0 -and $script:EnsureCalls -eq 0) 'Reject a concurrent provider-configuration edit before any application or service-principal mutation.'
+            foreach ($changedRestriction in (@((New-TestRestriction @($soprano.TenantId, $unknownTenant))) + $unconfiguredRestrictions)) {
+                $script:Restriction = $changedRestriction
+                Assert-Throws { Initialize-EppGraphAccess -Inputs $inputs -Context $context } 'provider configuration changed'
+                Assert ($script:Patches.Count -eq 0 -and $script:EnsureCalls -eq 0) 'Reject a changed or removed allowlist before any application or service-principal mutation.'
+            }
             $script:Application.SignInAudience = 'AzureADMyOrg'
             Assert-Throws { Initialize-EppGraphAccess -Inputs $inputs -Context $context } 'changed after preflight'
             Assert ($script:Patches.Count -eq 0) 'Do not re-expose an app whose sign-in audience changed after review.'

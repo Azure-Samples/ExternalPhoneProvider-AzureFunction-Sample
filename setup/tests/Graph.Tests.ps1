@@ -219,6 +219,22 @@ try {
         Assert ($script:Calls.Count -eq 1) 'Surface creation failures without retrying a non-idempotent POST.'
 
         Reset-TestState
+        $script:Responses.Enqueue(@{
+            id = $script:ObjectId; signInAudience = 'AzureADMyOrg'
+            signInAudienceRestrictions = @{
+                '@odata.type' = '#microsoft.graph.unrestrictedAudience'
+                kind = 'unrestricted'
+            }
+        })
+        $restriction = Get-EppSignInAudienceRestrictions -Inputs $inputs -ApplicationObjectId $script:ObjectId
+        Assert ($script:Calls.Count -eq 1 -and $script:Calls[0].Method -ceq 'get' -and
+            $script:Calls[0].Url -ceq "https://graph.microsoft.com/beta/applications/$script:ObjectId" -and
+            $script:Calls[0].Query['$select'] -ceq 'id,signInAudience,signInAudienceRestrictions') 'Read the actual beta audience-restriction response for the selected application.'
+        Assert ($restriction -is [Collections.IDictionary] -and $restriction.kind -ceq 'unrestricted') 'Preserve the explicit unrestricted response through CLI JSON parsing.'
+        Assert ($null -eq (Get-EppProviderRestrictionState -Restriction $restriction)) 'Treat an unrestricted Graph response as unconfigured, not unsupported.'
+        foreach ($path in $script:Files) { Assert (-not (Test-Path -LiteralPath $path)) 'Remove temporary Graph query files.' }
+
+        Reset-TestState
         Set-EppProviderTenantRestriction -Inputs $inputs -ApplicationObjectId $script:ObjectId -ProviderTenantId $script:User
         Assert ($script:Calls[0].Method -ceq 'patch' -and $script:Calls[0].Url -like '*/beta/applications/*') 'Use beta only for the allowed-tenants preview.'
         $body = $script:Calls[0].Body
