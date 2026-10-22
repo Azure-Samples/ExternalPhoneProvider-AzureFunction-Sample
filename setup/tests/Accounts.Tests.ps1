@@ -293,6 +293,7 @@ exit $ExitCode
         $null = Connect-EppAzureAccount -Inputs @{ TenantId = $tenantA; SubscriptionId = $subA } -ForceAuthentication
         Assert ($script:Calls[0] -ceq "login --tenant $tenantA --use-device-code --output none") 'ForceAuthentication must still reauthenticate to the final selected tenant.'
 
+        function script:Get-EppTenantRegionScope { param($TenantId); return 'NA' }
         function script:Get-EppLanguage {
             param($AssetDirectory, $Language, $SourceRepository, $PackageReleaseTag, [switch] $NonInteractive)
             return @{

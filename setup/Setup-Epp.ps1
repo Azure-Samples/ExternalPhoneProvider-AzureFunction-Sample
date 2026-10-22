@@ -17,6 +17,14 @@
 .PARAMETER ServicePlan
     FC1 for Flex Consumption with a free usage grant, or EP1 for Premium with a warm instance.
     Prompts when omitted; required for unattended setup.
+.PARAMETER Language
+    JavaScript by default, without a prompt. Use csharp or python to select another language.
+    The legacy dotnet value remains supported for C#.
+.PARAMETER EndpointRegion
+    Optional eu/global provider route assertion. Setup detects the tenant replication scope
+    and rejects a conflicting value. Omit to use the detected route.
+.PARAMETER ResourcePrefix
+    Interactive resource-name prefix, defaulting to epp on Enter. Required for unattended setup.
 .PARAMETER InstallPrerequisites
     Install the Azure CLI Bicep component after explicit opt-in. The Graph SDK is not required.
 .PARAMETER ForceAuthentication
@@ -47,7 +55,7 @@ param(
     [string] $Provider,
     [string] $EndpointRegion,
     [string] $ResourcePrefix,
-    [string] $Language,
+    [string] $Language = 'javascript',
     [string] $ServicePlan,
     [ValidateSet('Create', 'Reuse', 'Replace')]
     [string] $CertificateAction,

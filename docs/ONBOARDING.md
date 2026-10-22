@@ -49,14 +49,16 @@ renewal.
 | Endpoint application client ID | Microsoft Entra admin center > App registrations > application > Overview | `-ApplicationId` |
 | Azure region | Available Linux FC1/EP1 region that meets quota and organization requirements | `-Location` |
 | Provider | Approved Security Store integration | `-Provider telesign` or `soprano` |
-| Provider route | Provider-confirmed Global or EU route | `-EndpointRegion global` or `eu` |
-| Runtime and plan | JavaScript, .NET, or Python with FC1 or EP1 | `-Language`, `-ServicePlan` |
-| Resource prefix | Unique 2-8 character lowercase label that starts with a letter | `-ResourcePrefix` |
+| Provider route | Detected from the tenant's replication scope; EU for EU tenants, Global otherwise | Optional `-EndpointRegion eu` or `global` must match the detected route |
+| Language and plan | JavaScript by default; C# or Python by parameter, with FC1 or EP1 | `-Language csharp` or `python`, `-ServicePlan` |
+| Resource prefix | Interactive default `epp`, or a unique 2-8 character lowercase label that starts with a letter | `-ResourcePrefix` (required unattended) |
 | Encryption certificate | Existing registered key or approved replacement | `-CertificateAction` and certificate options |
 | Output and source versions | Private output folder and reviewed source/release versions | Optional output and version options |
 
 Use the application **client ID**, not its Object ID. The customer tenant ID and provider tenant ID
-are different values. Global or EU selects provider routing, not Azure location or data residency.
+are different values. Global or EU identifies provider routing, not Azure location or data residency.
+EU tenants receive an EU Data Boundary region shortlist; other tenants retain the existing
+recommendations. Explicit region overrides remain available with a warning for EU tenants.
 
 One guided deployment uses one provider and supports both SMS and voice. Each request selects its
 channel. Reusing the same subscription, application, and prefix reconfigures that deployment.
@@ -68,7 +70,8 @@ and [certificate selection](../setup/docs/README.md#encryption-certificate-selec
 <a id="setup-script-compatibility"></a>
 ### Values setup configures
 
-Keep `deployment-*.json` and the public certificate in private storage. Compare the summary with
+Save the deployment output: the endpoint URL and Application (client) ID are required for policy
+updates. Keep `deployment-*.json` and the public certificate in private storage. Compare the summary with
 the approved plan. `policyChanged: false` is expected because setup does not activate policy.
 
 | Setting | Purpose | Check |

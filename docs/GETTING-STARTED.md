@@ -99,15 +99,23 @@ Review the downloaded script, then run it:
 
 On a shared workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` for a fresh sign-in.
 
-Select the tenant, subscription, existing application **client ID**, and Azure region. Then choose:
+JavaScript is used by default, without a language prompt. To deploy another language, run
+`.\Setup-Epp.ps1 -Language csharp` or `.\Setup-Epp.ps1 -Language python`.
 
-- **Provider and route:** enter or confirm the provider by name. **Tenant scope** means Global/EU
-  provider routing, not Azure region or a data-residency guarantee.
-- **Platform:** Node.js, .NET, or Python. Setup downloads the matching stable release asset,
-  verifies `SHA256SUMS.txt`, and builds when required.
+Select the tenant, subscription, and existing application **client ID**. Setup detects the tenant's
+replication scope and selects the corresponding provider route; it does not ask you to choose EU or
+Global. Select the Azure region, then complete the remaining settings:
+
+- **Azure region:** EU tenants receive recommendations within the EU Data Boundary (EU/EFTA).
+  Other tenants retain the existing Azure-recommended shortlist. All-region and manual selection,
+  including `-Location`, remain available; EU tenants receive a warning for an out-of-boundary or
+  unverifiable choice. Recommendations are not a data-residency or GDPR compliance guarantee.
+- **Provider:** enter or confirm the provider by name. Setup downloads the language's matching
+  stable release asset, verifies `SHA256SUMS.txt`, and builds when required.
 - **Hosting:** FC1 can scale to zero and cold-start. EP1 has paid warm capacity. Review
-  [plan details](../setup/docs/README.md#service-plan-selection).
-- **Resource prefix:** 2-8 lowercase letters/digits, starting with a letter.
+  [plan details](../setup/docs/README.md#service-plan-selection) and the [cost estimate](COST-CALCULATOR.md).
+- **Resource prefix:** press Enter to use `epp`, or enter 2-8 lowercase letters/digits, starting
+  with a letter. When rerunning an existing deployment, use its original prefix.
 
 Complete required sign-in, MFA, or administrator consent. Resolve preflight errors before approval.
 
@@ -115,17 +123,22 @@ For existing encryption credentials, follow
 [certificate selection](../setup/docs/README.md#encryption-certificate-selection). Coordinate
 changes across every endpoint sharing the application.
 
-**Review the deployment plan before typing `Yes`.** Check accounts, region, provider URLs,
+**Review the deployment plan before typing `Yes` or `Y`.** Check accounts, region, provider URLs,
 runtime, plan, resource names, permissions, certificate key IDs, and vault access.
 The plan includes Microsoft Graph `Application.Read.All` for the Microsoft phone-provider service
-principal. `No` or Enter cancels.
+principal. `No`, `N`, or Enter cancels. Responses are case-insensitive.
 
 **Plan review:** run interactively and choose **No** at the final prompt. See
 [plan review](../setup/docs/README.md#reviewing-the-plan-without-deploying).
 
-Wait for **Deployment completed** and the saved summary before Step 4. Setup creates or updates
+Azure resource deployment and Function publication can each take several minutes. Keep the session
+open; a rotating indicator identifies the operation in progress, without a percentage or estimated
+completion time. Unattended or redirected output uses static status messages instead.
+
+Wait for **Deployment completed successfully** and the saved summary before Step 4. Setup creates or updates
 the Function App, hosting plan, storage, Key Vault, identities, Log Analytics, Application
 Insights, diagnostics, Easy Auth, and scoped role assignments. Do not precreate these resources.
+**Save the output: the endpoint URL and Application (client) ID are required for policy updates.**
 Keep `epp-output` private. Its [summary](../setup/docs/README.md#read-the-deployment-summary)
 records the selected tenant, subscription, provider route, runtime, plan, resource names, endpoint,
 application, package provenance, and encryption certificate references. No private key is downloaded.

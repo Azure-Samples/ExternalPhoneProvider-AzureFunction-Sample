@@ -23,6 +23,7 @@ try {
         }
         $script:Messages = [Collections.Generic.List[string]]::new()
         $script:Calls = [Collections.Generic.List[string]]::new()
+        $script:Activities = [Collections.Generic.List[string]]::new()
         $script:Answers = [Collections.Generic.Queue[string]]::new()
         $script:Regions = '[{"name":"West US 2"}]'
         $script:ExistingPlans = '[]'
@@ -37,9 +38,11 @@ try {
         }
         function script:Read-Host { param($Prompt); return $script:Answers.Dequeue() }
         function script:Invoke-EppAz {
-            param([Parameter(ValueFromRemainingArguments)][string[]] $Arguments)
+            [CmdletBinding(PositionalBinding = $false)]
+            param([Parameter(Position = 0, ValueFromRemainingArguments)][string[]] $Arguments, [string] $Activity)
             $command = $Arguments -join ' '
             $script:Calls.Add($command)
+            if ($Activity) { $script:Activities.Add($Activity) }
             switch -Regex ($command) {
                 '^version ' { return @{ 'azure-cli' = $script:CliVersion } | ConvertTo-Json }
                 '^bicep version ' { return '' }
@@ -78,6 +81,7 @@ try {
         $script:Answers.Enqueue('2')
         Assert ((Get-EppServicePlan).id -ceq 'EP1') 'Option 2 must select Premium.'
         Assert (($script:Messages -join "`n") -match 'Service plan selection') 'The selection section must have its requested heading.'
+        Assert (($script:Messages -join "`n").Contains('https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/blob/main/docs/COST-CALCULATOR.md')) 'Link the repository cost estimator at plan selection.'
         Assert ($script:Calls.Count -eq 0) 'Selecting a plan must not contact Azure.'
 
         $inputs = @{
@@ -121,6 +125,8 @@ try {
             Show-EppPlan -Inputs $inputs -Names $names -ProviderConfiguration $provider -Context $context
             $plan = $script:Messages -join "`n"
             Assert ($plan.Contains("Service plan: $id")) 'The approval must name the selected plan.'
+            Assert ($plan.Contains('Language:') -and -not $plan.Contains('Platform:')) 'Use customer-facing language terminology.'
+            Assert (-not $plan.Contains('Python')) 'Do not describe Python builds for JavaScript deployments.'
             Assert ($plan.Contains($inputs.SourceBaseUri) -and $plan.Contains($inputs.PackageUrl) -and
                 $plan.Contains("Release:      $($inputs.PackageReleaseTag)")) 'The approval must identify the setup source and exact Function release URL.'
             Assert ($plan.Contains('SMS and voice (selected by each request)')) 'The approval must disclose support for both request channels.'
@@ -129,6 +135,11 @@ try {
             foreach ($setting in @('EPP_KEY_VAULT_CACHE_ENABLED', 'EPP_ACCESS_TOKEN_CACHE_ENABLED')) {
                 Assert (-not $plan.Contains($setting)) 'The approval must not advertise obsolete cache settings.'
             }
+            $inputs.BuildStrategy = 'remote-build'
+            $script:Messages.Clear()
+            Show-EppPlan -Inputs $inputs -Names $names -ProviderConfiguration $provider -Context $context
+            Assert (($script:Messages -join "`n").Contains('Azure installs Python dependencies and prepares the Function deployment package. No local Python installation is required.')) 'Explain Python packaging only for the Python build strategy.'
+            $inputs.BuildStrategy = 'ready'
             $script:Calls.Clear()
             Assert-EppServicePlanLocation -Inputs $inputs
             Assert ($script:Calls.Count -eq 1) 'Availability must check only the selected plan.'
@@ -211,11 +222,12 @@ try {
             foreach ($language in @('javascript', 'dotnet', 'python')) {
                 $inputs.ServicePlan = $id; $inputs.Language = $language
                 $publish.Package.RequiresRemoteBuild = $language -eq 'python'
-                $script:Calls.Clear()
+                $script:Calls.Clear(); $script:Activities.Clear()
                 $hash = Publish-EppFunction @publish
                 $trace = $script:Calls -join "`n"
                 Assert ($script:Calls[0] -ceq 'authentication') 'Authentication must be verified before any publication or ingress change.'
                 Assert ($script:Calls[-1] -ceq 'published') 'Publication must finish with Function metadata readback.'
+                Assert ($script:Activities.Count -gt 0) 'Every plan/language publication path must provide an activity indicator.'
                 if ($id -eq 'FC1') {
                     $remoteBuild = ($language -eq 'python').ToString().ToLowerInvariant()
                     Assert ($script:Calls[1] -ceq 'ingress:Enabled') 'Flex must open its authenticated deployment endpoint before One Deploy.'
@@ -257,10 +269,12 @@ try {
         function script:Initialize-EppResourceProviders { param($Inputs) }
         foreach ($id in @('FC1', 'EP1')) {
             $inputs.ServicePlan = $id
+            $script:Activities.Clear()
             Assert-Throws {
                 Invoke-EppDeployment -Inputs $inputs -Names $names -ProviderConfiguration $provider -Context $context `
                     -AssetDirectory $Directory -WorkingDirectory $Directory -Package $publish.Package -OutputDirectory $Directory
             } 'stop-after-parameters'
+            Assert ($script:Activities -contains 'Deploying Azure resources') 'ARM deployment must use the shared activity indicator.'
             Assert ($script:DeploymentParameters.servicePlan.value -ceq $id) 'The approved plan must be passed to Bicep.'
             foreach ($setting in @('EPP_PROVIDER_SMS_ENDPOINT', 'EPP_PROVIDER_VOICE_ENDPOINT')) {
                 Assert ($script:DeploymentParameters.providerSettings.value[$setting] -ceq $provider.Settings[$setting]) 'Both approved endpoints must be passed to Bicep.'
