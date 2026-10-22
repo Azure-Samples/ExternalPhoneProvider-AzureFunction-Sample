@@ -76,7 +76,7 @@ authentication and decryption without a provider send. Live success confirms acc
 **not handset receipt**. Check a timeout before retrying.
 
 For built-in message and voice mapping, see
-[Soprano and Telesign](../TECHNICAL.md#built-in-providers).
+[Infobip, Soprano, and Telesign](../TECHNICAL.md#built-in-providers).
 
 ## Source
 
@@ -95,8 +95,8 @@ accounts require a separate trust, configuration, credential, and test design.
 
 `CredentialTokenService` invokes the selected provider's credential retrieval for each live
 request with a 2.5-second cancellation budget. API-key secrets are read from Key Vault each time.
-The OAuth provider reuses Azure Identity SDK credential instances, leaving token caching and
-renewal to the SDK. There is no custom credential cache, hosted warmup service, polling, or
+The OAuth providers share `OAuthCredentialSource` and reuse Azure Identity SDK credential instances,
+leaving token caching and renewal to the SDK. There is no custom credential cache, hosted warmup service, polling, or
 retry cooldown. Evaluation does no provider credential work. See
 [credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
 
@@ -108,6 +108,7 @@ retry cooldown. Evaluation does no provider credential work. See
 | [Src/EntraSendOtpPayload.cs](Src/EntraSendOtpPayload.cs) | Bound request model, strict channel/mode converters and semantic validation |
 | [Src/JweDeliveryContext.cs](Src/JweDeliveryContext.cs) | Pinned JWE decryption and decrypted delivery context |
 | [Src/CredentialTokenService.cs](Src/CredentialTokenService.cs) | Bounded provider-supplied credential retrieval for each live request |
+| [Src/OAuthCredentialSource.cs](Src/OAuthCredentialSource.cs) | Shared managed-identity assertion exchange and reusable SDK clients for Infobip/Soprano |
 | [Src/OtpLog.cs](Src/OtpLog.cs) | Source-generated, strongly typed [structured logging events](../docs/LOGGING.md#event-sequence) |
 | [Src/PhoneProviderBase.cs](Src/PhoneProviderBase.cs) | Provider extension contract and shared typed JSON/HTTP transport |
 | [Src/Providers/](Src/Providers/) | Provider identity, credential delegation and API-specific request/response protocols |

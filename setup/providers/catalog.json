@@ -10,6 +10,11 @@
       "id": "soprano",
       "displayName": "Soprano",
       "file": "soprano.json"
+    },
+    {
+      "id": "infobip",
+      "displayName": "Infobip",
+      "file": "infobip.json"
     }
   ]
 }

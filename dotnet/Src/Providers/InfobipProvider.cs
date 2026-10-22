@@ -1,3 +1,4 @@
+using Azure.Core;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
@@ -7,12 +8,19 @@ namespace Epp.Otp.Providers;
 
 public sealed class InfobipProvider : PhoneProviderBase
 {
-    private readonly ISecretResolver? _secrets;
+    private readonly OAuthCredentialSource _credentials;
 
-    public InfobipProvider(ISecretResolver? secrets = null) => _secrets = secrets;
+    public InfobipProvider() => _credentials = new();
+
+    internal InfobipProvider(
+        Func<string, TokenCredential> createIdentity,
+        Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> createCredential)
+    {
+        _credentials = new(createIdentity, createCredential);
+    }
 
     public override string Name => "infobip";
-    public override string AuthenticationMode => "apiKey";
+    public override string AuthenticationMode => "oauth";
 
     public override Task<ProviderResult> SendOtpAsync(
         string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credentials,
@@ -61,7 +69,7 @@ public sealed class InfobipProvider : PhoneProviderBase
         {
             Content = JsonContent.Create(body),
         };
-        request.Headers.TryAddWithoutValidation("Authorization", $"App {credential.Secret}");
+        request.Headers.Authorization = new("Bearer", credential.AccessToken);
         request.Headers.Accept.ParseAdd("application/json");
         return request;
     }
@@ -85,17 +93,9 @@ public sealed class InfobipProvider : PhoneProviderBase
         };
     }
 
-    public override async Task<ProviderCredentials> FetchCredentialsAsync(
-        AppConfig config, CancellationToken cancellationToken = default)
-    {
-        if (_secrets is null) throw CredentialTokenService.Unavailable();
-        var secret = await _secrets.ResolveAsync(
-            "infobip-api-key", cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(secret)) throw CredentialTokenService.Unavailable();
-        return new ProviderCredentials(
-            AuthenticationMode,
-            Secret: secret);
-    }
+    public override Task<ProviderCredentials> FetchCredentialsAsync(
+        AppConfig config, CancellationToken cancellationToken = default) =>
+        _credentials.FetchAsync(config, cancellationToken);
 
     private static (Outcome Outcome, bool Recognized) MapStatus(string? status) => status switch
     {

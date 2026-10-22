@@ -56,7 +56,7 @@ You can create the dedicated application during guided setup or register it manu
 
 **Create during setup:** in Step 3, press Enter to choose **Create a new application**, then Enter to use
 **EPP Application** or enter your own display name, and choose a provider by name from the
-alphabetized list (**Soprano, Telesign**). Blank provider-name input prompts again instead of
+alphabetized list (**Infobip, Soprano, Telesign**). Blank provider-name input prompts again instead of
 canceling or selecting a default.
 Setup creates the registration only after you approve the final deployment plan.
 Canceling before approval creates no application. The signed-in user must be allowed to register
