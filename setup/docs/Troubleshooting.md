@@ -11,10 +11,11 @@ Select the failed stage and keep existing resources. Before rerunning, use
 | --- | --- |
 | Account missing or wrong tenant | [Account picker](#the-expected-cached-account-or-subscription-is-missing), [directory context](#azure-cli-directory-context-does-not-match-the-selected-tenant) |
 | Permission or prerequisite failure | [Preflight](#authentication-permission-or-runtime-preflight-fails), [Graph 403](#az-ad-or-az-rest-returns-403-forbidden), [PrincipalNotFound](#principalnotfound-for-the-azure-operator) |
+| New or existing app reports an unsupported provider-tenant restriction | [Unrestricted application audience](#new-app-fails-with-an-unsupported-provider-tenant-restriction) |
 | Region or hosting rejected | [Tenant scope and EU recommendations](#tenant-scope-discovery-or-eu-region-recommendations-fail), [quota](#deployment-fails-with-subscriptionisoverquotaforsku), [plan selection](#service-plan-selection-or-availability-fails), [FC1 object-reference error](#fc1-deployment-preflight-reports-an-object-reference-error), [EP1 location check](#appservice-list-locations-rejects-ep1) |
 | Certificate or resource registration fails | [Certificate selection](#certificate-selection-reuse-or-cleanup-fails), [resource providers](#a-required-azure-resource-provider-is-not-registered) |
 | Download, build, or parser failure | [Old package prompts](#setup-still-asks-for-packageurl-or-packagesha256), [checksum/download](#a-checksum-or-package-download-fails), [.NET](#net-build-fails), [Python](#python-remote-build-fails), [CLI JSON](#azure-cli-warnings-break-json-parsing) |
-| Deployment stops after approval | [Publication and startup](#deployment-stops-after-approval) |
+| Deployment stops after approval | [Combined Azure CLI paths](#azure-cli-paths-are-combined-during-deployment), [publication and startup](#deployment-stops-after-approval) |
 | Endpoint rejects calls, does not deliver, or has no logs | [After-deployment triage](#after-deployment-triage), [401/live delivery](#the-endpoint-returns-401-or-live-delivery-fails), [credential acquisition](#provider-credential-acquisition-fails) |
 | Optional regional routing fails | [Front Door checks](#optional-front-door-deployments) |
 
@@ -275,6 +276,25 @@ and clears temporary build settings.
 
 After build or startup failure, setup closes public ingress. If that fails, inspect it immediately.
 
+## Azure CLI paths are combined during deployment
+
+**Symptom:** `Invoke-EppAz` reports an `EndInvoke` failure because a command such as
+`/usr/bin/az /bin/az` is not recognized, even though earlier Azure CLI operations succeeded.
+
+**Cause:** PowerShell can discover multiple Azure CLI paths. Older animated progress runners
+passed all discovered paths to the worker as one command instead of selecting the first match.
+The static status path does not have this problem.
+
+**Fix:** use a setup source revision containing the command-resolution fix. The corrected runner
+selects the first discovered executable, preserving its path and argument boundaries. Do not
+reinstall Azure CLI, edit `PATH`, or change hosting plans to work around this error.
+
+**Temporary workaround:** save the current `$ProgressPreference`, set it to `SilentlyContinue`,
+and rerun the same reviewed launcher revision with the original deployment inputs. Restore the
+previous preference afterward. This disables only progress animation, not deployment approval,
+validation, or error reporting. Reuse the printed `-ApplicationId` and original `-ResourcePrefix`;
+do not create another app or delete partially created resources.
+
 ## Azure CLI warnings break JSON parsing
 
 **Fix:** refresh the reviewed launcher/source revision.
@@ -295,6 +315,29 @@ After build or startup failure, setup closes public ingress. If that fails, insp
 4. Confirm beta `signInAudienceRestrictions` availability. If tenant policy/preview access blocks it,
    stop; setup does not silently allow all tenants. Unattended runs still need the user session
    and separate `-ApproveDeployment`.
+
+## New app fails with an unsupported provider-tenant restriction
+
+**Symptom:** setup creates the application and prints **Resolved Azure resource names**, then
+stops with `The application has an unsupported provider-tenant restriction`. This can also
+affect provider selection or preflight for an existing registration.
+
+**Cause:** Microsoft Graph can return a
+[`unrestrictedAudience`](https://learn.microsoft.com/graph/api/resources/unrestrictedaudience?view=graph-rest-beta)
+object with `kind: unrestricted` instead of a null `signInAudienceRestrictions` value.
+This is a valid unconfigured state; a single-tenant app still permits only its home tenant.
+Older helpers accepted only null or an `allowedTenants` restriction and rejected this response.
+
+**Recover:** use a setup source revision containing the fix. The launcher downloads its helpers
+from `-SourceRepository` / `-SourceRef` (`main` by default), so an old pinned revision or a local
+helper edit alone does not update the downloaded code. Rerun with the original `-ApplicationId`
+and `-ResourcePrefix`, retaining the other deployment inputs. For a setup-created app, use the
+client ID printed before the error or saved in `application-<client-id>.json`. Do not create
+another registration, delete resources, or manually broaden tenant access to bypass the check.
+
+The corrected helper recognizes the unrestricted state but still requires the approved provider
+allowlist before successful deployment. Unknown or inconsistent restrictions and changes made
+after plan approval still stop setup.
 
 ## `az ad` or `az rest` returns 403 Forbidden
 

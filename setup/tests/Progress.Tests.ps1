@@ -51,6 +51,7 @@ exit 0
             Assert (-not (Test-EppAnimationEnabled)) 'Do not animate redirected output.'
         }
         $script:FakeAz = $FakeAz
+        $script:CommandSources = @($FakeAz)
         $script:Animate = $true
         $script:Messages = [Collections.Generic.List[string]]::new()
         $script:Warnings = [Collections.Generic.List[string]]::new()
@@ -60,7 +61,7 @@ exit 0
         function script:Get-Command {
             param($Name, $CommandType, $ErrorAction)
             Assert ($Name -ceq 'az') 'Resolve only the Azure CLI command.'
-            return @{ Source = $script:FakeAz }
+            foreach ($source in $script:CommandSources) { @{ Source = $source } }
         }
         function script:az {
             & $script:FakeAz @args
@@ -108,6 +109,14 @@ exit 0
             Assert ([string]::IsNullOrEmpty((Invoke-EppAz -Activity 'Starting the Azure Function' empty))) 'Support successful commands with no stdout.'
         }
         $script:Animate = $true
+        $script:CommandSources = @($FakeAz, (Join-Path (Split-Path -Parent $FakeAz) 'unused az.ps1'))
+        $script:Messages.Clear()
+        $output = Invoke-EppAz -Activity 'Deploying Azure resources' success --parameters '@path with spaces & symbols.json' --output json
+        Assert ((($output | ConvertFrom-Json).arguments -join '|') -ceq 'success|--parameters|@path with spaces & symbols.json|--output|json|--only-show-errors') 'When command discovery returns multiple Azure CLI paths, invoke only the first and preserve argument boundaries.'
+        Assert ($script:Messages[-1] -match '^\r +\r$') 'Clear the indicator after choosing the first CLI path.'
+        Assert-Throws { Invoke-EppAz -Activity 'Deploying Azure resources' failure --output none } 'failed \(exit 7\)'
+        Assert ($script:Messages[-1] -match '^\r +\r$') 'Multiple discovered paths must not change CLI error propagation or indicator cleanup.'
+        $script:CommandSources = @($FakeAz)
         $script:Messages.Clear()
         $output = Invoke-EppAz success --output json
         Assert ((($output | ConvertFrom-Json).arguments -join '|') -ceq 'success|--output|json|--only-show-errors') 'An omitted activity must not consume any native CLI argument.'
@@ -121,7 +130,7 @@ exit 0
             Assert (-not (Test-Path -LiteralPath $path)) 'Remove captured CLI stderr files after success or failure.'
         }
     } $fakeCommand
-    Write-Host 'Deployment animation, argument preservation, stdout/stderr handling, redaction, failure, cancellation, and cleanup checks passed.'
+    Write-Host 'Deployment animation, command precedence, argument preservation, stdout/stderr handling, redaction, failure, cancellation, and cleanup checks passed.'
 }
 finally {
     Remove-Module -ModuleInfo $module -Force

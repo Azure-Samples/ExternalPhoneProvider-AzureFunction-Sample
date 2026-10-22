@@ -411,7 +411,7 @@ function Invoke-EppAz {
     $errorPath = Join-Path ([IO.Path]::GetTempPath()) "epp-az-$([Guid]::NewGuid().ToString('N')).stderr"
     try {
         if ($Activity -and (Test-EppAnimationEnabled)) {
-            $command = Get-Command az -CommandType Application, ExternalScript -ErrorAction Stop
+            $command = Get-Command az -CommandType Application, ExternalScript -ErrorAction Stop | Select-Object -First 1
             $worker = [PowerShell]::Create()
             $line = ''
             try {
@@ -971,9 +971,29 @@ function Get-EppProviderRestrictionState {
     param($Restriction)
 
     if ($null -eq $Restriction) { return $null }
-    if ($Restriction -isnot [Collections.IDictionary] -or $Restriction['kind'] -cne 'allowedTenants' -or
+    $unsupported = 'The application has an unsupported provider-tenant restriction. Review it before running setup.'
+    if ($Restriction -isnot [Collections.IDictionary]) { throw $unsupported }
+    $kind = $Restriction['kind']
+    $odataType = $Restriction['@odata.type']
+    if (($null -ne $kind -and $kind -isnot [string]) -or
+        ($null -ne $odataType -and $odataType -isnot [string])) { throw $unsupported }
+    if ($null -ne $odataType) {
+        $typeKind = switch -CaseSensitive ($odataType) {
+            '#microsoft.graph.unrestrictedAudience' { 'unrestricted' }
+            '#microsoft.graph.allowedTenantsAudience' { 'allowedTenants' }
+            default { throw $unsupported }
+        }
+        if ($null -ne $kind -and $kind -cne $typeKind) { throw $unsupported }
+        $kind = $typeKind
+    }
+    if ($kind -ceq 'unrestricted') {
+        if ($Restriction.Contains('allowedTenantIds') -or $Restriction.Contains('isHomeTenantAllowed')) { throw $unsupported }
+        # The pre-creation plan uses null for this same unconfigured state.
+        return $null
+    }
+    if ($kind -cne 'allowedTenants' -or
         $Restriction['isHomeTenantAllowed'] -isnot [bool] -or $Restriction['allowedTenantIds'] -isnot [Array]) {
-        throw 'The application has an unsupported provider-tenant restriction. Review it before running setup.'
+        throw $unsupported
     }
     $ids = @($Restriction.allowedTenantIds | ForEach-Object { ConvertTo-EppGuid ([string]$_) })
     $unique = @($ids | Sort-Object -Unique)
