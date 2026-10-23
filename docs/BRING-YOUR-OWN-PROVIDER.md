@@ -8,13 +8,13 @@
 Add a Twilio adapter to one runtime.
 
 > [!NOTE]
-> Twilio is not included in the sample or configured by guided setup. Adding it requires code,
-> tests, packaging, deployment settings, and your approved Twilio account configuration.
+> Twilio is not included or configured by guided setup. Adding it requires code, tests, packaging,
+> deployment settings, and approved Twilio account configuration.
 
 <a id="understand-the-request"></a>
 ## Before you start
 
-Prepare:
+Before editing code, prepare:
 
 - The [Send OTP API contract](CONTRACT.md).
 - An approved Twilio account and API design for SMS and voice.
@@ -23,7 +23,7 @@ Prepare:
 - Test credentials and endpoints that do not send to production recipients.
 
 Keep Easy Auth, envelope validation, JWE decryption, evaluation mode, and public responses in the
-shared handler. The Twilio adapter should only build the outbound request and interpret the response.
+shared handler. The Twilio adapter builds the outbound request and interprets the response.
 
 <a id="1-establish-caller-authentication"></a>
 <a id="3-decrypt-and-validate-the-delivery-context"></a>
@@ -45,8 +45,7 @@ shared handler. The Twilio adapter should only build the outbound request and in
 5. Return the shared `ProviderResult`.
 6. Keep sending in the shared runtime transport.
 
-Only a recognized accepted response can return success. A successful provider response does not
-confirm recipient delivery.
+Return success only for a recognized acceptance. Acceptance does not confirm delivery.
 
 Do not forward the incoming Microsoft Entra ID bearer token or return raw Twilio JSON.
 
@@ -95,8 +94,8 @@ Set:
 - `EPP_PROVIDER_SMS_ENDPOINT` and `EPP_PROVIDER_VOICE_ENDPOINT` for supported channels.
 - Twilio credential references and any additional adapter settings.
 
-Keep credentials in Key Vault and read them through managed identity. Use the shared request-time
-credential and timeout services instead of adding a credential cache, refresher, or send-retry loop.
+Keep credentials in Key Vault and use managed identity to read them. Use the shared credential and
+timeout services. Do not add a cache, refresher, or send-retry loop.
 
 See [provider settings and credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
 

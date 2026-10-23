@@ -1,12 +1,12 @@
 # External Phone Provider Azure Function Sample
 
 This **External Phone Provider (EPP)** sample connects Microsoft Entra ID to a phone provider
-for SMS and voice one-time passwords.
-Guided setup deploys **one regional endpoint** using JavaScript by default, with C# and Python options.
+for SMS and voice one-time passwords. Guided setup deploys **one regional endpoint** in JavaScript,
+C#, or Python. JavaScript is the default.
 
 > [!IMPORTANT]
-> Start in a separate nonproduction environment. Confirm provider access and Microsoft's approved
-> test and activation process before deployment.
+> Start in a separate nonproduction environment. Before deployment, confirm provider access and
+> Microsoft's approved test and activation process.
 
 ## Table of contents
 
@@ -27,8 +27,8 @@ Guided setup deploys **one regional endpoint** using JavaScript by default, with
 
 ## Requirements
 
-- Use a separate test environment with a Microsoft Entra ID tenant, Azure subscription, and
-  unique resource name prefix. Supply a dedicated app registration or create one during guided setup.
+- Use a separate test environment with a Microsoft Entra ID tenant, Azure subscription, unique
+  resource prefix, and dedicated app registration. Guided setup can create the registration.
 - Check [roles, permissions, tools, regional availability, and quota](setup/docs/README.md#prerequisites-for-step-2).
 - For Telesign, complete the [OAuth profile placeholders](docs/ONBOARDING.md#telesign-oauth-configuration-and-handoff)
   before deployment.
@@ -39,17 +39,15 @@ Guided setup deploys **one regional endpoint** using JavaScript by default, with
 
 ![Microsoft Entra ID sends an encrypted request through Easy Auth to a Function, which uses Key Vault and calls the phone provider](docs/images/single-region-architecture.png)
 
-*Easy Auth checks the Microsoft caller before the Function decrypts the request.
-Live success confirms provider acceptance. Confirm delivery separately. Evaluation validates the
-request without sending a message.
-The diagram is a topology overview; current packages read API-key secrets for each live request,
-while Azure Identity owns OAuth token caching.
-See [architecture details](TECHNICAL.md#single-region-architecture).
-[Open the full-size diagram](docs/images/single-region-architecture.png).*
+*Easy Auth checks the Microsoft caller before the Function decrypts the request. Evaluation checks
+the request without sending. Live success confirms provider acceptance, not delivery. Current
+packages read API-key secrets for each live request; Azure Identity caches OAuth tokens. See
+[architecture details](TECHNICAL.md#single-region-architecture) or
+[open the full-size diagram](docs/images/single-region-architecture.png).*
 
 ## Get started
 
-Follow the **[five-step setup guide](docs/GETTING-STARTED.md)** in order:
+Follow the **[five-step setup guide](docs/GETTING-STARTED.md)**:
 
 1. <a id="1-get-ready"></a>[Get ready](docs/GETTING-STARTED.md#1-get-ready): confirm access, approvals, permissions, and budget.
 2. <a id="2-register-your-application"></a>[Choose the app](docs/GETTING-STARTED.md#2-register-your-application): use an existing registration or create one during setup.

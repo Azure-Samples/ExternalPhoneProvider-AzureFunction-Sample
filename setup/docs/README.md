@@ -2,9 +2,10 @@
 
 [Documentation](../../docs/README.md) | [First deployment](../../docs/GETTING-STARTED.md) | [Troubleshooting](Troubleshooting.md)
 
-**EPP** stands for **External Phone Provider**. This reference covers setup choices, reruns, and
-maintenance. For a first deployment, follow the linked [five-step deployment guide](../../docs/GETTING-STARTED.md); it keeps preparation,
-deployment, provider validation, policy activation, and handoff in order.
+**EPP** means **External Phone Provider**. This reference covers setup choices, reruns, and
+maintenance. For a first deployment, follow the
+[five-step deployment guide](../../docs/GETTING-STARTED.md). It keeps preparation, deployment,
+provider validation, policy activation, and handoff in order.
 
 | Task | Section |
 | --- | --- |
@@ -16,15 +17,16 @@ deployment, provider validation, policy activation, and handoff in order.
 | Validate, activate, and maintain | [Step 3](#step-3---manually-validate-and-activate-policy), [renewal](#encryption-certificate-lifecycle), [rollback](#rollback-and-decommissioning) |
 | Develop setup changes | [Offline checks](#offline-setup-checks) |
 
-Confirm [provider access and Microsoft's approved procedure](../../docs/ONBOARDING.md#before-purchasing-or-deploying)
-before deployment.
+Before deployment, confirm
+[provider access and Microsoft's approved procedure](../../docs/ONBOARDING.md#before-purchasing-or-deploying).
 
-Setup creates **one regional endpoint**. See [Front Door](../../docs/FRONTDOOR.md) for regional continuity.
+Setup creates **one regional endpoint**. For regional continuity, see
+[Front Door](../../docs/FRONTDOOR.md).
 
 ## Availability
 
-Choose **Infobip, Soprano, or Telesign** and **FC1/EP1** hosting. Setup detects the tenant's replication scope
-and selects the **EU** provider route for EU tenants or **Global** otherwise, without a scope picker.
+Choose **Infobip, Soprano, or Telesign** and **FC1/EP1** hosting. Setup detects the tenant's
+replication scope and selects **EU** routing for EU tenants or **Global** routing otherwise.
 **JavaScript** is the default language, without a prompt. To use another language, run
 `.\Setup-Epp.ps1 -Language csharp` or `.\Setup-Epp.ps1 -Language python`.
 The legacy `-Language dotnet` value remains accepted for C#.
@@ -32,7 +34,7 @@ Setup selects `released-package.zip` from the matching language's stable release
 against that release's `SHA256SUMS.txt` before publishing.
 See [source/package selection](#source-versioning).
 
-Both channels are configured. Profile objects `deployment.routes.global` and
+Setup configures both channels. Profile objects `deployment.routes.global` and
 `deployment.routes.eu` define `smsEndpoint`, `voiceEndpoint`, tenant, authentication, and timing
 values. Setup writes the endpoints to `EPP_PROVIDER_SMS_ENDPOINT` and
 `EPP_PROVIDER_VOICE_ENDPOINT`; OAuth profiles also supply their API app ID and scope.
@@ -93,8 +95,8 @@ still apply. These are deployment recommendations, not enforcement or a GDPR com
 
 Setup offers these two Linux hosting plans:
 
-Review the [Azure hosting and provider cost estimate](../../docs/COST-CALCULATOR.md), also linked
-directly from the service-plan prompt.
+Before choosing a plan, review the
+[Azure hosting and provider cost estimate](../../docs/COST-CALCULATOR.md), also linked from the prompt.
 
 | Option | Hosting |
 | --- | --- |
@@ -133,17 +135,17 @@ For the first deployment, use a nonproduction tenant and subscription.
 press Enter to accept **EPP Application** or enter a display name (1-256 characters), and choose
 a provider by name from the alphabetized list (**Infobip, Soprano, Telesign**). Blank provider-name input
 prompts again; there is no default provider. An explicit `-Provider` skips that provider prompt.
-The new registration is only planned at this point: setup creates it after final deployment
-approval, not when you choose the menu option. Canceling before approval creates nothing.
+Setup creates the planned registration only after final deployment approval, not when you choose
+the menu option. Canceling before approval creates nothing.
 An existing app with the same display name is never adopted automatically.
 
-**Use an existing dedicated registration:** select/search for it or supply its client ID.
-To create it manually before setup:
+**Use or create a dedicated registration:** select/search for an existing app or supply its client
+ID. To create one before setup:
 
 1. In the customer tenant's **Microsoft Entra admin center > App registrations**, register a
    new application for this endpoint with **Accounts in this organizational directory only** as its initial
    supported account type; setup changes it to organizational multi-tenant after approval.
-   No redirect URI, client secret, API permission, or app role is required manually.
+   Do not add a redirect URI, client secret, API permission, or app role.
 2. Record the **Directory (tenant) ID** and **Application (client) ID**. For an existing app,
    supply its client ID, not the application's object ID. Setup never silently creates a
    replacement if an existing ID is invalid.
@@ -160,7 +162,7 @@ Creation is an interactive choice. Unattended runs still require an existing `-A
 
 Setup configures:
 
-- Organizational multitenancy and the Microsoft Entra ID allowed-tenants preview: home tenant,
+- Organizational multitenancy and the Microsoft Entra ID allowed-tenants configuration: home tenant,
   selected provider's Security Store and OAuth token tenants, and preserved existing allowed tenants.
 - The app's enterprise application with assignment required, `Epp.Invoke`, and its assignment to
   the Microsoft phone-provider service principal.
@@ -250,7 +252,7 @@ Invoke-WebRequest `
     -OutFile .\Setup-Epp.ps1
 ```
 
-Review the downloaded script before running it:
+Review the script before running it:
 
 ```powershell
 .\Setup-Epp.ps1
@@ -411,8 +413,8 @@ at `Proceed with deployment? Enter Yes or Y to deploy, or No or N to cancel [No]
 Do not supply `-ApproveDeployment`:
 that switch authorizes the deployment phase without asking again.
 
-This is a cancellation at the approval gate, not an offline simulation. You can select an existing
-registration or plan a new one; neither is created or changed before approval.
+This cancels at the approval gate; it is not an offline simulation. Select an existing registration
+or plan a new one. Neither changes before approval.
 Before the plan appears, setup can download tools and packages, request required installation,
 and sign in through Azure CLI. It also checks permissions and regions, verifies package
 checksums and contents, and compiles Bicep.
@@ -568,8 +570,8 @@ already registered.
 ### Read the deployment summary
 
 Open the timestamped JSON under `epp-output` in a private editor. It contains identifiers and
-configuration metadata, not provider credentials or private-key bytes. Keep it access-controlled.
-**Save the output: the endpoint URL and Application (client) ID are required for policy updates.**
+configuration metadata, not provider credentials or private-key bytes. Restrict access.
+**Save it: policy updates require the endpoint URL and Application (client) ID.**
 
 | Summary field | How to use it |
 | --- | --- |

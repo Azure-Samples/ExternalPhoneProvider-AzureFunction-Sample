@@ -2,8 +2,9 @@
 
 [Documentation](../../docs/README.md) | [Setup reference](README.md) | [Resume onboarding](../../docs/GETTING-STARTED.md)
 
-Select the failed stage and keep existing resources. Before rerunning, use
-[safe recovery](#recover-without-destructive-cleanup). Check provider outcomes before retrying timeouts.
+Find the failed stage and keep existing resources. Before rerunning, use
+[safe recovery](#recover-without-destructive-cleanup). Check the provider outcome before retrying
+a timeout.
 
 ## Find your symptom
 
@@ -47,7 +48,7 @@ Keep nonce-match **booleans**, statuses, latency, safe IDs, and delivery outcome
 1. **Locate the failure.** Before approval, only sign-in or Bicep installation can change the
    environment. After approval, partial Azure or Microsoft Entra ID changes can remain. Inspect
    the error and **resource group > Deployments**.
-2. **Fix, then rerun with the same inputs:** tenant, subscription, app, runtime, plan, prefix,
+2. **Fix the problem, then rerun with the same inputs:** tenant, subscription, app, runtime, plan, prefix,
    provider/route, and source/package versions. Active endpoints need a change window; setup has
    no checkpoint resume or automatic undo. If setup created the app, find its client ID in the
    printed output or `application-<client-id>.json` and rerun with `-ApplicationId` and the same
@@ -97,7 +98,7 @@ Follow the [Front Door guide](../../docs/FRONTDOOR.md), including readiness and 
 ## Deployment fails with SubscriptionIsOverQuotaForSku
 
 **Check:** the selected subscription's regional **EP1 VMs** quota, not authentication or resource
-registration. A supported Linux EP1 region can still have zero quota for your subscription.
+registration. A supported Linux EP1 region can still have zero quota.
 
 1. Confirm the tenant, subscription, region, and SKU in the plan and Azure error.
 2. In **Quotas > App Service**, filter to that subscription/region and inspect **EP1 VMs** usage
@@ -321,7 +322,7 @@ do not create another app or delete partially created resources.
    Azure roles do not grant Graph permissions; the user needs application/service-principal
    management and app-role assignment permissions, including active Privileged Role Administrator
    for the approved `Application.Read.All` grant.
-4. Confirm beta `signInAudienceRestrictions` availability. If tenant policy/preview access blocks it,
+4. Confirm beta `signInAudienceRestrictions` availability. If tenant policy or feature availability blocks it,
    stop; setup does not silently allow all tenants. Unattended runs still need the user session
    and separate `-ApproveDeployment`.
 
@@ -394,8 +395,8 @@ delete, purge/recover vaults, activate policy, or roll back. Follow
 For **Create a new application**, a successful registration can remain even if later steps fail.
 Its `application-<client-id>.json` record is not proof of deployment success. If the creation request
 itself fails or times out, inspect the selected tenant before retrying; setup does not automatically
-repeat that non-idempotent request. A permission error requires app-registration rights in addition
-to the [other setup permissions](README.md#prerequisites-for-step-2).
+repeat that non-idempotent request. A permission error requires app-registration rights plus the
+[other setup permissions](README.md#prerequisites-for-step-2).
 
 Recognized storage/Key Vault RBAC propagation errors are retried for at most twelve attempts.
 Transient Function startup errors also have bounded retries. This includes the specific ARM
@@ -407,7 +408,7 @@ registration fails.
 
 **Verify:** inspect [host/worker logs](../../docs/APPLICATION-INSIGHTS.md#single-region-configuration)
 for startup/discovery failures. Expected messages include `Worker process started and initialized`,
-`Found the following functions: Host.Functions.SendOtp`, and `Job host started`.
+`Found functions: Host.Functions.SendOtp`, and `Job host started`.
 Setup closes public ingress after persistent publication failure.
 
 ## The endpoint returns 401 or live delivery fails

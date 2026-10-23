@@ -2,7 +2,7 @@
 
 [Documentation](README.md) | [Deployment guide](GETTING-STARTED.md) | [Troubleshooting](../setup/docs/Troubleshooting.md)
 
-After deployment, connect the provider, validate the endpoint, and assign operational owners.
+After deployment, connect the provider, validate the endpoint, and assign owners.
 
 | Task | Go to |
 | --- | --- |
@@ -16,16 +16,17 @@ After deployment, connect the provider, validate the endpoint, and assign operat
 <a id="before-purchasing-or-deploying"></a>
 ## Before deployment
 
-In [Microsoft Security Store](https://securitystore.microsoft.com/private-solutions), confirm the
+Before spending or deploying, use
+[Microsoft Security Store](https://securitystore.microsoft.com/private-solutions) to confirm the
 provider account, sender registration, countries, channels, pricing, and EPP access.
 
 ![Cropped examples of phone-provider offer cards in Microsoft Security Store](images/onboarding/security-store-providers.png)
 
 *Sample cards only. Check the current offer and [guided provider support](#provider-credential-names).*
 
-Before spending or deploying, confirm:
+Also confirm:
 
-- eligibility, licensing, and preview access
+- eligibility, licensing, and feature access
 - the authorized Microsoft test caller and procedure
 - the activation process
 - an onboarding owner for Microsoft Entra ID, Azure, provider access, and support
@@ -75,9 +76,9 @@ and [certificate selection](../setup/docs/README.md#encryption-certificate-selec
 <a id="setup-script-compatibility"></a>
 ### Values setup configures
 
-Save the deployment output: the endpoint URL and Application (client) ID are required for policy
-updates. Keep `deployment-*.json` and the public certificate in private storage. Compare the summary with
-the approved plan. `policyChanged: false` is expected because setup does not activate policy.
+Save the deployment output. Policy updates need the endpoint URL and Application (client) ID.
+Keep `deployment-*.json` and the public certificate in private storage. Compare the summary with
+the approved plan. `policyChanged: false` is expected: deployment does not activate policy.
 
 | Setting | Purpose | Check |
 | --- | --- | --- |
@@ -93,7 +94,7 @@ the approved plan. `policyChanged: false` is expected because setup does not act
 | `EPP_PROVIDER_TIMEOUT_MS`, `EPP_PROVIDER_RETRY_INTERVAL_MS` | Provider timing values | Retry interval metadata does not enable retries |
 | Easy Auth issuer, audience, and caller allowlist | Inbound Microsoft caller validation | Read back the platform configuration |
 
-The trust paths are separate:
+The trust paths are independent:
 
 - Easy Auth validates the caller.
 - The Key Vault certificate decrypts the request.
@@ -162,8 +163,8 @@ test before retiring the old credentials. Evaluation does not test provider cred
 <a id="oauth-provider-administrator-handoff"></a>
 ### Complete provider OAuth authorization
 
-Setup creates the customer-side federation. The provider administrator still needs to authorize the
-customer application and account in the configured access-token tenant.
+Setup creates customer-side federation. The provider administrator must still authorize the
+customer application and account in the access-token tenant.
 
 Send identifiers only through the approved onboarding route:
 
@@ -189,14 +190,14 @@ prove provider-side authorization. Verify the integration with an approved contr
 
 For Infobip, set the Function App's `EPP_PROVIDER_ACCOUNT_NAME` to the approved sender/caller ID
 and confirm account access to SMS, voice, and the selected regional host. Do not assume the existing
-`Verify` fallback is an approved voice caller ID. No API key or client secret is required.
+default `Verify` value is an approved voice caller ID. No API key or client secret is required.
 
 <a id="validate-the-deployed-endpoint"></a>
 <a id="4-package-deploy-and-verify"></a>
 ## Validate the endpoint
 
-Use Microsoft's approved caller and test procedure. A customer test application or ordinary Azure
-CLI token is a different caller.
+Use Microsoft's approved caller and test procedure. A customer test app or Azure CLI token cannot
+stand in for that caller.
 
 Provide the authorized operator:
 
@@ -216,7 +217,7 @@ Provide the authorized operator:
 | 5 | Send one approved live SMS and voice request | Provider acceptance plus separate recipient confirmation |
 | 6 | Confirm logs and notifications | Saved query, resource scope, and tested action group |
 
-The following check sends no token and no OTP:
+This check sends no token and no OTP:
 
 ```powershell
 $endpoint = 'https://<function-host>/api/SendOtp'
@@ -264,7 +265,7 @@ evidence, package version, and renewal dates in restricted operational storage.
 <a id="optional-local-development-and-manual-deployment"></a>
 ## Custom deployment
 
-Skip this section after guided setup unless you are changing code or deploying a custom package.
+For custom code or package deployment only.
 
 For local work:
 

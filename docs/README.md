@@ -4,7 +4,7 @@
 
 [Sample overview](../README.md) | [Get started](GETTING-STARTED.md)
 
-Use the guide that matches your task.
+Choose the guide for your task.
 
 <a id="table-of-contents"></a>
 <a id="deploy-and-validate"></a>

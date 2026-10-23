@@ -5,7 +5,7 @@
 
 [Documentation](README.md) | [Single-region setup](GETTING-STARTED.md) | [Routing troubleshooting](../setup/docs/Troubleshooting.md#optional-front-door-deployments)
 
-Azure Front Door provides one public EPP URL across regional Function Apps. Start with a validated
+Azure Front Door can provide one public EPP URL for regional Function Apps. First validate a
 [single-region deployment](GETTING-STARTED.md).
 
 | Step | Task |
@@ -19,13 +19,12 @@ Azure Front Door provides one public EPP URL across regional Function Apps. Star
 
 ## When to use this design
 
-Use this advanced manual design when one public endpoint must route across regional Function Apps.
-The standard setup creates one regional endpoint. Released packages do not include the readiness
-route required by Front Door health probes, so implement and validate that route before enabling
-multi-region routing.
+Choose this design only when one public endpoint must route across regional Function Apps.
+Standard setup creates one regional endpoint. Released packages do not include the readiness route
+required by Front Door probes. Add and validate that route before enabling multi-region routing.
 
-Plan capacity, credentials, keys, monitoring, recovery tests, and rollback for the complete design.
-Set measurable recovery, latency, capacity, and failure targets before activation.
+Before activation, plan capacity, credentials, keys, monitoring, recovery tests, and rollback.
+Define recovery, latency, capacity, and failure targets.
 
 <a id="architecture-one-url-multiple-origins"></a>
 ## Architecture
@@ -49,8 +48,8 @@ priority, latency, and weight. Equal weights do not guarantee a 50/50 split.
 ### Regional origins
 
 Give every region its own Function App, capacity, storage, Key Vault, identities, telemetry, and
-provider credentials. Use equal priority when the regions should all serve traffic, and verify
-that every supported survivor combination can handle the required workload. Front Door,
+provider credentials. Use equal priority when all regions should serve traffic. Verify that every
+supported survivor combination can handle the workload. Front Door,
 Microsoft Entra ID authentication, and the provider remain shared dependencies.
 
 ## 1. Plan the regional deployment
@@ -69,8 +68,8 @@ Build and test the regional design outside live traffic. Review the
   caller application ID, certificate/public-key identity, selected provider route, and regional owners.
 - Plan rollout, validation, renewal, monitoring, recovery tests, and rollback before activation.
 
-Follow this regional procedure rather than rerunning `Setup-Epp.ps1` against the same
-application. The setup script creates one region. The steps below coordinate Front Door, shared
+Do not rerun `Setup-Epp.ps1` against the same application. It creates one region. The steps below
+coordinate Front Door, shared
 key material, regional registrations, and recovery routing without replacing an existing endpoint's
 application configuration or certificate unexpectedly.
 
@@ -156,8 +155,8 @@ certificate is separate from this JWE encryption certificate.
 
 ## 3. Provide a non-delivering readiness endpoint
 
-Front Door's health probes do not carry the Microsoft Entra ID caller token. Probing the protected `SendOtp`
-endpoint would test authentication failure rather than application readiness.
+Front Door probes do not carry the Microsoft Entra ID caller token. Probing the protected
+`SendOtp` endpoint tests authentication failure, not readiness.
 
 Implement a separate route such as **`/api/health/ready`** with this contract:
 

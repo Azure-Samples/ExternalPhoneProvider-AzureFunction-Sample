@@ -4,8 +4,8 @@
 
 [Documentation](README.md) | [Monitoring](MONITORING.md) | [Log fields](LOGGING.md)
 
-Start here when telemetry is missing or incomplete. For everyday queries and alerts, use
-[monitoring](MONITORING.md).
+For missing or incomplete telemetry, start here. For routine queries and alerts, see
+[Monitor the endpoint](MONITORING.md).
 
 | Task | Go to |
 | --- | --- |
@@ -17,7 +17,7 @@ Start here when telemetry is missing or incomplete. For everyday queries and ale
 | Review privacy and sampling | [Limits](#limits) |
 
 Function telemetry covers execution, timing, and logs. Microsoft Entra ID sign-ins and provider
-delivery evidence are separate.
+delivery use separate data.
 
 <a id="how-telemetry-reaches-application-insights"></a>
 ## Collection
@@ -38,7 +38,7 @@ requests, dependencies, exceptions, and traces when the active pipeline exports 
 | [Python](../python/host.json) | Standard host Application Insights settings. Requests are excluded from sampling. | There is no Azure Monitor or OpenTelemetry exporter in requirements. Confirm structured properties and dependencies. |
 
 These are source defaults, not guarantees. Runtime versions, packages, settings, filters, and
-sampling can change the collected data.
+sampling affect collected data.
 
 Application events are logs, not guaranteed `customEvents`. Verify the
 [runtime format](MONITORING.md#runtime-log-formats) before saving queries.
@@ -74,7 +74,7 @@ and [Functions monitoring reference](https://learn.microsoft.com/azure/azure-fun
 Guided setup connects one Function App to one Application Insights resource backed by a Log
 Analytics workspace.
 
-Check the following:
+Check these items:
 
 1. **Destination:** On the Function App, confirm `APPLICATIONINSIGHTS_CONNECTION_STRING` points
    to the intended resource. Do not copy it into issues or screenshots.
@@ -108,9 +108,9 @@ If you intentionally use a user-assigned ingestion identity, set
 `ClientId=<identity-client-id>;Authorization=AAD`, attach that identity to the app, and grant it
 access to the destination. Do not use the provider application ID.
 
-Missing data can result from a wrong destination, missing role assignment, identity mismatch,
-role propagation, an inactive exporter, filters, sampling, DNS, or network access. Query access is
-separate from ingestion access.
+Missing data can result from the wrong destination, missing roles, identity mismatch, role
+propagation, an inactive exporter, filters, sampling, DNS, or network access. Query and ingestion
+access are separate.
 
 See [Functions collection configuration](https://learn.microsoft.com/azure/azure-functions/configure-monitoring)
 and [Microsoft Entra-authenticated ingestion](https://learn.microsoft.com/azure/azure-monitor/app/azure-ad-authentication).
@@ -171,8 +171,8 @@ AppTraces
 | order by Latest desc
 ```
 
-An absent table, query error, or empty result is not a healthy zero. Check scope, time range,
-traffic, access, filters, sampling, and ingestion. `ItemCount` is a sampling weight when supplied.
+An absent table, query error, or empty result does not mean zero failures. Check scope, time range,
+traffic, access, filters, sampling, and ingestion. When present, `ItemCount` is a sampling weight.
 It does not recover discarded records.
 
 <a id="sampling-privacy-and-collection-limits"></a>

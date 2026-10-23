@@ -4,8 +4,8 @@
 
 [Documentation](../docs/README.md) | [Settings](#environment-configuration) | [Request behavior](#request-behavior) | [Source](#source)
 
-A Node.js Azure Function implementing the shared [HTTP contract](../docs/CONTRACT.md) with one
-provider per deployment.
+A Node.js Azure Function for the shared [HTTP contract](../docs/CONTRACT.md), with one provider per
+deployment.
 
 <a id="setup"></a>
 ## Setup and deployment
@@ -13,16 +13,17 @@ provider per deployment.
 **Sample deployment:** follow the [five-step guide](../docs/GETTING-STARTED.md), then complete
 [provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
 
-**Custom package development:** follow these steps from `javascript/`:
+**Custom development:** from `javascript/`:
 
 1. Create the [local settings below](#environment-configuration). Select a fixed provider ID from
    [providers/](src/functions/providers/), configure it, and complete
    [provider authentication](../docs/ONBOARDING.md#complete-provider-authentication).
 2. Install [package.json](package.json) dependencies, run its offline test script, and start Core Tools
    from this folder. **Bind only to loopback, without tunnels:** Core Tools has no Easy Auth.
-3. For manual deployment, [package](../TECHNICAL.md#build-zips-locally) this app, inspect it for
-   secrets, and complete the [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist).
-   Keep Easy Auth enabled for SendOtp, then run
+3. [Package](../TECHNICAL.md#build-zips-locally) the app for deployment and inspect it for secrets.
+   Complete the
+   [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist), keep Easy
+   Auth enabled for SendOtp, then run
    [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint) to verify
    platform authentication.
 
@@ -47,7 +48,7 @@ the test-key placeholder in this minimal setup:
 ```
 
 For live delivery, use the [shared settings table](../TECHNICAL.md#configure-environment-variables)
-for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter-specific options.
+for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter options.
 Keep `Values` as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"1500"`.
 Replace the placeholders. API-key adapters store credentials in Key Vault. Each selected channel
 requires a valid endpoint; a missing or invalid endpoint never uses the other channel.
@@ -82,7 +83,7 @@ For diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
 [JavaScript event queries](../docs/MONITORING.md#4-javascript-service-event-queries).
 
 Each live request reads API-key secrets from Key Vault or calls the reusable Azure Identity
-credential's token API. Only the SDK caches tokens and renews them as needed; there is no custom
+credential's token API. Only the SDK caches and renews tokens; there is no custom
 credential cache, startup warmup, polling, or retry cooldown. Evaluation does no provider credential
 work. Acquisition is bounded to 2.5 seconds, and shutdown aborts pending requests. See
 [credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
