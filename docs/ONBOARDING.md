@@ -140,7 +140,7 @@ secret names required by the selected adapter.
 2. Open that vault in **Azure portal > Key vaults**.
 3. Select **Objects > Secrets > Generate/Import**.
 
-   ![Key Vault Objects menu with Secrets selected and the Generate/Import action visible](images/onboarding/key-vault-secrets.png)
+  ![CYOT-CONSTO Key Vault Objects menu with the consto vault name, Secrets selected, and Generate/Import visible](images/onboarding/key-vault-secrets.png)
 
 4. Create the required secret with the raw credential, such as `sinch-api-token` for Sinch.
 5. Verify its name, enabled state, dates, and version without viewing its value.

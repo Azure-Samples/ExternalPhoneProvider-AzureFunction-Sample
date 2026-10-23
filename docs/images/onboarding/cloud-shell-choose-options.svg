@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="250" viewBox="0 0 1100 250" role="img" aria-labelledby="title desc">
+  <title id="title">CYOT-CONSTO setup choices in Azure Cloud Shell</title>
+  <desc id="desc">The setup selects Telesign Global routing, Node.js, Flex Consumption FC1, and the consto resource prefix.</desc>
+  <rect width="1100" height="250" fill="#062f63"/>
+  <g font-family="Consolas, monospace" font-size="14" fill="#f1f6fb">
+    <text x="6" y="22" fill="#36d7e9">Provider selection</text>
+    <text x="6" y="43">Provider: <tspan fill="#62ec71">Telesign</tspan>    Tenant scope: <tspan fill="#62ec71">Global</tspan></text>
+    <text x="6" y="72" fill="#36d7e9">Choose your platform:</text>
+    <text x="18" y="92">[1] Node.js</text><text x="18" y="111">[2] .NET</text><text x="18" y="130">[3] Python</text>
+    <text x="6" y="149">Platform number or name: <tspan fill="#fff100">1</tspan></text>
+    <text x="6" y="178" fill="#36d7e9">Service plan selection</text>
+    <text x="6" y="198">Flex Consumption has a free usage grant, not a zero-cost guarantee. Additional usage, Key Vault, storage, and telemetry can incur charges.</text>
+    <text x="6" y="222">Service plan number or name: <tspan fill="#fff100">1</tspan>    Resource prefix: <tspan fill="#62ec71">consto</tspan>    Application: <tspan fill="#62ec71">CYOT-CONSTO</tspan></text>
+    <text x="6" y="243" fill="#b7d3ed">Selected: Node.js • Flex Consumption FC1</text>
+  </g>
+</svg>

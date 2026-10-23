@@ -73,14 +73,14 @@ IDs handy. To register manually, open the customer tenant's
 3. On **Overview**, save the **Directory (tenant) ID** and **Application (client) ID** privately.
    Use the client ID, not the Object ID.
 
-![App registration form with an example name, Single tenant only selected, and no redirect URI](images/onboarding/app-registration.png)
+![App registration form with CYOT-CONSTO, the test directory, Single tenant only selected, and no redirect URI](images/onboarding/app-registration.png)
 
 *Some portal versions label the account type **Single tenant only**. Select the customer directory.
-The example above is an unsaved form and cannot be reused.*
+The CYOT-CONSTO example above uses a nonproduction test directory.*
 
 Use these labels to find the IDs:
 
-![App registration Overview with Application client ID and Directory tenant ID identified for setup and Object ID marked DO NOT USE](images/onboarding/app-registration-overview.png)
+![CYOT-CONSTO App registration Overview with Application client ID and Directory tenant ID identified for setup and Object ID marked DO NOT USE](images/onboarding/app-registration-overview.png)
 
 *Use **Application (client) ID** for `-ApplicationId` and **Directory (tenant) ID** for `-TenantId`.
 The **Object ID** is not either of these setup inputs. All ID values are hidden in this example.*
@@ -111,6 +111,11 @@ Review the downloaded script, then run it:
 .\Setup-Epp.ps1
 ```
 
+![Azure Cloud Shell in PowerShell mode downloading and starting setup for CYOT-CONSTO](images/onboarding/cloud-shell-run-setup.svg)
+
+*This CYOT-CONSTO nonproduction walkthrough keeps the recognizable application name and shell path visible.
+Only the tenant ID is hidden. Review the downloaded script before running it.*
+
 On a shared workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` for a fresh sign-in.
 
 JavaScript is used by default, without a language prompt. To deploy another language, run
@@ -136,6 +141,11 @@ it does not ask you to choose EU or Global. Select the Azure region, then comple
   [plan details](../setup/docs/README.md#service-plan-selection) and the [cost estimate](COST-CALCULATOR.md).
 - **Resource prefix:** press Enter to use `epp`, or enter 2-8 lowercase letters/digits, starting
   with a letter. When rerunning an existing deployment, use its original prefix.
+
+![Azure Cloud Shell shows the CYOT-CONSTO provider, platform, hosting plan, and resource prefix choices](images/onboarding/cloud-shell-choose-options.svg)
+
+*The walkthrough selected Telesign Global routing, Node.js, Flex Consumption FC1, and the
+`consto` resource prefix. These are example choices, not recommendations for every deployment.*
 
 Complete required sign-in, MFA, or administrator consent. Resolve preflight errors before approval.
 
@@ -171,6 +181,13 @@ Insights, diagnostics, Easy Auth, and scoped role assignments. Do not precreate 
 Keep `epp-output` private. Its [summary](../setup/docs/README.md#read-the-deployment-summary)
 records the selected tenant, subscription, provider route, runtime, plan, resource names, endpoint,
 application, package provenance, and encryption certificate references. No private key is downloaded.
+Cloud Shell sessions are ephemeral, so securely download or otherwise retain the private
+`epp-output` deployment summary and public certificate before closing the session.
+
+![Azure Cloud Shell deployment completion summary showing the CYOT-CONSTO resources and hidden endpoint](images/onboarding/cloud-shell-deployment-complete.svg)
+
+*The nonproduction CYOT-CONSTO resource names are shown so readers can recognize the naming
+pattern. The endpoint is hidden, and the full deployment summary remains private.*
 
 Setup verifies the private-key reference and **Easy Auth** before opening public access. Keep
 Easy Auth enabled. It also verifies that `SendOtp` is registered before reporting success. If setup
@@ -180,9 +197,9 @@ fails, use the
 To find the deployed resources, open **Azure portal > Resource groups** and select the group
 listed in your deployment summary.
 
-![Example regional resource group showing a Function App, monitoring, Key Vault, managed identity, hosting plan, and storage](images/onboarding/resource-group.png)
+![CYOT-CONSTO regional resource group showing the consto Function App, monitoring, Key Vault, managed identity, FC1 hosting plan, and storage](images/onboarding/resource-group.png)
 
-*This Premium test deployment shows the expected resource types. Your list can differ.*
+*This FC1 nonproduction deployment shows the actual CYOT-CONSTO resource names. Your list can differ.*
 
 ## 4. Connect your provider and test
 
@@ -196,9 +213,10 @@ In your Function App, open **Settings > Authentication**. Check that authenticat
 **Enabled**, access is set to **Require authentication**, and unauthenticated requests receive
 **HTTP 401 Unauthorized**. These are checks, not instructions to change the approved caller.
 
-![Function Authentication page showing Enabled, Require authentication, and Return HTTP 401 Unauthorized](images/onboarding/authentication.png)
+![CYOT-CONSTO Function Authentication page showing Enabled, Require authentication, and Return HTTP 401 Unauthorized](images/onboarding/authentication.png)
 
-*The **Microsoft** identity provider validates the caller. It is not the SMS or voice provider.*
+*The Function and identity-provider labels remain visible. Only the client ID is hidden. The
+**Microsoft Entra ID** identity provider validates the caller; it is not the SMS or voice provider.*
 
 Complete the [approved endpoint checks](ONBOARDING.md#validate-the-deployed-endpoint):
 
