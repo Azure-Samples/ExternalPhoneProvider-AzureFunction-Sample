@@ -336,8 +336,9 @@ test('Telesign OAuth skips startup acquisition and both live channels use only t
 
 test('Telesign OAuth acquisition failure stops before provider HTTP', async () => {
     process.env.EPP_PROVIDER_NAME = 'telesign';
-    getToken.mock.mockImplementation(async () => { throw new Error('PRIVATE-TOKEN-FAILURE'); });
+    getToken.mock.mockImplementation(async () => { throw new Error('AADSTS500011: PRIVATE-TOKEN-FAILURE'); });
     failure(await invoke(await envelope()), 502);
+    assert.equal(event('provider_credential_resolution_failed').aadstsCode, 'AADSTS500011');
     assert.equal(event('request_failed').failureReason, 'credential_unavailable');
     assert.equal(getToken.mock.callCount(), 1);
     assert.equal(getSecret.mock.callCount(), 0);
@@ -359,7 +360,9 @@ test('a credential failure is request-correlated and the next live request can r
 
 for (const [code, expected] of [
     ['70025', 'AADSTS70025'], ['70021', 'AADSTS70021'], ['700016', 'AADSTS700016'],
-    ['999999', null], ['700211', null],
+    ['500011', 'AADSTS500011'], ['501051', 'AADSTS501051'], ['700213', 'AADSTS700213'],
+    ['999999', 'AADSTS999999'], ['700211', 'AADSTS700211'],
+    ['500011suffix', null], ['not-a-code', null], ['', null],
 ]) {
     test(`AADSTS${code} changes only internal correlated logs, not the public credential-failure response`, async () => {
         getToken.mock.mockImplementation(async function () {

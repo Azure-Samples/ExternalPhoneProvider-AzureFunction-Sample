@@ -577,7 +577,9 @@ def test_selection_and_credential_failures_are_safe(
 
 @pytest.mark.parametrize("code,expected", [
     ("70025", "AADSTS70025"), ("70021", "AADSTS70021"), ("700016", "AADSTS700016"),
-    ("999999", None), ("700211", None),
+    ("500011", "AADSTS500011"), ("501051", "AADSTS501051"), ("700213", "AADSTS700213"),
+    ("999999", "AADSTS999999"), ("700211", "AADSTS700211"),
+    ("500011suffix", None), ("not-a-code", None), ("", None),
 ])
 def test_credential_diagnostic_preserves_public_response_and_correlation(caplog, code, expected):
     caplog.set_level(logging.INFO)

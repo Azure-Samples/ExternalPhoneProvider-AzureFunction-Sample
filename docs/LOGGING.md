@@ -72,8 +72,9 @@ Unknown status text and malformed JSON are never logged. Malformed JSON emits on
 ## Credential diagnostics
 
 The request-correlated `provider_credential_resolution_failed` event logs only `aadstsCode`
-(`AadstsCode` in .NET), extracted from the SDK error message. It is one of the codes below or
-null; raw error text, responses and credentials are never logged. Python/.NET use event ID
+(`AadstsCode` in .NET), extracted from the SDK error message. It contains `AADSTS` followed by
+ASCII digits, or null when no such identifier is present. Codes are not restricted to the
+examples below. Raw error text, responses and credentials are never logged. Python/.NET use event ID
 **1103** at Error level. Public HTTP responses and credential acquisition behavior are unchanged.
 
 | Code | Meaning and next check |
@@ -82,7 +83,8 @@ null; raw error text, responses and credentials are never logged. Python/.NET us
 | [`AADSTS70021`](https://login.microsoftonline.com/error?code=70021) | No matching federation; check issuer, subject and audience. |
 | [`AADSTS700016`](https://login.microsoftonline.com/error?code=700016) | Application not found in the requested directory; check app and tenant IDs. This alone does not prove missing provider consent. |
 
-The event does not identify which acquisition step failed or infer a root cause.
+The event does not identify which acquisition step failed or infer a root cause. A null value
+does not establish that authentication succeeded or that the failure was unrelated to Entra.
 
 ## Safe fields and identifiers
 

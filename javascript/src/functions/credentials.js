@@ -21,7 +21,7 @@ let filteredLogger;
 
 function aadstsCode(error) {
     return typeof error?.message === 'string'
-        ? error.message.match(/\bAADSTS(?:70025|70021|700016)\b/)?.[0] ?? null : null;
+        ? error.message.match(/\bAADSTS[0-9]+\b/)?.[0] ?? null : null;
 }
 
 // The installed identity SDK does not propagate every getToken abort signal to HTTP.
@@ -145,7 +145,7 @@ class CredentialTokenService {
             interrupted,
         ])).catch((error) => {
             controller.abort();
-            // Retain only an allowlisted code, never the SDK exception or response.
+            // Retain only the numeric AADSTS identifier, never the SDK exception or response.
             throw unavailable(error);
         }).finally(() => {
             clearTimeout(timeout);
