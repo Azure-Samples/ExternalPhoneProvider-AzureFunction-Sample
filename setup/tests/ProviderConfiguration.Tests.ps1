@@ -26,6 +26,7 @@ try {
         $script:ObjectId = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
         $telesign = Get-EppProviderDefinition -AssetDirectory $script:AssetDirectory -Provider Telesign
         $soprano = Get-EppProviderDefinition -AssetDirectory $script:AssetDirectory -Provider Soprano
+        $infobip = Get-EppProviderDefinition -AssetDirectory $script:AssetDirectory -Provider Infobip
         $unknownTenant = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
         $unconfiguredRestrictions = @(
             $null
@@ -117,7 +118,7 @@ try {
                 $selected = Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory
                 Assert ($selected -ceq 'telesign' -and $script:Prompts[0] -ceq 'Provider name') 'No configuration must prompt for a provider name.'
                 Assert (($script:Messages -join "`n").Contains('configuration is included in the deployment approval')) 'Do not configure an existing app before deployment approval.'
-                Assert ($script:Messages -contains 'Provider names: Soprano, Telesign') 'List provider names alphabetically, independently of catalog order.'
+                Assert ($script:Messages -contains 'Provider names: Infobip, Soprano, Telesign') 'List provider names alphabetically, independently of catalog order.'
                 Assert ($script:Patches.Count -eq 0) 'Provider resolution is read-only.'
             }
         }
@@ -144,6 +145,11 @@ try {
         Assert ($selected -ceq 'soprano' -and $script:Prompts.Count -eq 2 -and $script:Warnings.Count -eq 1 -and
             $script:Prompts[0] -ceq 'Provider name') 'Require a name when choosing among multiple configured providers.'
         Assert (-not (($script:Messages -join "`n") -match '\[\d+\]')) 'Configured providers must not be numbered.'
+        Reset-TestState @('Yes')
+        $script:Application.SignInAudience = 'AzureADMultipleOrgs'
+        $script:Restriction = New-TestRestriction @($infobip.TenantId)
+        Assert ((Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory) -ceq 'infobip') 'Recognize an existing Infobip tenant restriction and confirm its provider by name.'
+        Assert ($script:Prompts[0] -match 'configured for Infobip' -and $script:Patches.Count -eq 0) 'Infobip provider discovery must remain read-only.'
         Reset-TestState
         $selected = Resolve-EppApplicationProvider -Inputs (New-TestInputs) -AssetDirectory $script:AssetDirectory -Provider ' TELESIGN ' -NonInteractive
         Assert ($selected -ceq 'telesign' -and $script:ApplicationReads -eq 0 -and $script:Prompts.Count -eq 0) 'An explicit provider is an explicit choice; preflight validates the actual app configuration later.'

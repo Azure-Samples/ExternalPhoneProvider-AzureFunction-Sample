@@ -21,7 +21,7 @@ Use the guide that matches your task.
 ## Understand and develop
 
 - [Technical reference](../TECHNICAL.md)
-  - [Soprano and Telesign](../TECHNICAL.md#built-in-providers)
+  - [Infobip, Soprano, and Telesign](../TECHNICAL.md#built-in-providers)
 - [Send OTP API](CONTRACT.md)
 - Runtime guides:
   - [JavaScript](../javascript/README.md)

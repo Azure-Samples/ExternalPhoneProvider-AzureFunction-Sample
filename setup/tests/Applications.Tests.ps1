@@ -253,7 +253,7 @@ try {
             Assert ($script:ApplicationReads -eq 0 -and $script:RestrictionReads -eq 0) 'A planned new application has no existing Graph configuration to read.'
             Assert ($script:PlanInputs.NewApplicationDisplayName -ceq $script:ApplicationName -and -not $script:PlanInputs.ApplicationId) 'Carry the requested name, not a fake client ID, through preflight.'
             Assert ($script:PlanNames.keyVault -ceq 'unit-epp-kv-<app-id-hash>') 'Disclose pending names in the approval plan.'
-            Assert ($script:Messages -contains 'Provider names: Soprano, Telesign') 'Offer all guided providers alphabetically for a new app.'
+            Assert ($script:Messages -contains 'Provider names: Infobip, Soprano, Telesign') 'Offer all guided providers alphabetically for a new app.'
             Assert (($script:Messages -join "`n").Contains("Create '$script:ApplicationName' after approval")) 'Show the exact application creation action in the final plan.'
             Assert ($script:Answers.Count -eq 0 -and -not (Test-Path -LiteralPath $Directory)) 'Do not write deployment output before approval.'
         }
@@ -347,7 +347,7 @@ try {
         Assert ($script:Creates -eq 1 -and $script:Initializations -eq 0) 'Check final resource ownership before mutating app configuration or deploying Azure resources.'
         Assert (Test-Path -LiteralPath (Join-Path $setup.OutputDirectory "application-$script:AppId.json")) 'Keep the new client ID available if resolved resource names conflict.'
 
-        foreach ($provider in @('soprano', 'telesign')) {
+        foreach ($provider in @('soprano', 'telesign', 'infobip')) {
             $nameAnswer = if ($provider -eq 'soprano') { '' } else { $script:ApplicationName }
             $expectedName = if ($provider -eq 'soprano') { 'EPP Application' } else { $script:ApplicationName }
             $applicationAnswer = if ($provider -eq 'soprano') { '' } else { 'create' }
@@ -362,6 +362,12 @@ try {
             $summary = Read-EppJson $summaries[0].FullName
             $record = Read-EppJson (Join-Path $setup.OutputDirectory "application-$script:AppId.json")
             Assert ($record.displayName -ceq $expectedName) 'Create and persist either the accepted default name or the supplied custom name.'
+            $expectedAuth = if ($provider -eq 'telesign') { 'apiKey' } else { 'oauth' }
+            Assert ($summary.providerAuthentication -ceq $expectedAuth -and
+                $script:DeploymentParameters.providerSettings.value.EPP_PROVIDER_AUTH_MODE -ceq $expectedAuth) 'Carry the selected authentication mode through deployment and the success summary.'
+            if ($provider -eq 'infobip') {
+                Assert (($script:Messages -join "`n").Contains('Infobip OAuth: add a federated credential')) 'The approval plan must identify Infobip federation rather than another provider.'
+            }
             Assert ($summary.applicationId -ceq $record.applicationId -and $summary.provider -ceq $provider -and
                 $summary.packageSha256 -ceq ('b' * 64)) 'Record the deployed client ID, provider, and final package hash.'
             foreach ($key in $record.resources.Keys) {

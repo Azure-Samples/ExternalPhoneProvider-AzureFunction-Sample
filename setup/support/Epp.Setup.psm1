@@ -1476,7 +1476,7 @@ function Show-EppPlan {
     Write-Host '  - Configure Easy Auth to require HTTPS authentication and allow only the Microsoft phone-provider enterprise application.'
     Show-EppCertificatePlan -Plan $Context.CertificatePlan -Names $Names
     if ($Inputs.ProviderAuthentication -eq 'oauth') {
-        Write-Host '  - Soprano OAuth: add a federated credential so the outbound managed identity can authenticate without a client secret.'
+        Write-Host "  - $($ProviderConfiguration.DisplayName) OAuth: add a federated credential so the outbound managed identity can authenticate without a client secret."
     }
     else {
         Write-Host '  - Telesign API key: store the required provider credentials in Key Vault; no federated credential is created.'

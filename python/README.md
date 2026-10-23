@@ -69,7 +69,7 @@ authentication and decryption without a provider send. Live success confirms acc
 **not handset receipt**. Check a timeout before retrying.
 
 For built-in message and voice mapping, see
-[Soprano and Telesign](../TECHNICAL.md#built-in-providers).
+[Infobip, Soprano, and Telesign](../TECHNICAL.md#built-in-providers).
 
 ## Source
 

@@ -224,11 +224,50 @@ test('Soprano accepts root or first array object with strict status and flexible
     }
 });
 
+test('Infobip uses OAuth with the tested SMS and advanced voice contracts on both setup routes', () => {
+    const infobip = selectProvider('infobip');
+    const profile = require('../../setup/providers/infobip.json');
+    assert.equal(infobip.authenticationMode, 'oauth');
+    assert.deepEqual(infobip.credentialSpec, { mode: 'oauth' });
+    for (const [region, baseUrl] of [
+        ['global', 'https://api.infobip.com'],
+        ['eu', 'https://api-eu.infobip.com'],
+    ]) {
+        for (const channel of ['sms', 'voice']) {
+            const request = infobip.createRequest({
+                ...input,
+                channel,
+                endpoint: profile.deployment.routes[region][`${channel}Endpoint`],
+                credential: { mode: 'oauth', accessToken: 'provider-token' },
+                env: { EPP_PROVIDER_ACCOUNT_NAME: 'EPP' },
+            });
+            assert.equal(request.url, baseUrl + (channel === 'voice' ? '/tts/3/advanced' : '/sms/3/messages'));
+            assert.equal(request.method, 'POST');
+            assert.deepEqual(request.headers, {
+                Authorization: ['Bearer', 'provider-token'].join(' '),
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+            });
+            const destinations = [{ to: delivery.phoneNumber, messageId: 'correlation-id' }];
+            assert.deepEqual(JSON.parse(request.body), {
+                messages: [channel === 'voice' ? {
+                    from: 'EPP',
+                    destinations,
+                    text: delivery.message,
+                    language: 'fr-FR',
+                    voice: { name: 'Joanna', gender: 'female' },
+                } : {
+                    sender: 'EPP',
+                    destinations,
+                    content: { text: delivery.message },
+                }],
+            });
+        }
+    }
+});
+
 test('Infobip accepts only strict recognized status strings', () => {
     const infobip = selectProvider('infobip');
-    const request = infobip.createRequest(input);
-    assert.equal(request.headers.Authorization, 'App key');
-    assert.equal(JSON.parse(request.body).messages[0].content.text, delivery.message);
     for (const [status, expected] of [
         ['ACCEPTED', OUTCOME.CONTINUE],
         ['pending', OUTCOME.CONTINUE],

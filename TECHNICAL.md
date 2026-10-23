@@ -13,7 +13,7 @@ This reference covers implementation details, app settings, packages, and built-
 | Download or build a package | [Download](#download-a-function-zip) or [build](#build-zips-locally) |
 | Review request processing | [HTTP implementation details](#http-implementation-details) |
 | Configure settings | [Environment variables](#configure-environment-variables) |
-| Configure Soprano or Telesign | [Built-in providers](#built-in-providers) |
+| Configure Infobip, Soprano, or Telesign | [Built-in providers](#built-in-providers) |
 | Prepare for live use | [Production readiness](#production-readiness) |
 | Review trust boundaries | [Security](#security) |
 | Design regional continuity | [Resiliency and business continuity](#resiliency-and-business-continuity) |
@@ -306,9 +306,41 @@ Every deployment can serve both configured channels. The legacy `EPP_PROVIDER_CH
 <a id="soprano-integration"></a>
 <a id="telesign-integration"></a>
 
-Guided setup supports the sample's built-in **Soprano** and **Telesign** integrations.
+Guided setup supports the sample's built-in **Infobip**, **Soprano**, and **Telesign** integrations.
 Use the [credential and deployment-support table](docs/ONBOARDING.md#provider-credential-names)
 for onboarding.
+
+### Infobip
+
+Infobip uses OAuth only, with the same managed-identity client-assertion exchange and settings as
+[Soprano](#soprano). No `infobip-api-key` secret is read. The
+[guided profile](setup/providers/infobip.json) supplies the Security Store manifest's provider
+tenant and API application ID; its OAuth scope is that application ID followed by `/.default`.
+Provider-side authorization of the customer application is still required.
+
+Both channel settings are **base URLs**, without a message path or trailing slash:
+
+| Provider route | `EPP_PROVIDER_SMS_ENDPOINT` and `EPP_PROVIDER_VOICE_ENDPOINT` |
+| --- | --- |
+| Global | `https://api.infobip.com` |
+| EU | `https://api-eu.infobip.com` |
+
+The adapters preserve the API-key-tested request and response contracts: append `/sms/3/messages`
+for SMS or `/tts/3/advanced` for voice, and send the existing `messages` payload with OAuth
+`Authorization: Bearer <access-token>` instead of `App <api-key>`. Voice does **not** switch to
+the manifest's `/tts/3/single` contract, and neither channel uses plain HTTP.
+Message text, destinations, correlation IDs, locale, and voice options are unchanged.
+Recognized success groups remain `ACCEPTED`, `PENDING`, and `DELIVERED` on successful HTTP responses;
+unknown statuses fail closed.
+
+Set `EPP_PROVIDER_ACCOUNT_NAME` to an Infobip-approved sender/caller ID and confirm it works for
+both intended channels. The adapter's existing `Verify` fallback is not proof of sender approval.
+
+For an older API-key deployment, deploy a package containing this OAuth update and rerun setup
+with `-Provider infobip` to configure federation and the provider tenant/scope. Review
+`EPP_PROVIDER_AUTH_MODE=oauth` and the regional base URLs. Updating settings alone does not upgrade
+an older adapter; this version has no API-key fallback. Complete
+[provider authorization](docs/ONBOARDING.md#complete-provider-authentication) before live use.
 
 ### Soprano
 

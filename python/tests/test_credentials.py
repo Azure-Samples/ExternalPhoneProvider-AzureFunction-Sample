@@ -13,6 +13,8 @@ import pytest
 import src.credentials as credentials_module
 from src.config import read_config
 from src.credentials import CredentialTokenService
+from src.providers.infobip import InfobipProvider
+from src.providers.soprano import SopranoProvider
 from src.providers.telesign import TelesignProvider
 
 AUTH = {"mode": "apiKey", "key_vault_secret_name": "key", "identity_key_vault_secret_name": "id"}
@@ -121,7 +123,8 @@ def test_empty_secrets_do_not_return_a_previous_or_partial_bundle(empty_secret):
         manager.close()
 
 
-def test_oauth_calls_one_sdk_client_per_request_and_only_the_sdk_requests_assertions(monkeypatch):
+@pytest.mark.parametrize("provider", [SopranoProvider(), InfobipProvider()])
+def test_oauth_calls_one_sdk_client_per_request_and_only_the_sdk_requests_assertions(monkeypatch, provider):
     identity = Mock(spec=["get_token", "close"], get_token=Mock(return_value=token("PRIVATE-ASSERTION")))
     create_identity = Mock(return_value=identity)
     monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", create_identity)
@@ -144,8 +147,8 @@ def test_oauth_calls_one_sdk_client_per_request_and_only_the_sdk_requests_assert
     try:
         create_identity.assert_not_called()
         create_credential.assert_not_called()
-        assert manager.resolve({"mode": "oauth"}, OAUTH)["access_token"] == "PRIVATE-TOKEN-1"
-        assert manager.resolve({"mode": "oauth"}, OAUTH)["access_token"] == "PRIVATE-TOKEN-2"
+        assert manager.get_credentials(provider, OAUTH)["access_token"] == "PRIVATE-TOKEN-1"
+        assert manager.get_credentials(provider, OAUTH)["access_token"] == "PRIVATE-TOKEN-2"
         create_identity.assert_called_once()
         create_credential.assert_called_once()
         identity.get_token.assert_called_once()

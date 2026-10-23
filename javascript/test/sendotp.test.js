@@ -277,7 +277,7 @@ for (const mode of [1, 2]) {
     });
 }
 
-for (const provider of ['telesign', 'soprano']) {
+for (const provider of ['telesign', 'soprano', 'infobip']) {
     test(`${provider}: only live requests acquire credentials and obsolete cache settings are ignored`, async () => {
         const apiKey = provider === 'telesign';
         process.env.EPP_PROVIDER_NAME = provider;
@@ -286,6 +286,10 @@ for (const provider of ['telesign', 'soprano']) {
         process.env.EPP_ACCESS_TOKEN_CACHE_ENABLED = 'PRIVATE-OBSOLETE';
         if (apiKey) fetchMock.mock.mockImplementation(async () => ({
             ok: true, status: 200, text: async () => JSON.stringify({ status: { code: 3001 } }),
+        }));
+        if (provider === 'infobip') fetchMock.mock.mockImplementation(async () => ({
+            ok: true, status: 200,
+            text: async () => JSON.stringify({ messages: [{ status: { groupName: 'PENDING' } }] }),
         }));
         assert.equal(startHook, undefined);
         const evaluated = await invoke(await envelope({ mode: 2 }));
@@ -541,7 +545,7 @@ for (const [provider, response, smsPath, voicePath] of [
     test(`${provider}: request channel selects distinct configured endpoints`, async () => {
         Object.assign(process.env, {
             EPP_PROVIDER_NAME: provider,
-            EPP_PROVIDER_AUTH_MODE: provider === 'soprano' ? 'oauth' : 'apiKey',
+            EPP_PROVIDER_AUTH_MODE: ['soprano', 'infobip'].includes(provider) ? 'oauth' : 'apiKey',
             EPP_PROVIDER_SMS_ENDPOINT: 'https://sms.provider.example/send',
             EPP_PROVIDER_VOICE_ENDPOINT: 'https://voice.provider.example/send',
             SINCH_SERVICE_PLAN_ID: 'plan',
@@ -561,6 +565,11 @@ for (const [provider, response, smsPath, voicePath] of [
                 assert.equal(result.status, 200);
                 assert.equal(result.jsonBody.nonce, baseDelivery.nonce);
                 assert.equal(fetchMock.mock.calls.at(-1).arguments[0], endpoint + path);
+                if (provider === 'infobip') {
+                    assert.equal(fetchMock.mock.calls.at(-1).arguments[1].headers.Authorization,
+                        ['Bearer', 'PRIVATE-OAUTH-TOKEN'].join(' '));
+                    assert.equal(getSecret.mock.callCount(), 0);
+                }
             }
         }
         assert.equal(fetchMock.mock.callCount(), 4);

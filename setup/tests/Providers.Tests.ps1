@@ -6,7 +6,7 @@ $module = Import-Module (Join-Path $setupDirectory 'support' 'Epp.Setup.psm1') -
 $directory = Join-Path ([IO.Path]::GetTempPath()) "epp-provider-tests-$([Guid]::NewGuid().ToString('N'))"
 try {
     New-Item -ItemType Directory -Path (Join-Path $directory 'providers') -Force | Out-Null
-    foreach ($file in @('catalog.json', 'telesign.json', 'soprano.json')) {
+    foreach ($file in @('catalog.json', 'telesign.json', 'soprano.json', 'infobip.json')) {
         Copy-Item -LiteralPath (Join-Path $setupDirectory 'providers' $file) -Destination (Join-Path $directory 'providers' $file)
     }
     & $module {
@@ -106,7 +106,7 @@ try {
         Assert ($script:Prompts.Count -eq 0) 'Package resolution must not ask for raw URLs or checksums.'
         function script:Invoke-RestMethod { throw 'Unexpected REST call (no network allowed).' }
 
-        foreach ($id in @('telesign', 'soprano')) {
+        foreach ($id in @('telesign', 'soprano', 'infobip')) {
             foreach ($region in @('global', 'eu')) {
                 $configuration = Get-EppProvider -AssetDirectory $Directory `
                     -Provider $id -EndpointRegion $region -NonInteractive
@@ -121,8 +121,17 @@ try {
                 Assert ($settings.EPP_PROVIDER_TIMEOUT_MS -ceq [string]$route.timeoutMilliseconds) 'Preserve the provider timeout.'
                 Assert ($settings.EPP_PROVIDER_RETRY_INTERVAL_MS -ceq [string]([long]$route.retryIntervalSeconds * 1000)) 'Preserve retry interval metadata.'
                 Assert ($settings.EPP_PROVIDER_AUTH_MODE -ceq $configuration.Manifest.deployment.authentication.mode) 'Preserve provider authentication.'
-                if ($id -eq 'soprano') {
+                if ($configuration.AuthenticationMode -eq 'oauth') {
                     Assert ($settings.EPP_PROVIDER_APP_ID -ceq $route.appId -and $settings.EPP_PROVIDER_SCOPE -ceq $route.scope) 'Preserve regional OAuth settings.'
+                }
+                if ($id -eq 'infobip') {
+                    $baseUrl = if ($region -eq 'eu') { 'https://api-eu.infobip.com' } else { 'https://api.infobip.com' }
+                    Assert ($settings.EPP_PROVIDER_SMS_ENDPOINT -ceq $baseUrl -and $settings.EPP_PROVIDER_VOICE_ENDPOINT -ceq $baseUrl) 'Infobip adapters append the tested SMS and advanced voice paths to HTTPS regional base URLs.'
+                    Assert ($settings.EPP_PROVIDER_AUTH_MODE -ceq 'oauth' -and
+                        $settings.EPP_PROVIDER_TENANT_ID -ceq 'a7d072c3-504e-4385-9029-89283084be5d' -and
+                        $settings.EPP_PROVIDER_APP_ID -ceq 'd1131a30-5ed5-49b7-8602-d978c8eb1677' -and
+                        $settings.EPP_PROVIDER_SCOPE -ceq 'd1131a30-5ed5-49b7-8602-d978c8eb1677/.default') 'Use the Infobip manifest tenant/API application and its default scope for OAuth.'
+                    Assert (-not $configuration.Manifest.deployment.authentication.ContainsKey('keyVaultSecretName')) 'Infobip OAuth must not require an API-key secret.'
                 }
             }
         }
@@ -211,7 +220,7 @@ try {
             AssetDirectory = $SetupDirectory
             SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
         }
-        foreach ($id in @('telesign', 'soprano')) {
+        foreach ($id in @('telesign', 'soprano', 'infobip')) {
             foreach ($region in @('global', 'eu')) {
                 $script:TenantScope = if ($region -eq 'eu') { 'EU' } else { 'NA' }
                 Assert-Throws {

@@ -1,0 +1,28 @@
+{
+  "deployment": {
+    "enabled": true,
+    "providerName": "Infobip",
+    "tenantId": "a7d072c3-504e-4385-9029-89283084be5d",
+    "authentication": {
+      "mode": "oauth"
+    },
+    "routes": {
+      "global": {
+        "smsEndpoint": "https://api.infobip.com",
+        "voiceEndpoint": "https://api.infobip.com",
+        "appId": "d1131a30-5ed5-49b7-8602-d978c8eb1677",
+        "scope": "d1131a30-5ed5-49b7-8602-d978c8eb1677/.default",
+        "timeoutMilliseconds": 1500,
+        "retryIntervalSeconds": 30
+      },
+      "eu": {
+        "smsEndpoint": "https://api-eu.infobip.com",
+        "voiceEndpoint": "https://api-eu.infobip.com",
+        "appId": "d1131a30-5ed5-49b7-8602-d978c8eb1677",
+        "scope": "d1131a30-5ed5-49b7-8602-d978c8eb1677/.default",
+        "timeoutMilliseconds": 1500,
+        "retryIntervalSeconds": 30
+      }
+    }
+  }
+}

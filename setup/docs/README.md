@@ -23,7 +23,7 @@ Setup creates **one regional endpoint**. See [Front Door](../../docs/FRONTDOOR.m
 
 ## Availability
 
-Choose **Soprano or Telesign** and **FC1/EP1** hosting. Setup detects the tenant's replication scope
+Choose **Infobip, Soprano, or Telesign** and **FC1/EP1** hosting. Setup detects the tenant's replication scope
 and selects the **EU** provider route for EU tenants or **Global** otherwise, without a scope picker.
 **JavaScript** is the default language, without a prompt. To use another language, run
 `.\Setup-Epp.ps1 -Language csharp` or `.\Setup-Epp.ps1 -Language python`.
@@ -34,13 +34,16 @@ See [source/package selection](#source-versioning).
 Both channels are configured. Profile objects `deployment.routes.global` and
 `deployment.routes.eu` define `smsEndpoint`, `voiceEndpoint`, tenant, authentication, and timing
 values. Setup writes the endpoints to `EPP_PROVIDER_SMS_ENDPOINT` and
-`EPP_PROVIDER_VOICE_ENDPOINT`; Soprano also supplies its API app ID and scope.
+`EPP_PROVIDER_VOICE_ENDPOINT`; Infobip and Soprano also supply their API app ID and scope.
+Infobip's settings are HTTPS base URLs: its adapters append the tested `/sms/3/messages` and
+`/tts/3/advanced` paths without changing their request or response contracts.
 
 Use a package that supports channel-specific settings; neither channel uses the other channel's URL.
 
-The current profiles use identical Global/EU URLs, and Soprano uses the same app ID/scope.
-The route label is not a residency or Azure-region selection. Infobip and Sinch are bundled
-adapters without guided profiles.
+Soprano and Telesign currently use identical Global/EU URLs. Infobip uses `https://api.infobip.com`
+for Global and `https://api-eu.infobip.com` for EU. Each OAuth provider uses the same API app ID/scope
+across its two routes. The route label is not a residency or Azure-region selection.
+Sinch remains a bundled adapter without a guided profile.
 
 ### Tenant scope and Azure region recommendations
 
@@ -107,7 +110,7 @@ For the first deployment, use a nonproduction tenant and subscription.
 
 **Create during guided setup:** press Enter to accept **Create a new application** in the application picker,
 press Enter to accept **EPP Application** or enter a display name (1-256 characters), and choose
-a provider by name from the alphabetized list (**Soprano, Telesign**). Blank provider-name input
+a provider by name from the alphabetized list (**Infobip, Soprano, Telesign**). Blank provider-name input
 prompts again; there is no default provider. An explicit `-Provider` skips that provider prompt.
 The new registration is only planned at this point: setup creates it after final deployment
 approval, not when you choose the menu option. Canceling before approval creates nothing.
@@ -124,7 +127,7 @@ To create it manually before setup:
    supply its client ID, not the application's object ID. Setup never silently creates a
    replacement if an existing ID is invalid.
 3. Complete provider purchase, sender registration, and API onboarding.
-   Telesign uses `telesign-api-key` and `telesign-customer-id` in Key Vault. Soprano uses OAuth
+   Telesign uses `telesign-api-key` and `telesign-customer-id` in Key Vault. Infobip and Soprano use OAuth
    client-assertion exchange with the selected provider tenant/scope/application ID. Setup does not
    grant provider API consent or application roles. Finish the
    [provider authentication handoff](../../docs/ONBOARDING.md#complete-provider-authentication)
@@ -141,7 +144,7 @@ Setup configures:
 - The app's enterprise application with assignment required, `Epp.Invoke`, and its assignment to
   the Microsoft phone-provider service principal.
 - That Microsoft principal's tenant-wide Graph `Application.Read.All`, identifier URI, public JWE certificate, and Easy Auth caller restriction.
-- The disclosed outbound managed-identity federated credential for Soprano.
+- The disclosed outbound managed-identity federated credential for Infobip or Soprano.
 
 ## Prerequisites for Step 2
 
@@ -423,7 +426,7 @@ Subscription-wide registrations are not undone after later failures. See
 [registration recovery](Troubleshooting.md#a-required-azure-resource-provider-is-not-registered).
 
 Supply known values to shorten the prompts. Replace `<provider-id>` with your selected guided
-provider's ID (`soprano` or `telesign`); neither is a default or recommendation:
+provider's ID (`infobip`, `soprano`, or `telesign`); none is a default or recommendation:
 
 ```powershell
 .\Setup-Epp.ps1 `
