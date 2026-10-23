@@ -6,15 +6,15 @@ from ..provider import OutboundRequest, PhoneProviderBase, classify_failure
 
 class InfobipProvider(PhoneProviderBase):
     name = "infobip"
-    authentication_mode = "apiKey"
+    authentication_mode = "oauth"
 
     @property
     def credential_spec(self):
-        return {"mode": self.authentication_mode, "key_vault_secret_name": "infobip-api-key"}
+        return {"mode": self.authentication_mode}
 
     def build_request(self, channel, endpoint, delivery, credential, env):
         sender_id = env.get("EPP_PROVIDER_ACCOUNT_NAME") or "Verify"
-        authorization = f"App {credential['secret']}"
+        authorization = " ".join(("Bearer", credential["access_token"]))
         headers = {"Authorization": authorization, "Content-Type": "application/json", "Accept": "application/json"}
         message_id = delivery.correlation_id or delivery.message_id
 

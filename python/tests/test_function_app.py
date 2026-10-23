@@ -183,6 +183,7 @@ def test_non_object_risk_context_fails_before_provider_work(caplog, mode, risk_c
 @pytest.mark.parametrize(("provider", "mode"), [
     ("telesign", "apiKey"),
     ("soprano", "oauth"),
+    ("infobip", "oauth"),
 ])
 def test_only_live_requests_acquire_credentials(monkeypatch, provider, mode):
     monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
@@ -192,8 +193,10 @@ def test_only_live_requests_acquire_credentials(monkeypatch, provider, mode):
     function_app._credentials.get_credentials.return_value = {
         "mode": mode, "secret": "key", "identity": "customer", "access_token": "token",
     }
-    provider_module.requests.request.return_value = Mock(
-        status_code=200, json=Mock(return_value={"status": {"code": 3001} if mode == "apiKey" else "ENROUTE"}))
+    payload = {"messages": [{"status": {"groupName": "PENDING"}}]} if provider == "infobip" else {
+        "status": {"code": 3001} if mode == "apiKey" else "ENROUTE",
+    }
+    provider_module.requests.request.return_value = Mock(status_code=200, json=Mock(return_value=payload))
     response = _HANDLER(_request(_envelope(mode=2)))
     assert response.status_code == 200 and json.loads(response.get_body())["nonce"] == _NONCE
     function_app._credentials.get_credentials.assert_not_called()
@@ -370,7 +373,7 @@ def test_request_selects_either_channel_regardless_of_legacy_setting(monkeypatch
     ("sinch", {"id": "provider-id"}, "/xms/v1/plan/batches", "/calling/v1/callouts"),
 ])
 def test_request_channel_selects_distinct_configured_endpoints(monkeypatch, provider, payload, sms_path, voice_path):
-    mode = "oauth" if provider == "soprano" else "apiKey"
+    mode = "oauth" if provider in ("soprano", "infobip") else "apiKey"
     monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
     monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", mode)
     monkeypatch.setenv("EPP_PROVIDER_SMS_ENDPOINT", "https://sms.provider.example/send")
@@ -394,6 +397,8 @@ def test_request_channel_selects_distinct_configured_endpoints(monkeypatch, prov
             assert response.status_code == 200
             assert json.loads(response.get_body())["nonce"] == _NONCE
             assert provider_module.requests.request.call_args.args[1] == endpoint + path
+            if provider == "infobip":
+                assert provider_module.requests.request.call_args.kwargs["headers"]["Authorization"] == " ".join(("Bearer", "token"))
     assert provider_module.requests.request.call_count == 4
 
 

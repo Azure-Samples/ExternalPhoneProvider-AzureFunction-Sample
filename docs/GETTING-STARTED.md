@@ -4,12 +4,13 @@
 
 [Documentation](README.md) | [Setup reference](../setup/docs/README.md) | [Troubleshooting](../setup/docs/Troubleshooting.md)
 
-Deploy one regional endpoint for Microsoft Entra ID SMS and voice requests.
+**External Phone Provider (EPP)** connects Microsoft Entra ID to your phone provider for SMS
+and voice one-time passwords. This guide deploys one regional endpoint for that integration.
 
 | Step | Task |
 | --- | --- |
 | 1 | [Prepare access, tools, region, and budget](#1-get-ready) |
-| 2 | [Register the endpoint application](#2-register-your-application) |
+| 2 | [Choose the endpoint application](#2-register-your-application) |
 | 3 | [Run guided setup](#3-run-guided-setup) |
 | 4 | [Connect the provider and test](#4-connect-your-provider-and-test) |
 | 5 | [Activate and hand over](#5-activate-and-hand-over) |
@@ -51,7 +52,19 @@ Assign an **onboarding owner** and review [production readiness](../TECHNICAL.md
 
 ## 2. Register your application
 
-In the customer tenant's **Microsoft Entra admin center > App registrations > New registration**:
+You can create the dedicated application during guided setup or register it manually.
+
+**Create during setup:** in Step 3, press Enter to choose **Create a new application**, then Enter to use
+**EPP Application** or enter your own display name, and choose a provider by name from the
+alphabetized list (**Infobip, Soprano, Telesign**). Blank provider-name input prompts again instead of
+canceling or selecting a default.
+Setup creates the registration only after you approve the final deployment plan.
+Canceling before approval creates no application. The signed-in user must be allowed to register
+applications in the customer tenant.
+
+**Register manually or use an existing dedicated app:** keep its tenant and application client
+IDs handy. To register manually, open the customer tenant's
+**Microsoft Entra admin center > App registrations > New registration**:
 
 1. Give the application a recognizable name.
 2. Select **Accounts in this organizational directory only**. Leave the redirect URI blank,
@@ -79,7 +92,8 @@ See [application registration details](../setup/docs/README.md#step-1---manually
 
 Keep the Azure subscription ID handy. The [setup values worksheet](ONBOARDING.md#inputs-you-supply-to-setup)
 lists every input. Use a new app and prefix for an independent endpoint. After the app exists,
-complete provider onboarding steps that require its application client ID.
+complete provider onboarding steps that require its application client ID; for setup-created
+applications, that ID becomes available after deployment approval.
 
 ## 3. Run guided setup
 
@@ -104,15 +118,29 @@ Only the tenant ID is hidden. Review the downloaded script before running it.*
 
 On a shared workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` for a fresh sign-in.
 
-Select the tenant, subscription, existing application **client ID**, and Azure region. Then choose:
+JavaScript is used by default, without a language prompt. To deploy another language, run
+`.\Setup-Epp.ps1 -Language csharp` or `.\Setup-Epp.ps1 -Language python`.
 
-- **Provider and route:** enter or confirm the provider by name. **Tenant scope** means Global/EU
-  provider routing, not Azure region or a data-residency guarantee.
-- **Platform:** Node.js, .NET, or Python. Setup downloads the matching stable release asset,
-  verifies `SHA256SUMS.txt`, and builds when required.
-- **Hosting:** FC1 can scale to zero and cold-start. EP1 has paid warm capacity. Review
-  [plan details](../setup/docs/README.md#service-plan-selection).
-- **Resource prefix:** 2-8 lowercase letters/digits, starting with a letter.
+Select the tenant and subscription, then select an existing application, enter its **client ID**,
+or choose **Create a new application** and accept **EPP Application** or enter your own display name.
+Enter accepts the displayed menu default rather than canceling: the current CLI tenant/subscription
+when eligible (otherwise the first eligible option), and **Create a new application** for the app.
+Use **0** or **Cancel** where offered to stop.
+Setup detects the tenant's replication scope and selects the corresponding provider route;
+it does not ask you to choose EU or Global. Select the Azure region, then complete the remaining settings:
+
+- **Azure region:** EU tenants receive recommendations within the EU Data Boundary (EU/EFTA).
+  Enter selects the first displayed region.
+  Other tenants retain the existing Azure-recommended shortlist. All-region and manual selection,
+  including `-Location`, remain available; EU tenants receive a warning for an out-of-boundary or
+  unverifiable choice. Recommendations are not a data-residency or GDPR compliance guarantee.
+- **Provider:** enter or confirm the provider by name. New applications show all guided providers
+  in alphabetical order, with no default selection. Setup downloads the language's matching
+  stable release asset, verifies `SHA256SUMS.txt`, and builds when required.
+- **Hosting:** Enter defaults to FC1, which can scale to zero and cold-start. EP1 has paid warm capacity. Review
+  [plan details](../setup/docs/README.md#service-plan-selection) and the [cost estimate](COST-CALCULATOR.md).
+- **Resource prefix:** press Enter to use `epp`, or enter 2-8 lowercase letters/digits, starting
+  with a letter. When rerunning an existing deployment, use its original prefix.
 
 ![Azure Cloud Shell shows the CYOT-CONSTO provider, platform, hosting plan, and resource prefix choices](images/onboarding/cloud-shell-choose-options.svg)
 
@@ -122,20 +150,34 @@ Select the tenant, subscription, existing application **client ID**, and Azure r
 Complete required sign-in, MFA, or administrator consent. Resolve preflight errors before approval.
 
 For existing encryption credentials, follow
-[certificate selection](../setup/docs/README.md#encryption-certificate-selection). Coordinate
-changes across every endpoint sharing the application.
+[certificate selection](../setup/docs/README.md#encryption-certificate-selection).
+**Enter defaults to replacing all registered encryption credentials with one new certificate.**
+Select **Reuse** explicitly to keep a certificate. Coordinate changes across every endpoint
+sharing the application; no cleanup or creation occurs before final deployment approval.
 
-**Review the deployment plan before typing `Yes`.** Check accounts, region, provider URLs,
+**Review the deployment plan before typing `Yes` or `Y`.** Check accounts, region, provider URLs,
 runtime, plan, resource names, permissions, certificate key IDs, and vault access.
 The plan includes Microsoft Graph `Application.Read.All` for the Microsoft phone-provider service
-principal. `No` or Enter cancels.
+principal. `No`, `N`, or Enter cancels. Responses are case-insensitive.
+
+For a new application, the plan shows its display name and resource-name patterns containing
+`<app-id-hash>`. After approval, setup creates the registration, uses its real client ID to
+calculate the final names, and checks resource ownership before Azure deployment. It prints the
+new client ID and saves `application-<client-id>.json` in `epp-output` for recovery. If deployment
+then fails, reuse that client ID with `-ApplicationId` and the same prefix; do not create another app.
+The registration record is not a successful deployment summary.
 
 **Plan review:** run interactively and choose **No** at the final prompt. See
 [plan review](../setup/docs/README.md#reviewing-the-plan-without-deploying).
 
-Wait for **Deployment completed** and the saved summary before Step 4. Setup creates or updates
+Azure resource deployment and Function publication can each take several minutes. Keep the session
+open; a rotating indicator identifies the operation in progress, without a percentage or estimated
+completion time. Unattended or redirected output uses static status messages instead.
+
+Wait for **Deployment completed successfully** and the saved summary before Step 4. Setup creates or updates
 the Function App, hosting plan, storage, Key Vault, identities, Log Analytics, Application
 Insights, diagnostics, Easy Auth, and scoped role assignments. Do not precreate these resources.
+**Save the output: the endpoint URL and Application (client) ID are required for policy updates.**
 Keep `epp-output` private. Its [summary](../setup/docs/README.md#read-the-deployment-summary)
 records the selected tenant, subscription, provider route, runtime, plan, resource names, endpoint,
 application, package provenance, and encryption certificate references. No private key is downloaded.

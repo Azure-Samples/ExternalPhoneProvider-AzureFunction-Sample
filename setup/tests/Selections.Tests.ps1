@@ -33,10 +33,13 @@ try {
                 SignInAudience = 'AzureADMyOrg'; AdditionalProperties = @{}
             }
         }
-        function script:New-TestRegion([string] $Id, [string] $Category = 'Recommended', [string] $Type = 'Physical') {
+        function script:New-TestRegion(
+            [string] $Id, [string] $Category = 'Recommended', [string] $Type = 'Physical',
+            [string] $Geography = 'United States', [string] $GeographyGroup = 'US'
+        ) {
             return @{
                 name = $Id; displayName = $Id.ToUpperInvariant()
-                metadata = @{ regionCategory = $Category; regionType = $Type }
+                metadata = @{ regionCategory = $Category; regionType = $Type; geography = $Geography; geographyGroup = $GeographyGroup }
             }
         }
         $script:Calls = [Collections.Generic.List[string]]::new()
@@ -46,9 +49,16 @@ try {
         $script:Answers = [Collections.Generic.Queue[string]]::new()
         $script:AzureForces = [Collections.Generic.List[bool]]::new()
         $script:GraphForces = [Collections.Generic.List[bool]]::new()
+        $script:DiscoveryCalls = [Collections.Generic.List[string]]::new()
         function script:Reset-TestState([string[]] $Answers = @()) {
             $script:Calls.Clear(); $script:Messages.Clear(); $script:Warnings.Clear(); $script:Prompts.Clear(); $script:Answers.Clear()
             $script:AzureForces.Clear(); $script:GraphForces.Clear()
+            $script:DiscoveryCalls.Clear()
+            $script:DiscoveryMetadata = [pscustomobject]@{
+                issuer = "https://login.microsoftonline.com/$script:Tenant/v2.0"
+                tenant_region_scope = 'NA'
+            }
+            $script:DiscoveryError = ''
             foreach ($answer in $Answers) { $script:Answers.Enqueue($answer) }
             $script:Graph = [pscustomobject]@{
                 TenantId = $script:Tenant; Authentication = 'AzureCli'
@@ -118,7 +128,72 @@ try {
             return $script:RegionsJson
         }
         function script:Invoke-WebRequest { throw 'Unexpected download.' }
-        function script:Invoke-RestMethod { throw 'Unexpected REST call.' }
+        function script:Invoke-RestMethod {
+            param($Uri, $TimeoutSec, $MaximumRedirection)
+            Assert ($Uri -ceq "https://login.microsoftonline.com/$script:Tenant/v2.0/.well-known/openid-configuration") 'Read only the selected tenant discovery document.'
+            Assert ($TimeoutSec -eq 60 -and $MaximumRedirection -eq 0) 'Bound discovery and do not follow redirects.'
+            $script:DiscoveryCalls.Add($Uri)
+            if ($script:DiscoveryError) { throw $script:DiscoveryError }
+            return ,$script:DiscoveryMetadata
+        }
+
+        $options = @(@{ id = 'first'; displayName = 'Alpha' }, @{ id = 'second'; displayName = 'Beta' })
+        foreach ($blank in @('', '  ')) {
+            Reset-TestState @($blank)
+            Assert ((Select-EppOption -Entries $options -Name Choice -DefaultValue second -AllowCancel).id -ceq 'second') 'Enter must select the specified default, not always the first entry.'
+            Assert ($script:Prompts[0] -ceq 'Choice number or name [2]' -and
+                $script:Messages -contains '  [2] Beta (default)' -and $script:Messages -contains '  [0] Cancel') 'Mark the default and keep cancellation explicit.'
+            Reset-TestState @($blank)
+            Assert ((Read-EppInput -Name Prefix -Kind Prefix -DefaultValue epp -AllowCancel) -ceq 'epp') 'A text-input default must also take precedence over blank-input cancellation.'
+        }
+        Reset-TestState @('', 'first')
+        Assert ((Select-EppOption -Entries $options -Name Choice -AllowCancel).id -ceq 'first' -and
+            $script:Warnings.Count -eq 1) 'When no default is supplied, require a choice rather than canceling.'
+        Reset-TestState @('', 'prefix')
+        Assert ((Read-EppInput -Name Search -AllowCancel) -ceq 'prefix' -and $script:Warnings.Count -eq 1) 'Required text without a known default must reprompt on Enter.'
+        Reset-TestState
+        Assert-Throws { Select-EppOption -Entries $options -Name Choice -DefaultValue invalid } 'Unknown default'
+        Assert-Throws { Select-EppOption -Entries $options -Name Choice -DefaultValue first -NonInteractive } 'Choice is required'
+        Assert ((Select-EppOption -Entries $options -Name Choice -Value second -DefaultValue first -NonInteractive).id -ceq 'second') 'Explicit and unattended inputs must not be replaced by interactive defaults.'
+        Assert ($script:Prompts.Count -eq 0) 'Invalid defaults and unattended inputs must not prompt.'
+
+        foreach ($scope in @('EU', 'NA', 'AS', 'OC', 'AF', 'SA', 'AN', 'JPR', 'WW')) {
+            Reset-TestState
+            $script:DiscoveryMetadata.tenant_region_scope = $scope.ToLowerInvariant()
+            Assert ((Get-EppTenantRegionScope -TenantId $script:Tenant) -ceq $scope) 'Read and normalize the actual tenant scope without a country-to-scope mapping.'
+            $expectedRoute = if ($scope -eq 'EU') { 'eu' } else { 'global' }
+            Assert ((Resolve-EppEndpointRegion -TenantRegionScope $scope) -ceq $expectedRoute) 'Only EU tenants select the EU provider route.'
+            Assert ((Resolve-EppEndpointRegion -TenantRegionScope $scope -EndpointRegion $expectedRoute.ToUpperInvariant()) -ceq $expectedRoute) 'Accept matching explicit routes case-insensitively.'
+            $wrongRoute = if ($scope -eq 'EU') { 'global' } else { 'eu' }
+            Assert-Throws { Resolve-EppEndpointRegion -TenantRegionScope $scope -EndpointRegion $wrongRoute } 'incompatible with tenant replication scope'
+            Assert ($script:Prompts.Count -eq 0) 'Tenant scope and provider routing must not prompt.'
+        }
+        Reset-TestState
+        Assert-Throws { Get-EppTenantRegionScope -TenantId invalid } 'nonempty GUID'
+        Assert ($script:DiscoveryCalls.Count -eq 0) 'Validate tenant IDs before discovery.'
+        Assert-Throws { Resolve-EppEndpointRegion -TenantRegionScope EU -EndpointRegion invalid } 'Unknown EndpointRegion'
+        Assert-Throws { Resolve-EppEndpointRegion -TenantRegionScope '' } 'must be determined'
+        foreach ($invalidScope in @('', ' ', "EU`n", @('EU', 'NA'), 1)) {
+            Reset-TestState
+            $script:DiscoveryMetadata.tenant_region_scope = $invalidScope
+            Assert-Throws { Get-EppTenantRegionScope -TenantId $script:Tenant } 'valid tenant replication scope'
+        }
+        foreach ($metadata in @($null, @(), @([pscustomobject]@{ tenant_region_scope = 'EU' }))) {
+            Reset-TestState
+            $script:DiscoveryMetadata = $metadata
+            Assert-Throws { Get-EppTenantRegionScope -TenantId $script:Tenant } 'invalid tenant discovery metadata'
+        }
+        Reset-TestState
+        $script:DiscoveryMetadata = [pscustomobject]@{ issuer = "https://login.microsoftonline.com/$script:Tenant/v2.0" }
+        Assert-Throws { Get-EppTenantRegionScope -TenantId $script:Tenant } 'valid tenant replication scope'
+        foreach ($issuer in @("https://login.microsoftonline.com/$script:Subscription/v2.0", "https://login.microsoftonline.us/$script:Tenant/v2.0", '')) {
+            Reset-TestState
+            $script:DiscoveryMetadata.issuer = $issuer
+            Assert-Throws { Get-EppTenantRegionScope -TenantId $script:Tenant } 'selected tenant in the Azure public cloud'
+        }
+        Reset-TestState
+        $script:DiscoveryError = 'tenant discovery unavailable'
+        Assert-Throws { Get-EppTenantRegionScope -TenantId $script:Tenant } 'tenant discovery unavailable'
 
         foreach ($noninteractive in @($false, $true)) {
             Reset-TestState
@@ -178,14 +253,23 @@ try {
         Reset-TestState
         $script:GraphError = 'application lookup denied'
         Assert-Throws { Select-EppApplication -Inputs (New-TestInputs) } 'application lookup denied'
-        foreach ($answers in @(@(''), @('manual', ''), @('search', ''))) {
+        foreach ($answers in @(@(''), @('  '), @('manual', ''))) {
+            Reset-TestState $answers
+            Assert ((Select-EppApplication -Inputs (New-TestInputs)) -ceq 'create') 'Blank application selection or manual client-ID input must default to creating a new app.'
+        }
+        Reset-TestState @('')
+        $script:Applications = @()
+        Assert ((Select-EppApplication -Inputs (New-TestInputs)) -ceq 'create' -and
+            $script:Prompts[0] -ceq 'Application number or name [4]') 'The create default must follow the menu entry even when no existing apps are listed.'
+        foreach ($answers in @(@('0'), @('Cancel'), @('manual', 'Cancel'), @('search', 'Cancel'))) {
             Reset-TestState $answers
             Assert ($null -eq (Select-EppApplication -Inputs (New-TestInputs))) 'Application picker/manual/search cancellation must stop setup.'
         }
 
-        Reset-TestState @('westus2')
+        Reset-TestState @('')
         $inputs = New-TestInputs
-        Assert ((Select-EppLocation -Inputs $inputs -ForceAuthentication) -ceq 'westus2') 'Choose a canonical recommended region.'
+        Assert ((Select-EppLocation -Inputs $inputs -ForceAuthentication) -ceq 'westus2') 'Enter chooses the first available recommended region.'
+        Assert ($script:Prompts[0] -ceq 'Azure region number or name [1]') 'Show the region default in the prompt.'
         $text = $script:Messages -join "`n"
         Assert ($text.Contains('WESTUS2 (westus2) - Azure recommended') -and -not $text.Contains('EASTUS2 (eastus2)')) 'The shortlist must use live Recommended classification, not hardcoded claims.'
         Assert ($text.Contains('not a latency/cost ranking') -and $text.Contains('quota')) 'Do not imply a recommendation guarantees capacity or price.'
@@ -193,10 +277,73 @@ try {
         Reset-TestState @('all', 'eastus2')
         Assert ((Select-EppLocation -Inputs (New-TestInputs)) -ceq 'eastus2') 'Allow other physical subscription regions through the all-regions view.'
         Assert (-not ($script:Messages -join "`n").Contains('GLOBAL (global)')) 'Logical locations must not be offered.'
+        Reset-TestState @('all', '')
+        Assert ((Select-EppLocation -Inputs (New-TestInputs)) -ceq 'centralus') 'The all-regions view must default to its own first displayed region, not the shortlist default.'
         Reset-TestState @('all', 'shortlist', 'westus2')
         Assert ((Select-EppLocation -Inputs (New-TestInputs)) -ceq 'westus2') 'Return from all regions to the recommended shortlist.'
+        $euRegions = @(
+            (New-TestRegion westeurope -Geography Europe -GeographyGroup Europe),
+            (New-TestRegion northeurope -Geography Europe -GeographyGroup Europe),
+            (New-TestRegion francecentral -Geography France -GeographyGroup Europe),
+            (New-TestRegion norwayeast -Geography Norway -GeographyGroup Europe),
+            (New-TestRegion switzerlandnorth -Geography Switzerland -GeographyGroup Europe),
+            (New-TestRegion belgiumcentral -Geography Belgium -GeographyGroup Europe),
+            (New-TestRegion uksouth -Geography 'United Kingdom' -GeographyGroup Europe),
+            (New-TestRegion eastus),
+            (New-TestRegion unclassified -Geography '' -GeographyGroup Europe),
+            (New-TestRegion franceother Other -Geography France -GeographyGroup Europe)
+        )
+        Reset-TestState @('')
+        $inputs = New-TestInputs; $inputs.TenantRegionScope = 'EU'
+        $script:RegionsJson = @{ value = $euRegions } | ConvertTo-Json -Depth 8
+        Assert ((Select-EppLocation -Inputs $inputs) -ceq 'westeurope') 'The EU default must come from the filtered EU Data Boundary shortlist.'
+        $text = $script:Messages -join "`n"
+        foreach ($region in @('WESTEUROPE', 'NORTHEUROPE', 'FRANCECENTRAL', 'NORWAYEAST', 'SWITZERLANDNORTH', 'BELGIUMCENTRAL')) {
+            Assert ($text.Contains($region)) 'Use live EU/EFTA geography metadata, including new region names.'
+        }
+        foreach ($region in @('UKSOUTH', 'EASTUS', 'UNCLASSIFIED', 'FRANCEOTHER')) {
+            Assert (-not $text.Contains($region)) 'Never recommend non-EUDB, unverified, or non-Recommended locations to EU tenants.'
+        }
+        Assert ($text.Contains('Recommended Azure regions within the EU Data Boundary:') -and $script:Warnings.Count -eq 0) 'Label EU recommendations without warning for an in-boundary selection.'
+        foreach ($answers in @(@('all', 'uksouth'), @('manual', 'eastus'))) {
+            Reset-TestState $answers
+            $script:RegionsJson = @{ value = $euRegions } | ConvertTo-Json -Depth 8
+            $selected = Select-EppLocation -Inputs $inputs
+            Assert ($selected -ceq $answers[-1] -and $script:Warnings.Count -eq 1) 'Allow explicit out-of-boundary selections with one warning and no extra approval.'
+            Assert ($script:Warnings[0].Contains('outside the EU Data Boundary')) 'Explain the boundary mismatch.'
+        }
+        foreach ($location in @('westeurope', 'eastus', 'unclassified', 'customregion5')) {
+            Reset-TestState
+            $script:RegionsJson = @{ value = $euRegions } | ConvertTo-Json -Depth 8
+            Assert ((Select-EppLocation -Inputs $inputs -Location $location -NonInteractive) -ceq $location) 'Preserve explicit EU-tenant locations, including unattended overrides.'
+            Assert ($script:Prompts.Count -eq 0) 'An explicit location must never prompt.'
+            if ($location -eq 'westeurope') { Assert ($script:Warnings.Count -eq 0) 'An in-boundary parameter needs no warning.' }
+            else {
+                Assert ($script:Warnings.Count -eq 1) 'An out-of-boundary or unverifiable parameter must warn.'
+                if ($location -in @('unclassified', 'customregion5')) {
+                    Assert ($script:Warnings[0].Contains('could not be verified')) 'Do not claim unknown geography is known to be outside the boundary.'
+                }
+            }
+        }
+        Reset-TestState @('manual', 'eastus')
+        $null = Select-EppLocation -Inputs $inputs
+        Assert ($script:Warnings[0].Contains('no recommended regions with verified EU Data Boundary geography')) 'An empty EU shortlist must not silently fall back to global recommendations.'
+        Assert (@($script:Messages | Where-Object { $_ -match ' - Azure recommended(?: \(default\))?$' }).Count -eq 0) 'Do not present global regions as EU recommendations.'
+        Reset-TestState @('', 'Cancel')
+        $null = Select-EppLocation -Inputs $inputs
+        Assert ($script:Prompts.Count -eq 2 -and $script:Warnings[0].Contains('no recommended regions')) 'An empty EU shortlist defaults to showing all regions, not silently selecting a global region.'
+        foreach ($scope in @('NA', 'AS', 'OC', 'AF', 'SA', 'AN', 'JPR', 'WW')) {
+            Reset-TestState @('westus2')
+            $inputs = New-TestInputs; $inputs.TenantRegionScope = $scope
+            Assert ((Select-EppLocation -Inputs $inputs) -ceq 'westus2') 'Keep non-EU recommendations unchanged.'
+            Assert ($script:Warnings.Count -eq 0 -and -not ($script:Messages -join "`n").Contains('EU Data Boundary')) 'Do not add geographic warnings or filtering for non-EU tenants.'
+            Reset-TestState
+            Assert ((Select-EppLocation -Inputs $inputs -Location westus2 -NonInteractive) -ceq 'westus2' -and $script:Calls.Count -eq 0) 'Non-EU explicit locations must still bypass region discovery.'
+        }
         Reset-TestState @('manual', 'customregion5')
         Assert ((Select-EppLocation -Inputs (New-TestInputs)) -ceq 'customregion5') 'Allow a typed canonical region for later existing availability validation.'
+        Reset-TestState @('manual', '')
+        Assert ((Select-EppLocation -Inputs (New-TestInputs)) -ceq 'westus2') 'Manual region entry must show and accept the same available region default.'
         Reset-TestState @('manual', 'West US 2', 'westus2')
         Assert ((Select-EppLocation -Inputs (New-TestInputs)) -ceq 'westus2' -and $script:Warnings.Count -eq 1) 'Validate and reprompt malformed manual locations.'
         foreach ($regions in @(@(), @((New-TestRegion eastus2 Other)), @((New-TestRegion westus2)))) {
@@ -209,7 +356,7 @@ try {
             ForEach-Object { New-TestRegion $_ }
         $script:RegionsJson = @{ value = @($many) } | ConvertTo-Json -Depth 8
         $null = Select-EppLocation -Inputs (New-TestInputs)
-        Assert (@($script:Messages | Where-Object { $_ -match ' - Azure recommended$' }).Count -eq 8) 'Bound the common recommendation shortlist to eight regions.'
+        Assert (@($script:Messages | Where-Object { $_ -match ' - Azure recommended(?: \(default\))?$' }).Count -eq 8) 'Bound the common recommendation shortlist to eight regions.'
         foreach ($response in @('[]', '{"value":null}', '{"value":[{}]}')) {
             Reset-TestState
             $script:RegionsJson = $response
@@ -218,7 +365,7 @@ try {
         Reset-TestState
         $script:RegionsJson = @{ value = @((New-TestRegion westus2), (New-TestRegion westus2)) } | ConvertTo-Json -Depth 8
         Assert-Throws { Get-EppRegionOptions -Inputs (New-TestInputs) } 'invalid or duplicate region'
-        foreach ($field in @('regionType', 'regionCategory')) {
+        foreach ($field in @('regionType', 'regionCategory', 'geography')) {
             Reset-TestState
             $invalid = New-TestRegion westus2
             $invalid.metadata[$field] = @{}
@@ -232,7 +379,7 @@ try {
         $script:CliAvailable = $false
         Assert-Throws { Select-EppLocation -Inputs (New-TestInputs) } 'Azure CLI is not installed'
         Assert ($script:Calls.Count -eq 0) 'Missing Azure CLI must fail before attempting authentication.'
-        foreach ($answers in @(@(''), @('manual', ''))) {
+        foreach ($answers in @(@('0'), @('Cancel'), @('manual', 'Cancel'))) {
             Reset-TestState $answers
             Assert ($null -eq (Select-EppLocation -Inputs (New-TestInputs))) 'Region picker/manual cancellation must stop setup.'
         }
@@ -251,7 +398,7 @@ try {
         function script:Get-EppLanguage {
             param($AssetDirectory, $Language, $SourceRepository, $PackageReleaseTag, [switch] $NonInteractive)
             return @{
-                Id = 'javascript'; DisplayName = 'Node.js'; BuildStrategy = 'ready'
+                Id = 'javascript'; DisplayName = 'JavaScript'; BuildStrategy = 'ready'
                 Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
                 ReleaseTag = 'epp-packages-1-1'
             }
@@ -270,8 +417,9 @@ try {
         }
         Reset-TestState @($script:AppId, 'westus2')
         Assert-Throws { Invoke-EppSetup @setup -ForceAuthentication } '^selection-preflight-boundary$'
-        Assert (($script:Prompts -join ',') -ceq 'Application number or name,Azure region number or name') 'Use application and region selection instead of raw-ID/location prompts.'
+        Assert (($script:Prompts -join ',') -ceq 'Application number or name [5],Azure region number or name [1]') 'Use application and region selection with displayed defaults.'
         Assert ($script:PreflightInputs.ApplicationId -ceq $script:AppId -and $script:PreflightInputs.Location -ceq 'westus2') 'Forward selected values to the existing preflight and deployment inputs.'
+        Assert ($script:PreflightInputs.TenantRegionScope -ceq 'NA' -and $script:DiscoveryCalls.Count -eq 1) 'Discover and preserve tenant scope before selecting a location.'
         Assert ($script:PreflightInputs.AzureSelectionAuthenticated) 'Pass the shared CLI authentication state.'
         Reset-TestState @('0')
         Assert ($null -eq (Invoke-EppSetup @setup)) 'Application cancellation must return no success object.'
@@ -282,6 +430,11 @@ try {
         Assert-Throws { Invoke-EppSetup @setup -NonInteractive -ApproveDeployment } 'ApplicationId is required'
         Assert-Throws { Invoke-EppSetup @setup -ApplicationId $script:AppId -NonInteractive -ApproveDeployment } 'Location is required'
         Assert ($script:Calls.Count -eq 0) 'Unattended missing inputs must not trigger discovery or authentication.'
+        Assert ($script:DiscoveryCalls.Count -eq 0) 'Reject missing unattended IDs/locations before tenant discovery.'
+        Reset-TestState
+        $script:DiscoveryMetadata.tenant_region_scope = 'EU'
+        Assert-Throws { Invoke-EppSetup @setup -ApplicationId $script:AppId -Location westeurope -NonInteractive } 'incompatible with tenant replication scope'
+        Assert ($script:Calls.Count -eq 0 -and $null -eq $script:PreflightInputs) 'Reject a conflicting provider route before Azure lookup or preflight.'
         Assert (-not (Test-Path -LiteralPath $Directory)) 'Selection must not produce deployment output.'
     } $directory $ModulePath
     Write-Host 'Application/client-ID selection, scoped Graph search, recommended/manual regions, cancellation, authentication reuse, and unattended checks passed.'

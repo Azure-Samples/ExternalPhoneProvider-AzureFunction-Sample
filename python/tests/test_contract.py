@@ -87,17 +87,42 @@ def test_soprano_preserves_protocol_specific_mixed_response_shapes(body, expecte
     assert result.failure_reason == (None if recognized else "unrecognized_provider_status")
 
 
-def test_infobip_contract_is_strict_and_provider_owned():
-    request = InfobipProvider().build_request(
-        "sms", "https://infobip.example", _delivery(),
-        {"mode": "apiKey", "secret": "ib"}, {"EPP_PROVIDER_ACCOUNT_NAME": "EPP"})
-    assert request.url == "https://infobip.example/sms/3/messages"
-    assert request.headers["Authorization"] == "App ib"
-    assert json.loads(request.body)["messages"] == [{
+@pytest.mark.parametrize("region,base_url", [
+    ("global", "https://api.infobip.com"),
+    ("eu", "https://api-eu.infobip.com"),
+])
+@pytest.mark.parametrize("channel", ["sms", "voice"])
+def test_infobip_oauth_preserves_tested_contract_on_both_setup_routes(region, base_url, channel):
+    profile = json.loads((Path(__file__).parents[2] / "setup" / "providers" / "infobip.json").read_text())
+    provider = InfobipProvider()
+    assert provider.authentication_mode == "oauth"
+    assert provider.credential_spec == {"mode": "oauth"}
+    request = provider.build_request(
+        channel, profile["deployment"]["routes"][region][f"{channel}Endpoint"], _delivery(channel),
+        {"mode": "oauth", "access_token": "provider-token"}, {"EPP_PROVIDER_ACCOUNT_NAME": "EPP"})
+    assert request.url == base_url + ("/tts/3/advanced" if channel == "voice" else "/sms/3/messages")
+    assert request.method == "POST"
+    assert request.headers == {
+        "Authorization": " ".join(("Bearer", "provider-token")),
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    destinations = [{"to": "+15551234567", "messageId": "correlation-id"}]
+    expected = {
+        "from": "EPP",
+        "destinations": destinations,
+        "text": MESSAGE,
+        "language": "en-US",
+        "voice": {"name": "Joanna", "gender": "female"},
+    } if channel == "voice" else {
         "sender": "EPP",
-        "destinations": [{"to": "+15551234567", "messageId": "correlation-id"}],
+        "destinations": destinations,
         "content": {"text": MESSAGE},
-    }]
+    }
+    assert json.loads(request.body) == {"messages": [expected]}
+
+
+def test_infobip_contract_is_strict_and_provider_owned():
     result = InfobipProvider().map_response({
         "messages": [{"messageId": "message-id", "status": {"groupName": "PENDING"}}],
     }, 200)

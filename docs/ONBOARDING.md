@@ -8,7 +8,7 @@ After deployment, connect the provider, validate the endpoint, and assign operat
 | --- | --- |
 | Confirm access before spending | [Before deployment](#before-purchasing-or-deploying) |
 | Gather setup values | [Values and ownership](#values-and-ownership) |
-| Connect Soprano or Telesign | [Provider authentication](#complete-provider-authentication) |
+| Connect Infobip, Soprano, or Telesign | [Provider authentication](#complete-provider-authentication) |
 | Run approved tests | [Validate the endpoint](#validate-the-deployed-endpoint) |
 | Activate and assign owners | [Operations](#activate-operate-and-retire) |
 | Deploy custom code | [Custom deployment](#optional-local-development-and-manual-deployment) |
@@ -46,17 +46,24 @@ renewal.
 | --- | --- | --- |
 | Customer tenant ID | Microsoft Entra admin center > Overview | `-TenantId` |
 | Azure subscription ID | Azure portal > Subscriptions | `-SubscriptionId` |
-| Endpoint application client ID | Microsoft Entra admin center > App registrations > application > Overview | `-ApplicationId` |
+| Endpoint application | Existing dedicated app's client ID, or Enter to create a new app (default name `EPP Application`) | `-ApplicationId`, or the interactive **Create a new application** default |
 | Azure region | Available Linux FC1/EP1 region that meets quota and organization requirements | `-Location` |
-| Provider | Approved Security Store integration | `-Provider telesign` or `soprano` |
-| Provider route | Provider-confirmed Global or EU route | `-EndpointRegion global` or `eu` |
-| Runtime and plan | JavaScript, .NET, or Python with FC1 or EP1 | `-Language`, `-ServicePlan` |
-| Resource prefix | Unique 2-8 character lowercase label that starts with a letter | `-ResourcePrefix` |
-| Encryption certificate | Existing registered key or approved replacement | `-CertificateAction` and certificate options |
+| Provider | Approved Security Store integration | `-Provider infobip`, `soprano`, or `telesign` |
+| Provider route | Detected from the tenant's replication scope; EU for EU tenants, Global otherwise | Optional `-EndpointRegion eu` or `global` must match the detected route |
+| Language and plan | JavaScript by default; C# or Python by parameter; Enter defaults to FC1 hosting | `-Language csharp` or `python`, `-ServicePlan` |
+| Resource prefix | Interactive default `epp`, or a unique 2-8 character lowercase label that starts with a letter | `-ResourcePrefix` (required unattended) |
+| Encryption certificate | Enter defaults to replacing registered encryption credentials; explicitly choose Reuse to keep one | `-CertificateAction` and certificate options; final approval is still required |
 | Output and source versions | Private output folder and reviewed source/release versions | Optional output and version options |
 
 Use the application **client ID**, not its Object ID. The customer tenant ID and provider tenant ID
-are different values. Global or EU selects provider routing, not Azure location or data residency.
+are different values. Global or EU identifies provider routing, not Azure location or data residency.
+EU tenants receive an EU Data Boundary region shortlist; other tenants retain the existing
+recommendations. Explicit region overrides remain available with a warning for EU tenants.
+
+New registrations are created only after final deployment approval. Choose their provider from
+the alphabetized guided-provider list. Unattended runs still require an existing `-ApplicationId`.
+If setup creates an app and deployment later fails, use the client ID saved in
+`application-<client-id>.json` and the original prefix for a rerun, rather than creating another app.
 
 One guided deployment uses one provider and supports both SMS and voice. Each request selects its
 channel. Reusing the same subscription, application, and prefix reconfigures that deployment.
@@ -68,7 +75,8 @@ and [certificate selection](../setup/docs/README.md#encryption-certificate-selec
 <a id="setup-script-compatibility"></a>
 ### Values setup configures
 
-Keep `deployment-*.json` and the public certificate in private storage. Compare the summary with
+Save the deployment output: the endpoint URL and Application (client) ID are required for policy
+updates. Keep `deployment-*.json` and the public certificate in private storage. Compare the summary with
 the approved plan. `policyChanged: false` is expected because setup does not activate policy.
 
 | Setting | Purpose | Check |
@@ -76,9 +84,9 @@ the approved plan. `policyChanged: false` is expected because setup does not act
 | `EPP_PROVIDER_NAME` | Selects the registered adapter | Matches the approved provider |
 | `EPP_PROVIDER_SMS_ENDPOINT`, `EPP_PROVIDER_VOICE_ENDPOINT` | Channel-specific provider URLs | Provider confirms access to each channel |
 | `EPP_PROVIDER_ENDPOINT_REGION` | Provider route label | Matches Global or EU selection |
-| `EPP_PROVIDER_AUTH_MODE` | `apiKey` for Telesign or `oauth` for Soprano | Matches the selected profile |
-| `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_APP_ID`, `EPP_PROVIDER_SCOPE` | Soprano API tenant, app, and scope | Provider administrator confirms exact values |
-| `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | Customer app and outbound identity used for Soprano federation | Do not substitute object IDs |
+| `EPP_PROVIDER_AUTH_MODE` | `apiKey` for Telesign or `oauth` for Infobip/Soprano | Matches the selected profile |
+| `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_APP_ID`, `EPP_PROVIDER_SCOPE` | OAuth provider API tenant, app, and scope | Provider administrator confirms exact values |
+| `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | Customer app and outbound identity used for OAuth federation | Do not substitute object IDs |
 | `KEY_VAULT_URL` | Vault holding API-key provider credentials | Use the summary's vault URI |
 | `EPP_DECRYPTION_KEY_PEM`, `EPP_ENCRYPTION_KEY_ID` | Versioned encryption key reference and registered key ID | Assign a renewal owner |
 | `EPP_PROVIDER_TIMEOUT_MS`, `EPP_PROVIDER_RETRY_INTERVAL_MS` | Provider timing values | Retry interval metadata does not enable retries |
@@ -96,15 +104,21 @@ Settings select code that already exists. They do not install a provider adapter
 <a id="provider-credential-names"></a>
 ## Provider authentication
 
-Guided setup supports **Soprano and Telesign**.
+Guided setup supports **Infobip, Soprano, and Telesign**.
 
 | Provider | Authentication | Customer action |
 | --- | --- | --- |
+| Infobip | OAuth client assertion through managed identity federation | Complete provider-side authorization and configure an approved sender/caller ID in `EPP_PROVIDER_ACCOUNT_NAME`; no Infobip API-key secret |
 | Soprano | OAuth client assertion through managed identity federation | Complete provider-side authorization and confirm tenant, app, scope, account, and channels |
 | Telesign | Basic authentication from Key Vault secrets | Add `telesign-api-key` and `telesign-customer-id` to the setup-created vault |
 
-Infobip and Sinch adapters are bundled but do not have guided setup profiles. Twilio requires the
+Sinch is bundled but does not have a guided setup profile. Twilio requires the
 [Add Twilio](BRING-YOUR-OWN-PROVIDER.md) development process.
+
+Infobip retains the previously tested SMS and advanced voice API contracts, using OAuth rather
+than API-key authentication. Its channel settings are HTTPS regional base URLs, not the complete
+message paths in the Security Store manifest. See
+[Infobip routing and migration](../TECHNICAL.md#infobip).
 
 <a id="where-to-enter-api-key-credentials-in-key-vault"></a>
 ### Add Telesign secrets
@@ -132,9 +146,10 @@ During rotation, coordinate both values and their provider validity window. Veri
 test before retiring the old pair. Evaluation does not test provider credentials.
 
 <a id="soprano-provider-administrator-handoff"></a>
-### Complete Soprano authorization
+<a id="complete-soprano-authorization"></a>
+### Complete Infobip or Soprano authorization
 
-Setup creates the customer-side federation. The Soprano administrator still needs to authorize the
+Setup creates the customer-side federation. The provider administrator still needs to authorize the
 customer application and account.
 
 Send identifiers only through the approved onboarding route:
@@ -157,6 +172,10 @@ access. Then inspect **App registrations > Certificates & secrets > Federated cr
 
 The identity client ID is not the federation subject. Customer-side configuration alone does not
 prove provider-side authorization. Verify the integration with an approved controlled live test.
+
+For Infobip, set the Function App's `EPP_PROVIDER_ACCOUNT_NAME` to the approved sender/caller ID
+and confirm account access to SMS, voice, and the selected regional host. Do not assume the existing
+`Verify` fallback is an approved voice caller ID. No API key or client secret is required.
 
 <a id="validate-the-deployed-endpoint"></a>
 <a id="4-package-deploy-and-verify"></a>
