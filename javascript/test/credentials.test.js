@@ -161,9 +161,45 @@ test('invalid configuration performs no SDK calls and does not poison later requ
             [{ mode: 'apiKey' }, config],
             [auth, readConfig({})],
             [{ mode: 'oauth' }, readConfig({})],
-        ]) await assert.rejects(manager.getCredentials(spec, settings), /unavailable/);
+        ]) await assert.rejects(manager.getCredentials(spec, settings), (error) => {
+            assert.equal(error.diagnostic.credentialStage, 'configuration');
+            assert.equal(error.diagnostic.credentialFailure, 'configuration_invalid');
+            return true;
+        });
         assert.equal(vault.mock.callCount(), 0);
         assert.equal(provider.mock.callCount(), 0);
         assert.equal((await manager.getCredentials({ mode: 'oauth' }, oauth)).accessToken, 'provider');
     } finally { manager.close(); }
+});
+
+test('concurrent acquisition failures retain their own managed-identity and token-exchange stages', async (t) => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    let calls = 0;
+    t.mock.method(ManagedIdentityCredential.prototype, 'getToken', async () => {
+        if (++calls === 1) {
+            await gate;
+            throw new Error('PRIVATE-IDENTITY-FAILURE');
+        }
+        return token('PRIVATE-ASSERTION');
+    });
+    t.mock.method(ClientAssertionCredential.prototype, 'getToken', async function () {
+        await this.getAssertion();
+        throw new Error('AADSTS70025: PRIVATE-TOKEN-FAILURE');
+    });
+    const manager = new CredentialTokenService({ now: () => now });
+    const first = manager.getCredentials({ mode: 'oauth' }, oauth);
+    const firstRejected = assert.rejects(first, (error) => {
+        assert.equal(error.diagnostic.credentialStage, 'managed_identity');
+        assert.equal(error.diagnostic.credentialFailure, 'credential_unavailable');
+        return true;
+    });
+    try {
+        await flush();
+        await assert.rejects(manager.getCredentials({ mode: 'oauth' }, oauth), (error) => {
+            assert.equal(error.diagnostic.credentialStage, 'provider_token_exchange');
+            assert.equal(error.diagnostic.credentialFailure, 'federated_credential_missing');
+            return true;
+        });
+    } finally { release(); await firstRejected; manager.close(); }
 });

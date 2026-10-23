@@ -63,6 +63,12 @@ def credential_resolved(log, provider_name, elapsed_ms):
           providerName=provider_name, elapsedMs=elapsed_ms)
 
 
+def credential_resolution_failed(log, diagnostic):
+    _emit(log, 1103, "provider_credential_resolution_failed", "Provider credential resolution failed",
+          level=logging.ERROR, credentialStage=diagnostic.credential_stage,
+          credentialFailure=diagnostic.credential_failure, aadstsCode=diagnostic.aadsts_code)
+
+
 def provider_request_build_started(log):
     _emit(log, 1200, "provider_request_build_started", "Building provider request")
 

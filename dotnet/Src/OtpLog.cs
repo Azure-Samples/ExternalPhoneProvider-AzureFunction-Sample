@@ -48,6 +48,11 @@ internal static partial class OtpLog
     internal static partial void CredentialResolved(
         ILogger logger, string providerName, long elapsedMs);
 
+    [LoggerMessage(EventId = 1103, EventName = "provider_credential_resolution_failed", Level = LogLevel.Error,
+        Message = "Provider credential failure at {CredentialStage}: {CredentialFailure}; AADSTS {AadstsCode}")]
+    internal static partial void CredentialResolutionFailed(
+        ILogger logger, string credentialStage, string credentialFailure, string? aadstsCode);
+
     [LoggerMessage(EventId = 1200, EventName = "provider_request_build_started", Level = LogLevel.Information,
         Message = "Building provider request")]
     internal static partial void ProviderRequestBuildStarted(ILogger logger);

@@ -13,6 +13,7 @@ import pytest
 import src.credentials as credentials_module
 from src.config import read_config
 from src.credentials import CredentialTokenService
+from src.credential_failure import CredentialResolutionError
 from src.providers.infobip import InfobipProvider
 from src.providers.soprano import SopranoProvider
 from src.providers.telesign import TelesignProvider
@@ -81,12 +82,16 @@ def test_concurrent_requests_are_independent_and_shutdown_rejects_all_waiters():
             wait_until(lambda: len(calls) == 6)
             manager.close()
             for request in requests:
-                with pytest.raises(ValueError, match="unavailable"):
+                with pytest.raises(CredentialResolutionError, match="unavailable") as failure:
                     request.result(timeout=1)
+                assert failure.value.diagnostic.credential_stage == "key_vault"
+                assert failure.value.diagnostic.credential_failure == "cancelled"
             release.set()
         wait_until(lambda: not manager._requests)
-        with pytest.raises(ValueError, match="unavailable"):
+        with pytest.raises(CredentialResolutionError, match="unavailable") as failure:
             manager.resolve(AUTH, CONFIG)
+        assert failure.value.diagnostic.credential_stage == "unknown"
+        assert failure.value.diagnostic.credential_failure == "cancelled"
     finally:
         release.set()
         manager.close()
@@ -97,8 +102,10 @@ def test_acquisition_timeout_discards_late_values_and_does_not_delay_the_next_re
     secrets = Mock(resolve=Mock(side_effect=lambda _: release.wait(3) and "late"))
     manager = CredentialTokenService(secrets, wait_timeout=0.05)
     try:
-        with pytest.raises(ValueError, match="unavailable"):
+        with pytest.raises(CredentialResolutionError, match="unavailable") as failure:
             manager.resolve(AUTH, CONFIG)
+        assert failure.value.diagnostic.credential_stage == "key_vault"
+        assert failure.value.diagnostic.credential_failure == "timeout"
         secrets.resolve.side_effect = lambda _: "new"
         assert manager.resolve(AUTH, CONFIG)["secret"] == "new"
         release.set()
@@ -215,14 +222,92 @@ def test_invalid_configuration_does_not_poison_later_requests():
     manager = CredentialTokenService(secrets)
     try:
         for spec in ({"mode": "unknown"}, {"mode": "apiKey"}, {"mode": "oauth"}):
-            with pytest.raises(ValueError, match="unavailable"):
+            with pytest.raises(CredentialResolutionError, match="unavailable") as failure:
                 manager.resolve(spec, CONFIG)
+            assert failure.value.diagnostic.credential_stage == "configuration"
+            assert failure.value.diagnostic.credential_failure == "configuration_invalid"
         secrets.resolve.assert_not_called()
         provider = TelesignProvider()
         manager.get_credentials(provider, CONFIG)
         manager.get_credentials(provider, CONFIG)
         assert secrets.resolve.call_count == 4
     finally:
+        manager.close()
+
+
+def test_concurrent_failures_keep_independent_identity_and_exchange_stages(monkeypatch):
+    started, release = Event(), Event()
+
+    def identity_token(*_args, **_kwargs):
+        if not started.is_set():
+            started.set()
+            assert release.wait(3)
+            raise ValueError("PRIVATE-IDENTITY-FAILURE")
+        return token("PRIVATE-ASSERTION")
+
+    monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", lambda **_: SimpleNamespace(
+        get_token=identity_token, close=lambda: None))
+
+    def create(**kwargs):
+        def exchange(*_args, **_kwargs):
+            kwargs["func"]()
+            raise ValueError("AADSTS70025: PRIVATE-EXCHANGE-FAILURE")
+        return SimpleNamespace(get_token=exchange, close=lambda: None)
+
+    monkeypatch.setattr(credentials_module, "ClientAssertionCredential", create)
+    manager = CredentialTokenService(Mock(), clock=lambda: NOW)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            first = pool.submit(manager.resolve, {"mode": "oauth"}, OAUTH)
+            try:
+                assert started.wait(1)
+                with pytest.raises(CredentialResolutionError) as exchange:
+                    manager.resolve({"mode": "oauth"}, OAUTH)
+                assert exchange.value.diagnostic.credential_stage == "provider_token_exchange"
+                assert exchange.value.diagnostic.credential_failure == "federated_credential_missing"
+            finally:
+                release.set()
+            with pytest.raises(CredentialResolutionError) as identity:
+                first.result(timeout=1)
+            assert identity.value.diagnostic.credential_stage == "managed_identity"
+            assert identity.value.diagnostic.credential_failure == "credential_unavailable"
+            assert identity.value.diagnostic.aadsts_code is None
+    finally:
+        release.set()
+        manager.close()
+
+
+@pytest.mark.parametrize("stage", ["managed_identity", "provider_token_exchange"])
+def test_oauth_deadline_retains_the_blocked_hop(monkeypatch, stage):
+    release = Event()
+
+    def identity_token(*_args, **_kwargs):
+        if stage == "managed_identity":
+            assert release.wait(3)
+        return token("PRIVATE-ASSERTION")
+
+    monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", lambda **_: SimpleNamespace(
+        get_token=identity_token, close=lambda: None))
+
+    def create(**kwargs):
+        def exchange(*_args, **_kwargs):
+            kwargs["func"]()
+            if stage == "provider_token_exchange":
+                assert release.wait(3)
+            return token("PRIVATE-TOKEN")
+        return SimpleNamespace(get_token=exchange, close=lambda: None)
+
+    monkeypatch.setattr(credentials_module, "ClientAssertionCredential", create)
+    manager = CredentialTokenService(Mock(), clock=lambda: NOW, wait_timeout=0.3)
+    try:
+        with pytest.raises(CredentialResolutionError) as failure:
+            manager.resolve({"mode": "oauth"}, OAUTH)
+        assert failure.value.diagnostic.credential_stage == stage
+        assert failure.value.diagnostic.credential_failure == "timeout"
+        assert failure.value.diagnostic.aadsts_code is None
+    finally:
+        release.set()
+        wait_until(lambda: not manager._requests)
         manager.close()
 
 

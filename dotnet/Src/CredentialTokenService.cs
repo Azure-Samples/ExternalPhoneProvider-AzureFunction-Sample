@@ -10,24 +10,29 @@ public sealed class CredentialTokenService
         CancellationToken cancellationToken = default)
     {
         using var acquisition = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var context = new CredentialAcquisition();
         acquisition.CancelAfter(AcquisitionTimeout);
         try
         {
             acquisition.Token.ThrowIfCancellationRequested();
             if (provider.AuthenticationMode is not ("apiKey" or "oauth"))
                 throw Unavailable();
+            if (provider.AuthenticationMode == "apiKey") CredentialAcquisition.SetStage(CredentialStage.KeyVault);
             var credentials = await provider.FetchCredentialsAsync(config, acquisition.Token)
                 .WaitAsync(acquisition.Token).ConfigureAwait(false);
             return credentials ?? throw Unavailable();
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
-            throw;
+            throw new OperationCanceledException(cancellationToken);
         }
-        catch
+        catch (Exception) when (acquisition.IsCancellationRequested)
         {
-            // SendOtp logs the request failure without exposing SDK error details.
-            throw Unavailable();
+            throw new CredentialResolutionException(context.Stage, CredentialFailureKind.Timeout);
+        }
+        catch (Exception error)
+        {
+            throw CredentialResolutionException.From(error, context.Stage);
         }
     }
 

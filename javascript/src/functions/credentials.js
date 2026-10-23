@@ -7,6 +7,7 @@ const { createDefaultHttpClient } = require('@azure/core-rest-pipeline');
 const { AzureAuthorityHosts, ClientAssertionCredential, ManagedIdentityCredential } = require('@azure/identity');
 const { SecretClient } = require('@azure/keyvault-secrets');
 const { AzureLogger } = require('@azure/logger');
+const { CredentialResolutionError, credentialFailure } = require('./credentialFailure');
 
 const API_KEY_MODE = 'apiKey';
 const OAUTH_MODE = 'oauth';
@@ -14,7 +15,7 @@ const TOKEN_EXCHANGE_SCOPE = 'api://AzureADTokenExchange/.default';
 const ACQUISITION_TIMEOUT_MS = 2500;
 const TOKEN_SKEW_MS = 30000;
 const unavailable = () => new Error('provider credential unavailable');
-/** @type {AsyncLocalStorage<AbortSignal>} */
+/** @type {AsyncLocalStorage<{signal: AbortSignal, stage: string}>} */
 const acquisition = new AsyncLocalStorage();
 /** @type {typeof AzureLogger.log | undefined} */
 let filteredLogger;
@@ -25,7 +26,7 @@ function credentialHttpClient() {
     const client = createDefaultHttpClient();
     return {
         async sendRequest(request) {
-            const signal = acquisition.getStore();
+            const signal = acquisition.getStore()?.signal;
             if (!signal) return client.sendRequest(request);
             const controller = new AbortController();
             const existing = request.abortSignal;
@@ -46,6 +47,10 @@ function credentialHttpClient() {
 }
 
 const sdkOptions = () => ({ retryOptions: { maxRetries: 0 }, httpClient: credentialHttpClient() });
+function setStage(stage) {
+    const current = acquisition.getStore();
+    if (current) current.stage = stage;
+}
 /** @param {import('@azure/core-auth').AccessToken | null} token */
 function checkToken(token, now) {
     if (typeof token?.token !== 'string' || !token.token.trim() || !Number.isFinite(token.expiresOnTimestamp)
@@ -79,6 +84,7 @@ class CredentialTokenService {
         if (!key || !config.keyVaultUrl) throw unavailable();
         this.secretClient ??= new SecretClient(config.keyVaultUrl,
             new ManagedIdentityCredential({ clientId: config.managedIdentityClientId || undefined, ...sdkOptions() }), sdkOptions());
+        setStage('key_vault');
         const [secret, identity] = await Promise.all([
             this.secretClient.getSecret(key, { abortSignal: signal }),
             account ? this.secretClient.getSecret(account, { abortSignal: signal }) : null,
@@ -104,10 +110,16 @@ class CredentialTokenService {
         if (!this.tokenCredential) {
             const identity = new ManagedIdentityCredential({ clientId: config.outboundManagedIdentityClientId, ...sdkOptions() });
             this.tokenCredential = new ClientAssertionCredential(config.providerTenantId, config.outboundClientId,
-                async () => checkToken(await identity.getToken(TOKEN_EXCHANGE_SCOPE,
-                    { abortSignal: acquisition.getStore() }), this.now()).token,
+                async () => {
+                    setStage('managed_identity');
+                    const assertion = checkToken(await identity.getToken(TOKEN_EXCHANGE_SCOPE,
+                        { abortSignal: acquisition.getStore()?.signal }), this.now()).token;
+                    setStage('provider_token_exchange');
+                    return assertion;
+                },
                 { authorityHost: AzureAuthorityHosts.AzurePublicCloud, ...sdkOptions() });
         }
+        setStage('provider_token_exchange');
         const token = checkToken(await this.tokenCredential.getToken(config.providerScope,
             { abortSignal: signal }), this.now());
         signal.throwIfAborted();
@@ -118,18 +130,21 @@ class CredentialTokenService {
 
     /** @param {AuthConfig} auth @param {AppConfig} config */
     async getCredentials(auth, config) {
-        if (this.closed) throw unavailable();
+        if (this.closed) throw new CredentialResolutionError('unknown', 'cancelled');
         const controller = new AbortController();
+        const state = { signal: controller.signal, stage: 'configuration' };
         this.controllers.add(controller);
         if (AzureLogger.log !== filteredLogger) {
             const previous = AzureLogger.log;
             filteredLogger = (...args) => { if (!acquisition.getStore()) previous(...args); };
             AzureLogger.log = filteredLogger;
         }
-        const timeout = setTimeout(() => controller.abort(), ACQUISITION_TIMEOUT_MS);
+        let timedOut = false;
+        const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, ACQUISITION_TIMEOUT_MS);
         const interrupted = new Promise((_, reject) =>
-            controller.signal.addEventListener('abort', () => reject(unavailable()), { once: true }));
-        return acquisition.run(controller.signal, () => Promise.race([
+            controller.signal.addEventListener('abort', () =>
+                reject(new CredentialResolutionError(state.stage, timedOut ? 'timeout' : 'cancelled')), { once: true }));
+        return acquisition.run(state, () => Promise.race([
             Promise.resolve().then(() => {
                 controller.signal.throwIfAborted();
                 const mode = auth.mode || API_KEY_MODE;
@@ -138,10 +153,10 @@ class CredentialTokenService {
                 throw unavailable();
             }),
             interrupted,
-        ])).catch(() => {
+        ])).catch((error) => {
+            const failure = credentialFailure(error, state.stage);
             controller.abort();
-            // The handler logs a request-correlated failure without SDK error details.
-            throw unavailable();
+            throw failure;
         }).finally(() => {
             clearTimeout(timeout);
             this.controllers.delete(controller);

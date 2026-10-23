@@ -170,6 +170,20 @@ Credential acquisition failures have `failureStage=provider_credentials` and
 or idle credential-health signal. A successful evaluation does not prove provider credentials work;
 validate that path separately through an approved live test.
 
+For current packages, inspect the preceding `provider_credential_resolution_failed` event on
+the same Function request ID. Its `credentialStage`, `credentialFailure` and `aadstsCode`
+distinguish managed-identity acquisition from provider-token exchange, and missing/mismatched
+customer federation from an application not found in the provider directory.
+See [code meanings and limitations](LOGGING.md#credential-diagnostics). `700016` alone does
+not prove a missing provider service principal: a wrong app or tenant ID can produce it too.
+
+For JavaScript, filter the parsed `Event.eventName` to that event and read its camelCase fields.
+Python exports these as logging extras with `event_name`; .NET uses event ID `1103` and
+`CredentialStage`, `CredentialFailure`, `AadstsCode`. Verify property retention with the discovery
+query below. Do not count both this diagnostic and `request_failed` as two failed requests, and
+do not enable raw SDK/body logging to investigate them. Older packages have only the generic
+failure event.
+
 <a id="runtime-specific-log-discovery"></a>
 ## Runtime log formats
 

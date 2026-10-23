@@ -31,6 +31,7 @@ internal sealed class OAuthCredentialSource
         AppConfig config, CancellationToken cancellationToken = default)
     {
         var (credential, scope) = ConfigureCredentials(config);
+        CredentialAcquisition.SetStage(CredentialStage.ProviderTokenExchange);
         var token = CheckToken(await credential.GetTokenAsync(
             new TokenRequestContext([scope]),
             cancellationToken).ConfigureAwait(false));
@@ -57,10 +58,15 @@ internal sealed class OAuthCredentialSource
         }
     }
 
-    private static async Task<AccessToken> GetAssertionAsync(TokenCredential identity, CancellationToken cancellationToken) =>
-        CheckToken(await identity.GetTokenAsync(
+    private static async Task<AccessToken> GetAssertionAsync(TokenCredential identity, CancellationToken cancellationToken)
+    {
+        CredentialAcquisition.SetStage(CredentialStage.ManagedIdentity);
+        var token = CheckToken(await identity.GetTokenAsync(
             new TokenRequestContext(["api://AzureADTokenExchange/.default"]),
             cancellationToken).ConfigureAwait(false));
+        CredentialAcquisition.SetStage(CredentialStage.ProviderTokenExchange);
+        return token;
+    }
 
     private static AccessToken CheckToken(AccessToken token)
     {

@@ -242,8 +242,10 @@ public sealed class SendOtp
                     : "key_vault");
             credential = await _credentials.GetCredentialsAsync(provider, config);
         }
-        catch
+        catch (Exception error)
         {
+            var failure = CredentialResolutionException.From(error);
+            OtpLog.CredentialResolutionFailed(_log, failure.CredentialStage, failure.CredentialFailure, failure.AadstsCode);
             return Failure(502, "provider_credentials", "credential_unavailable");
         }
 
@@ -254,7 +256,10 @@ public sealed class SendOtp
             _ => true,
         };
         if (credentialUnavailable)
+        {
+            OtpLog.CredentialResolutionFailed(_log, "unknown", "credential_unavailable", null);
             return Failure(502, "provider_credentials", "credential_unavailable");
+        }
         OtpLog.CredentialResolved(
             _log,
             provider.Name,

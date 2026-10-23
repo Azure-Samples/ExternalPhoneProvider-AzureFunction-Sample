@@ -268,6 +268,13 @@ loops, or failure cooldowns. Evaluation skips provider credential work. Acquisit
 2.5-second budget. A failure returns `502` with a request-correlated `credential_unavailable`
 log; the next live request can attempt acquisition again.
 
+The additional internal `provider_credential_resolution_failed` event records the acquisition
+stage and an allowlisted cause/AADSTS code without logging the SDK exception, token response,
+assertion or decrypted payload. It distinguishes missing customer federation from a client app
+not found in the provider tenant when the actual error code supports that conclusion; the
+public response stays unchanged. See [credential diagnostics](docs/LOGGING.md#credential-diagnostics).
+Diagnostics do not contact Graph or change provider onboarding requirements.
+
 `EPP_KEY_VAULT_CACHE_ENABLED` and `EPP_ACCESS_TOKEN_CACHE_ENABLED` are obsolete and ignored by
 current packages. Setup no longer writes them for either hosting plan. Deploy the updated package
 to remove the old behavior; changing settings alone does not update an older package.

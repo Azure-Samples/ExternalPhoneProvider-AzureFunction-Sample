@@ -10,6 +10,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const pipeline = require('@azure/core-rest-pipeline');
 const { createHttpHeaders } = pipeline;
 const { readConfig } = require('../src/functions/config');
+const { AzureLogger, getLogLevel, setLogLevel } = require('@azure/logger');
 
 let state;
 const originalLoad = Module._load;
@@ -61,6 +62,12 @@ beforeEach(() => {
                 throw error;
             } finally {
                 call.completed = true;
+            }
+            const code = managedIdentity ? current.miError : current.tokenError;
+            if (code) {
+                return { request, status: 400, headers: createHttpHeaders({ 'content-type': 'application/json' }),
+                    bodyAsText: JSON.stringify({ error: 'invalid_client', error_codes: [Number(code)],
+                        error_description: `AADSTS${code}: PRIVATE-RESPONSE PRIVATE-ASSERTION PRIVATE-TOKEN` }) };
             }
             return { request, status: 200, headers: createHttpHeaders({ 'content-type': 'application/json' }),
                 bodyAsText: JSON.stringify({
@@ -120,7 +127,12 @@ test('the request deadline aborts SDK transport without imposing a retry cooldow
     const settings = config();
     state.wait = 10000;
     try {
-        await assert.rejects(manager.resolve({ mode: 'oauth' }, settings), /^Error: provider credential unavailable$/);
+        await assert.rejects(manager.resolve({ mode: 'oauth' }, settings), (error) => {
+            assert.deepEqual(error.diagnostic, {
+                credentialStage: 'provider_token_exchange', credentialFailure: 'timeout', aadstsCode: null,
+            });
+            return true;
+        });
         await new Promise(setImmediate);
         assert.ok(state.requests.some((request) => !request.managedIdentity && request.aborted));
         state.wait = 5;
@@ -154,7 +166,11 @@ test('the acquisition deadline aborts managed-identity transport and the next re
     const settings = config();
     state.miWait = 10000;
     try {
-        await assert.rejects(manager.resolve({ mode: 'oauth' }, settings), /unavailable/);
+        await assert.rejects(manager.resolve({ mode: 'oauth' }, settings), (error) => {
+            assert.equal(error.diagnostic.credentialStage, 'managed_identity');
+            assert.equal(error.diagnostic.credentialFailure, 'timeout');
+            return true;
+        });
         await new Promise(setImmediate);
         assert.equal(state.miCalls, 1);
         assert.ok(state.requests.every((request) => request.completed && request.aborted));
@@ -171,7 +187,11 @@ test('shutdown aborts managed-identity transport and cannot restart acquisition'
     const settings = config();
     state.miWait = 10000;
     const pending = manager.resolve({ mode: 'oauth' }, settings);
-    const rejected = assert.rejects(pending, /unavailable/);
+    const rejected = assert.rejects(pending, (error) => {
+        assert.equal(error.diagnostic.credentialStage, 'managed_identity');
+        assert.equal(error.diagnostic.credentialFailure, 'cancelled');
+        return true;
+    });
     try {
         await waitForRequest(true);
         manager.close();
@@ -185,6 +205,47 @@ test('shutdown aborts managed-identity transport and cannot restart acquisition'
         manager.close();
         await rejected;
     }
+});
+
+for (const [code, expected] of [
+    ['70025', 'federated_credential_missing'],
+    ['70021', 'federated_credential_mismatch'],
+    ['700016', 'provider_application_not_found'],
+]) {
+    test(`real Azure Identity SDK preserves AADSTS${code} without retaining the failed token response`, async (t) => {
+        state.tokenError = code;
+        const records = [];
+        const logLevel = getLogLevel();
+        t.mock.method(AzureLogger, 'log', (...values) => records.push(values));
+        setLogLevel('verbose');
+        const manager = new CredentialTokenService();
+        try {
+            await assert.rejects(manager.resolve({ mode: 'oauth' }, config()), (error) => {
+                assert.deepEqual(error.diagnostic, {
+                    credentialStage: 'provider_token_exchange', credentialFailure: expected, aadstsCode: code,
+                });
+                assert.doesNotMatch(error.stack + JSON.stringify(error), /PRIVATE/);
+                assert.equal(error.cause, undefined);
+                return true;
+            });
+            assert.equal(state.miCalls, 1);
+            assert.equal(state.tokenCalls, 1);
+            assert.doesNotMatch(JSON.stringify(records), /PRIVATE/);
+        } finally { manager.close(); setLogLevel(logLevel); }
+    });
+}
+
+test('a real SDK managed-identity failure is not mislabeled as provider-directory onboarding', async () => {
+    state.miError = '700016';
+    const manager = new CredentialTokenService();
+    try {
+        await assert.rejects(manager.resolve({ mode: 'oauth' }, config()), (error) => {
+            assert.equal(error.diagnostic.credentialStage, 'managed_identity');
+            assert.equal(error.diagnostic.credentialFailure, 'credential_unavailable');
+            return true;
+        });
+        assert.equal(state.tokenCalls, 0);
+    } finally { manager.close(); }
 });
 
 test('Key Vault acquisition also aborts its real managed-identity transport', async () => {

@@ -9,6 +9,7 @@ This reference defines safe event fields, request flow, and runtime differences.
 | Compare runtime output | [Runtime formats](#runtime-formats) |
 | Follow one request | [Event sequence](#event-sequence) |
 | Interpret IDs and fields | [Safe fields and identifiers](#safe-fields-and-identifiers) |
+| Distinguish credential failures | [Credential diagnostics](#credential-diagnostics) |
 | Configure collection | [Levels and collection](#levels-and-collection) |
 
 **Exclude request bodies, decrypted fields, credentials, nonces, raw exceptions, and provider
@@ -56,7 +57,8 @@ Failures emit `request_failed` with stage, reason, and HTTP status (`FailureStag
 `missing_provider_message_id`, or `invalid_provider_json`. `provider_response_processed` includes
 that classification, upstream HTTP status, and normalized status, never descriptions/bodies.
 Credential acquisition failures use `request_failed` with stage `provider_credentials`, reason
-`credential_unavailable`, and HTTP `502`. There are no background credential-refresh events.
+`credential_unavailable`, and HTTP `502`. A preceding `provider_credential_resolution_failed`
+event supplies the [internal diagnostic](#credential-diagnostics). There are no background credential-refresh events.
 Unexpected failures use `unexpected_error`. No event adds credential reads, acquisition, or send retries.
 
 `response_prepared` runs before successful and failed returns. It does not prove caller receipt.
@@ -66,6 +68,37 @@ An upstream `200` can precede a body-read timeout: `provider_response_received` 
 `request_failed` with Function `504`, without mapped provider status or success acknowledgement.
 Unknown status text and malformed JSON are never logged. Malformed JSON emits only
 `provider_response_invalid_json` before provider outcome rules run.
+
+## Credential diagnostics
+
+JavaScript, Python and .NET emit `provider_credential_resolution_failed` at Error level
+(event ID **1103** in Python/.NET). It uses the existing request context, before the unchanged
+`request_failed` event. The public HTTP `502` response remains `provider_delivery_failed` with
+its existing correlation/request IDs; diagnostic fields never appear in that response.
+
+| JavaScript/Python field | .NET field | Allowed information |
+|---|---|---|
+| `credentialStage` | `CredentialStage` | `configuration`, `managed_identity`, `provider_token_exchange`, `key_vault`, or `unknown`. The last observed acquisition step, not an inferred root cause. Key Vault includes its SDK authentication. |
+| `credentialFailure` | `CredentialFailure` | `configuration_invalid`, `credential_unavailable`, `timeout`, `cancelled`, or one of the code-based classifications below. |
+| `aadstsCode` | `AadstsCode` | Only the recognized numeric strings `70025`, `70021`, `700016`, otherwise null. No raw error text, token response, assertion, claims or SDK exception. |
+
+Code-based classifications apply only to the **provider token exchange**:
+
+| Code / `credentialFailure` | Meaning and next check |
+|---|---|
+| [`70025`](https://login.microsoftonline.com/error?code=70025) / `federated_credential_missing` | The client application has no configured federated identity credentials. Check the **customer application's** trust for the Function's outbound managed identity. |
+| [`70021`](https://login.microsoftonline.com/error?code=70021) / `federated_credential_mismatch` | No matching trust for the assertion. Check the exact issuer, managed-identity **principal ID** subject and audience, including propagation after a trust change. |
+| [`700016`](https://login.microsoftonline.com/error?code=700016) / `provider_application_not_found` | The application was not found in the requested directory. Check the configured outbound **app client ID** and **provider tenant**; a missing provider-tenant service principal/consent is one possible cause, not the only one. Adding customer-side federation does not provision a provider-side service principal. |
+
+Structured SDK codes are preferred; bounded traversal of wrapped errors can extract an
+allowlisted `AADSTS` code from SDK text without emitting or retaining that text in the sanitized
+error. Unknown codes and unclassified failures remain `credential_unavailable`; do not infer
+missing federation or provider onboarding from latency or a generic `502`.
+
+The 2.5-second acquisition budget, SDK token reuse, cancellation, evaluation behavior and next-live-request
+retry behavior are unchanged. No diagnostic performs a Graph/provider lookup, adds retries, or
+tests provider readiness. Stage tracking belongs to the individual acquisition, not a shared
+credential client. SDK/body logging remains suppressed.
 
 ## Safe fields and identifiers
 

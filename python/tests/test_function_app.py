@@ -13,6 +13,7 @@ import function_app
 import src.provider as provider_module
 from src.jwe import JweDecryptor
 from src.credentials import CredentialTokenService
+from src.credential_failure import credential_failure
 
 _KEY = jwk.JWK.generate(kty="RSA", size=2048)
 _PRIVATE_PEM = _KEY.export_to_pem(True, None).decode()
@@ -546,6 +547,38 @@ def test_selection_and_credential_failures_are_safe(
         if record.event_name == "request_failed")
     assert (failure.failureStage, failure.failureReason) == (stage, reason)
     assert "PRIVATE" not in caplog.text
+
+
+@pytest.mark.parametrize("code,expected", [
+    ("70025", "federated_credential_missing"),
+    ("70021", "federated_credential_mismatch"),
+    ("700016", "provider_application_not_found"),
+])
+def test_credential_diagnostic_preserves_public_response_and_correlation(caplog, code, expected):
+    caplog.set_level(logging.INFO)
+    function_app._credentials.get_credentials.side_effect = credential_failure(
+        ValueError(f"AADSTS{code}: PRIVATE-ASSERTION PRIVATE-TOKEN PRIVATE-RESPONSE"), "provider_token_exchange")
+    response = _HANDLER(_request(_envelope(), {"x-ms-client-request-id": "ms-request-id"}))
+    diagnostic, = (record for record in _events(caplog) if record.event_name == "provider_credential_resolution_failed")
+    assert response.status_code == 502
+    assert json.loads(response.get_body()) == {
+        "error": "provider_delivery_failed", "correlationId": _CORRELATION,
+        "requestId": diagnostic.functionRequestId,
+    }
+    assert diagnostic.event_id == 1103
+    assert diagnostic.credentialStage == "provider_token_exchange"
+    assert diagnostic.credentialFailure == expected
+    assert diagnostic.aadstsCode == code
+    assert diagnostic.__dict__["x-ms-client-request-id"] == "ms-request-id"
+    assert diagnostic.__dict__["x-ms-correlation-id"] == _CORRELATION
+    failure, = (record for record in _events(caplog) if record.event_name == "request_failed")
+    assert failure.failureReason == "credential_unavailable"
+    assert not any(record.event_name == "provider_request_started" for record in _events(caplog))
+    provider_module.requests.request.assert_not_called()
+    assert "PRIVATE" not in str([record.__dict__ for record in caplog.records])
+    caplog.clear()
+    assert _HANDLER(_request(_envelope(mode=2))).status_code == 200
+    assert not any(record.event_name == "provider_credential_resolution_failed" for record in _events(caplog))
 
 
 def test_request_context_is_isolated_between_concurrent_invocations(monkeypatch, caplog):
