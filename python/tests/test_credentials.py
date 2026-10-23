@@ -13,6 +13,9 @@ import pytest
 import src.credentials as credentials_module
 from src.config import read_config
 from src.credentials import CredentialTokenService
+from src.providers.infobip import InfobipProvider
+from src.providers.sinch import SinchProvider
+from src.providers.soprano import SopranoProvider
 from src.providers.telesign import TelesignProvider
 
 AUTH = {"mode": "apiKey", "key_vault_secret_name": "key", "identity_key_vault_secret_name": "id"}
@@ -35,12 +38,15 @@ def token(value):
     return SimpleNamespace(token=value, expires_on=NOW + 3600)
 
 
-def test_api_keys_are_read_per_request_without_warmup_stale_fallback_or_failure_cooldown(monkeypatch):
+@pytest.mark.parametrize("message,expected", [
+    ("PRIVATE-FAILURE", "provider credential unavailable"), ("AADSTS70025: PRIVATE-FAILURE", "AADSTS70025"),
+])
+def test_api_keys_are_read_per_request_without_warmup_stale_fallback_or_failure_cooldown(monkeypatch, message, expected):
     version, fail = 1, False
 
     def read(name):
         if fail and name == "id":
-            raise ValueError("PRIVATE-FAILURE")
+            raise ValueError(message)
         return f"{name}-{version}"
 
     monkeypatch.setattr(credentials_module, "ClientAssertionCredential",
@@ -53,7 +59,7 @@ def test_api_keys_are_read_per_request_without_warmup_stale_fallback_or_failure_
         version = 2
         assert manager.resolve(AUTH, CONFIG) == {"mode": "apiKey", "secret": "key-2", "identity": "id-2"}
         fail = True
-        with pytest.raises(ValueError, match="^provider credential unavailable$"):
+        with pytest.raises(ValueError, match=f"^{expected}$"):
             manager.resolve(AUTH, CONFIG)
         fail, version = False, 3
         assert manager.resolve(AUTH, CONFIG)["identity"] == "id-3"
@@ -121,7 +127,8 @@ def test_empty_secrets_do_not_return_a_previous_or_partial_bundle(empty_secret):
         manager.close()
 
 
-def test_oauth_calls_one_sdk_client_per_request_and_only_the_sdk_requests_assertions(monkeypatch):
+@pytest.mark.parametrize("provider", [SopranoProvider(), InfobipProvider(), TelesignProvider()])
+def test_oauth_calls_one_sdk_client_per_request_and_only_the_sdk_requests_assertions(monkeypatch, provider):
     identity = Mock(spec=["get_token", "close"], get_token=Mock(return_value=token("PRIVATE-ASSERTION")))
     create_identity = Mock(return_value=identity)
     monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", create_identity)
@@ -144,8 +151,8 @@ def test_oauth_calls_one_sdk_client_per_request_and_only_the_sdk_requests_assert
     try:
         create_identity.assert_not_called()
         create_credential.assert_not_called()
-        assert manager.resolve({"mode": "oauth"}, OAUTH)["access_token"] == "PRIVATE-TOKEN-1"
-        assert manager.resolve({"mode": "oauth"}, OAUTH)["access_token"] == "PRIVATE-TOKEN-2"
+        assert manager.get_credentials(provider, OAUTH)["access_token"] == "PRIVATE-TOKEN-1"
+        assert manager.get_credentials(provider, OAUTH)["access_token"] == "PRIVATE-TOKEN-2"
         create_identity.assert_called_once()
         create_credential.assert_called_once()
         identity.get_token.assert_called_once()
@@ -161,17 +168,29 @@ def test_oauth_calls_one_sdk_client_per_request_and_only_the_sdk_requests_assert
     identity.close.assert_called_once()
 
 
-def test_oauth_failure_can_retry_immediately_using_the_same_sdk_client(monkeypatch):
+@pytest.mark.parametrize("message,expected", [
+    ("PRIVATE-SDK-FAILURE", "provider credential unavailable"),
+    ("AADSTS70025: PRIVATE-SDK-FAILURE", "AADSTS70025"),
+    ("AADSTS70021: PRIVATE-SDK-FAILURE", "AADSTS70021"),
+    ("AADSTS700016: PRIVATE-SDK-FAILURE", "AADSTS700016"),
+    ("AADSTS500011: PRIVATE-SDK-FAILURE", "AADSTS500011"),
+    ("AADSTS501051: PRIVATE-SDK-FAILURE", "AADSTS501051"),
+    ("AADSTS700213: PRIVATE-SDK-FAILURE", "AADSTS700213"),
+    ("AADSTS999999: PRIVATE-SDK-FAILURE", "AADSTS999999"),
+    ("AADSTS500011suffix: PRIVATE-SDK-FAILURE", "provider credential unavailable"),
+    ("AADSTSnot-a-code: PRIVATE-SDK-FAILURE", "provider credential unavailable"),
+])
+def test_oauth_failure_can_retry_immediately_using_the_same_sdk_client(monkeypatch, message, expected):
     identity = Mock(spec=["get_token", "close"])
     credential = Mock(spec=["get_token", "close"], get_token=Mock(side_effect=[
-        ValueError("PRIVATE-SDK-FAILURE"), token("PRIVATE-TOKEN"),
+        ValueError(message), token("PRIVATE-TOKEN"),
     ]))
     monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock(return_value=identity))
     create = Mock(return_value=credential)
     monkeypatch.setattr(credentials_module, "ClientAssertionCredential", create)
     manager = CredentialTokenService(Mock(), clock=lambda: NOW)
     try:
-        with pytest.raises(ValueError, match="^provider credential unavailable$"):
+        with pytest.raises(ValueError, match=f"^{expected}$"):
             manager.resolve({"mode": "oauth"}, OAUTH)
         assert manager.resolve({"mode": "oauth"}, OAUTH)["access_token"] == "PRIVATE-TOKEN"
         create.assert_called_once()
@@ -215,10 +234,10 @@ def test_invalid_configuration_does_not_poison_later_requests():
             with pytest.raises(ValueError, match="unavailable"):
                 manager.resolve(spec, CONFIG)
         secrets.resolve.assert_not_called()
-        provider = TelesignProvider()
+        provider = SinchProvider()
         manager.get_credentials(provider, CONFIG)
         manager.get_credentials(provider, CONFIG)
-        assert secrets.resolve.call_count == 4
+        assert secrets.resolve.call_count == 2
     finally:
         manager.close()
 

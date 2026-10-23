@@ -4,7 +4,8 @@
 
 [Documentation](README.md) | [Setup reference](../setup/docs/README.md) | [Troubleshooting](../setup/docs/Troubleshooting.md)
 
-Deploy one regional endpoint for Microsoft Entra ID SMS and voice requests.
+**External Phone Provider (EPP)** connects Microsoft Entra ID to your phone provider for SMS
+and voice one-time passwords. This guide deploys one regional endpoint for that integration.
 
 | Step | Task |
 | --- | --- |
@@ -53,8 +54,10 @@ Assign an **onboarding owner** and review [production readiness](../TECHNICAL.md
 
 You can create the dedicated application during guided setup or register it manually.
 
-**Create during setup:** in Step 3, choose **Create a new application**, enter its display name,
-and choose a provider by name from the alphabetized list (**Soprano, Telesign**).
+**Create during setup:** in Step 3, press Enter to choose **Create a new application**, then Enter to use
+**EPP Application** or enter your own display name, and choose a provider by name from the
+alphabetized list (**Infobip, Soprano, Telesign**). Blank provider-name input prompts again instead of
+canceling or selecting a default.
 Setup creates the registration only after you approve the final deployment plan.
 Canceling before approval creates no application. The signed-in user must be allowed to register
 applications in the customer tenant.
@@ -70,14 +73,14 @@ IDs handy. To register manually, open the customer tenant's
 3. On **Overview**, save the **Directory (tenant) ID** and **Application (client) ID** privately.
    Use the client ID, not the Object ID.
 
-![App registration form with an example name, Single tenant only selected, and no redirect URI](images/onboarding/app-registration.png)
+![App registration form with CYOT-CONSTO, the test directory, Single tenant only selected, and no redirect URI](images/onboarding/app-registration.png)
 
 *Some portal versions label the account type **Single tenant only**. Select the customer directory.
-The example above is an unsaved form and cannot be reused.*
+The CYOT-CONSTO example above uses a nonproduction test directory.*
 
 Use these labels to find the IDs:
 
-![App registration Overview with Application client ID and Directory tenant ID identified for setup and Object ID marked DO NOT USE](images/onboarding/app-registration-overview.png)
+![CYOT-CONSTO App registration Overview with Application client ID and Directory tenant ID identified for setup and Object ID marked DO NOT USE](images/onboarding/app-registration-overview.png)
 
 *Use **Application (client) ID** for `-ApplicationId` and **Directory (tenant) ID** for `-TenantId`.
 The **Object ID** is not either of these setup inputs. All ID values are hidden in this example.*
@@ -108,33 +111,49 @@ Review the downloaded script, then run it:
 .\Setup-Epp.ps1
 ```
 
+![Azure Cloud Shell in PowerShell mode downloading and starting setup for CYOT-CONSTO](images/onboarding/cloud-shell-run-setup.svg)
+
+*This CYOT-CONSTO nonproduction walkthrough keeps the recognizable application name and shell path visible.
+Only the tenant ID is hidden. Review the downloaded script before running it.*
+
 On a shared workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` for a fresh sign-in.
 
 JavaScript is used by default, without a language prompt. To deploy another language, run
 `.\Setup-Epp.ps1 -Language csharp` or `.\Setup-Epp.ps1 -Language python`.
 
 Select the tenant and subscription, then select an existing application, enter its **client ID**,
-or choose **Create a new application** and enter its display name. Setup detects the tenant's
-replication scope and selects the corresponding provider route; it does not ask you to choose EU or
-Global. Select the Azure region, then complete the remaining settings:
+or choose **Create a new application** and accept **EPP Application** or enter your own display name.
+Enter accepts the displayed menu default rather than canceling: the current CLI tenant/subscription
+when eligible (otherwise the first eligible option), and **Create a new application** for the app.
+Use **0** or **Cancel** where offered to stop.
+Setup detects the tenant's replication scope and selects the corresponding provider route;
+it does not ask you to choose EU or Global. Select the Azure region, then complete the remaining settings:
 
 - **Azure region:** EU tenants receive recommendations within the EU Data Boundary (EU/EFTA).
+  Enter selects the first displayed region.
   Other tenants retain the existing Azure-recommended shortlist. All-region and manual selection,
   including `-Location`, remain available; EU tenants receive a warning for an out-of-boundary or
   unverifiable choice. Recommendations are not a data-residency or GDPR compliance guarantee.
 - **Provider:** enter or confirm the provider by name. New applications show all guided providers
   in alphabetical order, with no default selection. Setup downloads the language's matching
   stable release asset, verifies `SHA256SUMS.txt`, and builds when required.
-- **Hosting:** FC1 can scale to zero and cold-start. EP1 has paid warm capacity. Review
+- **Hosting:** Enter defaults to FC1, which can scale to zero and cold-start. EP1 has paid warm capacity. Review
   [plan details](../setup/docs/README.md#service-plan-selection) and the [cost estimate](COST-CALCULATOR.md).
 - **Resource prefix:** press Enter to use `epp`, or enter 2-8 lowercase letters/digits, starting
   with a letter. When rerunning an existing deployment, use its original prefix.
 
+![Azure Cloud Shell shows the CYOT-CONSTO provider, platform, hosting plan, and resource prefix choices](images/onboarding/cloud-shell-choose-options.svg)
+
+*The walkthrough selected Telesign Global routing, Node.js, Flex Consumption FC1, and the
+`consto` resource prefix. These are example choices, not recommendations for every deployment.*
+
 Complete required sign-in, MFA, or administrator consent. Resolve preflight errors before approval.
 
 For existing encryption credentials, follow
-[certificate selection](../setup/docs/README.md#encryption-certificate-selection). Coordinate
-changes across every endpoint sharing the application.
+[certificate selection](../setup/docs/README.md#encryption-certificate-selection).
+**Enter defaults to replacing all registered encryption credentials with one new certificate.**
+Select **Reuse** explicitly to keep a certificate. Coordinate changes across every endpoint
+sharing the application; no cleanup or creation occurs before final deployment approval.
 
 **Review the deployment plan before typing `Yes` or `Y`.** Check accounts, region, provider URLs,
 runtime, plan, resource names, permissions, certificate key IDs, and vault access.
@@ -162,6 +181,13 @@ Insights, diagnostics, Easy Auth, and scoped role assignments. Do not precreate 
 Keep `epp-output` private. Its [summary](../setup/docs/README.md#read-the-deployment-summary)
 records the selected tenant, subscription, provider route, runtime, plan, resource names, endpoint,
 application, package provenance, and encryption certificate references. No private key is downloaded.
+Cloud Shell sessions are ephemeral, so securely download or otherwise retain the private
+`epp-output` deployment summary and public certificate before closing the session.
+
+![Azure Cloud Shell deployment completion summary showing the CYOT-CONSTO resources and hidden endpoint](images/onboarding/cloud-shell-deployment-complete.svg)
+
+*The nonproduction CYOT-CONSTO resource names are shown so readers can recognize the naming
+pattern. The endpoint is hidden, and the full deployment summary remains private.*
 
 Setup verifies the private-key reference and **Easy Auth** before opening public access. Keep
 Easy Auth enabled. It also verifies that `SendOtp` is registered before reporting success. If setup
@@ -171,9 +197,9 @@ fails, use the
 To find the deployed resources, open **Azure portal > Resource groups** and select the group
 listed in your deployment summary.
 
-![Example regional resource group showing a Function App, monitoring, Key Vault, managed identity, hosting plan, and storage](images/onboarding/resource-group.png)
+![CYOT-CONSTO regional resource group showing the consto Function App, monitoring, Key Vault, managed identity, FC1 hosting plan, and storage](images/onboarding/resource-group.png)
 
-*This Premium test deployment shows the expected resource types. Your list can differ.*
+*This FC1 nonproduction deployment shows the actual CYOT-CONSTO resource names. Your list can differ.*
 
 ## 4. Connect your provider and test
 
@@ -187,9 +213,10 @@ In your Function App, open **Settings > Authentication**. Check that authenticat
 **Enabled**, access is set to **Require authentication**, and unauthenticated requests receive
 **HTTP 401 Unauthorized**. These are checks, not instructions to change the approved caller.
 
-![Function Authentication page showing Enabled, Require authentication, and Return HTTP 401 Unauthorized](images/onboarding/authentication.png)
+![CYOT-CONSTO Function Authentication page showing Enabled, Require authentication, and Return HTTP 401 Unauthorized](images/onboarding/authentication.png)
 
-*The **Microsoft** identity provider validates the caller. It is not the SMS or voice provider.*
+*The Function and identity-provider labels remain visible. Only the client ID is hidden. The
+**Microsoft Entra ID** identity provider validates the caller; it is not the SMS or voice provider.*
 
 Complete the [approved endpoint checks](ONBOARDING.md#validate-the-deployed-endpoint):
 

@@ -2,8 +2,8 @@
 
 [Documentation](../../docs/README.md) | [First deployment](../../docs/GETTING-STARTED.md) | [Troubleshooting](Troubleshooting.md)
 
-This reference covers setup choices, reruns, and maintenance. For a first deployment, follow the
-linked [five-step deployment guide](../../docs/GETTING-STARTED.md); it keeps preparation,
+**EPP** stands for **External Phone Provider**. This reference covers setup choices, reruns, and
+maintenance. For a first deployment, follow the linked [five-step deployment guide](../../docs/GETTING-STARTED.md); it keeps preparation,
 deployment, provider validation, policy activation, and handoff in order.
 
 | Task | Section |
@@ -23,7 +23,7 @@ Setup creates **one regional endpoint**. See [Front Door](../../docs/FRONTDOOR.m
 
 ## Availability
 
-Choose **Soprano or Telesign** and **FC1/EP1** hosting. Setup detects the tenant's replication scope
+Choose **Infobip, Soprano, or Telesign** and **FC1/EP1** hosting. Setup detects the tenant's replication scope
 and selects the **EU** provider route for EU tenants or **Global** otherwise, without a scope picker.
 **JavaScript** is the default language, without a prompt. To use another language, run
 `.\Setup-Epp.ps1 -Language csharp` or `.\Setup-Epp.ps1 -Language python`.
@@ -34,13 +34,36 @@ See [source/package selection](#source-versioning).
 Both channels are configured. Profile objects `deployment.routes.global` and
 `deployment.routes.eu` define `smsEndpoint`, `voiceEndpoint`, tenant, authentication, and timing
 values. Setup writes the endpoints to `EPP_PROVIDER_SMS_ENDPOINT` and
-`EPP_PROVIDER_VOICE_ENDPOINT`; Soprano also supplies its API app ID and scope.
+`EPP_PROVIDER_VOICE_ENDPOINT`; OAuth profiles also supply their API app ID and scope.
+Infobip's settings are HTTPS base URLs: its adapters append the tested `/sms/3/messages` and
+`/tts/3/advanced` paths without changing their request or response contracts.
 
 Use a package that supports channel-specific settings; neither channel uses the other channel's URL.
 
-The current profiles use identical Global/EU URLs, and Soprano uses the same app ID/scope.
-The route label is not a residency or Azure-region selection. Infobip and Sinch are bundled
-adapters without guided profiles.
+Soprano and Telesign currently use identical Global/EU URLs. Infobip uses `https://api.infobip.com`
+for Global and `https://api-eu.infobip.com` for EU. Each OAuth provider uses the same API app ID/scope
+across its two routes, except that Telesign's OAuth values are pending provider confirmation.
+The route label is not a residency or Azure-region selection.
+Sinch remains a bundled adapter without a guided profile.
+
+### Provider tenant configuration
+
+Provider profiles distinguish these adjacent fields under `deployment`:
+
+| Field | Purpose |
+| --- | --- |
+| `tenantId` | Provider's Security Store tenant; used for provider discovery and recorded as `providerTenantId` in the deployment summary |
+| `AccessTokenScopeTenant` | OAuth token-issuing tenant; mapped to `EPP_PROVIDER_TENANT_ID` and recorded as `accessTokenScopeTenant` |
+
+The token tenant can differ from the Security Store tenant. For older profiles that omit
+`AccessTokenScopeTenant`, setup uses `tenantId`; explicit empty, invalid, or placeholder values
+are rejected. OAuth setup adds both tenants to the reviewed application allowlist, deduplicates
+equal values, and preserves existing allowed tenants. The application home tenant remains allowed.
+Easy Auth still admits only the approved Microsoft caller.
+
+Telesign's profile contains placeholders for the token tenant and regional API app IDs/scopes.
+Complete [Telesign configuration](../../docs/ONBOARDING.md#telesign-oauth-configuration-and-handoff)
+before deployment.
 
 ### Tenant scope and Azure region recommendations
 
@@ -73,7 +96,7 @@ Review the [Azure hosting and provider cost estimate](../../docs/COST-CALCULATOR
 directly from the service-plan prompt.
 
 | Option | Hosting |
-|---|---|
+| --- | --- |
 | 1. Flex Consumption (FC1) | On-demand with a free usage grant; zero always-ready instances, 2048 MB, up to 40 on-demand instances |
 | 2. Premium (EP1) | Existing Premium configuration with one warm instance |
 
@@ -89,23 +112,26 @@ Both plans use the same [request-time credential acquisition](../../TECHNICAL.md
 API-key secrets are read on each live request, and Azure Identity manages its own token cache.
 Setup does not configure custom credential caches or refreshers.
 
-Use `-ServicePlan FC1` or `-ServicePlan EP1` to skip the prompt. Unattended setup requires it.
+Press Enter to accept **FC1**, or use `-ServicePlan FC1` or `-ServicePlan EP1` to skip the prompt.
+Unattended setup still requires an explicit service plan.
 
 **Use a different resource prefix to change plans.** In-place FC1/EP1 migration is not supported.
 Preflight rejects a mismatch with the existing resource-group tag or actual hosting-plan SKU,
 including older EP1 deployments without the new tag. Existing EP1 deployments can be rerun with
 `-ServicePlan EP1`.
 For an active endpoint, use a new Step 1 app or coordinate key continuity. Reusing an app still
-requires an explicit certificate choice; replacement affects every endpoint sharing the app.
+requires reviewing the certificate action; the interactive default is replacement, which affects
+every endpoint sharing the app. Select **Reuse** explicitly when keeping the current certificate.
 
 <a id="step-1---manually-create-the-application"></a>
 ## Step 1 - choose an application registration
 
 For the first deployment, use a nonproduction tenant and subscription.
 
-**Create during guided setup:** choose **Create a new application** in the application picker,
-enter a display name (1-256 characters), and choose a provider by name from the alphabetized
-list (**Soprano, Telesign**). An explicit `-Provider` skips that provider prompt.
+**Create during guided setup:** press Enter to accept **Create a new application** in the application picker,
+press Enter to accept **EPP Application** or enter a display name (1-256 characters), and choose
+a provider by name from the alphabetized list (**Infobip, Soprano, Telesign**). Blank provider-name input
+prompts again; there is no default provider. An explicit `-Provider` skips that provider prompt.
 The new registration is only planned at this point: setup creates it after final deployment
 approval, not when you choose the menu option. Canceling before approval creates nothing.
 An existing app with the same display name is never adopted automatically.
@@ -121,8 +147,8 @@ To create it manually before setup:
    supply its client ID, not the application's object ID. Setup never silently creates a
    replacement if an existing ID is invalid.
 3. Complete provider purchase, sender registration, and API onboarding.
-   Telesign uses `telesign-api-key` and `telesign-customer-id` in Key Vault. Soprano uses OAuth
-   client-assertion exchange with the selected provider tenant/scope/application ID. Setup does not
+   Infobip, Soprano, and Telesign OAuth use client-assertion exchange with the selected access-token
+   tenant/scope/application ID. Complete Telesign's profile placeholders first. Setup does not
    grant provider API consent or application roles. Finish the
    [provider authentication handoff](../../docs/ONBOARDING.md#complete-provider-authentication)
    after setup creates the vault and identity identifiers needed for those steps.
@@ -134,11 +160,11 @@ Creation is an interactive choice. Unattended runs still require an existing `-A
 Setup configures:
 
 - Organizational multitenancy and the Microsoft Entra ID allowed-tenants preview: home tenant,
-  selected provider tenant, and preserved existing allowed provider tenants.
+  selected provider's Security Store and OAuth token tenants, and preserved existing allowed tenants.
 - The app's enterprise application with assignment required, `Epp.Invoke`, and its assignment to
   the Microsoft phone-provider service principal.
 - That Microsoft principal's tenant-wide Graph `Application.Read.All`, identifier URI, public JWE certificate, and Easy Auth caller restriction.
-- The disclosed outbound managed-identity federated credential for Soprano.
+- The disclosed outbound managed-identity federated credential for OAuth providers.
 
 ## Prerequisites for Step 2
 
@@ -162,7 +188,7 @@ Setup configures:
   restricted, an appropriate role such as **Application Developer** can provide that permission.
   This does not replace the other setup permissions.
   See [application creation permissions](https://learn.microsoft.com/en-us/graph/api/application-post-applications?view=graph-rest-1.0#permissions).
-- Microsoft Graph **beta** access for `signInAudienceRestrictions`. The provider tenant is added;
+- Microsoft Graph **beta** access for `signInAudienceRestrictions`. The Security Store and OAuth token tenants are added;
   Microsoft Entra ID always allows the home tenant.
   See the
   [allowed-tenants schema](https://learn.microsoft.com/en-us/graph/api/resources/allowedtenantsaudience?view=graph-rest-beta).
@@ -206,7 +232,7 @@ dotnet --list-sdks
 Interactive setup can install missing Bicep.
 
 | Choice | Azure runtime | Automatic deployment path |
-|---|---|---|
+| --- | --- | --- |
 | JavaScript | Node.js 22, Functions v4 | Verify and publish the ready ZIP with its production dependencies |
 | C# | .NET 8 isolated, Functions v4 | Verify source ZIP, publish for Linux with .NET 8, repackage and publish |
 | Python | Python 3.11, Functions v4 | Verify source ZIP; One Deploy with remote build on FC1, or validate/download and publish the SCM-built output on EP1 |
@@ -243,34 +269,47 @@ Force explicit account selection when testing on a shared or multi-account compu
 .\Setup-Epp.ps1 -ForceAuthentication
 ```
 
+Selection menus mark the default and show its number in brackets. **Enter accepts that default**;
+choose **0** or **Cancel** where offered to stop instead. Required text inputs without a known
+default, such as a versioned certificate URL, prompt again on blank input. Provider selection
+never has a default. Installation and final deployment confirmations still default to **No**.
+
 The flow is:
 
 1. **Choose the customer Azure context.** Setup lists cached enabled Azure CLI user subscriptions,
    then asks for the tenant and subscription. Refresh or start device-code sign-in when the
    expected account is missing. Explicit `-TenantId` and `-SubscriptionId` values are preserved.
+   Enter prefers the current CLI tenant/subscription when eligible, otherwise the first listed
+   tenant/subscription within the chosen context. With no eligible entries, the displayed default
+   is sign-in; a missing explicit subscription instead defaults to refreshing the list.
 2. **Choose the dedicated app registration.** The application picker shows
    organizational app names and client IDs, supports bounded name-prefix search and manual client-ID
-   entry, and offers **Create a new application**. That option asks for a display name and stages
-   creation for final deployment approval. The picker never substitutes an object ID.
+   entry, and defaults to **Create a new application** on Enter, including at the manual client-ID
+   prompt. That option asks for a display name, defaulting
+   to **EPP Application** on Enter, and stages creation for final deployment approval.
+   The picker never substitutes an object ID.
    A supplied client ID skips this selector.
 3. **Detect tenant scope and choose the Azure region.** Setup selects EU/Global provider routing
    from the tenant metadata, then uses Azure's current Recommended regions for a shortlist.
    Only EU tenants receive the [EU Data Boundary filter](#tenant-scope-and-azure-region-recommendations).
    All-region and manual-entry options remain available. `-Location` skips the picker, but EU
    tenants still receive a boundary check and a warning if appropriate.
+   Enter selects the first displayed region, respecting the EU shortlist. An empty shortlist
+   defaults to showing all regions, not to selecting a region outside the shortlist automatically.
 4. **Choose a provider by name.** JavaScript is used unless `-Language csharp` or
    `-Language python` was supplied; there is no language prompt.
    When `-Provider` is omitted, setup reads the application's allowed-tenants configuration:
    no supported provider prompts for a name, one asks for confirmation, and several require a
    name. For a new application, it shows all supported provider names in alphabetical order,
    without reading a nonexistent registration or selecting a default.
+   Blank provider-name input prompts again until a provider is selected.
    Existing allowed provider tenants are preserved; provider options are never numbered.
    The selected [profile](#availability) supplies both channel URLs and auth/timing values.
    The launcher has no endpoint/credential overrides or `PackageUrl`/`PackageSha256` inputs.
    It uses `packages/catalog.json` and the latest stable CI release, or your
    `-PackageReleaseTag epp-packages-<run>-<attempt>`. Malformed/disabled profiles fail before resource creation.
 5. **Service plan selection:** choose **Flex Consumption FC1** (free usage grant, zero always-ready
-   instances) or **Premium EP1** (warm instance).
+   instances, the Enter default) or **Premium EP1** (warm instance).
    Supply `-ServicePlan FC1` or `-ServicePlan EP1` to reuse a known selection.
 6. **Accept the default resource prefix `epp`, or enter your own**, such as `contoso`.
    All resources created by the script start with
@@ -283,9 +322,10 @@ The flow is:
    separate confirmation. Graph operations reuse the selected Azure CLI user session; no Graph
    SDK installation or separate sign-in occurs.
 8. **Choose encryption certificate handling.** With no registered encryption certificate, use the
-   normal creation flow. Otherwise choose reuse of one certificate and supply its versioned Key
-   Vault location, or replace all encryption credentials with one new certificate. Reuse of one
-   among several also removes the others after approval. Enter cancels the certificate decision.
+   normal creation flow. Otherwise Enter defaults to **Replace**: remove the registered encryption
+   credentials and create one new certificate after final approval. To keep a certificate instead,
+   select **Reuse** and supply its versioned Key Vault location. Reuse of one among several also
+   removes the others after approval. Use **0** or **Cancel** to stop the certificate decision.
 9. **Review the complete plan**, including resource names, tenant/subscription, language, service plan,
    automatic package verification/build, provider
    settings, scoped roles, the exact encryption key IDs to keep/remove, certificate location or
@@ -314,14 +354,21 @@ It displays each key ID, certificate thumbprint, name, and validity. Signing/ver
 certificates are not encryption candidates, and unsupported encryption credential types stop setup.
 
 | Existing encryption credentials | Choice | Result after successful deployment |
-|---|---|---|
+| --- | --- | --- |
 | None | Creation is automatic; optional `-CertificateAction Create`. | Register one certificate from the setup vault. |
-| One | `Reuse` and provide its Key Vault certificate version, or `Replace`. | Keep the existing key ID, or replace it with one new credential. |
-| Several | `Reuse`, select the key ID to keep, and provide its certificate version; or `Replace`. | Remove only the other encryption entries, or replace all encryption entries with one new credential. |
+| One | Enter accepts `Replace`; select `Reuse` explicitly to provide its Key Vault certificate version. | Replace the existing credential with one new credential, or keep the existing key ID when reusing. |
+| Several | Enter accepts `Replace`; select `Reuse` explicitly to choose a key ID and provide its certificate version. | Replace all encryption entries with one new credential, or remove only the other encryption entries when reusing. |
 
-Interactive selection never defaults to the newest certificate or to cleanup. Enter/Cancel
-stops before deployment; invalid locations can be corrected or followed by another choice.
-Selecting an action does not apply it: the complete deployment approval lists the exact removals.
+**Interactive Enter defaults to cleanup and replacement, not reuse.** This affects every endpoint
+sharing the registration; coordinate maintenance for active applications. If you explicitly choose
+Reuse and several credentials exist, the key picker defaults to the first displayed key, not the
+newest certificate. You must still provide its exact versioned Key Vault location.
+Use **0** or **Cancel** at a menu, or type **Cancel** at a text prompt, to stop.
+Invalid locations can be corrected or followed by another choice; the action menu again defaults
+to Replace. Selecting an action does not apply it: the complete deployment approval lists the exact
+removals, and **Enter at final approval still means No**. Cleanup does not delete Key Vault objects
+or signing credentials. Unattended runs with existing encryption credentials still require an
+explicit `-CertificateAction`.
 
 For reuse, open **Azure portal > Key Vault > Certificates > certificate > version** and copy
 **Certificate Identifier**, of the form
@@ -399,7 +446,7 @@ Subscription-wide registrations are not undone after later failures. See
 [registration recovery](Troubleshooting.md#a-required-azure-resource-provider-is-not-registered).
 
 Supply known values to shorten the prompts. Replace `<provider-id>` with your selected guided
-provider's ID (`soprano` or `telesign`); neither is a default or recommendation:
+provider's ID (`infobip`, `soprano`, or `telesign`); none is a default or recommendation:
 
 ```powershell
 .\Setup-Epp.ps1 `
@@ -532,12 +579,13 @@ configuration metadata, not provider credentials or private-key bytes. Keep it a
 **Save the output: the endpoint URL and Application (client) ID are required for policy updates.**
 
 | Summary field | How to use it |
-|---|---|
+| --- | --- |
 | `tenantId`, `subscriptionId`, `applicationId` | Verify the intended customer directory, Azure subscription, and endpoint **client ID**. |
 | `tenantRegionScope` | Detected tenant replication scope used to select the provider route and apply EU-only region recommendations. |
 | `resources.functionApp`, `resources.keyVault`, `resources.applicationInsights`, `resources.logAnalytics` | Find the exact Azure resources; do not guess names or use a different environment's vault. |
-| `provider`, `endpointRegion`, `providerTenantId` | Confirm the tenant-derived provider route, separate from Azure location. Both SMS and voice use this configuration. |
-| `allowedProviderTenantIds` | Review the complete preserved provider-tenant allowlist, including the selected provider. This does not enable runtime switching between providers. |
+| `provider`, `endpointRegion`, `providerTenantId` | Confirm the tenant-derived provider route and Security Store tenant, separate from Azure location. Both SMS and voice use this configuration. |
+| `accessTokenScopeTenant` | OAuth token-issuing tenant, matching `EPP_PROVIDER_TENANT_ID`; can differ from `providerTenantId` and is null for API-key deployments |
+| `allowedProviderTenantIds` | Review the preserved allowlist, including the selected provider's Security Store and OAuth token tenants. This does not enable runtime switching between providers. |
 | `providerSmsEndpoint`, `providerVoiceEndpoint` | Confirm the distinct or identical provider URLs for SMS and voice. These are outbound provider URLs, not the Function's `endpointUrl`. |
 | `endpointUrl`, `identifierUri` | Exact SendOtp URL and registered app audience information for the authorized test/policy operator. |
 | `encryptionKeyId`, `certificateThumbprint`, `certificateId`, `certificateSecretId`, `certificateExpiresUtc` | Public-key identification and version/renewal inventory. A secret **ID** is not its value; do not fetch its private-key contents. |
@@ -587,7 +635,7 @@ Reuse leaves an external vault's issuance policy unchanged; automatic issuance t
 requires manual endpoint synchronization (`certificateRenewal: manual`). Account for every
 endpoint sharing the key and cached/in-flight requests; decryption uses one in-process private key.
 
-**Legacy deployments require an explicit decision.** A compatible matching Key Vault certificate
+**Review the replacement default for legacy deployments.** A compatible matching Key Vault certificate
 can be reused even if it has an older/custom subject. A standalone PEM secret without a Key Vault
 certificate is not a reuse input: arrange an approved secure certificate import with a PEM backing
 secret, or choose replacement. Setup never exports the private key locally. Do not manually delete

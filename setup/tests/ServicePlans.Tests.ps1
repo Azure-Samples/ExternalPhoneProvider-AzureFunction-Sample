@@ -78,6 +78,10 @@ try {
         Assert-Throws { Get-EppServicePlan -ServicePlan Y1 -NonInteractive } 'Unknown ServicePlan'
         $script:Answers.Enqueue('1')
         Assert ((Get-EppServicePlan).id -ceq 'FC1') 'Option 1 must select Flex Consumption.'
+        foreach ($blank in @('', '  ')) {
+            $script:Answers.Enqueue($blank)
+            Assert ((Get-EppServicePlan).id -ceq 'FC1') 'Enter must accept the Flex Consumption default.'
+        }
         $script:Answers.Enqueue('2')
         Assert ((Get-EppServicePlan).id -ceq 'EP1') 'Option 2 must select Premium.'
         Assert (($script:Messages -join "`n") -match 'Service plan selection') 'The selection section must have its requested heading.'
@@ -89,7 +93,7 @@ try {
             ApplicationId = '22222222-2222-2222-2222-222222222222'
             SubscriptionId = '33333333-3333-3333-3333-333333333333'
             Location = 'westus2'; ResourcePrefix = 'unit'; Platform = 'Node.js'; Language = 'javascript'
-            ProviderAuthentication = 'apiKey'; ServicePlan = 'FC1'; BuildStrategy = 'ready'
+            ProviderAuthentication = 'oauth'; ServicePlan = 'FC1'; BuildStrategy = 'ready'
             PackageFile = 'epp-javascript.zip'
             PackageReleaseTag = 'epp-packages-1-1'
             PackageUrl = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
@@ -99,14 +103,18 @@ try {
         }
         $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix unit
         $provider = @{
-            DisplayName = 'Telesign'; EndpointRegion = 'global'; AuthenticationMode = 'apiKey'
+            DisplayName = 'Telesign'; EndpointRegion = 'global'; AuthenticationMode = 'oauth'
+            TenantId = '44444444-4444-4444-4444-444444444444'
+            AccessTokenScopeTenant = '77777777-7777-7777-7777-777777777777'
             Settings = @{
-                EPP_PROVIDER_TENANT_ID = '44444444-4444-4444-4444-444444444444'
+                EPP_PROVIDER_TENANT_ID = '77777777-7777-7777-7777-777777777777'
+                EPP_PROVIDER_APP_ID = '88888888-8888-8888-8888-888888888888'
+                EPP_PROVIDER_SCOPE = 'api://88888888-8888-8888-8888-888888888888/.default'
                 EPP_PROVIDER_SMS_ENDPOINT = 'https://sms.provider.contoso.com/send'
                 EPP_PROVIDER_VOICE_ENDPOINT = 'https://voice.provider.contoso.com/send'
                 EPP_PROVIDER_TIMEOUT_MS = '1500'; EPP_PROVIDER_RETRY_INTERVAL_MS = '100'
             }
-            Manifest = @{ deployment = @{ authentication = @{ keyVaultSecretName = 'key'; identityKeyVaultSecretName = 'id' } } }
+            Manifest = @{ deployment = @{ authentication = @{ mode = 'oauth' } } }
         }
         $context = @{
             Application = @{ SignInAudience = 'AzureADMultipleOrgs' }
@@ -149,6 +157,13 @@ try {
             }
             else { Assert ($script:Calls[0] -like '*geoRegions*') 'EP1 must keep its ARM availability check.' }
         }
+        $script:Messages.Clear()
+        Show-EppPlan -Inputs $inputs -Names $names -ProviderConfiguration $provider -Context $context
+        $plan = $script:Messages -join "`n"
+        Assert ($plan.Contains("Security Store tenant: $($provider.TenantId)") -and
+            $plan.Contains("Access-token tenant: $($provider.AccessTokenScopeTenant)")) 'Approval must disclose the two distinct provider tenants.'
+        Assert ($plan.Contains('Telesign OAuth: add a federated credential') -and
+            -not $plan.Contains('Soprano OAuth')) 'Federation guidance must identify the selected OAuth provider.'
         $inputs.ServicePlan = 'FC1'
         $script:Regions = '[{"name":"East US"}]'
         Assert-Throws { Assert-EppServicePlanLocation -Inputs $inputs } 'FC1 is unavailable'
@@ -276,9 +291,11 @@ try {
             } 'stop-after-parameters'
             Assert ($script:Activities -contains 'Deploying Azure resources') 'ARM deployment must use the shared activity indicator.'
             Assert ($script:DeploymentParameters.servicePlan.value -ceq $id) 'The approved plan must be passed to Bicep.'
-            foreach ($setting in @('EPP_PROVIDER_SMS_ENDPOINT', 'EPP_PROVIDER_VOICE_ENDPOINT')) {
-                Assert ($script:DeploymentParameters.providerSettings.value[$setting] -ceq $provider.Settings[$setting]) 'Both approved endpoints must be passed to Bicep.'
+            foreach ($setting in @('EPP_PROVIDER_SMS_ENDPOINT', 'EPP_PROVIDER_VOICE_ENDPOINT', 'EPP_PROVIDER_TENANT_ID', 'EPP_PROVIDER_SCOPE')) {
+                Assert ($script:DeploymentParameters.providerSettings.value[$setting] -ceq $provider.Settings[$setting]) 'Approved endpoints and OAuth settings must be passed to Bicep.'
             }
+            Assert ($script:DeploymentParameters.providerSettings.value.EPP_PROVIDER_TENANT_ID -ceq $provider.AccessTokenScopeTenant -and
+                $script:DeploymentParameters.providerSettings.value.EPP_PROVIDER_TENANT_ID -cne $provider.TenantId) 'Deploy the access-token authority rather than the Security Store tenant.'
             Assert (-not $script:DeploymentParameters.providerSettings.value.ContainsKey('EPP_PROVIDER_CHANNEL')) 'Bicep must not receive a channel restriction.'
         }
 

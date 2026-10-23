@@ -11,10 +11,11 @@ Select the failed stage and keep existing resources. Before rerunning, use
 | --- | --- |
 | Account missing or wrong tenant | [Account picker](#the-expected-cached-account-or-subscription-is-missing), [directory context](#azure-cli-directory-context-does-not-match-the-selected-tenant) |
 | Permission or prerequisite failure | [Preflight](#authentication-permission-or-runtime-preflight-fails), [Graph 403](#az-ad-or-az-rest-returns-403-forbidden), [PrincipalNotFound](#principalnotfound-for-the-azure-operator) |
+| New or existing app reports an unsupported provider-tenant restriction | [Unrestricted application audience](#new-app-fails-with-an-unsupported-provider-tenant-restriction) |
 | Region or hosting rejected | [Tenant scope and EU recommendations](#tenant-scope-discovery-or-eu-region-recommendations-fail), [quota](#deployment-fails-with-subscriptionisoverquotaforsku), [plan selection](#service-plan-selection-or-availability-fails), [FC1 object-reference error](#fc1-deployment-preflight-reports-an-object-reference-error), [EP1 location check](#appservice-list-locations-rejects-ep1) |
 | Certificate or resource registration fails | [Certificate selection](#certificate-selection-reuse-or-cleanup-fails), [resource providers](#a-required-azure-resource-provider-is-not-registered) |
 | Download, build, or parser failure | [Old package prompts](#setup-still-asks-for-packageurl-or-packagesha256), [checksum/download](#a-checksum-or-package-download-fails), [.NET](#net-build-fails), [Python](#python-remote-build-fails), [CLI JSON](#azure-cli-warnings-break-json-parsing) |
-| Deployment stops after approval | [Publication and startup](#deployment-stops-after-approval) |
+| Deployment stops after approval | [Combined Azure CLI paths](#azure-cli-paths-are-combined-during-deployment), [publication and startup](#deployment-stops-after-approval) |
 | Endpoint rejects calls, does not deliver, or has no logs | [After-deployment triage](#after-deployment-triage), [401/live delivery](#the-endpoint-returns-401-or-live-delivery-fails), [credential acquisition](#provider-credential-acquisition-fails) |
 | Optional regional routing fails | [Front Door checks](#optional-front-door-deployments) |
 
@@ -25,13 +26,14 @@ resource group, runtime/release, UTC time, and safe correlation IDs. Exclude set
 phone numbers, OTPs, private keys, encrypted bodies, and raw responses. Keep body tracing off.
 
 | Symptom | First checks / owner | Safeguard |
-|---|---|---|
+| --- | --- | --- |
 | Cannot see an offer or EPP activation/test capability | Customer onboarding owner verifies the [Security Store and feature-access gate](../../docs/ONBOARDING.md#before-purchasing-or-deploying) with provider/Microsoft support. | Do not infer eligibility from Azure Owner or a successful purchase. |
-| Setup reports success, but no OTP delivery | Finish [Telesign vault entry or Soprano provider consent](../../docs/ONBOARDING.md#complete-provider-authentication); confirm authorized testing and policy activation are separately complete. | Do not redeploy all runtimes or paste credentials into local settings. |
+| Setup reports success, but no OTP delivery | Finish [provider OAuth authorization](../../docs/ONBOARDING.md#complete-provider-authentication); confirm authorized testing and policy activation are separately complete. | Do not redeploy all runtimes or paste credentials into local settings. |
 | Endpoint returns 401/403 with no invocation | Azure operator checks Easy Auth, issuer/audience/caller restrictions, network access, and available platform/auth logs. An ordinary customer CLI token is not the allowlisted Microsoft caller. | Do not disable Easy Auth, add a test caller, or interpret rejection as readiness. |
 | App failure after invocation, including 401 | Inspect correlated `request_failed` and provider-response events. A provider's 401/403 is mapped to a handler 401; this differs from Easy Auth rejection. | Do not change inbound trust to fix outbound provider authorization. |
 | `decryption_failed` or unresolved key reference | Compare summary certificate/thumbprint/key ID and versioned reference; verify Function identity vault access and reference resolution, then use an authorized evaluation. | Do not export the private key, remove certificates outside approved cleanup, or assume new vault versions automatically update Entra. |
-| Provider credentials unavailable | Check secret names/enabled versions/vault access for Telesign; customer federation plus provider-side authorization/tenant/scope for Soprano. Allow RBAC propagation. | Do not assume evaluation validates outbound credentials. |
+| Provider credentials unavailable | For guided providers, check customer federation and provider authorization in `AccessTokenScopeTenant`, plus the API scope. API-key adapters such as Sinch require their configured vault secrets. | Evaluation does not validate outbound credentials. |
+| Telesign profile is not deployment-ready | Have the provider owner complete `AccessTokenScopeTenant` and both routes' `appId`/`scope` placeholders. | Do not invent values, substitute the Security Store or customer tenant, or bypass validation. |
 | Timeout, 502/504, or provider acceptance without handset receipt | Separate credential, outbound HTTP, host, and caller timings; ask the provider for supported delivery evidence. Confirm locale/digit clarity for voice. | Do not blindly resend: the first request may already have been accepted. |
 | No requests/traces in Application Insights | Check the exact component/workspace, UTC window, actual authorized traffic, host/worker startup, ingestion identity/network, filters/sampling/caps, and effective exporter. Use [collection guidance](../../docs/APPLICATION-INSIGHTS.md). | Do not treat an empty table/Failures view as healthy or search every runtime for a JSON request summary. |
 | Requests exist but Python/.NET event query is empty | Use [runtime-specific discovery](../../docs/MONITORING.md#runtime-specific-log-discovery). Python extras/.NET scopes may not be exported; .NET host OpenTelemetry does not initialize direct worker export. | Do not apply JavaScript's JSON parser to other runtimes or promise complete dependencies/exceptions. |
@@ -59,10 +61,12 @@ Keep nonce-match **booleans**, statuses, latency, safe IDs, and delivery outcome
 
 **Check:** compare the application key ID and exact vault version using
 [certificate selection](README.md#encryption-certificate-selection).
-Existing credentials require explicit **Reuse** or **Replace**, not an automatic new certificate.
+For existing credentials, the interactive default is **Replace** (clean up registered encryption
+credentials and create a new certificate after final approval). Select **Reuse** explicitly to keep
+one, or **0/Cancel** to stop. Unattended runs still require an explicit **Reuse** or **Replace**.
 
 | Failure | Safe recovery |
-|---|---|
+| --- | --- |
 | Missing `CertificateAction`, `EncryptionKeyId`, or `KeyVaultCertificateId` in unattended mode | Supply an explicit action. Reuse requires the exact key ID and versioned `/certificates/` URL even when only one credential exists. `-ApproveDeployment` is not a certificate choice. |
 | Key Vault certificate does not match the selected app credential | Compare the displayed key ID and public thumbprint with the exact Key Vault certificate version. A same-name or renewed certificate is not necessarily the registered certificate. Correct the location or explicitly choose replacement. |
 | Expired, not-yet-valid, disabled, or incompatible certificate/secret | Select a valid certificate with more than 30 days remaining and an exportable RSA key of at least 2048 bits in a certificate-managed PEM secret. A public `.cer` file or standalone PEM secret is not a reuse location. |
@@ -275,6 +279,25 @@ and clears temporary build settings.
 
 After build or startup failure, setup closes public ingress. If that fails, inspect it immediately.
 
+## Azure CLI paths are combined during deployment
+
+**Symptom:** `Invoke-EppAz` reports an `EndInvoke` failure because a command such as
+`/usr/bin/az /bin/az` is not recognized, even though earlier Azure CLI operations succeeded.
+
+**Cause:** PowerShell can discover multiple Azure CLI paths. Older animated progress runners
+passed all discovered paths to the worker as one command instead of selecting the first match.
+The static status path does not have this problem.
+
+**Fix:** use a setup source revision containing the command-resolution fix. The corrected runner
+selects the first discovered executable, preserving its path and argument boundaries. Do not
+reinstall Azure CLI, edit `PATH`, or change hosting plans to work around this error.
+
+**Temporary workaround:** save the current `$ProgressPreference`, set it to `SilentlyContinue`,
+and rerun the same reviewed launcher revision with the original deployment inputs. Restore the
+previous preference afterward. This disables only progress animation, not deployment approval,
+validation, or error reporting. Reuse the printed `-ApplicationId` and original `-ResourcePrefix`;
+do not create another app or delete partially created resources.
+
 ## Azure CLI warnings break JSON parsing
 
 **Fix:** refresh the reviewed launcher/source revision.
@@ -295,6 +318,29 @@ After build or startup failure, setup closes public ingress. If that fails, insp
 4. Confirm beta `signInAudienceRestrictions` availability. If tenant policy/preview access blocks it,
    stop; setup does not silently allow all tenants. Unattended runs still need the user session
    and separate `-ApproveDeployment`.
+
+## New app fails with an unsupported provider-tenant restriction
+
+**Symptom:** setup creates the application and prints **Resolved Azure resource names**, then
+stops with `The application has an unsupported provider-tenant restriction`. This can also
+affect provider selection or preflight for an existing registration.
+
+**Cause:** Microsoft Graph can return a
+[`unrestrictedAudience`](https://learn.microsoft.com/graph/api/resources/unrestrictedaudience?view=graph-rest-beta)
+object with `kind: unrestricted` instead of a null `signInAudienceRestrictions` value.
+This is a valid unconfigured state; a single-tenant app still permits only its home tenant.
+Older helpers accepted only null or an `allowedTenants` restriction and rejected this response.
+
+**Recover:** use a setup source revision containing the fix. The launcher downloads its helpers
+from `-SourceRepository` / `-SourceRef` (`main` by default), so an old pinned revision or a local
+helper edit alone does not update the downloaded code. Rerun with the original `-ApplicationId`
+and `-ResourcePrefix`, retaining the other deployment inputs. For a setup-created app, use the
+client ID printed before the error or saved in `application-<client-id>.json`. Do not create
+another registration, delete resources, or manually broaden tenant access to bypass the check.
+
+The corrected helper recognizes the unrestricted state but still requires the approved provider
+allowlist before successful deployment. Unknown or inconsistent restrictions and changes made
+after plan approval still stop setup.
 
 ## `az ad` or `az rest` returns 403 Forbidden
 
@@ -367,7 +413,8 @@ Setup closes public ingress after persistent publication failure.
    Confirm `EPP_PROVIDER_SMS_ENDPOINT` or `EPP_PROVIDER_VOICE_ENDPOINT` and account access.
    The selected URL is required and the handler does not use the other channel's URL; deploy a supporting package.
 3. Complete [provider authentication](../../docs/ONBOARDING.md#complete-provider-authentication):
-   exact vault secrets for Telesign, provider-side authorization for Soprano.
+   provider-side authorization for OAuth, or exact vault secrets for an API-key adapter.
+   `EPP_PROVIDER_TENANT_ID` must match the access-token tenant, which can differ from the Security Store tenant.
    Arrange [authorized evaluation, then controlled live checks](../../docs/ONBOARDING.md#validate-the-deployed-endpoint).
    Verify acceptance and receipt separately; never blindly resend a timeout.
 

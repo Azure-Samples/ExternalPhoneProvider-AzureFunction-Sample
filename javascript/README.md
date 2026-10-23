@@ -2,12 +2,13 @@
 
 <a id="external-phone-provider-function-javascript"></a>
 
-[Documentation](../docs/README.md) | [Settings](#environment-configuration) | [Request behavior](#request-behavior) | [Source](#source-and-extension-points)
+[Documentation](../docs/README.md) | [Settings](#environment-configuration) | [Request behavior](#request-behavior) | [Source](#source)
 
 A Node.js Azure Function implementing the shared [HTTP contract](../docs/CONTRACT.md) with one
 provider per deployment.
 
-## Setup
+<a id="setup"></a>
+## Setup and deployment
 
 **Sample deployment:** follow the [five-step guide](../docs/GETTING-STARTED.md), then complete
 [provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
@@ -36,20 +37,20 @@ the test-key placeholder in this minimal setup:
 
 ```json
 {
-   "IsEncrypted": false,
-   "Values": {
-      "AzureWebJobsStorage": "UseDevelopmentStorage=true",
-      "FUNCTIONS_WORKER_RUNTIME": "node",
-      "EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>"
-   }
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>"
+  }
 }
 ```
 
 For live delivery, use the [shared settings table](../TECHNICAL.md#configure-environment-variables)
 for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter-specific options.
 Keep `Values` as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"1500"`.
-Replace the placeholders. Store API keys in Key Vault. Each selected channel requires a valid
-endpoint. An invalid or missing endpoint returns an error without using the other channel.
+Replace the placeholders. API-key adapters store credentials in Key Vault. Each selected channel
+requires a valid endpoint; a missing or invalid endpoint never uses the other channel.
 
 Core Tools copies `Values` into the process environment. Direct Node processes and offline tests
 do not load the file. Restart after edits. Use a local test PEM because Core Tools cannot resolve
@@ -69,9 +70,10 @@ authentication and decryption without a provider send. Live success confirms acc
 **not handset receipt**. Check a timeout before retrying.
 
 For built-in message and voice mapping, see
-[Soprano and Telesign](../TECHNICAL.md#built-in-providers).
+[Infobip, Soprano, and Telesign](../TECHNICAL.md#built-in-providers).
 
-## Source and extension points
+<a id="source-and-extension-points"></a>
+## Source
 
 To add Twilio, follow the [Twilio integration guide](../docs/BRING-YOUR-OWN-PROVIDER.md).
 Keep caller authentication and public responses in the shared handler.
@@ -86,7 +88,7 @@ work. Acquisition is bounded to 2.5 seconds, and shutdown aborts pending request
 [credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
 
 | Source | Purpose |
-|---|---|
+| --- | --- |
 | [src/functions/SendOtp.js](src/functions/SendOtp.js) | Explicit HTTP orchestration and shutdown cancellation |
 | [src/functions/config.js](src/functions/config.js) | Shared deployment settings |
 | [src/functions/entraPayload.js](src/functions/entraPayload.js) | Validated Microsoft Entra ID envelope and exact contract reasons |

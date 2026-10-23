@@ -36,20 +36,20 @@ For local evaluation, start Azurite and replace the test-key placeholder in this
 
 ```json
 {
-	"IsEncrypted": false,
-	"Values": {
-		"AzureWebJobsStorage": "UseDevelopmentStorage=true",
-		"FUNCTIONS_WORKER_RUNTIME": "python",
-		"EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>"
-	}
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "EPP_DECRYPTION_KEY_PEM": "<base64 of your local test private PEM>"
+  }
 }
 ```
 
 For live delivery, use the [shared settings table](../TECHNICAL.md#configure-environment-variables)
 for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter-specific options.
-Keep values as strings, including `EPP_PROVIDER_TIMEOUT_MS: "1500"`. Replace the placeholders.
-Store API keys in provider-named Key Vault secrets. Each selected channel requires a valid
-endpoint. An invalid or missing endpoint returns an error without using the other channel.
+Keep `Values` as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"1500"`.
+Replace the placeholders. API-key adapters store credentials in Key Vault. Each selected channel
+requires a valid endpoint; a missing or invalid endpoint never uses the other channel.
 
 Core Tools loads `Values` into `os.environ`. Direct Python and pytest do not. Restart after edits.
 Use a local test PEM because Core Tools cannot resolve Key Vault references locally. Keep Azurite
@@ -69,7 +69,7 @@ authentication and decryption without a provider send. Live success confirms acc
 **not handset receipt**. Check a timeout before retrying.
 
 For built-in message and voice mapping, see
-[Soprano and Telesign](../TECHNICAL.md#built-in-providers).
+[Infobip, Soprano, and Telesign](../TECHNICAL.md#built-in-providers).
 
 ## Source
 
@@ -88,7 +88,7 @@ blocking process shutdown. Timed-out results are discarded; SDK network timeouts
 underlying calls. See [credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
 
 | Source | Purpose |
-|---|---|
+| --- | --- |
 | [function_app.py](function_app.py) | Typed request orchestration and direct provider selection |
 | [src/config.py](src/config.py) | Shared deployment settings |
 | [src/models.py](src/models.py) | Typed Microsoft Entra ID payload, delivery context, provider request and result dataclasses |

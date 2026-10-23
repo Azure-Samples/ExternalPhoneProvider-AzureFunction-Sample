@@ -7,14 +7,14 @@ const REJECTED = new Set(['REJECTED', 'EXPIRED', 'UNDELIVERABLE']);
 
 const provider = Object.freeze({
     name: 'infobip',
-    authenticationMode: 'apiKey',
-    credentialSpec: Object.freeze({ mode: 'apiKey', keyVaultSecretName: 'infobip-api-key' }),
+    authenticationMode: 'oauth',
+    credentialSpec: Object.freeze({ mode: 'oauth' }),
 
     createRequest({ channel, endpoint, delivery, credential, env }) {
         const senderId = env.EPP_PROVIDER_ACCOUNT_NAME || 'Verify';
         const messageId = delivery.correlationId || delivery.messageId;
         const headers = {
-            Authorization: `App ${credential.secret}`,
+            Authorization: ['Bearer', credential.accessToken].join(' '),
             'Content-Type': 'application/json',
             Accept: 'application/json',
         };

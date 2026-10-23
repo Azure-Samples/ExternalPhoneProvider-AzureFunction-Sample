@@ -277,15 +277,25 @@ for (const mode of [1, 2]) {
     });
 }
 
-for (const provider of ['telesign', 'soprano']) {
-    test(`${provider}: only live requests acquire credentials and obsolete cache settings are ignored`, async () => {
-        const apiKey = provider === 'telesign';
+for (const [provider, mode] of [['sinch', 'apiKey'], ['telesign', 'oauth'], ['soprano', 'oauth'], ['infobip', 'oauth']]) {
+    test(`${provider} ${mode}: only live requests acquire credentials and obsolete cache settings are ignored`, async () => {
+        const apiKey = mode === 'apiKey';
         process.env.EPP_PROVIDER_NAME = provider;
         process.env.EPP_PROVIDER_AUTH_MODE = apiKey ? 'apiKey' : 'oauth';
         process.env.EPP_KEY_VAULT_CACHE_ENABLED = 'PRIVATE-OBSOLETE';
         process.env.EPP_ACCESS_TOKEN_CACHE_ENABLED = 'PRIVATE-OBSOLETE';
-        if (apiKey) fetchMock.mock.mockImplementation(async () => ({
+        if (provider === 'sinch') {
+            process.env.SINCH_SERVICE_PLAN_ID = 'plan';
+            fetchMock.mock.mockImplementation(async () => ({
+                ok: true, status: 200, text: async () => JSON.stringify({ id: 'provider-id' }),
+            }));
+        }
+        if (provider === 'telesign') fetchMock.mock.mockImplementation(async () => ({
             ok: true, status: 200, text: async () => JSON.stringify({ status: { code: 3001 } }),
+        }));
+        if (provider === 'infobip') fetchMock.mock.mockImplementation(async () => ({
+            ok: true, status: 200,
+            text: async () => JSON.stringify({ messages: [{ status: { groupName: 'PENDING' } }] }),
         }));
         assert.equal(startHook, undefined);
         const evaluated = await invoke(await envelope({ mode: 2 }));
@@ -293,10 +303,48 @@ for (const provider of ['telesign', 'soprano']) {
         assert.equal(evaluated.jsonBody.nonce, baseDelivery.nonce);
         assert.deepEqual([getSecret.mock.callCount(), getToken.mock.callCount(), fetchMock.mock.callCount()], [0, 0, 0]);
         for (let i = 0; i < 2; i++) assert.equal((await invoke(await envelope())).status, 200);
-        assert.equal(getSecret.mock.callCount(), apiKey ? 4 : 0);
+        assert.equal(getSecret.mock.callCount(), apiKey ? 2 : 0);
         assert.equal(getToken.mock.callCount(), apiKey ? 0 : 2);
     });
 }
+
+test('Telesign OAuth skips startup acquisition and both live channels use only the acquired token', async () => {
+    process.env.EPP_PROVIDER_NAME = 'telesign';
+    process.env.EPP_PROVIDER_TENANT_ID = '44444444-4444-4444-4444-444444444444';
+    fetchMock.mock.mockImplementation(async () => ({
+        ok: true, status: 200, text: async () => JSON.stringify({ status: { code: 3001 } }),
+    }));
+    assert.equal(startHook, undefined);
+    assert.equal(getToken.mock.callCount(), 0);
+    assert.equal(fetchMock.mock.callCount(), 0);
+    assert.equal((await invoke(await envelope({ mode: 2 }))).status, 200);
+    for (const channel of [1, 2]) {
+        const result = await invoke(await envelope({ channel, tenantId: 'FORGED-TENANT' },
+            { ...baseDelivery, providerJwt: 'FORGED-TOKEN' }), { authorization: 'Bearer FORGED-CALLER' });
+        assert.equal(result.status, 200);
+        assert.equal(result.jsonBody.nonce, baseDelivery.nonce);
+        const request = fetchMock.mock.calls.at(-1).arguments[1];
+        assert.equal(request.headers.Authorization, 'Bearer PRIVATE-OAUTH-TOKEN');
+        assert.doesNotMatch(request.body, /FORGED/);
+        assert.equal(event('provider_selected').providerAuthMode, 'oauth');
+        assert.equal(event('provider_credential_resolution_started').providerTenantId,
+            process.env.EPP_PROVIDER_TENANT_ID);
+    }
+    assert.equal(getToken.mock.callCount(), 2);
+    assert.equal(getSecret.mock.callCount(), 0);
+});
+
+test('Telesign OAuth acquisition failure stops before provider HTTP', async () => {
+    process.env.EPP_PROVIDER_NAME = 'telesign';
+    getToken.mock.mockImplementation(async () => { throw new Error('AADSTS500011: PRIVATE-TOKEN-FAILURE'); });
+    failure(await invoke(await envelope()), 502);
+    assert.equal(event('provider_credential_resolution_failed').aadstsCode, 'AADSTS500011');
+    assert.equal(event('request_failed').failureReason, 'credential_unavailable');
+    assert.equal(getToken.mock.callCount(), 1);
+    assert.equal(getSecret.mock.callCount(), 0);
+    assert.equal(fetchMock.mock.callCount(), 0);
+    assert.equal((await invoke(await envelope({ mode: 2 }))).status, 200);
+});
 
 test('a credential failure is request-correlated and the next live request can recover immediately', async () => {
     getToken.mock.mockImplementationOnce(async () => { throw new Error('PRIVATE-SDK-FAILURE'); });
@@ -309,6 +357,37 @@ test('a credential failure is request-correlated and the next live request can r
     assert.equal(getToken.mock.callCount(), 2);
     assert.equal(fetchMock.mock.callCount(), 1);
 });
+
+for (const [code, expected] of [
+    ['70025', 'AADSTS70025'], ['70021', 'AADSTS70021'], ['700016', 'AADSTS700016'],
+    ['500011', 'AADSTS500011'], ['501051', 'AADSTS501051'], ['700213', 'AADSTS700213'],
+    ['999999', 'AADSTS999999'], ['700211', 'AADSTS700211'],
+    ['500011suffix', null], ['not-a-code', null], ['', null],
+]) {
+    test(`AADSTS${code} changes only internal correlated logs, not the public credential-failure response`, async () => {
+        getToken.mock.mockImplementation(async function () {
+            await this.getAssertion();
+            throw new Error(`AADSTS${code}: PRIVATE-ASSERTION PRIVATE-TOKEN PRIVATE-RESPONSE`);
+        });
+        const response = await invoke(await envelope(), { 'x-ms-client-request-id': 'ms-request-id' });
+        const diagnostic = event('provider_credential_resolution_failed');
+        assert.deepEqual(response.jsonBody, {
+            error: 'provider_delivery_failed', correlationId: 'correlation-id',
+            requestId: diagnostic.functionRequestId,
+        });
+        assert.equal(response.status, 502);
+        assert.equal(diagnostic.aadstsCode, expected);
+        assert.doesNotMatch(JSON.stringify(records) + JSON.stringify(response.jsonBody), /PRIVATE/);
+        assert.equal(diagnostic['x-ms-client-request-id'], 'ms-request-id');
+        assert.equal(diagnostic['x-ms-correlation-id'], 'correlation-id');
+        assert.equal(records.filter((entry) => entry.eventName === 'provider_credential_resolution_failed').length, 1);
+        assert.equal(event('request_failed').failureReason, 'credential_unavailable');
+        assert.equal(fetchMock.mock.callCount(), 0);
+        assert.equal(event('provider_request_started'), undefined);
+        assert.equal((await invoke(await envelope({ mode: 2 }))).status, 200);
+        assert.equal(event('provider_credential_resolution_failed'), undefined);
+    });
+}
 
 test('startup does not warm credentials and shutdown closes pending acquisition', async () => {
     assert.equal(startHook, undefined);
@@ -503,7 +582,7 @@ for (const provider of ['telesign', 'soprano']) {
     for (const legacyChannel of [undefined, 'sms', 'voice', 'invalid']) {
         test(`${provider}: request selects either channel with legacy setting ${legacyChannel}`, async () => {
             process.env.EPP_PROVIDER_NAME = provider;
-            process.env.EPP_PROVIDER_AUTH_MODE = provider === 'telesign' ? 'apiKey' : 'oauth';
+            process.env.EPP_PROVIDER_AUTH_MODE = 'oauth';
             if (legacyChannel !== undefined) process.env.EPP_PROVIDER_CHANNEL = legacyChannel;
             fetchMock.mock.mockImplementation(async () => ({
                 ok: true,
@@ -541,7 +620,7 @@ for (const [provider, response, smsPath, voicePath] of [
     test(`${provider}: request channel selects distinct configured endpoints`, async () => {
         Object.assign(process.env, {
             EPP_PROVIDER_NAME: provider,
-            EPP_PROVIDER_AUTH_MODE: provider === 'soprano' ? 'oauth' : 'apiKey',
+            EPP_PROVIDER_AUTH_MODE: provider === 'sinch' ? 'apiKey' : 'oauth',
             EPP_PROVIDER_SMS_ENDPOINT: 'https://sms.provider.example/send',
             EPP_PROVIDER_VOICE_ENDPOINT: 'https://voice.provider.example/send',
             SINCH_SERVICE_PLAN_ID: 'plan',
@@ -561,6 +640,11 @@ for (const [provider, response, smsPath, voicePath] of [
                 assert.equal(result.status, 200);
                 assert.equal(result.jsonBody.nonce, baseDelivery.nonce);
                 assert.equal(fetchMock.mock.calls.at(-1).arguments[0], endpoint + path);
+                if (provider === 'infobip') {
+                    assert.equal(fetchMock.mock.calls.at(-1).arguments[1].headers.Authorization,
+                        ['Bearer', 'PRIVATE-OAUTH-TOKEN'].join(' '));
+                    assert.equal(getSecret.mock.callCount(), 0);
+                }
             }
         }
         assert.equal(fetchMock.mock.callCount(), 4);
@@ -735,7 +819,7 @@ test('Sinch successful HTTP without a nonblank message ID fails closed', async (
 
 test('Telesign strict integer status and voice pacing keep endpoint outcomes stable', async () => {
     process.env.EPP_PROVIDER_NAME = 'telesign';
-    process.env.EPP_PROVIDER_AUTH_MODE = 'apiKey';
+    process.env.EPP_PROVIDER_AUTH_MODE = 'oauth';
     process.env.EPP_PROVIDER_VOICE_ENDPOINT = 'https://verify.telesign.com/epp/send';
     for (const [code, status] of [[290, 200], ['290', 502], [true, 502]]) {
         fetchMock.mock.mockImplementation(async () => ({

@@ -29,12 +29,15 @@ out of queries, alerts, exports, and screenshots.
 1. Open the Function App from the deployment summary.
 2. Select **Monitoring > Application Insights**, then open the linked resource.
 
-   ![Function App Monitoring menu with Application Insights selected and its connected resource link](images/onboarding/monitoring-link.png)
+    ![CYOT-CONSTO Function App Monitoring menu with the consto Application Insights resource link](images/onboarding/monitoring-link.png)
 
 3. On the Application Insights **Overview**, open **Logs workspace**.
 4. In the workspace, select **Logs** and use **KQL mode**.
 
-   ![Application Insights Overview showing the Logs workspace link with account and connection details redacted](images/onboarding/monitoring-workspace.png)
+    ![CYOT-CONSTO Application Insights Overview showing the consto resource group and Logs workspace while identifiers and connection details remain hidden](images/onboarding/monitoring-workspace.png)
+
+    *Nonproduction resource names and the subscription display name remain visible. Subscription and
+    application IDs, the instrumentation key, and the connection string remain hidden.*
 
 Record the Function App, Application Insights resource, workspace, runtime, region, deployment
 version, owner, and expected traffic or test schedule. For several regions, keep one row per origin.
@@ -70,7 +73,7 @@ AppRequests
 | order by ResultCode asc
 ```
 
-![Workspace Logs in KQL mode with a scoped request-status query, Run button, and one aggregate result row](images/onboarding/logs-query-results.png)
+![CYOT-CONSTO workspace Logs in KQL mode with a query scoped to the consto Function App and one aggregate result row](images/onboarding/logs-query-results.png)
 
 `StoredRows` counts stored telemetry, not delivered messages. Sampling can change the count.
 Evaluation and live calls can both return `200`. No rows means no matching data in this scope and
@@ -169,6 +172,10 @@ Credential acquisition failures have `failureStage=provider_credentials` and
 `failureReason=credential_unavailable` on the failing request. There is no background refresher
 or idle credential-health signal. A successful evaluation does not prove provider credentials work;
 validate that path separately through an approved live test.
+
+The preceding `provider_credential_resolution_failed` event includes a safe `aadstsCode`
+(`AadstsCode` in .NET). See [credential diagnostics](LOGGING.md#credential-diagnostics).
+Do not count it and `request_failed` as two failed requests or enable raw SDK/body logging.
 
 <a id="runtime-specific-log-discovery"></a>
 ## Runtime log formats

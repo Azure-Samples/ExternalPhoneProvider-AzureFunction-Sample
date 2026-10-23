@@ -160,15 +160,18 @@ public class ContractTests
         Assert.Equal("provider_rejected", result.FailureReason);
     }
 
-    [Fact]
-    public async Task InfobipRequestsKeepExactSmsAndVoiceWireContracts()
+    [Theory]
+    [InlineData("https://api.infobip.com")]
+    [InlineData("https://api-eu.infobip.com")]
+    public async Task InfobipOAuthRequestsKeepExactSmsAndVoiceWireContracts(string endpoint)
     {
         var env = new TestEnv { ["EPP_PROVIDER_ACCOUNT_NAME"] = "Verify" };
-        var credential = new ProviderCredentials("apiKey", "test-key", "test-id");
+        var credential = new ProviderCredentials("oauth", AccessToken: "test-token");
+        Assert.Equal("oauth", new InfobipProvider().AuthenticationMode);
 
         var sms = await new InfobipProvider().CaptureRequestAsync(
-            "sms", "https://provider.example", Delivery(), credential, env);
-        AssertJsonRequest(sms, "https://provider.example/sms/3/messages", "App test-key");
+            "sms", endpoint, Delivery(), credential, env);
+        AssertJsonRequest(sms, $"{endpoint}/sms/3/messages", "Bearer test-token");
         var expectedSms = new
         {
             messages = new[]
@@ -184,8 +187,8 @@ public class ContractTests
         Assert.Equal(JsonSerializer.Serialize(expectedSms), sms.Body);
 
         var voice = await new InfobipProvider().CaptureRequestAsync(
-            "voice", "https://provider.example", Delivery("voice"), credential, env);
-        AssertJsonRequest(voice, "https://provider.example/tts/3/advanced", "App test-key");
+            "voice", endpoint, Delivery("voice"), credential, env);
+        AssertJsonRequest(voice, $"{endpoint}/tts/3/advanced", "Bearer test-token");
         var expectedVoice = new
         {
             messages = new[]
@@ -260,12 +263,12 @@ public class ContractTests
             channel,
             $"https://verify.telesign.com/epp/{channel}",
             delivery,
-            new ProviderCredentials("apiKey", "test-key", "test-id"),
+            new ProviderCredentials("oauth", AccessToken: "provider-token"),
             new TestEnv());
         AssertJsonRequest(
             request,
             $"https://verify.telesign.com/epp/{channel}",
-            "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("test-id:test-key")));
+            "Bearer provider-token");
         var expectedText = channel == "voice"
             ? "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.   "
               + "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.  "
@@ -290,7 +293,7 @@ public class ContractTests
             "voice",
             "https://verify.telesign.com/epp/voice",
             delivery,
-            new ProviderCredentials("apiKey", "test-key", "test-id"),
+            new ProviderCredentials("oauth", AccessToken: "provider-token"),
             new TestEnv());
         using var body = JsonDocument.Parse(request.Body);
         Assert.Equal(
@@ -303,7 +306,7 @@ public class ContractTests
     public async Task TelesignValidatesRecipientAndFallsBackToMessageId()
     {
         var provider = new TelesignProvider();
-        var credential = new ProviderCredentials("apiKey", "key", "id");
+        var credential = new ProviderCredentials("oauth", AccessToken: "provider-token");
         foreach (var phoneNumber in new[] { "15551234567", "+0123", "+1", "+1234567890123456", "+123\n", "+123\r", "+12 34" })
         {
             var error = await Assert.ThrowsAsync<PhoneProviderBase.ProviderSendException>(

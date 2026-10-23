@@ -1,4 +1,3 @@
-import base64
 import json
 import re
 
@@ -21,15 +20,11 @@ def _build_voice_message(message):
 
 class TelesignProvider(PhoneProviderBase):
     name = "telesign"
-    authentication_mode = "apiKey"
+    authentication_mode = "oauth"
 
     @property
     def credential_spec(self):
-        return {
-            "mode": self.authentication_mode,
-            "key_vault_secret_name": "telesign-api-key",
-            "identity_key_vault_secret_name": "telesign-customer-id",
-        }
+        return {"mode": self.authentication_mode}
 
     def build_request(self, channel, endpoint, delivery, credential, env):
         if channel not in ("sms", "voice"):
@@ -38,8 +33,6 @@ class TelesignProvider(PhoneProviderBase):
             r"\+[1-9][0-9]{1,14}", delivery.phone_number
         ):
             raise ValueError("invalid recipient")
-        raw = f"{credential['identity']}:{credential['secret']}".encode()
-        authorization = "Basic " + base64.b64encode(raw).decode()
         correlation_id = delivery.correlation_id
         if not isinstance(correlation_id, str) or not correlation_id:
             correlation_id = delivery.message_id
@@ -55,7 +48,7 @@ class TelesignProvider(PhoneProviderBase):
             "correlation_id": correlation_id,
         }
         headers = {
-            "Authorization": authorization,
+            "Authorization": "Bearer " + credential["access_token"],
             "Content-Type": "application/json",
             "Accept": "application/json",
         }

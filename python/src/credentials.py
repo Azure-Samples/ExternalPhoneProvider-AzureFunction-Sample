@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -22,6 +23,11 @@ ACQUISITION_TIMEOUT_SECONDS = 2.5
 TOKEN_SKEW_SECONDS = 30
 _acquiring = ContextVar("epp_credential_acquisition", default=False)
 T = TypeVar("T")
+
+
+def aadsts_code(error: Exception) -> str | None:
+    match = re.search(r"\bAADSTS[0-9]+\b", str(error))
+    return match[0] if match else None
 
 
 class Token(Protocol):
@@ -91,26 +97,26 @@ class CredentialTokenService:
         threading.Thread(target=self._run, args=(spec, config, pending), daemon=True).start()
         try:
             return pending.result(timeout=self._wait_timeout)
-        except Exception:
+        except Exception as error:
             with self._lock:
                 pending.cancel()
-            # The handler logs the failure without exposing SDK error details.
-            raise ValueError(CREDENTIAL_ERROR) from None
+            raise ValueError(aadsts_code(error) or CREDENTIAL_ERROR) from None
 
     def _run(self, spec: Mapping[str, str], config: AppConfig,
              pending: Future[ApiKeyCredential | OAuthCredential]) -> None:
         value = None
+        failure = CREDENTIAL_ERROR
         try:
             value = _private_acquisition(
                 lambda: self._fetch_api_key(spec) if spec["mode"] == API_KEY_MODE else self._fetch_token(config))
-        except Exception:
-            # Publish only the sanitized error to the waiting request.
-            value = None
+        except Exception as error:
+            # Retain only the numeric AADSTS identifier, never the SDK exception or response.
+            failure = aadsts_code(error) or CREDENTIAL_ERROR
         with self._lock:
             self._requests.discard(pending)
             if not pending.done():
                 if value is None:
-                    pending.set_exception(ValueError(CREDENTIAL_ERROR))
+                    pending.set_exception(ValueError(failure))
                 else:
                     pending.set_result(value)
             close_clients = self._closed and not self._requests
@@ -126,8 +132,8 @@ class CredentialTokenService:
                     if self._closed:
                         raise ValueError(CREDENTIAL_ERROR)
                 result.set_result(_private_acquisition(lambda: self._secrets.resolve(name)))
-            except Exception:
-                result.set_exception(ValueError(CREDENTIAL_ERROR))
+            except Exception as error:
+                result.set_exception(ValueError(aadsts_code(error) or CREDENTIAL_ERROR))
 
         # Executor threads are joined at exit; unfinished SDK reads must not block shutdown.
         threading.Thread(target=read, daemon=True).start()

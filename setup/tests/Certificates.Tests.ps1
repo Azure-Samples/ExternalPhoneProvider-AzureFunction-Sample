@@ -318,7 +318,14 @@ try {
             Assert-Throws { Get-EppCertificatePlan @planArgs -CertificateAction Reuse -EncryptionKeyId $keyId -NonInteractive } '\-KeyVaultCertificateId is required'
             $script:Answers.Enqueue('')
             $script:Calls.Clear()
-            Assert ($null -eq (Get-EppCertificatePlan @planArgs)) 'Enter must cancel without choosing a certificate.'
+            $beforeWrites = $script:GraphWrites
+            $defaultPlan = Get-EppCertificatePlan @planArgs
+            Assert ($defaultPlan.Action -ceq 'Replace' -and $defaultPlan.RemoveKeyIds.Count -eq 1 -and
+                $defaultPlan.RemoveKeyIds[0] -ceq $keyId) 'Enter must plan cleanup and a new encryption certificate, preserving non-encryption credentials.'
+            Assert ($script:Prompts[-1] -ceq 'Encryption certificate action number or name [2]') 'Display replacement as the certificate default.'
+            Assert ($script:Calls.Count -eq 0 -and $script:GraphWrites -eq $beforeWrites) 'Accepting the replacement default must not change Azure or Graph before final approval.'
+            $script:Answers.Enqueue('0')
+            Assert ($null -eq (Get-EppCertificatePlan @planArgs)) 'An explicit cancellation must stop certificate selection.'
             Assert ($script:Calls.Count -eq 0) 'Cancelling the decision must not contact Key Vault.'
             $script:Answers.Enqueue('Reuse'); $script:Answers.Enqueue($certificateId)
             $singlePlan = Get-EppCertificatePlan @planArgs
@@ -326,7 +333,11 @@ try {
             Assert ($script:Answers.Count -eq 0) 'Single-certificate reuse should only ask for the action and location.'
 
             $script:Application.KeyCredentials = @($first, (New-TestCredential $other $secondId), (New-TestCredential $certificate $thirdId), $signing)
-            $script:Answers.Enqueue('Reuse'); $script:Answers.Enqueue($keyId); $script:Answers.Enqueue($certificateId)
+            $script:Answers.Enqueue('  ')
+            $defaultPlan = Get-EppCertificatePlan @planArgs
+            Assert ($defaultPlan.Action -ceq 'Replace' -and $defaultPlan.RemoveKeyIds.Count -eq 3 -and
+                $defaultPlan.RemoveKeyIds -notcontains $signing.KeyId) 'The replacement default must plan removal of all encryption credentials and no signing credentials.'
+            $script:Answers.Enqueue('Reuse'); $script:Answers.Enqueue(''); $script:Answers.Enqueue($certificateId)
             $multiplePlan = Get-EppCertificatePlan @planArgs
             Assert ($multiplePlan.RemoveKeyIds.Count -eq 2 -and $multiplePlan.RemoveKeyIds -contains $secondId -and
                 $multiplePlan.RemoveKeyIds -contains $thirdId) 'Keep the selected key ID even when another entry has the same thumbprint.'
@@ -509,6 +520,7 @@ try {
             }
             $provider = @{
                 Id = 'unit'; EndpointRegion = 'global'; AuthenticationMode = 'apiKey'
+                TenantId = $inputs.ProviderTenantId; AccessTokenScopeTenant = $inputs.ProviderTenantId
                 Settings = @{ EPP_PROVIDER_SMS_ENDPOINT = 'https://sms.contoso.com/send'; EPP_PROVIDER_VOICE_ENDPOINT = 'https://voice.contoso.com/send'; EPP_PROVIDER_TENANT_ID = $inputs.ProviderTenantId }
             }
             $deployment = @{
@@ -533,6 +545,8 @@ try {
                 Assert ($result.certificateAction -ceq $action -and $result.certificateReferenceResolved -eq $true) 'The persisted result must identify the action and resolved reference.'
                 $expectedLanguage = if ($inputs.Language -eq 'dotnet') { 'csharp' } else { 'javascript' }
                 Assert ($result.language -ceq $expectedLanguage -and $result.tenantRegionScope -ceq 'NA') 'Persist the customer-facing language identifier and detected tenant scope.'
+                Assert ($result.providerTenantId -ceq $inputs.ProviderTenantId -and
+                    $null -eq $result.accessTokenScopeTenant) 'Basic-auth summaries must preserve the provider tenant without claiming an OAuth authority.'
                 Assert ($result.sourceRevision -ceq ('a' * 40) -and $result.source -ceq $inputs.SourceBaseUri -and
                     $result.packageFile -ceq $inputs.PackageFile -and $result.packageUrl -ceq $inputs.PackageUrl -and
                     $result.packageReleaseTag -ceq $inputs.PackageReleaseTag) 'The persisted result must identify the setup source and downloaded Function release.'
@@ -595,9 +609,12 @@ try {
             }
             Set-TestBundle $certificate
             $script:Application.KeyCredentials = @($first, $signing)
-            $script:Answers.Enqueue(''); $script:Calls.Clear()
+            $script:Answers.Enqueue('0'); $script:Calls.Clear()
             Invoke-EppSetup @setupInputs
             Assert ($script:Calls.Count -eq 0 -and $null -eq $context.CertificatePlan) 'Cancelling certificate onboarding must stop before package preparation or deployment.'
+            $script:Answers.Enqueue('')
+            Assert-Throws { Invoke-EppSetup @setupInputs } '^package-boundary$'
+            Assert ($context.CertificatePlan.Action -ceq 'Replace' -and $script:Calls.Count -eq 0) 'The setup entry point must stage the replacement default without making changes.'
             Assert-Throws { Invoke-EppSetup @setupInputs -NonInteractive -ApproveDeployment } '\-CertificateAction is required'
             Assert-Throws { Invoke-EppSetup @setupInputs @reuseArgs -NonInteractive } '^package-boundary$'
             Assert ($context.CertificatePlan.Action -ceq 'Reuse' -and $context.CertificatePlan.KeyId -ceq $keyId) 'The entry point must forward the explicit reuse inputs to preflight.'
@@ -609,6 +626,38 @@ try {
                 Assert ($launcher.ParamBlock.Parameters.Name.VariablePath.UserPath -contains $parameter) "The launcher must forward $parameter."
             }
             Assert ($script:Answers.Count -eq 0) 'Every expected interactive answer must be consumed.'
+
+            $script:SetEndpointWithoutFederation = (Get-Command Set-EppApplicationEndpoint).ScriptBlock
+            function script:Set-EppApplicationEndpoint {
+                param($Inputs, $Context, $Outputs, $Certificate, $KeyId, [switch] $ConfigureFederation)
+                Assert $ConfigureFederation 'Telesign OAuth must request outbound managed-identity federation.'
+                & $script:SetEndpointWithoutFederation -Inputs $Inputs -Context $Context -Outputs $Outputs `
+                    -Certificate $Certificate -KeyId $KeyId -ConfigureFederation:$false
+            }
+            $oauthInputs = @{} + $inputs
+            $oauthInputs.ProviderAuthentication = 'oauth'
+            $oauthInputs.AccessTokenScopeTenant = '99999999-9999-9999-9999-999999999999'
+            $oauthInputs.ProviderAllowedTenantIds = @($inputs.ProviderTenantId, $oauthInputs.AccessTokenScopeTenant)
+            $oauthProvider = @{} + $provider
+            $oauthProvider.Id = 'telesign'; $oauthProvider.DisplayName = 'Telesign'; $oauthProvider.AuthenticationMode = 'oauth'
+            $oauthProvider.AccessTokenScopeTenant = $oauthInputs.AccessTokenScopeTenant
+            $oauthProvider.Settings = @{} + $provider.Settings
+            $oauthProvider.Settings.EPP_PROVIDER_TENANT_ID = $oauthInputs.AccessTokenScopeTenant
+            $oauthProvider.Settings.EPP_PROVIDER_APP_ID = '88888888-8888-8888-8888-888888888888'
+            $oauthProvider.Settings.EPP_PROVIDER_SCOPE = 'api://88888888-8888-8888-8888-888888888888/.default'
+            $oauthContext = @{} + $context
+            $oauthContext.CertificatePlan = Get-EppCertificatePlan @planArgs @reuseArgs -NonInteractive
+            $oauthDeployment = @{} + $deployment
+            $oauthDeployment.Inputs = $oauthInputs; $oauthDeployment.ProviderConfiguration = $oauthProvider; $oauthDeployment.Context = $oauthContext
+            $result = Invoke-EppDeployment @oauthDeployment
+            Assert ($result.providerTenantId -ceq $inputs.ProviderTenantId -and
+                $result.accessTokenScopeTenant -ceq $oauthInputs.AccessTokenScopeTenant) 'OAuth summaries must retain distinct Security Store and access-token tenant IDs.'
+            $saved = @(Get-ChildItem -LiteralPath $Directory -Filter 'deployment-*.json' | ForEach-Object {
+                Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+            } | Where-Object providerAuthentication -eq 'oauth')
+            Assert ($saved.Count -eq 1 -and $saved[0].providerTenantId -ceq $result.providerTenantId -and
+                $saved[0].accessTokenScopeTenant -ceq $result.accessTokenScopeTenant -and
+                $saved[0].allowedProviderTenantIds -contains $result.accessTokenScopeTenant) 'Persist both tenant roles and the OAuth authority in the approved allowlist.'
         }
         finally {
             if ($issued) { $issued.Certificate.Dispose() }

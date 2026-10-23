@@ -96,14 +96,17 @@ public class CredentialAcquisitionTests
         Assert.Equal(2, calls);
     }
 
-    [Fact]
-    public async Task OAuthCallsReusableSdkCredentialsForEveryRequestWithoutPrefetchingAssertions()
+    [Theory]
+    [InlineData("soprano")]
+    [InlineData("infobip")]
+    [InlineData("telesign")]
+    public async Task OAuthCallsReusableSdkCredentialsForEveryRequestWithoutPrefetchingAssertions(string providerName)
     {
         var identityCalls = 0;
         var providerCalls = 0;
         var identityInstances = 0;
         var credentialInstances = 0;
-        var provider = new SopranoProvider(
+        var provider = CreateOAuthProvider(providerName,
             _ =>
             {
                 identityInstances++;
@@ -132,13 +135,16 @@ public class CredentialAcquisitionTests
         Assert.Equal(1, credentialInstances);
     }
 
-    [Fact]
-    public async Task RealAzureIdentitySdkRetainsItsTokenCache()
+    [Theory]
+    [InlineData("soprano")]
+    [InlineData("infobip")]
+    [InlineData("telesign")]
+    public async Task RealAzureIdentitySdkRetainsItsTokenCache(string providerName)
     {
         var identityCalls = 0;
         using var transport = new TokenTransport();
         using var client = new HttpClient(transport);
-        var provider = new SopranoProvider(
+        var provider = CreateOAuthProvider(providerName,
             _ => new Token((_, _) =>
             {
                 identityCalls++;
@@ -161,11 +167,14 @@ public class CredentialAcquisitionTests
         Assert.Equal(1, identityCalls);
     }
 
-    [Fact]
-    public async Task InvalidConfigurationDoesNotPoisonLaterAcquisition()
+    [Theory]
+    [InlineData("soprano")]
+    [InlineData("infobip")]
+    [InlineData("telesign")]
+    public async Task InvalidConfigurationDoesNotPoisonLaterAcquisition(string providerName)
     {
         var instances = 0;
-        var provider = new SopranoProvider(
+        var provider = CreateOAuthProvider(providerName,
             _ => new Token((_, _) => throw new InvalidOperationException("Unneeded assertion")),
             (_, _, _) =>
             {
@@ -180,6 +189,16 @@ public class CredentialAcquisitionTests
         Assert.Equal("provider", (await service.GetCredentialsAsync(provider, OAuthConfig())).AccessToken);
         Assert.Equal(1, instances);
     }
+
+    private static PhoneProviderBase CreateOAuthProvider(
+        string name, Func<string, TokenCredential> createIdentity,
+        Func<string, string, Func<CancellationToken, Task<string>>, TokenCredential> createCredential) => name switch
+    {
+        "soprano" => new SopranoProvider(createIdentity, createCredential),
+        "infobip" => new InfobipProvider(createIdentity, createCredential),
+        "telesign" => new TelesignProvider(createIdentity, createCredential),
+        _ => throw new ArgumentException("Unexpected OAuth provider", nameof(name)),
+    };
 
     private static AppConfig OAuthConfig(string scope = "api://provider/.default") => new()
     {

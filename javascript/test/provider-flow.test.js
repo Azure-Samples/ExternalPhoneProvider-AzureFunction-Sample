@@ -224,11 +224,50 @@ test('Soprano accepts root or first array object with strict status and flexible
     }
 });
 
+test('Infobip uses OAuth with the tested SMS and advanced voice contracts on both setup routes', () => {
+    const infobip = selectProvider('infobip');
+    const profile = require('../../setup/providers/infobip.json');
+    assert.equal(infobip.authenticationMode, 'oauth');
+    assert.deepEqual(infobip.credentialSpec, { mode: 'oauth' });
+    for (const [region, baseUrl] of [
+        ['global', 'https://api.infobip.com'],
+        ['eu', 'https://api-eu.infobip.com'],
+    ]) {
+        for (const channel of ['sms', 'voice']) {
+            const request = infobip.createRequest({
+                ...input,
+                channel,
+                endpoint: profile.deployment.routes[region][`${channel}Endpoint`],
+                credential: { mode: 'oauth', accessToken: 'provider-token' },
+                env: { EPP_PROVIDER_ACCOUNT_NAME: 'EPP' },
+            });
+            assert.equal(request.url, baseUrl + (channel === 'voice' ? '/tts/3/advanced' : '/sms/3/messages'));
+            assert.equal(request.method, 'POST');
+            assert.deepEqual(request.headers, {
+                Authorization: ['Bearer', 'provider-token'].join(' '),
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+            });
+            const destinations = [{ to: delivery.phoneNumber, messageId: 'correlation-id' }];
+            assert.deepEqual(JSON.parse(request.body), {
+                messages: [channel === 'voice' ? {
+                    from: 'EPP',
+                    destinations,
+                    text: delivery.message,
+                    language: 'fr-FR',
+                    voice: { name: 'Joanna', gender: 'female' },
+                } : {
+                    sender: 'EPP',
+                    destinations,
+                    content: { text: delivery.message },
+                }],
+            });
+        }
+    }
+});
+
 test('Infobip accepts only strict recognized status strings', () => {
     const infobip = selectProvider('infobip');
-    const request = infobip.createRequest(input);
-    assert.equal(request.headers.Authorization, 'App key');
-    assert.equal(JSON.parse(request.body).messages[0].content.text, delivery.message);
     for (const [status, expected] of [
         ['ACCEPTED', OUTCOME.CONTINUE],
         ['pending', OUTCOME.CONTINUE],
@@ -268,18 +307,15 @@ test('Sinch HTTP success requires a nonblank string ID and may infer Dispatched'
 
 test('Telesign request validates E.164 and voice pacing remains unchanged', () => {
     const telesign = selectProvider('telesign');
-    const voice = telesign.createRequest({ ...input, channel: 'voice' });
-    assert.deepEqual(telesign.credentialSpec, {
-        mode: 'apiKey',
-        keyVaultSecretName: 'telesign-api-key',
-        identityKeyVaultSecretName: 'telesign-customer-id',
-    });
+    const credential = { mode: 'oauth', accessToken: 'provider-token' };
+    const voice = telesign.createRequest({ ...input, channel: 'voice', credential });
+    assert.deepEqual(telesign.credentialSpec, { mode: 'oauth' });
     assert.equal(JSON.parse(voice.body).message.text,
         '  Your code is 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1.\n'
         + '   Your code is 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1.\n');
     for (const phoneNumber of ['15551234567', '+0123', '+1', '+1234567890123456', '+123\n']) {
         assert.throws(() => telesign.createRequest({
-            ...input,
+            ...input, credential,
             delivery: new OtpDelivery({ ...delivery, phoneNumber }),
         }), /invalid recipient/);
     }
@@ -297,6 +333,24 @@ test('Telesign status.code must be an integer number', () => {
     ]) {
         const result = telesign.interpretResponse(response({ status: { code } }));
         assert.deepEqual([result.outcome, result.providerStatusCode], [outcome, normalized]);
+    }
+});
+
+test('Telesign sends OAuth bearer credentials for both channels', () => {
+    const telesign = selectProvider('telesign');
+    assert.equal(telesign.authenticationMode, 'oauth');
+    for (const channel of ['sms', 'voice']) {
+        const request = telesign.createRequest({
+            ...input, channel, credential: { mode: 'oauth', accessToken: 'provider-token' },
+        });
+        assert.equal(request.headers.Authorization, 'Bearer provider-token');
+        assert.equal(request.url, input.endpoint);
+        const body = JSON.parse(request.body);
+        assert.deepEqual(body.recipient, { phone_number: delivery.phoneNumber });
+        assert.deepEqual(body.channels, [{ channel }]);
+        assert.equal(body.correlation_id, delivery.correlationId);
+        assert.equal(body.message.language, delivery.locale);
+        if (channel === 'sms') assert.equal(body.message.text, delivery.message);
     }
 });
 

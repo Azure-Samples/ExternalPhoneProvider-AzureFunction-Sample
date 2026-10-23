@@ -1,13 +1,14 @@
 # External Phone Provider Azure Function Sample
 
-Connect Microsoft Entra ID to a phone provider for SMS and voice one-time passwords.
+This **External Phone Provider (EPP)** sample connects Microsoft Entra ID to a phone provider
+for SMS and voice one-time passwords.
 Guided setup deploys **one regional endpoint** using JavaScript by default, with C# and Python options.
 
 > [!IMPORTANT]
 > Start in a separate nonproduction environment. Confirm provider access and Microsoft's approved
 > test and activation process before deployment.
 
-## Table of Contents
+## Table of contents
 
 - [Features](#features)
 - [Requirements](#requirements)
@@ -29,6 +30,8 @@ Guided setup deploys **one regional endpoint** using JavaScript by default, with
 - Use a separate test environment with a Microsoft Entra ID tenant, Azure subscription, and
   unique resource name prefix. Supply a dedicated app registration or create one during guided setup.
 - Check [roles, permissions, tools, regional availability, and quota](setup/docs/README.md#prerequisites-for-step-2).
+- For Telesign, complete the [OAuth profile placeholders](docs/ONBOARDING.md#telesign-oauth-configuration-and-handoff)
+  before deployment.
 - Plan for Azure, telemetry, and provider charges. The [cost estimate](docs/COST-CALCULATOR.md) is not a bill.
 - Use Easy Auth to allow only the approved Microsoft caller.
 
