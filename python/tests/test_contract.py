@@ -1,4 +1,3 @@
-import base64
 import json
 from pathlib import Path
 
@@ -142,21 +141,24 @@ def test_sinch_requires_a_provider_message_id_for_success():
 
 @pytest.mark.parametrize("channel", ["sms", "voice"])
 def test_telesign_request_contract(channel):
-    request = TelesignProvider().build_request(
+    provider = TelesignProvider()
+    request = provider.build_request(
         channel,
         f"https://verify.telesign.com/epp/{channel}",
         _delivery(channel),
-        {"mode": "apiKey", "secret": "key", "identity": "customer"},
+        {"mode": "oauth", "access_token": "provider-token"},
         {},
     )
-    assert request.headers["Authorization"] == (
-        "Basic " + base64.b64encode(b"customer:key").decode())
+    assert request.headers["Authorization"] == "Bearer provider-token"
+    assert provider.credential_spec == {"mode": "oauth"}
     body = json.loads(request.body)
     assert body["recipient"] == {"phone_number": "+15551234567"}
     assert body["channels"] == [{"channel": channel}]
     assert body["correlation_id"] == "correlation-id"
     if channel == "voice":
         assert "9, 1, 8, 2, 7, 3" in body["message"]["text"]
+    else:
+        assert body["message"]["text"] == MESSAGE
 
 
 def test_telesign_enforces_integer_status_codes():
@@ -181,7 +183,7 @@ def test_http_errors_override_provider_acceptance():
 
 def test_telesign_validates_recipient_and_channel():
     provider = TelesignProvider()
-    credential = {"identity": "customer", "secret": "key"}
+    credential = {"mode": "oauth", "access_token": "provider-token"}
     for destination in ("15551234567", "+0123", "+1", "+1234567890123456", None):
         delivery = _delivery()
         delivery = OtpDelivery(

@@ -99,6 +99,7 @@ public class CredentialAcquisitionTests
     [Theory]
     [InlineData("soprano")]
     [InlineData("infobip")]
+    [InlineData("telesign")]
     public async Task OAuthCallsReusableSdkCredentialsForEveryRequestWithoutPrefetchingAssertions(string providerName)
     {
         var identityCalls = 0;
@@ -137,6 +138,7 @@ public class CredentialAcquisitionTests
     [Theory]
     [InlineData("soprano")]
     [InlineData("infobip")]
+    [InlineData("telesign")]
     public async Task RealAzureIdentitySdkRetainsItsTokenCache(string providerName)
     {
         var identityCalls = 0;
@@ -168,6 +170,7 @@ public class CredentialAcquisitionTests
     [Theory]
     [InlineData("soprano")]
     [InlineData("infobip")]
+    [InlineData("telesign")]
     public async Task InvalidConfigurationDoesNotPoisonLaterAcquisition(string providerName)
     {
         var instances = 0;
@@ -193,6 +196,7 @@ public class CredentialAcquisitionTests
     {
         "soprano" => new SopranoProvider(createIdentity, createCredential),
         "infobip" => new InfobipProvider(createIdentity, createCredential),
+        "telesign" => new TelesignProvider(createIdentity, createCredential),
         _ => throw new ArgumentException("Unexpected OAuth provider", nameof(name)),
     };
 

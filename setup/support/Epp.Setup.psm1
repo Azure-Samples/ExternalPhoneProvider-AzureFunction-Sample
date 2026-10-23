@@ -291,8 +291,14 @@ function ConvertTo-EppProviderSettings {
         $issues.Add('the provider owner has not enabled this profile')
     }
     if ($deployment['providerName'] -ine $Id) { $issues.Add('deployment.providerName must match the catalog ID or display name') }
+    $providerTenantId = $null
     try { $providerTenantId = ConvertTo-EppGuid $deployment['tenantId'] }
-    catch { $issues.Add('deployment.tenantId must identify the provider tenant') }
+    catch { $issues.Add('deployment.tenantId must identify the provider Security Store tenant') }
+    $accessTokenScopeTenant = $providerTenantId
+    if ($deployment.Contains('AccessTokenScopeTenant')) {
+        try { $accessTokenScopeTenant = ConvertTo-EppGuid $deployment['AccessTokenScopeTenant'] }
+        catch { $issues.Add('deployment.AccessTokenScopeTenant must identify the provider access-token tenant') }
+    }
 
     $authentication = $deployment['authentication']
     if ($authentication -isnot [Collections.IDictionary] -or $authentication['mode'] -notin @('apiKey', 'oauth')) {
@@ -360,7 +366,7 @@ function ConvertTo-EppProviderSettings {
         EPP_PROVIDER_TIMEOUT_MS = [string]$selectedRoute['timeoutMilliseconds']
         EPP_PROVIDER_RETRY_INTERVAL_MS = [string]([long]$selectedRoute['retryIntervalSeconds'] * 1000)
         EPP_PROVIDER_AUTH_MODE = $authenticationMode
-        EPP_PROVIDER_TENANT_ID = $providerTenantId
+        EPP_PROVIDER_TENANT_ID = $accessTokenScopeTenant
     }
     if ($authenticationMode -eq 'oauth') {
         $settings.EPP_PROVIDER_SCOPE = [string]$selectedRoute['scope']
@@ -369,6 +375,8 @@ function ConvertTo-EppProviderSettings {
     return [pscustomobject]@{
         Id = $Id
         DisplayName = $DisplayName
+        TenantId = $providerTenantId
+        AccessTokenScopeTenant = $accessTokenScopeTenant
         Manifest = $Profile
         EndpointRegion = [string]$regionEntry['id']
         AuthenticationMode = $authenticationMode
@@ -1342,7 +1350,11 @@ function Connect-EppContext {
     } else { $null }
     $providerRestrictionState = Get-EppProviderRestrictionState -Restriction $tenantRestriction
     $allowedTenants = @(if ($providerRestrictionState) { $providerRestrictionState.allowedTenantIds })
-    $Inputs.ProviderAllowedTenantIds = @(($allowedTenants + @($Inputs.ProviderTenantId)) | Sort-Object -Unique)
+    $providerTenants = @($Inputs.ProviderTenantId)
+    if ($Inputs['ProviderAuthentication'] -eq 'oauth') {
+        $providerTenants += ConvertTo-EppGuid ([string]$Inputs['AccessTokenScopeTenant'])
+    }
+    $Inputs.ProviderAllowedTenantIds = @(($allowedTenants + $providerTenants) | Sort-Object -Unique)
     $version = if ($application.Api -and $application.Api.RequestedAccessTokenVersion) { [int]$application.Api.RequestedAccessTokenVersion } else { 1 }
     if ($version -notin @(1, 2)) { throw 'The endpoint application has an unsupported access-token version.' }
 
@@ -1413,7 +1425,7 @@ function Show-EppPlan {
     $providerRoute = if ($ProviderConfiguration.EndpointRegion -eq 'eu') { 'EU' } else { 'Global' }
     Write-Host "Provider route: $providerRoute"
     Write-Host "Provider auth: $($ProviderConfiguration.AuthenticationMode)"
-    Write-Host "Provider tenant: $($ProviderConfiguration.Settings.EPP_PROVIDER_TENANT_ID)"
+    Write-Host "Security Store tenant: $($ProviderConfiguration.TenantId)"
     if ($Inputs['ProviderAllowedTenantIds']) {
         Write-Host "Allowed provider tenants after deployment: $($Inputs.ProviderAllowedTenantIds -join ', ') (home tenant also allowed)"
         Write-Host 'Existing allowed provider tenants are preserved; selecting a provider does not configure multi-provider runtime fallback.'
@@ -1422,6 +1434,7 @@ function Show-EppPlan {
     Write-Host "Voice endpoint: $($ProviderConfiguration.Settings.EPP_PROVIDER_VOICE_ENDPOINT)"
     Write-Host 'Per-channel routing requires a Function package that reads EPP_PROVIDER_SMS_ENDPOINT and EPP_PROVIDER_VOICE_ENDPOINT.' -ForegroundColor Yellow
     if ($ProviderConfiguration.AuthenticationMode -eq 'oauth') {
+        Write-Host "Access-token tenant: $($ProviderConfiguration.AccessTokenScopeTenant)"
         Write-Host "Provider API: $($ProviderConfiguration.Settings.EPP_PROVIDER_APP_ID) / $($ProviderConfiguration.Settings.EPP_PROVIDER_SCOPE)"
     }
     else {
@@ -1479,7 +1492,7 @@ function Show-EppPlan {
         Write-Host "  - $($ProviderConfiguration.DisplayName) OAuth: add a federated credential so the outbound managed identity can authenticate without a client secret."
     }
     else {
-        Write-Host '  - Telesign API key: store the required provider credentials in Key Vault; no federated credential is created.'
+        Write-Host "  - $($ProviderConfiguration.DisplayName) API key: store the required provider credentials in Key Vault; no federated credential is created."
     }
 
     Write-Host "`nDeployment notes" -ForegroundColor Cyan
@@ -1568,13 +1581,11 @@ function Show-EppDeploymentResult {
     Write-Host "Deployment details: $ResultPath"
     Write-Host 'Certificate renewal is manual. Track the expiry in the deployment details and coordinate the Entra certificate update before expiry.' -ForegroundColor Yellow
 
-    if ($ProviderConfiguration.Id -eq 'telesign') {
-        $authentication = $ProviderConfiguration.Manifest.deployment.authentication
+    if ($ProviderConfiguration.AuthenticationMode -eq 'oauth') {
         Write-Host "`nPending operation" -ForegroundColor Yellow
-        Write-Host "Add the Telesign credentials to Key Vault '$($Names.keyVault)':"
-        Write-Host "   - $($authentication.identityKeyVaultSecretName) - your Telesign customer ID."
-        Write-Host "   - $($authentication.keyVaultSecretName) - your Telesign API key."
-        Write-Host '   Store the values as Key Vault secrets; do not enter them into this setup script or shared logs.'
+        Write-Host "Have the $($ProviderConfiguration.DisplayName) administrator authorize application '$($Inputs.ApplicationId)' in access-token tenant '$($ProviderConfiguration.AccessTokenScopeTenant)'."
+        Write-Host "   Provider API: $($ProviderConfiguration.Settings.EPP_PROVIDER_APP_ID) / $($ProviderConfiguration.Settings.EPP_PROVIDER_SCOPE)"
+        Write-Host '   Provider consent and application-role assignments are not performed by setup. No provider API-key secrets are required.'
     }
 
     Write-Host "`nNext steps" -ForegroundColor Cyan
@@ -2518,6 +2529,7 @@ function Invoke-EppDeployment {
             provider = $ProviderConfiguration.Id
             endpointRegion = $ProviderConfiguration.EndpointRegion; providerAuthentication = $Inputs.ProviderAuthentication
             providerTenantId = $Inputs.ProviderTenantId
+            accessTokenScopeTenant = if ($Inputs.ProviderAuthentication -eq 'oauth') { $Inputs['AccessTokenScopeTenant'] } else { $null }
             allowedProviderTenantIds = @($Inputs.ProviderAllowedTenantIds)
             providerSmsEndpoint = $ProviderConfiguration.Settings.EPP_PROVIDER_SMS_ENDPOINT
             providerVoiceEndpoint = $ProviderConfiguration.Settings.EPP_PROVIDER_VOICE_ENDPOINT
@@ -2797,7 +2809,8 @@ function Invoke-EppSetup {
         $providerConfiguration = Get-EppProvider -AssetDirectory $assetDirectory -Provider $providerName `
             -EndpointRegion $endpointRegion -NonInteractive:$NonInteractive
         $inputs.ProviderAuthentication = $providerConfiguration.AuthenticationMode
-        $inputs.ProviderTenantId = $providerConfiguration.Settings.EPP_PROVIDER_TENANT_ID
+        $inputs.ProviderTenantId = $providerConfiguration.TenantId
+        $inputs.AccessTokenScopeTenant = $providerConfiguration.AccessTokenScopeTenant
         $selection = Get-EppLanguage -AssetDirectory $assetDirectory -Language $Language -SourceRepository $SourceRepository `
             -PackageReleaseTag $PackageReleaseTag -NonInteractive:$NonInteractive
         $inputs.Language = $selection.Id

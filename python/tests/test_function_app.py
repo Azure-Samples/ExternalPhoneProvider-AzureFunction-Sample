@@ -181,21 +181,25 @@ def test_non_object_risk_context_fails_before_provider_work(caplog, mode, risk_c
 
 
 @pytest.mark.parametrize(("provider", "mode"), [
-    ("telesign", "apiKey"),
+    ("sinch", "apiKey"),
+    ("telesign", "oauth"),
     ("soprano", "oauth"),
     ("infobip", "oauth"),
 ])
 def test_only_live_requests_acquire_credentials(monkeypatch, provider, mode):
     monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
     monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", mode)
+    monkeypatch.setenv("SINCH_SERVICE_PLAN_ID", "plan")
     for name in ("EPP_KEY_VAULT_CACHE_ENABLED", "EPP_ACCESS_TOKEN_CACHE_ENABLED"):
         monkeypatch.setenv(name, "PRIVATE-OBSOLETE")
     function_app._credentials.get_credentials.return_value = {
         "mode": mode, "secret": "key", "identity": "customer", "access_token": "token",
     }
     payload = {"messages": [{"status": {"groupName": "PENDING"}}]} if provider == "infobip" else {
-        "status": {"code": 3001} if mode == "apiKey" else "ENROUTE",
+        "status": {"code": 3001} if provider == "telesign" else "ENROUTE",
     }
+    if provider == "sinch":
+        payload = {"id": "provider-id"}
     provider_module.requests.request.return_value = Mock(status_code=200, json=Mock(return_value=payload))
     response = _HANDLER(_request(_envelope(mode=2)))
     assert response.status_code == 200 and json.loads(response.get_body())["nonce"] == _NONCE
@@ -208,7 +212,8 @@ def test_only_live_requests_acquire_credentials(monkeypatch, provider, mode):
 
 def test_credential_failure_is_request_correlated_and_next_request_recovers(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
-    monkeypatch.setenv("EPP_PROVIDER_NAME", "telesign")
+    monkeypatch.setenv("EPP_PROVIDER_NAME", "sinch")
+    monkeypatch.setenv("SINCH_SERVICE_PLAN_ID", "plan")
     monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", "apiKey")
     monkeypatch.setenv("EPP_KEY_VAULT_CACHE_ENABLED", "PRIVATE-OBSOLETE")
     monkeypatch.setenv("EPP_ACCESS_TOKEN_CACHE_ENABLED", "PRIVATE-OBSOLETE")
@@ -227,9 +232,9 @@ def test_credential_failure_is_request_correlated_and_next_request_recovers(monk
         secrets.resolve.side_effect = None
         secrets.resolve.return_value = "key"
         provider_module.requests.request.return_value = Mock(
-            status_code=200, json=Mock(return_value={"status": {"code": 3001}}))
+            status_code=200, json=Mock(return_value={"id": "provider-id"}))
         assert _HANDLER(_request(_envelope())).status_code == 200
-        assert secrets.resolve.call_count == 4
+        assert secrets.resolve.call_count == 2
         provider_module.requests.request.assert_called_once()
         assert "PRIVATE" not in caplog.text
     finally:
@@ -338,13 +343,12 @@ def test_jwe_tampering_fails_before_provider_work():
 @pytest.mark.parametrize("provider", ["telesign", "soprano"])
 @pytest.mark.parametrize("legacy_channel", [None, "sms", "voice", "invalid"])
 def test_request_selects_either_channel_regardless_of_legacy_setting(monkeypatch, provider, legacy_channel):
-    mode = "apiKey" if provider == "telesign" else "oauth"
     monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
-    monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", mode)
+    monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", "oauth")
     if legacy_channel is not None:
         monkeypatch.setenv("EPP_PROVIDER_CHANNEL", legacy_channel)
     function_app._credentials.get_credentials.return_value = {
-        "mode": mode, "secret": "key", "identity": "customer", "access_token": "token",
+        "mode": "oauth", "access_token": "token",
     }
     provider_module.requests.request.return_value = Mock(
         status_code=200,
@@ -366,6 +370,29 @@ def test_request_selects_either_channel_regardless_of_legacy_setting(monkeypatch
     assert provider_module.requests.request.call_count == 4
 
 
+def test_telesign_oauth_live_send_never_forwards_inbound_credentials(monkeypatch):
+    monkeypatch.setenv("EPP_PROVIDER_NAME", "telesign")
+    provider = function_app._select_provider("telesign")
+    assert provider.authentication_mode == "oauth"
+    assert provider.credential_spec == {"mode": "oauth"}
+    function_app._credentials.get_credentials.assert_not_called()
+    provider_module.requests.request.assert_not_called()
+    provider_module.requests.request.return_value = Mock(
+        status_code=200, json=Mock(return_value={"status": {"code": 3001}}))
+    for channel in (1, 2):
+        response = _HANDLER(_request(
+            _envelope(channel=channel, tenantId="FORGED-TENANT"),
+            headers={"Authorization": "Bearer FORGED-CALLER"}))
+        assert response.status_code == 200
+        assert provider_module.requests.request.call_args.kwargs["headers"]["Authorization"] == "Bearer provider-token"
+    function_app._credentials.get_credentials.side_effect = ValueError("provider credential unavailable")
+    provider_module.requests.request.reset_mock()
+    response = _HANDLER(_request(_envelope()))
+    assert response.status_code == 502 and "nonce" not in json.loads(response.get_body())
+    provider_module.requests.request.assert_not_called()
+    assert _HANDLER(_request(_envelope(mode=2))).status_code == 200
+
+
 @pytest.mark.parametrize("provider,payload,sms_path,voice_path", [
     ("telesign", {"status": {"code": 3001}}, "", ""),
     ("soprano", {"status": "ENROUTE"}, "", ""),
@@ -373,7 +400,7 @@ def test_request_selects_either_channel_regardless_of_legacy_setting(monkeypatch
     ("sinch", {"id": "provider-id"}, "/xms/v1/plan/batches", "/calling/v1/callouts"),
 ])
 def test_request_channel_selects_distinct_configured_endpoints(monkeypatch, provider, payload, sms_path, voice_path):
-    mode = "oauth" if provider in ("soprano", "infobip") else "apiKey"
+    mode = "apiKey" if provider == "sinch" else "oauth"
     monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
     monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", mode)
     monkeypatch.setenv("EPP_PROVIDER_SMS_ENDPOINT", "https://sms.provider.example/send")

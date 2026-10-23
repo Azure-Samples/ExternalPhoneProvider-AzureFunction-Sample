@@ -332,7 +332,7 @@ exit $ExitCode
         }
         $setup = @{
             Location = 'westus2'; ResourcePrefix = 'unit'; Language = 'javascript'; ServicePlan = 'FC1'
-            Provider = 'telesign'; EndpointRegion = 'global'; OutputDirectory = $Directory
+            Provider = 'soprano'; EndpointRegion = 'global'; OutputDirectory = $Directory
             AssetDirectory = $ModulePath
             SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
         }

@@ -3,6 +3,7 @@
     "enabled": true,
     "providerName": "Soprano",
     "tenantId": "801bae25-4443-4a29-9e56-9d1cf22ff819",
+    "AccessTokenScopeTenant": "801bae25-4443-4a29-9e56-9d1cf22ff819",
     "authentication": {
       "mode": "oauth"
     },

@@ -37,7 +37,7 @@ authentication settings consistent and use the same RSA key. Match key material,
 or version IDs.
 
 | Component | Purpose |
-|---|---|
+| --- | --- |
 | Front Door profile and endpoint | Provide the single hostname used by the caller. One endpoint is sufficient for regional redundancy. |
 | Route | Match `/api/SendOtp` and forward the request to the EPP origin group over HTTPS. |
 | Origin group | Contain the regional Function hostnames and their health, priority, weight, and latency settings. |
@@ -182,7 +182,7 @@ In the Azure portal, create a Front Door Standard/Premium profile, an endpoint, 
 Use these starting settings, then validate them against the required performance target:
 
 | Setting | Starting value |
-|---|---|
+| --- | --- |
 | Tier and domain | Standard, using its generated `azurefd.net` hostname |
 | Origin hostnames | Each Function App's actual default hostname |
 | Origin host header | That origin's Function hostname, not the Front Door hostname |
@@ -257,7 +257,7 @@ sends only inside this endpoint. Caller retries or other delivery paths can stil
 caller behavior with Microsoft and obtain separate approval for sign-in or delivery tests.
 
 | What to test | How and where to test safely | Expected outcome / acceptance | Evidence to keep |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Baseline encrypted evaluation | Send synthetic encrypted `mode: 2` requests through Front Door with both origins healthy. Confirm each origin serves requests. | Matching nonce checked locally, no delivery, and agreed baseline error/latency limits met. | Offered/completed rates, latency/errors, safe correlation IDs, and serving region. Exclude nonce values and request bodies. |
 | Bad caller credentials, unauthorized callers, and direct-origin access | From the test harness, try missing/invalid/wrong-audience tokens, an unauthorized app, and direct-origin requests including a spoofed `X-Azure-FDID`. Send valid evaluations before and after. | Invalid calls are rejected while valid evaluations still work. Authentication and ingress restrictions remain enabled. | Response status and sanitized access diagnostics identifying the rejection, plus successful surrounding evaluations. |
 | Recovery from A to B | Follow the recovery test: isolate only approved test origin A while leaving it **enabled in Front Door**. Keep B healthy and evaluation traffic bounded. | Health-based routing to B meets agreed recovery and transition-error limits, without changing the public URL, trust, or encryption key. | Fault/probe/client timestamps, every failure/timeout, and B's request/health signals. |
