@@ -11,6 +11,7 @@ $script:EppCertificateSubject = 'CN=ExternalPhoneProvider'
 $script:KeyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 . (Join-Path $PSScriptRoot 'Epp.Packages.ps1')
 . (Join-Path $PSScriptRoot 'Epp.Graph.ps1')
+. (Join-Path $PSScriptRoot 'Epp.Federation.ps1')
 
 function Read-EppJson {
     param([string] $Path)
@@ -1476,7 +1477,7 @@ function Show-EppPlan {
     Write-Host '  - Configure Easy Auth to require HTTPS authentication and allow only the Microsoft phone-provider enterprise application.'
     Show-EppCertificatePlan -Plan $Context.CertificatePlan -Names $Names
     if ($Inputs.ProviderAuthentication -eq 'oauth') {
-        Write-Host "  - $($ProviderConfiguration.DisplayName) OAuth: add a federated credential so the outbound managed identity can authenticate without a client secret."
+        Write-Host "  - $($ProviderConfiguration.DisplayName) OAuth: automatically create or reuse a matching federated credential for the outbound managed identity and confirm it before publishing."
     }
     else {
         Write-Host '  - Telesign API key: store the required provider credentials in Key Vault; no federated credential is created.'
@@ -2221,7 +2222,7 @@ function Assert-EppEncryptionReference {
 }
 
 function Set-EppApplicationEndpoint {
-    param([hashtable] $Inputs, $Context, $Outputs, $Certificate, [string] $KeyId, [bool] $ConfigureFederation = $true)
+    param([hashtable] $Inputs, $Context, $Outputs, $Certificate, [string] $KeyId)
 
     $application = Get-EppApplication -Inputs $Inputs -ObjectId $Context.Application.Id
     if ($application.AppId -ne $Inputs.ApplicationId -or $application.SignInAudience -ne 'AzureADMultipleOrgs' -or $application.TokenEncryptionKeyId) {
@@ -2271,24 +2272,6 @@ function Set-EppApplicationEndpoint {
         identifierUris = $uris
         keyCredentials = @(ConvertTo-EppGraphKeyCredentials -Credentials $keys)
     } | Out-Null
-    if (-not $ConfigureFederation) { return }
-
-    $issuer = "https://login.microsoftonline.com/$($Inputs.TenantId)/v2.0"
-    $audience = 'api://AzureADTokenExchange'
-    $credentialName = "epp-$($Outputs.functionAppName.value)-outbound"
-    $credentials = Invoke-EppDirectoryCommand -Inputs $Inputs -Arguments @('ad', 'app', 'federated-credential', 'list', '--id', $application.Id)
-    if ($credentials -isnot [Array]) { throw 'Azure CLI returned an invalid federated-credential list.' }
-    $credentials = @($credentials | ForEach-Object { [pscustomobject]$_ })
-    $matching = @($credentials | Where-Object {
-        $_.Issuer -ceq $issuer -and $_.Subject -ceq $Outputs.outboundPrincipalId.value -and
-        @($_.Audiences).Count -eq 1 -and $_.Audiences[0] -ceq $audience
-    })
-    if (-not $matching.Count) {
-        if (@($credentials | Where-Object Name -eq $credentialName).Count) { throw 'The outbound federated credential name is already used for a different trust. It will not be overwritten.' }
-        New-EppFederatedCredential -Inputs $Inputs -ObjectId $application.Id -Credential @{
-            name = $credentialName; issuer = $issuer; subject = $Outputs.outboundPrincipalId.value; audiences = @($audience)
-        }
-    }
 }
 
 function Assert-EppAuthentication {
@@ -2483,6 +2466,7 @@ function Invoke-EppDeployment {
     $null = ConvertTo-EppGuid $outputs.outboundPrincipalId.value
     Assert-EppHttpsUrl $outputs.endpointUrl.value
     if ([Text.Encoding]::UTF8.GetByteCount($outputs.endpointUrl.value) -gt 100) { throw 'The deployed endpoint URL exceeds the EPP 100-byte limit.' }
+    $federation = Initialize-EppOutboundFederation -Inputs $Inputs -Names $Names -Context $Context -Outputs $outputs -OutputDirectory $OutputDirectory
     $issued = $null
     try {
         $certificatePlan = $Context.CertificatePlan
@@ -2505,10 +2489,10 @@ function Invoke-EppDeployment {
         Initialize-EppCertificateAccess -Inputs $Inputs -Names $Names -Plan $certificatePlan -Directory $WorkingDirectory
         Set-EppEncryptionSettings -Inputs $Inputs -Names $Names -SecretId $issued.SecretId -KeyId $keyId -Directory $WorkingDirectory
         Assert-EppEncryptionReference -Inputs $Inputs -Names $Names -SecretId $issued.SecretId -KeyId $keyId
-        Set-EppApplicationEndpoint -Inputs $Inputs -Context $Context -Outputs $outputs -Certificate $certificate -KeyId $keyId `
-            -ConfigureFederation:($Inputs.ProviderAuthentication -eq 'oauth')
+        Set-EppApplicationEndpoint -Inputs $Inputs -Context $Context -Outputs $outputs -Certificate $certificate -KeyId $keyId
         $graphAccess = Assert-EppGraphAccess -Inputs $Inputs -Certificate $certificate -KeyId $keyId `
             -IdentifierUri $outputs.identifierUri.value -CertificatePlan $certificatePlan
+        $federation = Initialize-EppOutboundFederation -Inputs $Inputs -Names $Names -Context $Context -Outputs $outputs -OutputDirectory $OutputDirectory
         $siteId = "/subscriptions/$($Inputs.SubscriptionId)/resourceGroups/$($Names.resourceGroup)/providers/Microsoft.Web/sites/$($Names.functionApp)"
         $Inputs.PackageSha256 = Publish-EppFunction -Inputs $Inputs -Names $Names -Context $Context -Outputs $outputs `
             -SiteId $siteId -Package $Package -Directory $WorkingDirectory
@@ -2535,6 +2519,7 @@ function Invoke-EppDeployment {
             microsoftPhoneProviderServicePrincipalId = $graphAccess.CallerPrincipalId
             eppInvokeAppRoleId = $script:EppInvokeAppRoleId
             microsoftGraphApplicationReadAll = $true
+            outboundFederation = $federation
             source = $Inputs.SourceBaseUri; sourceRevision = $Inputs.SourceRevision
             packageFile = $Inputs.PackageFile; packageUrl = $Inputs.PackageUrl
             packageReleaseTag = $Inputs.PackageReleaseTag; sourcePackageSha256 = $Inputs.SourcePackageSha256

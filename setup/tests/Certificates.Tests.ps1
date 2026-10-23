@@ -295,7 +295,7 @@ try {
             $registration = @{
                 Inputs = $inputs; Context = $context
                 Outputs = @{ identifierUri = @{ value = 'api://epp-test' } }
-                Certificate = $issued.Certificate; ConfigureFederation = $false
+                Certificate = $issued.Certificate
             }
             $reuseArgs = @{ CertificateAction = 'Reuse'; EncryptionKeyId = $keyId; KeyVaultCertificateId = $certificateId }
             $script:Calls.Clear()

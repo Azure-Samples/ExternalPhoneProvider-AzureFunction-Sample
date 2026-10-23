@@ -227,7 +227,7 @@ function New-EppFederatedCredential {
     $path = Join-Path ([IO.Path]::GetTempPath()) "epp-federation-$([Guid]::NewGuid().ToString('N')).json"
     try {
         $Credential | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $path -Encoding utf8NoBOM
-        Invoke-EppDirectoryCommand -Inputs $Inputs -Arguments @('ad', 'app', 'federated-credential', 'create', '--id', $id, '--parameters', $path) | Out-Null
+        return Invoke-EppDirectoryCommand -Inputs $Inputs -Arguments @('ad', 'app', 'federated-credential', 'create', '--id', $id, '--parameters', $path)
     }
     finally { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
 }

@@ -48,7 +48,9 @@ Keep nonce-match **booleans**, statuses, latency, safe IDs, and delivery outcome
    the error and **resource group > Deployments**.
 2. **Fix, then rerun with the same inputs:** tenant, subscription, app, runtime, plan, prefix,
    provider/route, and source/package versions. Active endpoints need a change window; setup has
-   no checkpoint resume or automatic undo. If setup created the app, find its client ID in the
+   no general deployment resume or automatic undo. Outbound federation is
+   [configured automatically](README.md#outbound-federation) by the normal setup flow.
+   Select **Reuse** when keeping an already registered certificate. If setup created the app, find its client ID in the
    printed output or `application-<client-id>.json` and rerun with `-ApplicationId` and the same
    prefix. Do not choose **Create a new application** again for that deployment.
 3. **Verify the failed stage and complete acceptance checks.** Keep resource-group deletion,
@@ -168,6 +170,15 @@ federation, provider tenant/scope, and provider permissions using the
 [authentication handoff](../../docs/ONBOARDING.md#complete-provider-authentication).
 Match diagnostics to the deployed package version. Regardless of event names, verify permissions
 and identity configuration.
+
+An attached managed identity is not application federation. Compare the issuer, identity
+**principal ID** subject and `api://AzureADTokenExchange` audience, not just the credential name.
+[Normal OAuth setup](README.md#outbound-federation) automatically creates or reuses the matching
+trust and confirms it before certificate changes and again before publication. It preserves
+older identities' trusts and retries transient creation/readback failures; no separate recovery
+switch is needed. If rerunning an older deployment, keep the original inputs and select **Reuse**
+when certificate rotation is not intended. Setup does not depend on provider-account readiness
+and cannot grant missing provider-directory authorization.
 
 Current packages acquire credentials only during live requests, retain SDK token caching, and
 have no custom failure cooldown. The next live request can retry acquisition. Confirm the deployed

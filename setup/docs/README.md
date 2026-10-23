@@ -13,6 +13,7 @@ deployment, provider validation, policy activation, and handoff in order.
 | Run or review setup | [Step 2](#step-2---download-and-run-one-script), [certificate choice](#encryption-certificate-selection), [cancel at approval](#reviewing-the-plan-without-deploying) |
 | Use known inputs and versions | [Noninteractive example](#noninteractive-example), [source versioning](#source-versioning) |
 | Find deployment results | [Summary fields](#read-the-deployment-summary) |
+| Understand automatic outbound trust configuration | [Outbound federation](#outbound-federation) |
 | Validate, activate, and maintain | [Step 3](#step-3---manually-validate-and-activate-policy), [renewal](#encryption-certificate-lifecycle), [rollback](#rollback-and-decommissioning) |
 | Develop setup changes | [Offline checks](#offline-setup-checks) |
 
@@ -145,6 +146,35 @@ Setup configures:
   the Microsoft phone-provider service principal.
 - That Microsoft principal's tenant-wide Graph `Application.Read.All`, identifier URI, public JWE certificate, and Easy Auth caller restriction.
 - The disclosed outbound managed-identity federated credential for Infobip or Soprano.
+
+### Outbound federation
+
+Federation is an automatic part of every approved OAuth setup, including first deployments
+and reruns. No extra switch or separate recovery command is required.
+Setup reads the deployed outbound identity, its Function attachment and
+the nonsecret runtime client-ID settings. It then reuses an exact issuer/subject/audience trust
+under any name, or creates the missing trust and confirms it by readback **before certificate
+issuance or encryption-setting changes**. The subject is the identity's **principal ID**, not
+its client ID. Setup reconciles the same linkage again immediately before publishing.
+Older deployments' credentials are preserved. If the usual name belongs to a
+recreated identity, setup uses a deterministic principal-specific name instead of retargeting it.
+
+Bounded retries handle throttling, delayed visibility and uncertain creation responses, with a
+fresh read before another write. A missing permission, conflicting issuer/subject/audience or
+the 20-credential application limit still requires administrator action; setup never deletes an
+old trust to make room. Graph readback confirms configuration, not token-service propagation.
+Provider account creation, consent and traffic approval remain separate: **setup does not
+request a provider token or require the provider to be ready**.
+
+Setup does not report completion with unresolved outbound federation. Permissions, identity
+mismatches and capacity conflicts are surfaced explicitly instead of skipping trust creation.
+Reruns use the same normal setup flow and approval process; review the existing certificate plan
+and select **Reuse** when rotation is not intended.
+
+Verified identity resource/client/principal IDs and FIC ID/name/issuer/subject/audience are saved
+to `epp-output/federation-<function-name>.json`. Deployment also includes this object as
+`outboundFederation` in its summary (`null` for API-key deployments). The federation record
+survives a later deployment failure, but is not a claim that the whole deployment completed.
 
 ## Prerequisites for Step 2
 
@@ -655,6 +685,7 @@ $tests = @(
     'Launcher.Tests.ps1',
     'Accounts.Tests.ps1',
     'Graph.Tests.ps1',
+    'Federation.Tests.ps1',
     'ProviderConfiguration.Tests.ps1',
     'Selections.Tests.ps1',
     'Applications.Tests.ps1',

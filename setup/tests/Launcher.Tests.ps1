@@ -9,7 +9,7 @@ $state = @{
     Requests = [Collections.Generic.List[string]]::new()
 }
 $requiredAssets = @(
-    'support/Epp.Setup.psm1', 'support/Epp.Packages.ps1', 'support/Epp.Graph.ps1'
+    'support/Epp.Setup.psm1', 'support/Epp.Packages.ps1', 'support/Epp.Graph.ps1', 'support/Epp.Federation.ps1'
     'providers/catalog.json', 'packages/catalog.json', 'infra/main.bicep', 'infra/resources.bicep'
     'providers/telesign.json', 'providers/soprano.json', 'providers/infobip.json'
 )
@@ -78,7 +78,8 @@ function Invoke-EppSetup {
     [CmdletBinding()]
     param(
         $TenantId, $SubscriptionId, $ApplicationId, $Provider, $OutputDirectory,
-        $SourceRepository, $AssetDirectory, $SourceBaseUri, [switch] $PassThru
+        $SourceRepository, $AssetDirectory, $SourceBaseUri, [switch] $PassThru,
+        $ResourcePrefix
     )
     $state.SetupArguments = @{} + $PSBoundParameters
     Assert ($SourceRepository -ceq $state.Repository -and $AssetDirectory -ceq $state.AssetDirectory) 'Preserve the selected source repository and downloaded assets.'
@@ -97,6 +98,13 @@ $parameters = @{
     ApplicationId = '33333333-3333-3333-3333-333333333333'
 }
 try {
+    Assert (-not (Get-Command $launcher).Parameters.ContainsKey('RepairOutboundAuthentication')) 'Federation must not require an extra launcher mode.'
+    Reset-TestState
+    & $launcher @parameters -SourceRepository $state.Repository -SourceRef $state.Revision `
+        -ResourcePrefix test
+    Assert ($state.SetupArguments.ResourcePrefix -ceq 'test') 'Forward normal setup inputs without a separate federation mode.'
+    Assert-Cleanup
+
     foreach ($repository in @('Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample', 'unit/epp-fork')) {
         $state.Repository = $repository
         Reset-TestState

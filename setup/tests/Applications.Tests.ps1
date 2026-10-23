@@ -45,6 +45,9 @@ try {
             $script:PlanInputs = $null; $script:PlanNames = $null; $script:PlanKeyId = $null
             $script:DeploymentInputs = $null; $script:DeploymentContext = $null
             $script:StopAtInitialization = $true; $script:DeploymentParameters = $null; $script:CertificateDisposed = $false
+            $script:FederationInitialized = $false
+            $script:FederationChecks = 0; $script:FederationError = ''
+            $script:CertificateIssued = $false; $script:EncryptionSettingsChanged = $false
         }
         function script:Write-Host {
             param([Parameter(ValueFromPipeline)] $Object, $ForegroundColor, [switch] $NoNewline)
@@ -201,6 +204,8 @@ try {
         }
         function script:Get-EppEncryptionCertificate {
             param($Inputs, $VaultName, $CertificateName, $OutputDirectory, $Directory)
+            Assert ($script:FederationInitialized) 'Resolve outbound federation before issuing a certificate.'
+            $script:CertificateIssued = $true
             $certificate = [pscustomobject]@{ Thumbprint = 'A' * 40; NotAfter = [DateTime]::UtcNow.AddYears(1) }
             $certificate | Add-Member -MemberType ScriptMethod -Name Dispose -Value { $script:CertificateDisposed = $true }
             return @{
@@ -216,12 +221,19 @@ try {
         function script:Set-EppEncryptionSettings {
             param($Inputs, $Names, $SecretId, $KeyId, $Directory)
             Assert ($SecretId.StartsWith("https://$($Names.keyVault).vault.azure.net/secrets/")) 'Bind decryption to the real vault.'
+            $script:EncryptionSettingsChanged = $true
         }
         function script:Assert-EppEncryptionReference { param($Inputs, $Names, $SecretId, $KeyId) }
         function script:Set-EppApplicationEndpoint {
-            param($Inputs, $Context, $Outputs, $Certificate, $KeyId, [switch] $ConfigureFederation)
+            param($Inputs, $Context, $Outputs, $Certificate, $KeyId)
             Assert ($Context.Application.AppId -ceq $script:AppId -and $Inputs.ApplicationId -ceq $script:AppId) 'Register the endpoint against the new app.'
-            Assert ($ConfigureFederation -eq ($Inputs.ProviderAuthentication -eq 'oauth')) 'Keep the selected provider authentication behavior.'
+        }
+        function script:Initialize-EppOutboundFederation {
+            param($Inputs, $Names, $Context, $Outputs, $OutputDirectory)
+            $script:FederationChecks++
+            if ($script:FederationError) { throw $script:FederationError }
+            $script:FederationInitialized = $true
+            if ($Inputs.ProviderAuthentication -eq 'oauth') { return @{ credentialName = 'verified' } }
         }
         function script:Assert-EppGraphAccess {
             param($Inputs, $Certificate, $KeyId, $IdentifierUri, $CertificatePlan)
@@ -230,6 +242,7 @@ try {
         function script:Publish-EppFunction {
             param($Inputs, $Names, $Context, $Outputs, $SiteId, $Package, $Directory)
             Assert ($SiteId -ceq "/subscriptions/$script:Subscription/resourceGroups/$($Names.resourceGroup)/providers/Microsoft.Web/sites/$($Names.functionApp)") 'Publish to the finalized Function App.'
+            Assert ($script:FederationChecks -eq 2) 'Reconcile federation before certificates and again before publication.'
             return 'b' * 64
         }
         $setup = @{
@@ -250,6 +263,7 @@ try {
             Reset-TestState @('create', $script:ApplicationName, 'soprano', $answer)
             Assert ($null -eq (Invoke-EppSetup @setup -PassThru)) 'Cancellation must not return a successful deployment.'
             Assert ($script:Creates -eq 0 -and $script:Initializations -eq 0 -and $script:GroupChecks -eq 0) 'Cancel without creating an app or looking up placeholder resource names.'
+            Assert ($script:FederationChecks -eq 0 -and -not $script:CertificateIssued) 'Automatic federation remains covered by normal deployment approval.'
             Assert ($script:ApplicationReads -eq 0 -and $script:RestrictionReads -eq 0) 'A planned new application has no existing Graph configuration to read.'
             Assert ($script:PlanInputs.NewApplicationDisplayName -ceq $script:ApplicationName -and -not $script:PlanInputs.ApplicationId) 'Carry the requested name, not a fake client ID, through preflight.'
             Assert ($script:PlanNames.keyVault -ceq 'unit-epp-kv-<app-id-hash>') 'Disclose pending names in the approval plan.'
@@ -347,6 +361,14 @@ try {
         Assert ($script:Creates -eq 1 -and $script:Initializations -eq 0) 'Check final resource ownership before mutating app configuration or deploying Azure resources.'
         Assert (Test-Path -LiteralPath (Join-Path $setup.OutputDirectory "application-$script:AppId.json")) 'Keep the new client ID available if resolved resource names conflict.'
 
+        Reset-TestState @('create', $script:ApplicationName, 'soprano', 'Yes')
+        $setup.OutputDirectory = Join-Path $Directory 'federation-failed'
+        $script:StopAtInitialization = $false
+        $script:FederationError = 'Authorization_RequestDenied: cannot create federated credential'
+        Assert-Throws { Invoke-EppSetup @setup } 'Authorization_RequestDenied'
+        Assert (-not $script:CertificateIssued -and -not $script:EncryptionSettingsChanged) 'A federation conflict/denial must occur before certificate or encryption-setting changes.'
+        Assert (@(Get-ChildItem -LiteralPath $setup.OutputDirectory -Filter 'deployment-*.json').Count -eq 0) 'Do not record deployment completion after unresolved federation.'
+
         foreach ($provider in @('soprano', 'telesign', 'infobip')) {
             $nameAnswer = if ($provider -eq 'soprano') { '' } else { $script:ApplicationName }
             $expectedName = if ($provider -eq 'soprano') { 'EPP Application' } else { $script:ApplicationName }
@@ -365,8 +387,12 @@ try {
             $expectedAuth = if ($provider -eq 'telesign') { 'apiKey' } else { 'oauth' }
             Assert ($summary.providerAuthentication -ceq $expectedAuth -and
                 $script:DeploymentParameters.providerSettings.value.EPP_PROVIDER_AUTH_MODE -ceq $expectedAuth) 'Carry the selected authentication mode through deployment and the success summary.'
+            if ($expectedAuth -eq 'oauth') {
+                Assert ($summary.outboundFederation.credentialName -ceq 'verified') 'Include verified federation in the deployment summary.'
+            }
+            else { Assert ($null -eq $summary.outboundFederation) 'API-key deployments have no outbound federation.' }
             if ($provider -eq 'infobip') {
-                Assert (($script:Messages -join "`n").Contains('Infobip OAuth: add a federated credential')) 'The approval plan must identify Infobip federation rather than another provider.'
+                Assert (($script:Messages -join "`n").Contains('Infobip OAuth: automatically create or reuse a matching federated credential')) 'The normal approval plan must identify automatic Infobip federation rather than another provider.'
             }
             Assert ($summary.applicationId -ceq $record.applicationId -and $summary.provider -ceq $provider -and
                 $summary.packageSha256 -ceq ('b' * 64)) 'Record the deployed client ID, provider, and final package hash.'

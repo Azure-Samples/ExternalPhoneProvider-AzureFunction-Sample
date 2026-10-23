@@ -26,6 +26,9 @@ jobs:
       - name: Test CLI-backed Graph operations without Azure access
         shell: pwsh
         run: ./setup/tests/Graph.Tests.ps1
+      - name: Test outbound federation recovery without Azure access
+        shell: pwsh
+        run: ./setup/tests/Federation.Tests.ps1
       - name: Test application provider configuration without Azure access
         shell: pwsh
         run: ./setup/tests/ProviderConfiguration.Tests.ps1
