@@ -9,7 +9,7 @@ import azure.functions as func
 
 from src import otp_log
 from src.config import read_config
-from src.credentials import CredentialTokenService
+from src.credentials import CredentialTokenService, aadsts_code
 from src.jwe import JweDecryptor
 from src.models import EntraSendOtpPayload, OtpDelivery
 from src.provider import (
@@ -82,7 +82,8 @@ def _send_to_provider(delivery, log):
     try:
         otp_log.credential_resolution_started(log, provider.name, credential_source)
         credential = _credentials.get_credentials(provider, config)
-    except Exception:
+    except Exception as error:
+        otp_log.credential_resolution_failed(log, aadsts_code(error))
         return _failure(log, 502, "provider_credentials", "credential_unavailable"), log
     otp_log.credential_resolved(
         log, provider.name, int((time.monotonic() - credential_started) * 1000))

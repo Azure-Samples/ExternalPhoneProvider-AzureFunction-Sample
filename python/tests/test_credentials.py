@@ -38,12 +38,15 @@ def token(value):
     return SimpleNamespace(token=value, expires_on=NOW + 3600)
 
 
-def test_api_keys_are_read_per_request_without_warmup_stale_fallback_or_failure_cooldown(monkeypatch):
+@pytest.mark.parametrize("message,expected", [
+    ("PRIVATE-FAILURE", "provider credential unavailable"), ("AADSTS70025: PRIVATE-FAILURE", "AADSTS70025"),
+])
+def test_api_keys_are_read_per_request_without_warmup_stale_fallback_or_failure_cooldown(monkeypatch, message, expected):
     version, fail = 1, False
 
     def read(name):
         if fail and name == "id":
-            raise ValueError("PRIVATE-FAILURE")
+            raise ValueError(message)
         return f"{name}-{version}"
 
     monkeypatch.setattr(credentials_module, "ClientAssertionCredential",
@@ -56,7 +59,7 @@ def test_api_keys_are_read_per_request_without_warmup_stale_fallback_or_failure_
         version = 2
         assert manager.resolve(AUTH, CONFIG) == {"mode": "apiKey", "secret": "key-2", "identity": "id-2"}
         fail = True
-        with pytest.raises(ValueError, match="^provider credential unavailable$"):
+        with pytest.raises(ValueError, match=f"^{expected}$"):
             manager.resolve(AUTH, CONFIG)
         fail, version = False, 3
         assert manager.resolve(AUTH, CONFIG)["identity"] == "id-3"
@@ -165,17 +168,24 @@ def test_oauth_calls_one_sdk_client_per_request_and_only_the_sdk_requests_assert
     identity.close.assert_called_once()
 
 
-def test_oauth_failure_can_retry_immediately_using_the_same_sdk_client(monkeypatch):
+@pytest.mark.parametrize("message,expected", [
+    ("PRIVATE-SDK-FAILURE", "provider credential unavailable"),
+    ("AADSTS70025: PRIVATE-SDK-FAILURE", "AADSTS70025"),
+    ("AADSTS70021: PRIVATE-SDK-FAILURE", "AADSTS70021"),
+    ("AADSTS700016: PRIVATE-SDK-FAILURE", "AADSTS700016"),
+    ("AADSTS999999: PRIVATE-SDK-FAILURE", "provider credential unavailable"),
+])
+def test_oauth_failure_can_retry_immediately_using_the_same_sdk_client(monkeypatch, message, expected):
     identity = Mock(spec=["get_token", "close"])
     credential = Mock(spec=["get_token", "close"], get_token=Mock(side_effect=[
-        ValueError("PRIVATE-SDK-FAILURE"), token("PRIVATE-TOKEN"),
+        ValueError(message), token("PRIVATE-TOKEN"),
     ]))
     monkeypatch.setattr(credentials_module, "ManagedIdentityCredential", Mock(return_value=identity))
     create = Mock(return_value=credential)
     monkeypatch.setattr(credentials_module, "ClientAssertionCredential", create)
     manager = CredentialTokenService(Mock(), clock=lambda: NOW)
     try:
-        with pytest.raises(ValueError, match="^provider credential unavailable$"):
+        with pytest.raises(ValueError, match=f"^{expected}$"):
             manager.resolve({"mode": "oauth"}, OAUTH)
         assert manager.resolve({"mode": "oauth"}, OAUTH)["access_token"] == "PRIVATE-TOKEN"
         create.assert_called_once()

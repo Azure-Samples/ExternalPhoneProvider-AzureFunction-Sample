@@ -13,11 +13,16 @@ const OAUTH_MODE = 'oauth';
 const TOKEN_EXCHANGE_SCOPE = 'api://AzureADTokenExchange/.default';
 const ACQUISITION_TIMEOUT_MS = 2500;
 const TOKEN_SKEW_MS = 30000;
-const unavailable = () => new Error('provider credential unavailable');
+const unavailable = (error) => new Error(aadstsCode(error) || 'provider credential unavailable');
 /** @type {AsyncLocalStorage<AbortSignal>} */
 const acquisition = new AsyncLocalStorage();
 /** @type {typeof AzureLogger.log | undefined} */
 let filteredLogger;
+
+function aadstsCode(error) {
+    return typeof error?.message === 'string'
+        ? error.message.match(/\bAADSTS(?:70025|70021|700016)\b/)?.[0] ?? null : null;
+}
 
 // The installed identity SDK does not propagate every getToken abort signal to HTTP.
 /** @returns {import('@azure/core-rest-pipeline').HttpClient} */
@@ -138,10 +143,10 @@ class CredentialTokenService {
                 throw unavailable();
             }),
             interrupted,
-        ])).catch(() => {
+        ])).catch((error) => {
             controller.abort();
-            // The handler logs a request-correlated failure without SDK error details.
-            throw unavailable();
+            // Retain only an allowlisted code, never the SDK exception or response.
+            throw unavailable(error);
         }).finally(() => {
             clearTimeout(timeout);
             this.controllers.delete(controller);
@@ -160,4 +165,5 @@ const credentialTokenService = new CredentialTokenService();
 module.exports = {
     CredentialTokenService,
     credentialTokenService,
+    aadstsCode,
 };
