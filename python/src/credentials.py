@@ -26,7 +26,7 @@ T = TypeVar("T")
 
 
 def aadsts_code(error: Exception) -> str | None:
-    match = re.search(r"\bAADSTS(?:70025|70021|700016)\b", str(error))
+    match = re.search(r"\bAADSTS[0-9]+\b", str(error))
     return match[0] if match else None
 
 
@@ -110,7 +110,7 @@ class CredentialTokenService:
             value = _private_acquisition(
                 lambda: self._fetch_api_key(spec) if spec["mode"] == API_KEY_MODE else self._fetch_token(config))
         except Exception as error:
-            # Retain only an allowlisted code, never the SDK exception or response.
+            # Retain only the numeric AADSTS identifier, never the SDK exception or response.
             failure = aadsts_code(error) or CREDENTIAL_ERROR
         with self._lock:
             self._requests.discard(pending)

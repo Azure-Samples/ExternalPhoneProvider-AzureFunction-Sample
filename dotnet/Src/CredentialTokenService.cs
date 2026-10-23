@@ -28,14 +28,14 @@ public sealed class CredentialTokenService
         }
         catch (Exception error)
         {
-            // Retain only an allowlisted code, never the SDK exception or response.
+            // Retain only the numeric AADSTS identifier, never the SDK exception or response.
             throw Unavailable(error);
         }
     }
 
     internal static string? AadstsCode(Exception? error)
     {
-        var match = Regex.Match(error?.Message ?? "", @"\bAADSTS(?:70025|70021|700016)\b");
+        var match = Regex.Match(error?.Message ?? "", @"\bAADSTS[0-9]+\b");
         return match.Success ? match.Value : null;
     }
 

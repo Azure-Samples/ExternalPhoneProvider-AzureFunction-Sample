@@ -173,7 +173,12 @@ def test_oauth_calls_one_sdk_client_per_request_and_only_the_sdk_requests_assert
     ("AADSTS70025: PRIVATE-SDK-FAILURE", "AADSTS70025"),
     ("AADSTS70021: PRIVATE-SDK-FAILURE", "AADSTS70021"),
     ("AADSTS700016: PRIVATE-SDK-FAILURE", "AADSTS700016"),
-    ("AADSTS999999: PRIVATE-SDK-FAILURE", "provider credential unavailable"),
+    ("AADSTS500011: PRIVATE-SDK-FAILURE", "AADSTS500011"),
+    ("AADSTS501051: PRIVATE-SDK-FAILURE", "AADSTS501051"),
+    ("AADSTS700213: PRIVATE-SDK-FAILURE", "AADSTS700213"),
+    ("AADSTS999999: PRIVATE-SDK-FAILURE", "AADSTS999999"),
+    ("AADSTS500011suffix: PRIVATE-SDK-FAILURE", "provider credential unavailable"),
+    ("AADSTSnot-a-code: PRIVATE-SDK-FAILURE", "provider credential unavailable"),
 ])
 def test_oauth_failure_can_retry_immediately_using_the_same_sdk_client(monkeypatch, message, expected):
     identity = Mock(spec=["get_token", "close"])

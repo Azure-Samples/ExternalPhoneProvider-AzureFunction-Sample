@@ -841,8 +841,14 @@ public class SendOtpTests
     [InlineData("70025", "AADSTS70025")]
     [InlineData("70021", "AADSTS70021")]
     [InlineData("700016", "AADSTS700016")]
-    [InlineData("999999", null)]
-    [InlineData("700211", null)]
+    [InlineData("500011", "AADSTS500011")]
+    [InlineData("501051", "AADSTS501051")]
+    [InlineData("700213", "AADSTS700213")]
+    [InlineData("999999", "AADSTS999999")]
+    [InlineData("700211", "AADSTS700211")]
+    [InlineData("500011suffix", null)]
+    [InlineData("not-a-code", null)]
+    [InlineData("", null)]
     public async Task CredentialDiagnosticsPreservePublicResponseAndCorrelation(string code, string? expected)
     {
         using var rig = new HandlerRig();
