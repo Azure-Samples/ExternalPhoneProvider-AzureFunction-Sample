@@ -10,6 +10,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const pipeline = require('@azure/core-rest-pipeline');
 const { createHttpHeaders } = pipeline;
 const { readConfig } = require('../src/functions/config');
+const { selectProvider } = require('../src/functions/providers');
 
 let state;
 const originalLoad = Module._load;
@@ -52,7 +53,7 @@ beforeEach(() => {
                 assert.ok(url.pathname.endsWith('/oauth2/v2.0/token'));
                 current.tokenCalls++;
             }
-            const call = { managedIdentity, aborted: false, completed: false };
+            const call = { managedIdentity, url: request.url, body: request.body, aborted: false, completed: false };
             current.requests.push(call);
             try {
                 await delay(managedIdentity ? current.miWait : current.wait, null, { signal: request.abortSignal });
@@ -111,6 +112,30 @@ test('the real SDK reuses its token on concurrent and later requests without app
         await manager.resolve({ mode: 'oauth' }, settings);
         assert.equal(state.tokenCalls, 1);
         assert.equal(state.miCalls, 1);
+        assert.equal(state.vaultCalls, 0);
+    } finally { manager.close(); }
+});
+
+test('Telesign OAuth exchanges the managed identity assertion in the configured access-token tenant', async () => {
+    const manager = new CredentialTokenService();
+    const settings = config();
+    settings.providerName = 'telesign';
+    settings.providerAuthMode = 'oauth';
+    settings.providerTenantId = '44444444-4444-4444-4444-444444444444';
+    settings.providerScope = 'api://telesign/.default';
+    const provider = selectProvider(settings.providerName);
+    try {
+        const credential = await manager.getCredentials(provider.credentialSpec, settings);
+        assert.equal(credential.mode, 'oauth');
+        assert.equal(credential.accessToken, 'PRIVATE-TOKEN');
+        const tokenRequest = state.requests.find((request) => !request.managedIdentity);
+        const tokenUrl = new URL(tokenRequest.url);
+        assert.equal(tokenUrl.origin + tokenUrl.pathname,
+            'https://login.microsoftonline.com/44444444-4444-4444-4444-444444444444/oauth2/v2.0/token');
+        const form = new URLSearchParams(tokenRequest.body);
+        assert.equal(form.get('scope'), settings.providerScope);
+        assert.equal(form.get('client_id'), settings.outboundClientId);
+        assert.equal(form.get('client_assertion'), 'PRIVATE-ASSERTION');
         assert.equal(state.vaultCalls, 0);
     } finally { manager.close(); }
 });

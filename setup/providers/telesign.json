@@ -3,21 +3,24 @@
     "enabled": true,
     "providerName": "Telesign",
     "tenantId": "d818b557-ea1c-4070-a3f1-928330b7a30c",
+    "AccessTokenScopeTenant": "<telesign-access-token-tenant-id>",
     "authentication": {
-      "mode": "apiKey",
-      "keyVaultSecretName": "telesign-api-key",
-      "identityKeyVaultSecretName": "telesign-customer-id"
+      "mode": "oauth"
     },
     "routes": {
       "global": {
         "smsEndpoint": "https://verify.telesign.com/integration/msft/cyot",
         "voiceEndpoint": "https://verify.telesign.com/integration/msft/cyot",
+        "appId": "<telesign-api-application-id>",
+        "scope": "<telesign-api-resource>/.default",
         "timeoutMilliseconds": 1500,
         "retryIntervalSeconds": 30
       },
       "eu": {
         "smsEndpoint": "https://verify.telesign.com/integration/msft/cyot",
         "voiceEndpoint": "https://verify.telesign.com/integration/msft/cyot",
+        "appId": "<telesign-api-application-id>",
+        "scope": "<telesign-api-resource>/.default",
         "timeoutMilliseconds": 1500,
         "retryIntervalSeconds": 30
       }

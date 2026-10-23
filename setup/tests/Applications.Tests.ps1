@@ -27,6 +27,20 @@ try {
         $script:ObjectId = '22222222-2222-2222-2222-222222222222'
         $script:ExistingAppId = '33333333-3333-3333-3333-333333333333'
         $script:ApplicationName = 'Contoso EPP'
+        $script:TokenTenant = '44444444-4444-4444-4444-444444444444'
+        $script:OriginalReadJson = ${function:Read-EppJson}
+        function script:Read-EppJson {
+            param([string] $Path)
+            $value = & $script:OriginalReadJson $Path
+            if ([IO.Path]::GetFileName($Path) -ceq 'telesign.json') {
+                $value.deployment.AccessTokenScopeTenant = $script:TokenTenant
+                foreach ($region in @('global', 'eu')) {
+                    $value.deployment.routes[$region].appId = '55555555-5555-5555-5555-555555555555'
+                    $value.deployment.routes[$region].scope = 'api://55555555-5555-5555-5555-555555555555/.default'
+                }
+            }
+            return $value
+        }
         $script:GraphAccess = @{
             EndpointPrincipalId = $script:ObjectId; CallerPrincipalId = $script:Operator; GraphPrincipalId = $script:Tenant
         }
@@ -362,11 +376,19 @@ try {
             $summary = Read-EppJson $summaries[0].FullName
             $record = Read-EppJson (Join-Path $setup.OutputDirectory "application-$script:AppId.json")
             Assert ($record.displayName -ceq $expectedName) 'Create and persist either the accepted default name or the supplied custom name.'
-            $expectedAuth = if ($provider -eq 'telesign') { 'apiKey' } else { 'oauth' }
+            $expectedAuth = 'oauth'
             Assert ($summary.providerAuthentication -ceq $expectedAuth -and
                 $script:DeploymentParameters.providerSettings.value.EPP_PROVIDER_AUTH_MODE -ceq $expectedAuth) 'Carry the selected authentication mode through deployment and the success summary.'
             if ($provider -eq 'infobip') {
                 Assert (($script:Messages -join "`n").Contains('Infobip OAuth: add a federated credential')) 'The approval plan must identify Infobip federation rather than another provider.'
+            }
+            if ($provider -eq 'telesign') {
+                Assert ($summary.accessTokenScopeTenant -ceq $script:TokenTenant -and
+                    $summary.providerTenantId -cne $script:TokenTenant -and
+                    $script:DeploymentParameters.providerSettings.value.EPP_PROVIDER_TENANT_ID -ceq $script:TokenTenant) 'New applications must retain the Security Store tenant and use the separate token authority.'
+                Assert ($script:PlanInputs.ProviderAllowedTenantIds -contains $script:TokenTenant -and
+                    $summary.allowedProviderTenantIds -contains $summary.providerTenantId -and
+                    $summary.allowedProviderTenantIds -contains $script:TokenTenant) 'Review and persist both tenant identities for newly created applications.'
             }
             Assert ($summary.applicationId -ceq $record.applicationId -and $summary.provider -ceq $provider -and
                 $summary.packageSha256 -ceq ('b' * 64)) 'Record the deployed client ID, provider, and final package hash.'

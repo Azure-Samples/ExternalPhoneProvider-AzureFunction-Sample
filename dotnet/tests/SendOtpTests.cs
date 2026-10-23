@@ -135,9 +135,12 @@ public class SendOtpTests
         rig.Env["EPP_OUTBOUND_CLIENT_ID"] = "calling-application";
         rig.Env["EPP_OUTBOUND_MI_CLIENT_ID"] = "outbound-identity";
         rig.Env["AZURE_CLIENT_ID"] = "different-vault-identity";
-        rig.Http.Respond = _ => Task.FromResult(Json(201, provider == "infobip"
-            ? "{\"messages\":[{\"status\":{\"groupName\":\"PENDING\"}}]}"
-            : "{\"status\":\"ENROUTE\"}"));
+        rig.Http.Respond = _ => Task.FromResult(Json(201, provider switch
+        {
+            "infobip" => "{\"messages\":[{\"status\":{\"groupName\":\"PENDING\"}}]}",
+            "telesign" => "{\"status\":{\"code\":3001}}",
+            _ => "{\"status\":\"ENROUTE\"}",
+        }));
     }
 
     [Theory]
@@ -156,16 +159,7 @@ public class SendOtpTests
                 ValueTask.FromResult(new AccessToken("assertion", DateTimeOffset.UtcNow.AddHours(1)))),
             (_, _, _) => new TestTokenCredential((_, _) =>
                 ValueTask.FromResult(new AccessToken("token", DateTimeOffset.UtcNow.AddHours(1)))));
-        if (provider == "soprano")
-        {
-            ConfigureOAuth(rig);
-        }
-        else
-        {
-            rig.Env["EPP_PROVIDER_NAME"] = provider;
-            rig.Env["EPP_PROVIDER_AUTH_MODE"] = "apiKey";
-            rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"status\":{\"code\":3001}}"));
-        }
+        ConfigureOAuth(rig, provider);
         if (legacyChannel is not null) rig.Env["EPP_PROVIDER_CHANNEL"] = legacyChannel;
 
         foreach (var channel in new[] { "sms", "voice" })
@@ -192,9 +186,9 @@ public class SendOtpTests
                 ValueTask.FromResult(new AccessToken("assertion", DateTimeOffset.UtcNow.AddHours(1)))),
             (_, _, _) => new TestTokenCredential((_, _) =>
                 ValueTask.FromResult(new AccessToken("token", DateTimeOffset.UtcNow.AddHours(1)))));
-        if (provider is "soprano" or "infobip") ConfigureOAuth(rig, provider);
+        if (provider != "sinch") ConfigureOAuth(rig, provider);
         rig.Env["EPP_PROVIDER_NAME"] = provider;
-        rig.Env["EPP_PROVIDER_AUTH_MODE"] = provider is "soprano" or "infobip" ? "oauth" : "apiKey";
+        rig.Env["EPP_PROVIDER_AUTH_MODE"] = provider == "sinch" ? "apiKey" : "oauth";
         rig.Env["EPP_PROVIDER_SMS_ENDPOINT"] = "https://sms.provider.example/send";
         rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] = "https://voice.provider.example/send";
         rig.Env["SINCH_SERVICE_PLAN_ID"] = "plan";
@@ -261,8 +255,9 @@ public class SendOtpTests
     public async Task OnlyLiveRequestsFetchSecretsAndObsoleteCacheSettingsAreIgnored()
     {
         using var rig = new HandlerRig();
-        rig.Env["EPP_PROVIDER_NAME"] = "telesign";
-        rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"status\":{\"code\":3001}}"));
+        rig.Env["EPP_PROVIDER_NAME"] = "sinch";
+        rig.Env["SINCH_SERVICE_PLAN_ID"] = "plan";
+        rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"id\":\"provider-id\"}"));
         rig.Env["EPP_KEY_VAULT_CACHE_ENABLED"] = "PRIVATE-OBSOLETE";
         rig.Env["EPP_ACCESS_TOKEN_CACHE_ENABLED"] = "PRIVATE-OBSOLETE";
         Assert.Equal(0, rig.Secrets.Calls);
@@ -272,7 +267,7 @@ public class SendOtpTests
         Assert.Equal(0, rig.Http.Calls);
         AssertAccepted(await rig.Invoke());
         AssertAccepted(await rig.Invoke());
-        Assert.Equal(4, rig.Secrets.Calls);
+        Assert.Equal(2, rig.Secrets.Calls);
         Assert.Equal(2, rig.Http.Calls);
     }
 
@@ -281,6 +276,8 @@ public class SendOtpTests
     [InlineData("soprano", "PRIVATE-OBSOLETE")]
     [InlineData("infobip", "false")]
     [InlineData("infobip", "PRIVATE-OBSOLETE")]
+    [InlineData("telesign", "false")]
+    [InlineData("telesign", "PRIVATE-OBSOLETE")]
     public async Task OAuthAcquisitionIgnoresObsoleteCacheSettingsAndSkipsEvaluation(string provider, string setting)
     {
         var calls = 0;
@@ -319,6 +316,7 @@ public class SendOtpTests
     [InlineData("soprano", "api://provider/.default")]
     [InlineData("soprano", "api://second/.default")]
     [InlineData("infobip", "d1131a30-5ed5-49b7-8602-d978c8eb1677/.default")]
+    [InlineData("telesign", "api://telesign/.default")]
     public async Task OAuthUsesSetupIdentitiesAndScopeForEveryRequest(string provider, string scope)
     {
         var scopes = new List<string>();
@@ -345,12 +343,13 @@ public class SendOtpTests
             });
         });
         ConfigureOAuth(rig, provider);
+        rig.Env["EPP_PROVIDER_TENANT_ID"] = "alternate-token-tenant";
         rig.Env["EPP_PROVIDER_SCOPE"] = scope;
         AssertAccepted(await rig.Invoke("evaluation"));
         Assert.Empty(applications);
         foreach (var channel in new[] { "sms", "voice" })
         {
-            AssertAccepted(await rig.Invoke(channel: channel, deliveryOverrides: JsonSerializer.SerializeToElement(new
+            AssertAccepted(await rig.Invoke(channel: channel, tenantId: "security-store-tenant", deliveryOverrides: JsonSerializer.SerializeToElement(new
             {
                 providerJwt = "FORGED-PAYLOAD", locale = "fr-FR",
                 textToVoice = new { beforePasswordText = "ignored", password = "001234", language = "override" },
@@ -374,7 +373,7 @@ public class SendOtpTests
         AssertAccepted(await rig.Invoke());
         Assert.Single(applications);
         Assert.Equal(new[] { scope, scope, scope }, scopes);
-        Assert.Equal(new[] { ("provider-tenant", "calling-application") }, applications);
+        Assert.Equal(new[] { ("alternate-token-tenant", "calling-application") }, applications);
         Assert.All(identities, identity => Assert.Equal("outbound-identity", identity));
         Assert.Equal(3, rig.Http.Calls);
         Assert.Equal(0, rig.Secrets.Calls);
@@ -392,6 +391,10 @@ public class SendOtpTests
     [InlineData("infobip", true, "private-assertion", 5)]
     [InlineData("infobip", false, " ", 3600)]
     [InlineData("infobip", false, "private-token", -1)]
+    [InlineData("telesign", true, "", 3600)]
+    [InlineData("telesign", true, "private-assertion", 5)]
+    [InlineData("telesign", false, " ", 3600)]
+    [InlineData("telesign", false, "private-token", -1)]
     public async Task OAuthRejectsUnusableTokensBeforeProviderIo(string provider, bool invalidAssertion, string token, int lifetime)
     {
         var invalid = new AccessToken(token, DateTimeOffset.UtcNow.AddSeconds(lifetime));
@@ -410,6 +413,7 @@ public class SendOtpTests
     [Theory]
     [InlineData("soprano")]
     [InlineData("infobip")]
+    [InlineData("telesign")]
     public async Task OAuthRecoversAfterTimeoutWithoutRestartAndNeverRetriesProviderRejection(string provider)
     {
         CancellationToken observed = default;
@@ -437,7 +441,8 @@ public class SendOtpTests
         waitForCancellation = false;
         AssertAccepted(await rig.Invoke());
         Assert.Equal((1, 0), (rig.Http.Calls, rig.Secrets.Calls));
-        rig.Http.Respond = _ => Task.FromResult(Json(401, "{\"status\":\"REJECTED\"}"));
+        rig.Http.Respond = _ => Task.FromResult(Json(401,
+            provider == "telesign" ? "{\"status\":{\"code\":999}}" : "{\"status\":\"REJECTED\"}"));
         AssertFailure(rig, await rig.Invoke(), 401);
         Assert.Equal((2, 0), (rig.Http.Calls, rig.Secrets.Calls));
     }
@@ -542,15 +547,12 @@ public class SendOtpTests
     }
 
     [Fact]
-    public async Task MissingIdentityOrKeyFailsClosedBeforeHttp()
+    public async Task MissingApiKeyFailsClosedBeforeHttp()
     {
         using var rig = new HandlerRig();
-        rig.Env["EPP_PROVIDER_NAME"] = "telesign";
-        rig.Env["EPP_PROVIDER_SMS_ENDPOINT"] = "https://verify.telesign.com/epp/sms";
+        rig.Env["EPP_PROVIDER_NAME"] = "sinch";
+        rig.Env["SINCH_SERVICE_PLAN_ID"] = "plan";
         rig.Env["EPP_PROVIDER_AUTH_MODE"] = "apiKey";
-        rig.Secrets.Identity = "";
-        AssertFailure(rig, await rig.Invoke(), 502);
-        rig.Secrets.Identity = "private-api-id";
         rig.Secrets.Secret = "";
         AssertFailure(rig, await rig.Invoke(), 502);
         Assert.Equal(0, rig.Http.Calls);
@@ -886,8 +888,9 @@ public class SendOtpTests
     public async Task ApiKeyLifecycleIdentifiesKeyVaultWithoutLoggingCredentials()
     {
         using var rig = new HandlerRig();
-        rig.Env["EPP_PROVIDER_NAME"] = "telesign";
-        rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"status\":{\"code\":3001}}"));
+        rig.Env["EPP_PROVIDER_NAME"] = "sinch";
+        rig.Env["SINCH_SERVICE_PLAN_ID"] = "plan";
+        rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"id\":\"provider-id\"}"));
         AssertAccepted(await rig.Invoke());
         var summary = Summary(rig);
         Assert.Equal("key_vault", summary.GetProperty("providerCredentialSource").GetString());
@@ -896,7 +899,7 @@ public class SendOtpTests
         Assert.Equal(JsonValueKind.Null, summary.GetProperty("functionOutboundClientId").ValueKind);
         Assert.Equal(JsonValueKind.Null, summary.GetProperty("functionOutboundManagedIdentityClientId").ValueKind);
         Assert.InRange(summary.GetProperty("providerCredentialElapsedMs").GetInt64(), 0, summary.GetProperty("elapsedMs").GetInt64());
-        Assert.Equal(2, rig.Secrets.Calls);
+        Assert.Equal(1, rig.Secrets.Calls);
         Assert.Equal(LiveEvents, rig.Log.Records.Select(record => record.GetProperty("eventName").GetString()));
     }
 
@@ -1149,7 +1152,7 @@ public class SendOtpTests
             PhoneProviderBase[] providers =
             {
                 Infobip,
-                new TelesignProvider(Secrets),
+                new TelesignProvider(createIdentity, createOAuth),
                 new SopranoProvider(createIdentity, createOAuth),
                 new SinchProvider(Secrets),
             };
@@ -1221,13 +1224,12 @@ public class SendOtpTests
     {
         public int Calls { get; private set; }
         public string Secret { get; set; } = "private-api-key";
-        public string Identity { get; set; } = "private-api-id";
         public Exception? Error { get; set; }
         public Task<string> ResolveAsync(string? name, CancellationToken cancellationToken = default)
         {
             Calls++;
             if (Error is not null) throw Error;
-            return Task.FromResult(name == "telesign-customer-id" ? Identity : Secret);
+            return Task.FromResult(Secret);
         }
     }
 

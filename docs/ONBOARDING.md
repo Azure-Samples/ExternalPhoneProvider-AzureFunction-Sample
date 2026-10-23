@@ -84,8 +84,9 @@ the approved plan. `policyChanged: false` is expected because setup does not act
 | `EPP_PROVIDER_NAME` | Selects the registered adapter | Matches the approved provider |
 | `EPP_PROVIDER_SMS_ENDPOINT`, `EPP_PROVIDER_VOICE_ENDPOINT` | Channel-specific provider URLs | Provider confirms access to each channel |
 | `EPP_PROVIDER_ENDPOINT_REGION` | Provider route label | Matches Global or EU selection |
-| `EPP_PROVIDER_AUTH_MODE` | `apiKey` for Telesign or `oauth` for Infobip/Soprano | Matches the selected profile |
-| `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_APP_ID`, `EPP_PROVIDER_SCOPE` | OAuth provider API tenant, app, and scope | Provider administrator confirms exact values |
+| `EPP_PROVIDER_AUTH_MODE` | `oauth` for Infobip, Soprano, or Telesign | Matches the selected profile |
+| `EPP_PROVIDER_TENANT_ID` | OAuth token-issuing tenant from `deployment.AccessTokenScopeTenant` | Can differ from the Security Store `deployment.tenantId`; summary records the two as `accessTokenScopeTenant` and `providerTenantId` |
+| `EPP_PROVIDER_APP_ID`, `EPP_PROVIDER_SCOPE` | OAuth provider API application ID and resource scope ending in `/.default` | Provider administrator confirms exact values |
 | `EPP_OUTBOUND_CLIENT_ID`, `EPP_OUTBOUND_MI_CLIENT_ID` | Customer app and outbound identity used for OAuth federation | Do not substitute object IDs |
 | `KEY_VAULT_URL` | Vault holding API-key provider credentials | Use the summary's vault URI |
 | `EPP_DECRYPTION_KEY_PEM`, `EPP_ENCRYPTION_KEY_ID` | Versioned encryption key reference and registered key ID | Assign a renewal owner |
@@ -110,7 +111,7 @@ Guided setup supports **Infobip, Soprano, and Telesign**.
 | --- | --- | --- |
 | Infobip | OAuth client assertion through managed identity federation | Complete provider-side authorization and configure an approved sender/caller ID in `EPP_PROVIDER_ACCOUNT_NAME`; no Infobip API-key secret |
 | Soprano | OAuth client assertion through managed identity federation | Complete provider-side authorization and confirm tenant, app, scope, account, and channels |
-| Telesign | Basic authentication from Key Vault secrets | Add `telesign-api-key` and `telesign-customer-id` to the setup-created vault |
+| Telesign | OAuth client assertion through managed identity federation | Complete [OAuth configuration and handoff](#telesign-oauth-configuration-and-handoff) |
 
 Sinch is bundled but does not have a guided setup profile. Twilio requires the
 [Add Twilio](BRING-YOUR-OWN-PROVIDER.md) development process.
@@ -120,8 +121,20 @@ than API-key authentication. Its channel settings are HTTPS regional base URLs, 
 message paths in the Security Store manifest. See
 [Infobip routing and migration](../TECHNICAL.md#infobip).
 
+### Telesign: OAuth configuration and handoff
+
+The provider owner must complete `deployment.AccessTokenScopeTenant` and both Global/EU routes'
+`appId` and `scope` in the [Telesign profile](../setup/providers/telesign.json) before deployment.
+Scopes must end in `/.default`. Keep `deployment.tenantId` as the Security Store tenant.
+
+Use a Function package supporting Telesign OAuth and complete the
+[provider-administrator handoff](#oauth-provider-administrator-handoff).
+
 <a id="where-to-enter-api-key-credentials-in-key-vault"></a>
-### Add Telesign secrets
+### Add API-key provider secrets
+
+This applies to API-key adapters such as Sinch, not the guided OAuth providers. Use the exact
+secret names required by the selected adapter.
 
 1. In the deployment summary, find `resources.keyVault`.
 2. Open that vault in **Azure portal > Key vaults**.
@@ -129,28 +142,28 @@ message paths in the Security Store manifest. See
 
   ![CYOT-CONSTO Key Vault Objects menu with the consto vault name, Secrets selected, and Generate/Import visible](images/onboarding/key-vault-secrets.png)
 
-4. Create `telesign-api-key` with the raw API key.
-5. Create `telesign-customer-id` with the matching raw Customer ID.
-6. Verify both secret names, enabled state, dates, and versions without viewing their values.
-7. Confirm the Function's system-assigned identity has **Key Vault Secrets User**.
+4. Create the required secret with the raw credential, such as `sinch-api-token` for Sinch.
+5. Verify its name, enabled state, dates, and version without viewing its value.
+6. Confirm the Function's system-assigned identity has **Key Vault Secrets User**.
 
 ![Unsaved Create a secret form showing a sample name, masked placeholder value, and Enabled set to Yes](images/onboarding/key-vault-create-secret.png)
 
 *The screenshots contain test examples and fake values.*
 
-Do not encode the credential pair or enter an Authorization header. The adapter builds Basic
-authentication. Keep credentials out of commands, transcripts, settings, screenshots, and chat.
+Store raw credentials rather than an Authorization header. Keep credentials out of commands,
+transcripts, settings, screenshots, and chat.
 
-<a id="telesign-enter-and-verify-the-two-vault-secrets"></a>
-During rotation, coordinate both values and their provider validity window. Verify an approved live
-test before retiring the old pair. Evaluation does not test provider credentials.
+During rotation, coordinate credential updates and the provider validity window. Verify an approved live
+test before retiring the old credentials. Evaluation does not test provider credentials.
 
 <a id="soprano-provider-administrator-handoff"></a>
 <a id="complete-soprano-authorization"></a>
-### Complete Infobip or Soprano authorization
+<a id="complete-infobip-or-soprano-authorization"></a>
+<a id="oauth-provider-administrator-handoff"></a>
+### Complete provider OAuth authorization
 
 Setup creates the customer-side federation. The provider administrator still needs to authorize the
-customer application and account.
+customer application and account in the configured access-token tenant.
 
 Send identifiers only through the approved onboarding route:
 
@@ -158,6 +171,7 @@ Send identifiers only through the approved onboarding route:
 - endpoint application client ID
 - intended channels and provider URLs
 - `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_APP_ID`, and `EPP_PROVIDER_SCOPE`
+- Security Store tenant ID when it differs from the access-token tenant
 - outbound identity client ID and principal ID when troubleshooting federation
 - provider-requested account or sender reference
 

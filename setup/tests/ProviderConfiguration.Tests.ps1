@@ -247,6 +247,17 @@ try {
             Assert-Throws { Initialize-EppGraphAccess -Inputs $inputs -Context $context } 'provider configuration changed'
             Assert ($script:Patches.Count -eq 0 -and $script:EnsureCalls -eq 0) 'Do not overwrite an allowlist added after approval, including on a newly created app.'
         }
+        foreach ($tokenTenant in @($telesign.TenantId, 'ffffffff-ffff-ffff-ffff-ffffffffffff')) {
+            Reset-TestState
+            $script:Restriction = New-TestRestriction @($soprano.TenantId, $unknownTenant)
+            $inputs = New-TestInputs
+            $inputs.ProviderAuthentication = 'oauth'
+            $inputs.AccessTokenScopeTenant = $tokenTenant
+            Assert-Throws { Connect-EppContext -Inputs $inputs -Names @{ resourceGroup = 'unit' } -NonInteractive } '^provider-preflight-boundary$'
+            $expected = @($soprano.TenantId, $unknownTenant, $telesign.TenantId, $tokenTenant) | Sort-Object -Unique
+            Assert (($inputs.ProviderAllowedTenantIds -join ',') -ceq ($expected -join ',')) 'OAuth must allow both the Security Store and token tenants, deduplicate them, and preserve existing allowed tenants.'
+            Assert ($inputs.ProviderTenantId -ceq $telesign.TenantId) 'The token tenant must not replace the provider identity used for Security Store discovery.'
+        }
         foreach ($alreadyConfigured in @($false, $true)) {
             Reset-TestState
             $script:Application.SignInAudience = 'AzureADMultipleOrgs'

@@ -34,7 +34,7 @@ See [source/package selection](#source-versioning).
 Both channels are configured. Profile objects `deployment.routes.global` and
 `deployment.routes.eu` define `smsEndpoint`, `voiceEndpoint`, tenant, authentication, and timing
 values. Setup writes the endpoints to `EPP_PROVIDER_SMS_ENDPOINT` and
-`EPP_PROVIDER_VOICE_ENDPOINT`; Infobip and Soprano also supply their API app ID and scope.
+`EPP_PROVIDER_VOICE_ENDPOINT`; OAuth profiles also supply their API app ID and scope.
 Infobip's settings are HTTPS base URLs: its adapters append the tested `/sms/3/messages` and
 `/tts/3/advanced` paths without changing their request or response contracts.
 
@@ -42,8 +42,28 @@ Use a package that supports channel-specific settings; neither channel uses the 
 
 Soprano and Telesign currently use identical Global/EU URLs. Infobip uses `https://api.infobip.com`
 for Global and `https://api-eu.infobip.com` for EU. Each OAuth provider uses the same API app ID/scope
-across its two routes. The route label is not a residency or Azure-region selection.
+across its two routes, except that Telesign's OAuth values are pending provider confirmation.
+The route label is not a residency or Azure-region selection.
 Sinch remains a bundled adapter without a guided profile.
+
+### Provider tenant configuration
+
+Provider profiles distinguish these adjacent fields under `deployment`:
+
+| Field | Purpose |
+| --- | --- |
+| `tenantId` | Provider's Security Store tenant; used for provider discovery and recorded as `providerTenantId` in the deployment summary |
+| `AccessTokenScopeTenant` | OAuth token-issuing tenant; mapped to `EPP_PROVIDER_TENANT_ID` and recorded as `accessTokenScopeTenant` |
+
+The token tenant can differ from the Security Store tenant. For older profiles that omit
+`AccessTokenScopeTenant`, setup uses `tenantId`; explicit empty, invalid, or placeholder values
+are rejected. OAuth setup adds both tenants to the reviewed application allowlist, deduplicates
+equal values, and preserves existing allowed tenants. The application home tenant remains allowed.
+Easy Auth still admits only the approved Microsoft caller.
+
+Telesign's profile contains placeholders for the token tenant and regional API app IDs/scopes.
+Complete [Telesign configuration](../../docs/ONBOARDING.md#telesign-oauth-configuration-and-handoff)
+before deployment.
 
 ### Tenant scope and Azure region recommendations
 
@@ -76,7 +96,7 @@ Review the [Azure hosting and provider cost estimate](../../docs/COST-CALCULATOR
 directly from the service-plan prompt.
 
 | Option | Hosting |
-|---|---|
+| --- | --- |
 | 1. Flex Consumption (FC1) | On-demand with a free usage grant; zero always-ready instances, 2048 MB, up to 40 on-demand instances |
 | 2. Premium (EP1) | Existing Premium configuration with one warm instance |
 
@@ -127,8 +147,8 @@ To create it manually before setup:
    supply its client ID, not the application's object ID. Setup never silently creates a
    replacement if an existing ID is invalid.
 3. Complete provider purchase, sender registration, and API onboarding.
-   Telesign uses `telesign-api-key` and `telesign-customer-id` in Key Vault. Infobip and Soprano use OAuth
-   client-assertion exchange with the selected provider tenant/scope/application ID. Setup does not
+   Infobip, Soprano, and Telesign OAuth use client-assertion exchange with the selected access-token
+   tenant/scope/application ID. Complete Telesign's profile placeholders first. Setup does not
    grant provider API consent or application roles. Finish the
    [provider authentication handoff](../../docs/ONBOARDING.md#complete-provider-authentication)
    after setup creates the vault and identity identifiers needed for those steps.
@@ -140,11 +160,11 @@ Creation is an interactive choice. Unattended runs still require an existing `-A
 Setup configures:
 
 - Organizational multitenancy and the Microsoft Entra ID allowed-tenants preview: home tenant,
-  selected provider tenant, and preserved existing allowed provider tenants.
+  selected provider's Security Store and OAuth token tenants, and preserved existing allowed tenants.
 - The app's enterprise application with assignment required, `Epp.Invoke`, and its assignment to
   the Microsoft phone-provider service principal.
 - That Microsoft principal's tenant-wide Graph `Application.Read.All`, identifier URI, public JWE certificate, and Easy Auth caller restriction.
-- The disclosed outbound managed-identity federated credential for Infobip or Soprano.
+- The disclosed outbound managed-identity federated credential for OAuth providers.
 
 ## Prerequisites for Step 2
 
@@ -168,7 +188,7 @@ Setup configures:
   restricted, an appropriate role such as **Application Developer** can provide that permission.
   This does not replace the other setup permissions.
   See [application creation permissions](https://learn.microsoft.com/en-us/graph/api/application-post-applications?view=graph-rest-1.0#permissions).
-- Microsoft Graph **beta** access for `signInAudienceRestrictions`. The provider tenant is added;
+- Microsoft Graph **beta** access for `signInAudienceRestrictions`. The Security Store and OAuth token tenants are added;
   Microsoft Entra ID always allows the home tenant.
   See the
   [allowed-tenants schema](https://learn.microsoft.com/en-us/graph/api/resources/allowedtenantsaudience?view=graph-rest-beta).
@@ -212,7 +232,7 @@ dotnet --list-sdks
 Interactive setup can install missing Bicep.
 
 | Choice | Azure runtime | Automatic deployment path |
-|---|---|---|
+| --- | --- | --- |
 | JavaScript | Node.js 22, Functions v4 | Verify and publish the ready ZIP with its production dependencies |
 | C# | .NET 8 isolated, Functions v4 | Verify source ZIP, publish for Linux with .NET 8, repackage and publish |
 | Python | Python 3.11, Functions v4 | Verify source ZIP; One Deploy with remote build on FC1, or validate/download and publish the SCM-built output on EP1 |
@@ -334,7 +354,7 @@ It displays each key ID, certificate thumbprint, name, and validity. Signing/ver
 certificates are not encryption candidates, and unsupported encryption credential types stop setup.
 
 | Existing encryption credentials | Choice | Result after successful deployment |
-|---|---|---|
+| --- | --- | --- |
 | None | Creation is automatic; optional `-CertificateAction Create`. | Register one certificate from the setup vault. |
 | One | Enter accepts `Replace`; select `Reuse` explicitly to provide its Key Vault certificate version. | Replace the existing credential with one new credential, or keep the existing key ID when reusing. |
 | Several | Enter accepts `Replace`; select `Reuse` explicitly to choose a key ID and provide its certificate version. | Replace all encryption entries with one new credential, or remove only the other encryption entries when reusing. |
@@ -559,12 +579,13 @@ configuration metadata, not provider credentials or private-key bytes. Keep it a
 **Save the output: the endpoint URL and Application (client) ID are required for policy updates.**
 
 | Summary field | How to use it |
-|---|---|
+| --- | --- |
 | `tenantId`, `subscriptionId`, `applicationId` | Verify the intended customer directory, Azure subscription, and endpoint **client ID**. |
 | `tenantRegionScope` | Detected tenant replication scope used to select the provider route and apply EU-only region recommendations. |
 | `resources.functionApp`, `resources.keyVault`, `resources.applicationInsights`, `resources.logAnalytics` | Find the exact Azure resources; do not guess names or use a different environment's vault. |
-| `provider`, `endpointRegion`, `providerTenantId` | Confirm the tenant-derived provider route, separate from Azure location. Both SMS and voice use this configuration. |
-| `allowedProviderTenantIds` | Review the complete preserved provider-tenant allowlist, including the selected provider. This does not enable runtime switching between providers. |
+| `provider`, `endpointRegion`, `providerTenantId` | Confirm the tenant-derived provider route and Security Store tenant, separate from Azure location. Both SMS and voice use this configuration. |
+| `accessTokenScopeTenant` | OAuth token-issuing tenant, matching `EPP_PROVIDER_TENANT_ID`; can differ from `providerTenantId` and is null for API-key deployments |
+| `allowedProviderTenantIds` | Review the preserved allowlist, including the selected provider's Security Store and OAuth token tenants. This does not enable runtime switching between providers. |
 | `providerSmsEndpoint`, `providerVoiceEndpoint` | Confirm the distinct or identical provider URLs for SMS and voice. These are outbound provider URLs, not the Function's `endpointUrl`. |
 | `endpointUrl`, `identifierUri` | Exact SendOtp URL and registered app audience information for the authorized test/policy operator. |
 | `encryptionKeyId`, `certificateThumbprint`, `certificateId`, `certificateSecretId`, `certificateExpiresUtc` | Public-key identification and version/renewal inventory. A secret **ID** is not its value; do not fetch its private-key contents. |
