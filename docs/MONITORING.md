@@ -173,6 +173,10 @@ Credential acquisition failures have `failureStage=provider_credentials` and
 or idle credential-health signal. A successful evaluation does not prove provider credentials work;
 validate that path separately through an approved live test.
 
+The preceding `provider_credential_resolution_failed` event includes a safe `aadstsCode`
+(`AadstsCode` in .NET). See [credential diagnostics](LOGGING.md#credential-diagnostics).
+Do not count it and `request_failed` as two failed requests or enable raw SDK/body logging.
+
 <a id="runtime-specific-log-discovery"></a>
 ## Runtime log formats
 

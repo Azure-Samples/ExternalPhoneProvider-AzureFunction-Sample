@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace Epp.Otp;
 
 public sealed class CredentialTokenService
@@ -24,13 +26,19 @@ public sealed class CredentialTokenService
         {
             throw;
         }
-        catch
+        catch (Exception error)
         {
-            // SendOtp logs the request failure without exposing SDK error details.
-            throw Unavailable();
+            // Retain only an allowlisted code, never the SDK exception or response.
+            throw Unavailable(error);
         }
     }
 
-    internal static InvalidOperationException Unavailable() =>
-        new("provider credential unavailable");
+    internal static string? AadstsCode(Exception? error)
+    {
+        var match = Regex.Match(error?.Message ?? "", @"\bAADSTS(?:70025|70021|700016)\b");
+        return match.Success ? match.Value : null;
+    }
+
+    internal static InvalidOperationException Unavailable(Exception? error = null) =>
+        new(AadstsCode(error) ?? "provider credential unavailable");
 }

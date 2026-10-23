@@ -357,6 +357,35 @@ test('a credential failure is request-correlated and the next live request can r
     assert.equal(fetchMock.mock.callCount(), 1);
 });
 
+for (const [code, expected] of [
+    ['70025', 'AADSTS70025'], ['70021', 'AADSTS70021'], ['700016', 'AADSTS700016'],
+    ['999999', null], ['700211', null],
+]) {
+    test(`AADSTS${code} changes only internal correlated logs, not the public credential-failure response`, async () => {
+        getToken.mock.mockImplementation(async function () {
+            await this.getAssertion();
+            throw new Error(`AADSTS${code}: PRIVATE-ASSERTION PRIVATE-TOKEN PRIVATE-RESPONSE`);
+        });
+        const response = await invoke(await envelope(), { 'x-ms-client-request-id': 'ms-request-id' });
+        const diagnostic = event('provider_credential_resolution_failed');
+        assert.deepEqual(response.jsonBody, {
+            error: 'provider_delivery_failed', correlationId: 'correlation-id',
+            requestId: diagnostic.functionRequestId,
+        });
+        assert.equal(response.status, 502);
+        assert.equal(diagnostic.aadstsCode, expected);
+        assert.doesNotMatch(JSON.stringify(records) + JSON.stringify(response.jsonBody), /PRIVATE/);
+        assert.equal(diagnostic['x-ms-client-request-id'], 'ms-request-id');
+        assert.equal(diagnostic['x-ms-correlation-id'], 'correlation-id');
+        assert.equal(records.filter((entry) => entry.eventName === 'provider_credential_resolution_failed').length, 1);
+        assert.equal(event('request_failed').failureReason, 'credential_unavailable');
+        assert.equal(fetchMock.mock.callCount(), 0);
+        assert.equal(event('provider_request_started'), undefined);
+        assert.equal((await invoke(await envelope({ mode: 2 }))).status, 200);
+        assert.equal(event('provider_credential_resolution_failed'), undefined);
+    });
+}
+
 test('startup does not warm credentials and shutdown closes pending acquisition', async () => {
     assert.equal(startHook, undefined);
     assert.equal(getToken.mock.callCount(), 0);

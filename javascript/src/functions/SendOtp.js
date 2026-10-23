@@ -12,7 +12,7 @@ const { parseEntraPayload } = require('./entraPayload');
 const { OtpDelivery } = require('./delivery');
 const { decryptDeliveryContext } = require('./jwe');
 const { selectProvider } = require('./providers');
-const { credentialTokenService } = require('./credentials');
+const { credentialTokenService, aadstsCode } = require('./credentials');
 const {
     ProviderTransportError,
     isValidProviderUrl,
@@ -169,7 +169,8 @@ app.http('SendOtp', {
                     provider.credentialSpec,
                     config,
                 );
-            } catch {
+            } catch (error) {
+                emit(logContext, 'provider_credential_resolution_failed', { aadstsCode: aadstsCode(error) }, 'error');
                 fail('provider_credentials', 'credential_unavailable', 502);
                 return respond(502, { error: 'provider_delivery_failed', correlationId, requestId });
             }
@@ -179,6 +180,8 @@ app.http('SendOtp', {
                     && (!credential.secret || (needsIdentity && !credential.identity)))
                 || (credential.mode === 'oauth' && !credential.accessToken);
             if (credentialUnavailable) {
+                emit(logContext, 'provider_credential_resolution_failed',
+                    { aadstsCode: null }, 'error');
                 fail('provider_credentials', 'credential_unavailable', 502);
                 return respond(502, { error: 'provider_delivery_failed', correlationId, requestId });
             }

@@ -9,6 +9,7 @@ This reference defines safe event fields, request flow, and runtime differences.
 | Compare runtime output | [Runtime formats](#runtime-formats) |
 | Follow one request | [Event sequence](#event-sequence) |
 | Interpret IDs and fields | [Safe fields and identifiers](#safe-fields-and-identifiers) |
+| Distinguish credential failures | [Credential diagnostics](#credential-diagnostics) |
 | Configure collection | [Levels and collection](#levels-and-collection) |
 
 **Exclude request bodies, decrypted fields, credentials, nonces, raw exceptions, and provider
@@ -56,7 +57,8 @@ Failures emit `request_failed` with stage, reason, and HTTP status (`FailureStag
 `missing_provider_message_id`, or `invalid_provider_json`. `provider_response_processed` includes
 that classification, upstream HTTP status, and normalized status, never descriptions/bodies.
 Credential acquisition failures use `request_failed` with stage `provider_credentials`, reason
-`credential_unavailable`, and HTTP `502`. There are no background credential-refresh events.
+`credential_unavailable`, and HTTP `502`. A preceding `provider_credential_resolution_failed`
+event supplies the [internal diagnostic](#credential-diagnostics). There are no background credential-refresh events.
 Unexpected failures use `unexpected_error`. No event adds credential reads, acquisition, or send retries.
 
 `response_prepared` runs before successful and failed returns. It does not prove caller receipt.
@@ -66,6 +68,21 @@ An upstream `200` can precede a body-read timeout: `provider_response_received` 
 `request_failed` with Function `504`, without mapped provider status or success acknowledgement.
 Unknown status text and malformed JSON are never logged. Malformed JSON emits only
 `provider_response_invalid_json` before provider outcome rules run.
+
+## Credential diagnostics
+
+The request-correlated `provider_credential_resolution_failed` event logs only `aadstsCode`
+(`AadstsCode` in .NET), extracted from the SDK error message. It is one of the codes below or
+null; raw error text, responses and credentials are never logged. Python/.NET use event ID
+**1103** at Error level. Public HTTP responses and credential acquisition behavior are unchanged.
+
+| Code | Meaning and next check |
+|---|---|
+| [`AADSTS70025`](https://login.microsoftonline.com/error?code=70025) | No federated identity credentials configured for the client application. |
+| [`AADSTS70021`](https://login.microsoftonline.com/error?code=70021) | No matching federation; check issuer, subject and audience. |
+| [`AADSTS700016`](https://login.microsoftonline.com/error?code=700016) | Application not found in the requested directory; check app and tenant IDs. This alone does not prove missing provider consent. |
+
+The event does not identify which acquisition step failed or infer a root cause.
 
 ## Safe fields and identifiers
 

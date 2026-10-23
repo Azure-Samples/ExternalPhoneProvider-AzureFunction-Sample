@@ -575,6 +575,35 @@ def test_selection_and_credential_failures_are_safe(
     assert "PRIVATE" not in caplog.text
 
 
+@pytest.mark.parametrize("code,expected", [
+    ("70025", "AADSTS70025"), ("70021", "AADSTS70021"), ("700016", "AADSTS700016"),
+    ("999999", None), ("700211", None),
+])
+def test_credential_diagnostic_preserves_public_response_and_correlation(caplog, code, expected):
+    caplog.set_level(logging.INFO)
+    function_app._credentials.get_credentials.side_effect = ValueError(
+        f"AADSTS{code}: PRIVATE-ASSERTION PRIVATE-TOKEN PRIVATE-RESPONSE")
+    response = _HANDLER(_request(_envelope(), {"x-ms-client-request-id": "ms-request-id"}))
+    diagnostic, = (record for record in _events(caplog) if record.event_name == "provider_credential_resolution_failed")
+    assert response.status_code == 502
+    assert json.loads(response.get_body()) == {
+        "error": "provider_delivery_failed", "correlationId": _CORRELATION,
+        "requestId": diagnostic.functionRequestId,
+    }
+    assert diagnostic.event_id == 1103
+    assert diagnostic.aadstsCode == expected
+    assert diagnostic.__dict__["x-ms-client-request-id"] == "ms-request-id"
+    assert diagnostic.__dict__["x-ms-correlation-id"] == _CORRELATION
+    failure, = (record for record in _events(caplog) if record.event_name == "request_failed")
+    assert failure.failureReason == "credential_unavailable"
+    assert not any(record.event_name == "provider_request_started" for record in _events(caplog))
+    provider_module.requests.request.assert_not_called()
+    assert "PRIVATE" not in str([record.__dict__ for record in caplog.records])
+    caplog.clear()
+    assert _HANDLER(_request(_envelope(mode=2))).status_code == 200
+    assert not any(record.event_name == "provider_credential_resolution_failed" for record in _events(caplog))
+
+
 def test_request_context_is_isolated_between_concurrent_invocations(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     monkeypatch.setattr(provider_module.requests, "request", Mock(

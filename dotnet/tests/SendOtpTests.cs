@@ -837,6 +837,33 @@ public class SendOtpTests
         Assert.DoesNotContain("PRIVATE", string.Join("\n", rig.Log.Messages));
     }
 
+    [Theory]
+    [InlineData("70025", "AADSTS70025")]
+    [InlineData("70021", "AADSTS70021")]
+    [InlineData("700016", "AADSTS700016")]
+    [InlineData("999999", null)]
+    [InlineData("700211", null)]
+    public async Task CredentialDiagnosticsPreservePublicResponseAndCorrelation(string code, string? expected)
+    {
+        using var rig = new HandlerRig();
+        rig.OAuthError = new InvalidOperationException($"AADSTS{code}: PRIVATE-ASSERTION PRIVATE-TOKEN PRIVATE-RESPONSE");
+        var response = await rig.Invoke(headers: new() { ["x-ms-client-request-id"] = "ms-request-id" });
+        Assert.Equal(502, response.StatusCode);
+        var body = Assert.IsType<EndpointErrorResponse>(response.Value);
+        Assert.Equal("provider_delivery_failed", body.Error);
+        Assert.Equal(Correlation, body.CorrelationId);
+        var entry = rig.Log.Entry("provider_credential_resolution_failed");
+        Assert.Equal(1103, entry.EventId.Id);
+        Assert.Equal(expected, entry.State["AadstsCode"]);
+        Assert.Equal(body.RequestId, entry.Scope["FunctionRequestId"]);
+        Assert.Equal(Correlation, entry.Scope["MsCorrelationId"]);
+        Assert.Equal("ms-request-id", entry.Scope["MsClientRequestId"]);
+        Assert.Equal("credential_unavailable", rig.Log.Entry("request_failed").State["FailureReason"]);
+        Assert.Equal(0, rig.Http.Calls);
+        Assert.DoesNotContain(rig.Log.Entries, value => value.EventId.Name == "provider_request_started");
+        Assert.DoesNotContain("PRIVATE", JsonSerializer.Serialize(rig.Log.Entries) + JsonSerializer.Serialize(body));
+    }
+
     [Fact]
     public async Task SuccessfulLifecycleLogsAllowedBodyMetadataRawOAuthIdsAndEndpointWithoutQuery()
     {
