@@ -1,0 +1,518 @@
+trigger:
+  batch: true
+  branches:
+    include:
+    - main
+pr: none
+
+parameters:
+- name: sourceCommit
+  displayName: Triggering GitHub commit for build-only, or reviewed full lowercase SHA
+  type: string
+  default: triggeringCommit
+- name: templateConnection
+  displayName: Approved 1ES template repository connection
+  type: string
+  default: REQUIRED
+- name: poolName
+  displayName: Approved Linux x64 1ES pool
+  type: string
+  default: REQUIRED
+- name: poolImage
+  displayName: Linux x64 image with PowerShell 7.4+, Git and Python tool cache
+  type: string
+  default: REQUIRED
+- name: deployAndTest
+  displayName: Deploy ALL THREE test apps and run authenticated HTTP tests
+  type: boolean
+  default: false
+- name: deploymentConnection
+  displayName: CYOT federated ARM deployment connection
+  type: string
+  default: REQUIRED
+- name: callerConnection
+  displayName: Separate federated test-caller connection
+  type: string
+  default: REQUIRED
+- name: environmentName
+  displayName: Existing protected ADO environment with approval and exclusive lock
+  type: string
+  default: REQUIRED
+- name: resourceGroup
+  displayName: Existing test resource group
+  type: string
+  default: REQUIRED
+- name: targets
+  displayName: Three existing apps; audience and base64-encoded PUBLIC RSA PEM for each
+  type: object
+  default:
+  - language: dotnet
+    appName: REQUIRED
+    appType: functionApp
+    audience: REQUIRED
+    publicKeyBase64: REQUIRED
+  - language: javascript
+    appName: REQUIRED
+    appType: functionApp
+    audience: REQUIRED
+    publicKeyBase64: REQUIRED
+  - language: python
+    appName: REQUIRED
+    appType: functionAppLinux
+    audience: REQUIRED
+    publicKeyBase64: REQUIRED
+
+resources:
+  repositories:
+  - repository: 1ESPipelineTemplates
+    type: git
+    name: 1ESPipelineTemplates/1ESPipelineTemplates
+    ref: refs/tags/release
+    endpoint: ${{ parameters.templateConnection }}
+
+extends:
+  template: v1/1ES.Official.PipelineTemplate.yml@1ESPipelineTemplates
+  parameters:
+    pool:
+      name: ${{ parameters.poolName }}
+      image: ${{ parameters.poolImage }}
+      os: linux
+    stages:
+    - stage: Build
+      jobs:
+      - job: BuildAll
+        timeoutInMinutes: 45
+        workspace:
+          clean: all
+        templateContext:
+          outputs:
+          - output: pipelineArtifact
+            artifactName: cyot-packages
+            targetPath: $(Build.ArtifactStagingDirectory)/cyot-packages
+        steps:
+        - checkout: none
+        - task: UseDotNet@2
+          inputs:
+            packageType: sdk
+            version: 8.0.x
+        - task: UseNode@1
+          inputs:
+            version: 22.x
+        - task: UsePythonVersion@0
+          inputs:
+            versionSpec: '3.11'
+            architecture: x64
+        - pwsh: |
+            $ErrorActionPreference = 'Stop'
+            function Invoke-Checked {
+              param([string]$Program, [string[]]$Arguments)
+              & $Program @Arguments
+              if ($LASTEXITCODE -ne 0) { throw "$Program failed ($LASTEXITCODE)." }
+            }
+            if (-not $IsLinux -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') {
+              throw 'Use a clean Linux x64 agent; Python wheels are packaged for Linux x64.'
+            }
+            $sourceRef = $env:SOURCE_COMMIT
+            if ($env:BUILD_REASON -in @('IndividualCI', 'BatchedCI')) {
+              if ($sourceRef -cne 'triggeringCommit' -or $env:DEPLOY_AND_TEST -ieq 'true' -or
+                  $env:BUILD_SOURCEBRANCH -cne 'refs/heads/main') {
+                throw 'CI must build the triggering main commit without deployment.'
+              }
+            }
+            if ($sourceRef -ceq 'triggeringCommit') {
+              if ($env:DEPLOY_AND_TEST -ieq 'true') { throw 'Deployment requires an explicit reviewed full commit SHA.' }
+              if ($env:BUILD_REPOSITORY_PROVIDER -cne 'GitHub' -or
+                  $env:BUILD_REPOSITORY_NAME -ine 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample') {
+                throw 'Register this YAML against the EPP GitHub repository.'
+              }
+              $sourceRef = $env:BUILD_SOURCEVERSION
+            }
+            if ($sourceRef -cnotmatch '^[0-9a-f]{40}$') {
+              throw 'Use the triggering GitHub commit or a reviewed full lowercase commit SHA.'
+            }
+            $source = Join-Path $env:AGENT_TEMPDIRECTORY ('cyot-source-' + $env:BUILD_BUILDID)
+            if (Test-Path $source) { throw 'Source directory already exists; use a clean agent.' }
+            New-Item -ItemType Directory $source | Out-Null
+            Invoke-Checked git @('-C', $source, 'init')
+            Invoke-Checked git @('-c', 'credential.helper=', '-C', $source, 'fetch', '--depth=1', '--no-tags', '--no-recurse-submodules', 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample.git', $sourceRef)
+            Invoke-Checked git @('-C', $source, 'checkout', '--detach', 'FETCH_HEAD')
+            $actual = (& git -C $source rev-parse HEAD).Trim()
+            if ($LASTEXITCODE -ne 0 -or $actual -cnotmatch '^[0-9a-f]{40}$' -or
+                $actual -cne $sourceRef) { throw 'Source SHA mismatch.' }
+            $testOutput = Join-Path $env:AGENT_TEMPDIRECTORY 'cyot-unit'
+            $artifact = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'cyot-packages'
+            New-Item -ItemType Directory $testOutput, $artifact | Out-Null
+            $manifest = @{ commit = $actual; buildId = $env:BUILD_BUILDID; packages = @{} }
+            foreach ($language in @('dotnet', 'javascript', 'python')) {
+              $app = Join-Path $source $language
+              $package = Join-Path $env:AGENT_TEMPDIRECTORY ('cyot-package-' + $language)
+              if (Test-Path $package) { throw 'Package directory already exists.' }
+              New-Item -ItemType Directory $package | Out-Null
+              Push-Location $app
+              try {
+                switch ($language) {
+                  dotnet {
+                    Invoke-Checked dotnet @('test', 'tests/Epp.Otp.Tests.csproj', '-c', 'Release', '--logger', 'trx;LogFileName=dotnet.trx', '--results-directory', $testOutput)
+                    [xml]$trx = Get-Content (Join-Path $testOutput 'dotnet.trx') -Raw
+                    $counts = $trx.TestRun.ResultSummary.Counters
+                    if ([int]$counts.total -le 0 -or [int]$counts.passed -ne [int]$counts.total) { throw 'All .NET tests must execute and pass.' }
+                    Invoke-Checked dotnet @('publish', 'dotnet.csproj', '-c', 'Release', '--no-self-contained', '-o', $package)
+                    foreach ($name in @('host.json', 'dotnet.dll', 'functions.metadata', 'worker.config.json', '.azurefunctions')) {
+                      if (-not (Test-Path (Join-Path $package $name))) { throw "Missing publish output: $name" }
+                    }
+                    $metadata = Get-Content (Join-Path $package 'functions.metadata') -Raw | ConvertFrom-Json
+                    if ('SendOtp' -notin @($metadata.name)) { throw 'SendOtp is not registered.' }
+                  }
+                  javascript {
+                    Invoke-Checked npm @('ci', '--no-audit', '--no-fund')
+                    Invoke-Checked node @('--test', '--test-reporter=junit', ('--test-reporter-destination=' + (Join-Path $testOutput 'javascript.xml')))
+                    Copy-Item host.json, package.json, package-lock.json -Destination $package
+                    Copy-Item src -Destination $package -Recurse
+                    Get-ChildItem $package -Recurse -Force -File | Where-Object {
+                      $_.Name -like 'local.settings*' -or $_.Name -like '.env*'
+                    } | Remove-Item -Force
+                    Push-Location $package
+                    try { Invoke-Checked npm @('ci', '--omit=dev', '--no-audit', '--no-fund') } finally { Pop-Location }
+                  }
+                  python {
+                    if ((& python -c 'import sys; print(sys.version_info[:2] == (3, 11))') -ne 'True') { throw 'Python 3.11 is required.' }
+                    Invoke-Checked python @('-m', 'pip', 'install', 'pytest')
+                    Copy-Item function_app.py, host.json, requirements.txt -Destination $package
+                    Copy-Item src -Destination $package -Recurse
+                    $dependencies = Join-Path $package '.python_packages/lib/site-packages'
+                    Invoke-Checked python @('-m', 'pip', 'install', '-r', 'requirements.txt', '--target', $dependencies, '--platform', 'manylinux2014_x86_64', '--python-version', '3.11', '--implementation', 'cp', '--abi', 'cp311', '--only-binary=:all:', '--no-compile')
+                    $previousPythonPath = $env:PYTHONPATH
+                    try {
+                      $env:PYTHONPATH = $dependencies
+                      $env:PYTHONDONTWRITEBYTECODE = '1'
+                      Invoke-Checked python @('-m', 'pytest', 'tests', ('--junitxml=' + (Join-Path $testOutput 'python.xml')))
+                    } finally { $env:PYTHONPATH = $previousPythonPath }
+                  }
+                }
+              } finally { Pop-Location }
+              if ($language -ne 'dotnet') {
+                [xml]$junit = Get-Content (Join-Path $testOutput ($language + '.xml')) -Raw
+                $cases = @($junit.SelectNodes('//testcase'))
+                if ($cases.Count -eq 0 -or $junit.SelectNodes('//testcase/failure | //testcase/error | //testcase/skipped').Count -gt 0) {
+                  throw "All $language tests must execute and pass."
+                }
+              }
+              $private = @(Get-ChildItem $package -Recurse -Force -File | Where-Object {
+                $_.Name -match '^(local\.settings.*|\.env.*)$|\.(pfx|p12|key|publishsettings|pubxml)$' -or
+                ($_.Extension -eq '.pem' -and (Select-String -LiteralPath $_.FullName -Pattern 'PRIVATE KEY' -Quiet))
+              })
+              if ($private.Count) { throw 'Package contains private configuration or key material.' }
+              $zip = Join-Path $artifact ($language + '.zip')
+              [IO.Compression.ZipFile]::CreateFromDirectory($package, $zip)
+              $manifest.packages[$language] = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            $manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $artifact 'source.json') -Encoding utf8
+            Write-Host "All three packages built from $actual."
+          displayName: Fetch exact source, run all suites, and package all runtimes
+          env:
+            SOURCE_COMMIT: ${{ parameters.sourceCommit }}
+            DEPLOY_AND_TEST: ${{ parameters.deployAndTest }}
+            GIT_TERMINAL_PROMPT: '0'
+        - task: PublishTestResults@2
+          condition: succeededOrFailed()
+          inputs:
+            testResultsFormat: VSTest
+            testResultsFiles: $(Agent.TempDirectory)/cyot-unit/dotnet.trx
+            failTaskOnFailedTests: true
+            failTaskOnMissingResultsFile: true
+            testRunTitle: CYOT .NET unit tests
+        - task: PublishTestResults@2
+          condition: succeededOrFailed()
+          inputs:
+            testResultsFormat: JUnit
+            testResultsFiles: $(Agent.TempDirectory)/cyot-unit/*.xml
+            failTaskOnFailedTests: true
+            failTaskOnMissingResultsFile: true
+            testRunTitle: CYOT JavaScript and Python unit tests
+
+    - ${{ if eq(parameters.deployAndTest, true) }}:
+      - stage: DeployAndTest
+        dependsOn: Build
+        condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq(variables['Build.Reason'], 'Manual'))
+        variables:
+        - group: cyot-e2e-config
+        lockBehavior: sequential
+        jobs:
+        - deployment: AllFunctionApps
+          timeoutInMinutes: 60
+          workspace:
+            clean: all
+          environment: ${{ parameters.environmentName }}
+          templateContext:
+            type: releaseJob
+            isProduction: false
+            inputs:
+            - input: pipelineArtifact
+              artifactName: cyot-packages
+              targetPath: $(Pipeline.Workspace)/cyot-packages
+          strategy:
+            runOnce:
+              deploy:
+                steps:
+                - checkout: none
+                - download: none
+                - task: AzurePowerShell@5
+                  displayName: Verify ALL targets and artifacts before any deployment
+                  inputs:
+                    azureSubscription: ${{ parameters.deploymentConnection }}
+                    ScriptType: InlineScript
+                    azurePowerShellVersion: LatestVersion
+                    pwsh: true
+                    Inline: |
+                      $ErrorActionPreference = 'Stop'
+                      function Test-DeploymentPreflight {
+                      $context = Get-AzContext
+                      $tenant = [guid]::Empty
+                      $subscription = [guid]::Empty
+                      $caller = [guid]::Empty
+                      if (-not [guid]::TryParse($env:EXPECTED_TENANT, [ref]$tenant) -or
+                          -not [guid]::TryParse($env:EXPECTED_SUBSCRIPTION, [ref]$subscription) -or
+                          -not [guid]::TryParse($env:CALLER_CLIENT_ID, [ref]$caller) -or
+                          $tenant -eq [guid]::Empty -or $subscription -eq [guid]::Empty -or $caller -eq [guid]::Empty) {
+                        throw 'Configure valid identity IDs in the cyot-e2e-config variable group.'
+                      }
+                      if ([guid]$context.Tenant.Id -ne $tenant -or [guid]$context.Subscription.Id -ne $subscription) { throw 'Wrong deployment tenant/subscription.' }
+                      if ($env:DEPLOYMENT_CONNECTION -eq $env:CALLER_CONNECTION) { throw 'Use separate deployment and test-caller connections.' }
+                      $targets = @($env:TARGETS_JSON | ConvertFrom-Json)
+                      if ($targets.Count -ne 3 -or (($targets.language | Sort-Object) -join ',') -ne 'dotnet,javascript,python' -or
+                          @($targets.appName | Sort-Object -Unique).Count -ne 3) { throw 'Three distinct apps, one per language, are required.' }
+                      $artifact = Join-Path $env:PIPELINE_WORKSPACE 'cyot-packages'
+                      $manifest = Get-Content (Join-Path $artifact 'source.json') -Raw | ConvertFrom-Json
+                      if ($manifest.commit -cne $env:SOURCE_COMMIT -or $manifest.buildId -ne $env:BUILD_BUILDID) { throw 'Artifact provenance mismatch.' }
+                      $verified = @()
+                      foreach ($target in $targets) {
+                        if ($target.appName -cnotmatch '^[a-zA-Z0-9][a-zA-Z0-9-]{1,58}[a-zA-Z0-9]$' -or $env:TARGET_GROUP -eq 'REQUIRED' -or
+                            $target.appType -notin @('functionApp','functionAppLinux') -or -not $target.audience -or $target.audience -eq 'REQUIRED') { throw 'Configure every target explicitly.' }
+                        $pem = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($target.publicKeyBase64))
+                        if ($pem -notmatch '-----BEGIN PUBLIC KEY-----' -or $pem -match 'PRIVATE KEY') { throw 'Only a public SubjectPublicKeyInfo RSA PEM is accepted.' }
+                        $rsa = [Security.Cryptography.RSA]::Create()
+                        try { $rsa.ImportFromPem($pem); if ($rsa.KeySize -lt 2048) { throw 'RSA key is too small.' } } finally { $rsa.Dispose() }
+                        $hash = (Get-FileHash (Join-Path $artifact ($target.language + '.zip')) -Algorithm SHA256).Hash.ToLowerInvariant()
+                        if ($manifest.packages.($target.language) -cne $hash) { throw 'Artifact hash mismatch.' }
+                        $resource = '/subscriptions/' + $subscription + '/resourceGroups/' + [uri]::EscapeDataString($env:TARGET_GROUP) + '/providers/Microsoft.Web/sites/' + [uri]::EscapeDataString($target.appName)
+                        function Read-Arm([string]$Path, [string]$Method = 'GET') {
+                          $response = Invoke-AzRestMethod -Path ($Path + '?api-version=2024-11-01') -Method $Method -ErrorAction Stop -Verbose:$false -Debug:$false 3>$null 4>$null 5>$null 6>$null
+                          if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) { throw 'ARM preflight read failed.' }
+                          return ($response.Content | ConvertFrom-Json)
+                        }
+                        $app = Read-Arm $resource
+                        if ($app.kind -notmatch 'functionapp' -or -not $app.properties.httpsOnly -or
+                            (($app.kind -match 'linux') -ne ($target.appType -eq 'functionAppLinux'))) { throw 'Function App type/HTTPS mismatch.' }
+                        $plan = Read-Arm $app.properties.serverFarmId
+                        if ($plan.sku.name -eq 'FC1') { throw 'This ZIP-deploy path does not support Flex; use an existing non-Flex app.' }
+                        if ($target.appType -eq 'functionAppLinux' -and $plan.sku.name -eq 'Y1') { throw 'Use Linux Premium/Dedicated; Linux Consumption would require a different storage/SAS deployment path.' }
+                        $config = Read-Arm ($resource + '/config/web')
+                        $settings = (Read-Arm ($resource + '/config/appsettings/list') 'POST').properties
+                        $runtime = @{ dotnet = 'dotnet-isolated'; javascript = 'node'; python = 'python' }[$target.language]
+                        $stack = @{ dotnet = 'DOTNET-ISOLATED|8.0'; javascript = 'NODE|22'; python = 'PYTHON|3.11' }[$target.language]
+                        if ($settings.FUNCTIONS_WORKER_RUNTIME -ne $runtime) { throw 'Worker runtime mismatch.' }
+                        if ($settings.FUNCTIONS_EXTENSION_VERSION -notmatch '^~?4(\.|$)') { throw 'The Function host must already use version 4.' }
+                        if ($target.appType -eq 'functionAppLinux') {
+                          if ($config.properties.linuxFxVersion -ne $stack) { throw 'Linux runtime stack mismatch.' }
+                        } elseif ($target.language -eq 'python' -or
+                            ($target.language -eq 'dotnet' -and $config.properties.netFrameworkVersion -ne 'v8.0') -or
+                            ($target.language -eq 'javascript' -and $settings.WEBSITE_NODE_DEFAULT_VERSION -notmatch '^~?22(\.|$)')) { throw 'Windows runtime version mismatch.' }
+                        if ($settings.EPP_PROVIDER_NAME -or -not $settings.EPP_DECRYPTION_KEY_PEM) { throw 'Use a provider-free app with its test-only decryption key already configured.' }
+                        if ($settings.SCM_DO_BUILD_DURING_DEPLOYMENT -eq 'true' -or $settings.ENABLE_ORYX_BUILD -eq 'true') { throw 'Remote build must be disabled for prebuilt ZIPs.' }
+                        $auth = (Read-Arm ($resource + '/config/authsettingsV2/list')).properties
+                        $aad = $auth.identityProviders.azureActiveDirectory
+                        $issuer = [uri]$aad.registration.openIdIssuer
+                        $allowedIssuers = @(
+                          ('https://login.microsoftonline.com/' + $tenant + '/v2.0')
+                          ('https://sts.windows.net/' + $tenant)
+                        )
+                        if (-not $auth.platform.enabled -or -not $auth.globalValidation.requireAuthentication -or
+                            $auth.globalValidation.unauthenticatedClientAction -ne 'Return401' -or
+                          -not $auth.httpSettings.requireHttps -or
+                            @($auth.globalValidation.excludedPaths).Where({ $_ }).Count -gt 0 -or -not $aad.enabled -or
+                          $issuer.AbsoluteUri.TrimEnd('/') -notin $allowedIssuers -or
+                            $target.audience -notin @($aad.validation.allowedAudiences) -or
+                            $caller.ToString() -notin @($aad.validation.defaultAuthorizationPolicy.allowedApplications)) { throw 'Easy Auth tenant/audience/caller policy does not match the test configuration.' }
+                        $hostname = [string]$app.properties.defaultHostName
+                        if ($hostname -notmatch '^[a-zA-Z0-9.-]+\.azurewebsites\.net$') { throw 'Unexpected public Azure Function hostname.' }
+                        $verified += @{ language = $target.language; url = 'https://' + $hostname + '/api/SendOtp'; audience = $target.audience; publicKeyBase64 = $target.publicKeyBase64 }
+                      }
+                      $verified | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $env:AGENT_TEMPDIRECTORY ('cyot-verified-targets-' + $env:BUILD_BUILDID + '.json')) -Encoding utf8
+                      Write-Host 'All three targets passed preflight. No settings or identities were modified.'
+                      }
+                      try { Test-DeploymentPreflight } catch {
+                        throw 'Deployment preflight failed. Check protected identity values, target configuration, and artifact provenance. Sensitive details suppressed.'
+                      }
+                  env:
+                    EXPECTED_TENANT: $(CyotTenantId)
+                    EXPECTED_SUBSCRIPTION: $(CyotSubscriptionId)
+                    CALLER_CLIENT_ID: $(CyotCallerClientId)
+                    TARGET_GROUP: ${{ parameters.resourceGroup }}
+                    TARGETS_JSON: ${{ convertToJson(parameters.targets) }}
+                    SOURCE_COMMIT: ${{ parameters.sourceCommit }}
+                    DEPLOYMENT_CONNECTION: ${{ parameters.deploymentConnection }}
+                    CALLER_CONNECTION: ${{ parameters.callerConnection }}
+                - ${{ each target in parameters.targets }}:
+                  - task: AzureFunctionApp@2
+                    displayName: Deploy verified ${{ target.language }} ZIP
+                    inputs:
+                      connectedServiceNameARM: ${{ parameters.deploymentConnection }}
+                      appType: ${{ target.appType }}
+                      appName: ${{ target.appName }}
+                      resourceGroupName: ${{ parameters.resourceGroup }}
+                      package: $(Pipeline.Workspace)/cyot-packages/${{ target.language }}.zip
+                      deploymentMethod: zipDeploy
+                - task: AzurePowerShell@5
+                  displayName: Test real HTTP authentication and encrypted evaluation on all apps
+                  inputs:
+                    azureSubscription: ${{ parameters.callerConnection }}
+                    ScriptType: InlineScript
+                    azurePowerShellVersion: LatestVersion
+                    pwsh: true
+                    Inline: |
+                      $ErrorActionPreference = 'Stop'
+                      try {
+                        if ([guid](Get-AzContext).Tenant.Id -ne [guid]$env:EXPECTED_TENANT) { throw 'Wrong test-caller tenant.' }
+                        $targets = @(Get-Content (Join-Path $env:AGENT_TEMPDIRECTORY ('cyot-verified-targets-' + $env:BUILD_BUILDID + '.json')) -Raw | ConvertFrom-Json)
+                      } catch { throw 'Test-caller context or verified targets are invalid. Sensitive details suppressed.' }
+                      $results = [Collections.Generic.List[object]]::new()
+                      function Base64Url([byte[]]$Bytes) { [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+','-').Replace('/','_') }
+                      function Decode64([string]$Value) {
+                        $value = $Value.Replace('-','+').Replace('_','/')
+                        [Convert]::FromBase64String($value.PadRight($value.Length + (4 - $value.Length % 4) % 4, '='))
+                      }
+                      function Encrypt-Context($Context, $Rsa) {
+                        $header = Base64Url ([Text.Encoding]::UTF8.GetBytes('{"alg":"RSA-OAEP-256","enc":"A256GCM"}'))
+                        $key = [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
+                        $iv = [Security.Cryptography.RandomNumberGenerator]::GetBytes(12)
+                        $plain = [Text.Encoding]::UTF8.GetBytes(($Context | ConvertTo-Json -Compress))
+                        $cipher = [byte[]]::new($plain.Length)
+                        $tag = [byte[]]::new(16)
+                        $aes = [Security.Cryptography.AesGcm]::new($key, 16)
+                        try {
+                          $aes.Encrypt($iv, $plain, $cipher, $tag, [Text.Encoding]::ASCII.GetBytes($header))
+                          $wrapped = $Rsa.Encrypt($key, [Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
+                          return (@($header, (Base64Url $wrapped), (Base64Url $iv), (Base64Url $cipher), (Base64Url $tag)) -join '.')
+                        } finally { $aes.Dispose(); [Array]::Clear($key, 0, $key.Length) }
+                      }
+                      function Envelope([string]$Jwe, [string]$Correlation, [int]$Channel = 1) {
+                        @{ type = 'microsoft.mfa.otpDeliver.v1'; channel = $Channel; mode = 2; ttlSeconds = 60; correlationId = $Correlation; encryptedDeliveryContext = $Jwe } | ConvertTo-Json -Compress
+                      }
+                      function Send-Request([string]$Url, [string]$Body, [string]$Bearer = '') {
+                        $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Post, $Url)
+                        try {
+                          $request.Content = [Net.Http.StringContent]::new($Body, [Text.Encoding]::UTF8, 'application/json')
+                          if ($Bearer) { $request.Headers.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', $Bearer) }
+                          $response = $client.SendAsync($request).GetAwaiter().GetResult()
+                          try {
+                            $text = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                            try { $bodyObject = $text | ConvertFrom-Json -ErrorAction Stop } catch { $bodyObject = $null }
+                            return @{ Status = [int]$response.StatusCode; Body = $bodyObject }
+                          } finally { $response.Dispose() }
+                        } catch { return @{ Status = 0; Body = $null } }
+                        finally { $request.Dispose() }
+                      }
+                      function Record([string]$Name, [bool]$Passed, [string]$Detail) {
+                        $results.Add(@{ name = $Name; passed = $Passed; detail = $Detail })
+                        Write-Host "$Name : $(if ($Passed) { 'PASS' } else { 'FAIL' }) ($Detail)"
+                      }
+                      $handler = [Net.Http.HttpClientHandler]::new()
+                      $handler.AllowAutoRedirect = $false
+                      $client = [Net.Http.HttpClient]::new($handler)
+                      $client.Timeout = [TimeSpan]::FromSeconds(20)
+                      try {
+                        foreach ($target in $targets) {
+                          $rsa = [Security.Cryptography.RSA]::Create()
+                          $bearer = $null
+                          try {
+                            $rsa.ImportFromPem([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($target.publicKeyBase64)))
+                            $token = Get-AzAccessToken -ResourceUrl $target.audience -ErrorAction Stop -Verbose:$false -Debug:$false 3>$null 4>$null 5>$null 6>$null
+                            $bearer = if ($token.Token -is [Security.SecureString]) { [Net.NetworkCredential]::new('', $token.Token).Password } else { [string]$token.Token }
+                            $claims = [Text.Encoding]::UTF8.GetString((Decode64 $bearer.Split('.')[1])) | ConvertFrom-Json
+                            $clientId = if ($claims.azp) { $claims.azp } else { $claims.appid }
+                            if ($clientId -ne $env:CALLER_CLIENT_ID -or $claims.tid -ne $env:EXPECTED_TENANT) { throw 'Unexpected test-caller claims.' }
+                            $nonce = [guid]::NewGuid().ToString('n')
+                            $correlation = [guid]::NewGuid().ToString('n')
+                            $context = @{ nonce = $nonce; phoneNumber = '+15555550123'; message = 'Synthetic evaluation 123456'; locale = 'en-US' }
+                            $jwe = Encrypt-Context $context $rsa
+                            $valid = Envelope $jwe $correlation
+                            $ready = $false
+                            $last = 0
+                            for ($attempt = 1; $attempt -le 12; $attempt++) {
+                              $reply = Send-Request $target.url $valid $bearer
+                              $last = $reply.Status
+                              if ($reply.Status -eq 200 -and $reply.Body.nonce -ceq $nonce -and $reply.Body.correlationId -ceq $correlation) { $ready = $true; break }
+                              if ($reply.Status -notin @(0, 401, 403, 404, 429, 500, 502, 503, 504)) { break }
+                              if ($attempt -lt 12) { [Threading.Tasks.Task]::Delay(5000).GetAwaiter().GetResult() }
+                            }
+                            Record "$($target.language).evaluation_sms" $ready "HTTP $last; matching nonce/correlation required"
+                            if (-not $ready) { continue }
+                            $reply = Send-Request $target.url $valid
+                            Record "$($target.language).anonymous_rejected" ($reply.Status -eq 401) "HTTP $($reply.Status)"
+                            $reply = Send-Request $target.url $valid 'invalid-token'
+                            Record "$($target.language).invalid_token_rejected" ($reply.Status -eq 401) "HTTP $($reply.Status)"
+                            $reply = Send-Request $target.url (Envelope $jwe $correlation 2) $bearer
+                            Record "$($target.language).evaluation_voice" ($reply.Status -eq 200 -and $reply.Body.nonce -ceq $nonce -and $reply.Body.correlationId -ceq $correlation) "HTTP $($reply.Status); matching nonce/correlation required"
+                            $parts = $jwe.Split('.')
+                            $tag = Decode64 $parts[4]
+                            $tag[0] = $tag[0] -bxor 1
+                            $parts[4] = Base64Url $tag
+                            $incomplete = Encrypt-Context @{ nonce = ''; phoneNumber = '+15555550123'; message = 'Synthetic evaluation' } $rsa
+                            $badType = $valid | ConvertFrom-Json
+                            $badType.type = 'invalid'
+                            $badChannel = $valid | ConvertFrom-Json
+                            $badChannel.channel = $true
+                            $invalidCases = @(
+                              @{ name = 'tampered_jwe'; body = (Envelope ($parts -join '.') $correlation); error = 'decryption_failed' },
+                              @{ name = 'incomplete_context'; body = (Envelope $incomplete $correlation); error = 'bad_request' },
+                              @{ name = 'unsupported_type'; body = ($badType | ConvertTo-Json -Compress); error = 'bad_request' },
+                              @{ name = 'invalid_channel'; body = ($badChannel | ConvertTo-Json -Compress); error = 'bad_request' },
+                              @{ name = 'malformed_json'; body = '{'; error = 'bad_request' }
+                            )
+                            foreach ($case in $invalidCases) {
+                              $reply = Send-Request $target.url $case.body $bearer
+                              $passed = $reply.Status -eq 400 -and $reply.Body.error -ceq $case.error -and
+                                -not ($reply.Body.PSObject.Properties.Name -contains 'nonce')
+                              Record "$($target.language).$($case.name)" $passed "HTTP $($reply.Status); fixed error and no nonce required"
+                            }
+                          } catch {
+                            Record "$($target.language).harness" $false 'Credential, public key, or harness failure; sensitive exception details suppressed'
+                          } finally { $rsa.Dispose(); $bearer = $null; $token = $null }
+                        }
+                      } finally {
+                        $client.Dispose()
+                        $failed = @($results | Where-Object { -not $_.passed }).Count
+                        $output = Join-Path $env:PIPELINE_WORKSPACE 'cyot-http-results.xml'
+                        $writer = [Xml.XmlWriter]::Create($output, [Xml.XmlWriterSettings]@{ Indent = $true })
+                        try {
+                          $writer.WriteStartElement('testsuite')
+                          $writer.WriteAttributeString('name', 'CYOT deployed Function HTTP tests')
+                          $writer.WriteAttributeString('tests', [string]$results.Count)
+                          $writer.WriteAttributeString('failures', [string]$failed)
+                          foreach ($result in $results) {
+                            $writer.WriteStartElement('testcase'); $writer.WriteAttributeString('name', $result.name)
+                            if (-not $result.passed) { $writer.WriteElementString('failure', $result.detail) }
+                            $writer.WriteEndElement()
+                          }
+                          $writer.WriteEndElement()
+                        } finally { $writer.Dispose() }
+                      }
+                      if ($failed -gt 0 -or $results.Count -ne 27) { throw 'Deployed HTTP validation failed or did not execute all 27 checks. See the ADO Tests tab.' }
+                  env:
+                    EXPECTED_TENANT: $(CyotTenantId)
+                    CALLER_CLIENT_ID: $(CyotCallerClientId)
+                - task: PublishTestResults@2
+                  condition: succeededOrFailed()
+                  inputs:
+                    testResultsFormat: JUnit
+                    testResultsFiles: $(Pipeline.Workspace)/cyot-http-results.xml
+                    failTaskOnFailedTests: true
+                    failTaskOnMissingResultsFile: true
+                    testRunTitle: CYOT deployed HTTP tests (no provider delivery)
+                - pwsh: |
+                    $path = Join-Path $env:AGENT_TEMPDIRECTORY ('cyot-verified-targets-' + $env:BUILD_BUILDID + '.json')
+                    try {
+                      if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force -ErrorAction Stop }
+                    } catch { throw 'Temporary target metadata cleanup failed.' }
+                  displayName: Remove temporary target metadata
+                  condition: always()
