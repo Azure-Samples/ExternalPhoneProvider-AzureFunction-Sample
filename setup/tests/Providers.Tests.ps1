@@ -110,6 +110,13 @@ try {
 
         $profile = Read-EppJson (Join-Path $SetupDirectory 'providers' 'telesign.json')
         Assert ($profile.deployment.authentication.mode -ceq 'oauth') 'Telesign deployments must select OAuth.'
+        foreach ($region in @('global', 'eu')) {
+            $configuration = Get-EppProvider -AssetDirectory $SetupDirectory -Provider telesign -EndpointRegion $region -NonInteractive
+            Assert ($configuration.TenantId -ceq 'd818b557-ea1c-4070-a3f1-928330b7a30c' -and
+                $configuration.Settings.EPP_PROVIDER_TENANT_ID -ceq 'd818b557-ea1c-4070-a3f1-928330b7a30c') 'Keep the Telesign provider and access-token tenants unchanged.'
+            Assert ($configuration.Settings.EPP_PROVIDER_APP_ID -ceq 'f1117a41-5e56-48d1-836a-1313846d1610' -and
+                $configuration.Settings.EPP_PROVIDER_SCOPE -ceq 'api://f1117a41-5e56-48d1-836a-1313846d1610/.default') 'Both Telesign routes must emit the confirmed API application and scope.'
+        }
         $profile.deployment.AccessTokenScopeTenant = '<telesign-access-token-tenant-id>'
         Assert-Throws {
             ConvertTo-EppProviderSettings -Profile $profile -Id telesign -DisplayName Telesign -EndpointRegion global -NonInteractive
