@@ -67,19 +67,24 @@ One deployment accepts SMS and voice. Each request's `channel` selects its confi
 
 Guided setup selects and publishes the language ZIP automatically. Use this section for manual deployment.
 
-Download the latest successful CI ZIP for your chosen language:
+Open the [package releases](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases)
+and choose the newest stable tag ending in your language ID. Each language release contains
+`released-package.zip` and its own `SHA256SUMS.txt`:
 
-| Language | Download | Contents |
+| Language | Release tag | Contents |
 | --- | --- | --- |
-| JavaScript | [epp-javascript.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-javascript.zip) | Node.js 22 application and production dependencies |
-| .NET | [epp-dotnet.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-dotnet.zip) | Framework-dependent .NET 8 Linux x64 publish output, including Azure Functions metadata and extensions |
-| Python | [epp-python.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-python.zip) | Python 3.11 application with Linux x64 dependencies in `.python_packages/lib/site-packages` |
+| JavaScript | `epp-packages-<run>-<attempt>-javascript` | Node.js 22 application and production dependencies |
+| .NET | `epp-packages-<run>-<attempt>-dotnet` | Framework-dependent .NET 8 Linux x64 publish output, including Azure Functions metadata and extensions |
+| Python | `epp-packages-<run>-<attempt>-python` | Python 3.11 application with Linux x64 dependencies in `.python_packages/lib/site-packages` |
 
 Deploy the ZIP to an Azure Functions v4 app on Linux x64 with the matching language runtime.
-Verify `SHA256SUMS.txt` and configure the matching runtime, settings, Key Vault, and **Easy Auth**.
+Verify the ZIP against `SHA256SUMS.txt` from the same language release and configure the matching
+runtime, settings, Key Vault, and **Easy Auth**.
 
-Successful `main` builds publish a versioned [release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest).
-PR builds publish workflow artifacts only. Packaging does not deploy or verify delivery.
+Successful `main` builds publish one versioned release per language.
+PR builds publish workflow artifacts only, with each ZIP and checksum under its language folder.
+These folders separate identical asset names locally; the ZIP itself contains the Function payload,
+not a wrapper folder. Packaging does not deploy or verify delivery.
 
 ## Build ZIPs locally
 
@@ -87,9 +92,9 @@ Run one packaging script from the repository root. It creates a local ZIP withou
 
 | Language | Root-level script | Prerequisites | ZIP in `artifacts/` |
 | --- | --- | --- | --- |
-| JavaScript | [package-javascript.ps1](package-javascript.ps1) | PowerShell 7+, Node.js 20 or 22 with npm, npm registry access | `epp-javascript.zip` |
-| .NET | [package-dotnet.ps1](package-dotnet.ps1) | PowerShell 7+, .NET 8 SDK, and NuGet feed access to build the ZIP | `epp-dotnet.zip` |
-| Python | [package-python.ps1](package-python.ps1) | Linux x64, PowerShell 7+, Python 3.11 with pip, and PyPI access to build the ZIP | `epp-python.zip` |
+| JavaScript | [package-javascript.ps1](package-javascript.ps1) | PowerShell 7+, Node.js 20 or 22 with npm, npm registry access | `javascript/released-package.zip` |
+| .NET | [package-dotnet.ps1](package-dotnet.ps1) | PowerShell 7+, .NET 8 SDK, and NuGet feed access to build the ZIP | `dotnet/released-package.zip` |
+| Python | [package-python.ps1](package-python.ps1) | Linux x64, PowerShell 7+, Python 3.11 with pip, and PyPI access to build the ZIP | `python/released-package.zip` |
 
 ```powershell
 pwsh -File ./package-javascript.ps1
@@ -114,7 +119,7 @@ imports the application using only the bundled dependencies.
 Existing archives are never overwritten. For another build, specify a new path:
 
 ```powershell
-pwsh -File ./package-javascript.ps1 -OutputPath ./artifacts/epp-javascript-v2.zip
+pwsh -File ./package-javascript.ps1 -OutputPath ./artifacts/javascript-v2/released-package.zip
 ```
 
 `-OutputPath` works for all three scripts. Configure the destination and follow

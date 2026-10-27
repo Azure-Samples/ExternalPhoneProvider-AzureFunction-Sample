@@ -1,39 +1,48 @@
 function Get-EppPackageRelease {
-    param([string] $SourceRepository, [string] $Tag, [string] $TagPrefix)
+    param([string] $SourceRepository, [string] $Tag, [string] $TagPrefix,
+        [ValidateSet('javascript', 'dotnet', 'python')][string] $Language)
 
-    $tagPattern = '^' + [regex]::Escape($TagPrefix) + '[0-9]+-[0-9]+$'
+    $tagShape = "$TagPrefix<run>-<attempt>-$Language"
+    $tagPattern = '^' + [regex]::Escape($TagPrefix) + '[0-9]+-[0-9]+-' + $Language + '\z'
+    if ($Tag -and $Tag -cnotmatch $tagPattern) {
+        throw "Package release tag '$Tag' must match '$tagShape' for the selected language."
+    }
     $headers = @{
         'User-Agent' = 'EPP-Setup'
         Accept = 'application/vnd.github+json'
         'X-GitHub-Api-Version' = '2022-11-28'
     }
-    $uri = if ($Tag) {
-        "https://api.github.com/repos/$SourceRepository/releases/tags/$([Uri]::EscapeDataString($Tag))"
-    }
-    else {
-        "https://api.github.com/repos/$SourceRepository/releases?per_page=100"
-    }
-    try {
-        $response = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec 60
-    }
-    catch {
-        $description = if ($Tag) { "package release '$Tag'" } else { 'stable package releases' }
-        throw "Could not resolve the $description in '$SourceRepository': $($_.Exception.Message)"
-    }
-    $release = if ($Tag) {
-        $response
-    }
-    else {
-        @($response) | Where-Object {
-            -not $_.draft -and -not $_.prerelease -and [string]$_.tag_name -cmatch $tagPattern
-        } | Select-Object -First 1
-    }
+    $page = 1
+    do {
+        $uri = if ($Tag) {
+            "https://api.github.com/repos/$SourceRepository/releases/tags/$([Uri]::EscapeDataString($Tag))"
+        }
+        else {
+            "https://api.github.com/repos/$SourceRepository/releases?per_page=100&page=$page"
+        }
+        try {
+            $response = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec 60
+        }
+        catch {
+            $description = if ($Tag) { "package release '$Tag'" } else { 'stable package releases' }
+            throw "Could not resolve the $description in '$SourceRepository': $($_.Exception.Message)"
+        }
+        $release = if ($Tag) {
+            $response
+        }
+        else {
+            @($response) | Where-Object {
+                -not $_.draft -and -not $_.prerelease -and [string]$_.tag_name -cmatch $tagPattern
+            } | Select-Object -First 1
+        }
+        $page++
+    } while (-not $Tag -and -not $release -and @($response).Count -eq 100)
     if (-not $release) {
-        throw "No stable CI package release matching '$TagPrefix<run>-<attempt>' was found in '$SourceRepository'."
+        throw "No stable CI package release matching '$tagShape' was found in '$SourceRepository'."
     }
     $resolvedTag = [string]$release.tag_name
-    if ($release.draft -or $release.prerelease -or $resolvedTag -cnotmatch $tagPattern) {
-        throw "GitHub release '$resolvedTag' is not a stable CI package release matching '$TagPrefix<run>-<attempt>'."
+    if ($release.draft -or $release.prerelease -or $resolvedTag -cnotmatch $tagPattern -or ($Tag -and $resolvedTag -cne $Tag)) {
+        throw "GitHub release '$resolvedTag' is not the requested stable CI package release matching '$tagShape'."
     }
     return $release
 }
@@ -57,7 +66,7 @@ function Get-EppLanguage {
         if ($entry -isnot [Collections.IDictionary] -or -not $strategies.ContainsKey([string]$entry['id']) -or
             $seen.ContainsKey($entry['id']) -or $entry['buildStrategy'] -cne $strategies[$entry['id']] -or
             -not $entry['displayName'] -or $entry['displayName'] -match '[\x00-\x1f]' -or
-            [string]$entry['assetName'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*\.zip$') {
+            $entry['assetName'] -cne 'released-package.zip') {
             throw 'Language catalog contains an invalid, unsupported, or duplicate entry.'
         }
         $seen[$entry['id']] = $true
@@ -71,7 +80,7 @@ function Get-EppLanguage {
     }
     $entry = $entries | Where-Object { $_['id'] -ceq $languageId } | Select-Object -First 1
     if (-not $entry) { throw "The package catalog does not contain the selected language '$Language'." }
-    $release = Get-EppPackageRelease -SourceRepository $SourceRepository -Tag $PackageReleaseTag -TagPrefix $tagPrefix
+    $release = Get-EppPackageRelease -SourceRepository $SourceRepository -Tag $PackageReleaseTag -TagPrefix $tagPrefix -Language $languageId
     $releaseTag = [string]$release.tag_name
     $releaseBaseUrl = "https://github.com/$SourceRepository/releases/download/$releaseTag"
     $assetName = [string]$entry['assetName']
@@ -81,6 +90,7 @@ function Get-EppLanguage {
             throw "Release '$releaseTag' must contain exactly one '$requiredAsset' asset."
         }
     }
+    if ($assets.Count -ne 2) { throw "Release '$releaseTag' must contain only '$assetName' and 'SHA256SUMS.txt' assets." }
     $url = Read-EppInput -Name PackageUrl -Value "$releaseBaseUrl/$assetName" -Kind PackageUrl `
         -SourceRepository $SourceRepository -NonInteractive
     return [pscustomobject]@{
@@ -173,7 +183,7 @@ function Get-EppPackage {
     if ((Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash -ine $expected) {
         throw 'The downloaded Function ZIP does not match its published SHA-256. No Azure resources were changed.'
     }
-    if ($Selection.BuildStrategy -ne 'ready') { throw 'Select a release containing deployment ZIPs for all languages.' }
+    if ($Selection.BuildStrategy -ne 'ready') { throw 'Select a release containing the selected language deployment ZIPs.' }
     Assert-EppArchive -Path $sourcePath -Language $Selection.Id -Kind ready
     $path = $sourcePath
     return [pscustomobject]@{

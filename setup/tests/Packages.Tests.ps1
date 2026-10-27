@@ -48,10 +48,11 @@ try {
             $script:Downloads.Add($Uri)
             if ($Uri.EndsWith('/SHA256SUMS.txt')) {
                 Assert ($TimeoutSec -eq 60) 'Bound checksum downloads.'
+                Assert ($Uri -ceq $script:ExpectedChecksumsUrl) 'Use only the selected language release checksum file.'
                 Set-Content -LiteralPath $OutFile -Value $script:ChecksumText -Encoding utf8NoBOM
             }
             else {
-                Assert ($Uri -ceq $script:ExpectedPackageUrl -and $TimeoutSec -eq 300) 'Download only the selected aggregate release asset with a bounded timeout.'
+                Assert ($Uri -ceq $script:ExpectedPackageUrl -and $TimeoutSec -eq 300) 'Download only the selected language release asset with a bounded timeout.'
                 Copy-Item -LiteralPath $script:PackagePath -Destination $OutFile
                 if ($script:CorruptDownload) { Add-Content -LiteralPath $OutFile -Value 'corrupted' }
             }
@@ -75,11 +76,12 @@ try {
             Assert-Throws { Assert-EppArchive -Path $duplicate -Language $language -Kind ready } "exactly one 'host.json'"
 
             $hash = (Get-FileHash -LiteralPath $script:PackagePath -Algorithm SHA256).Hash.ToLowerInvariant()
-            $file = "epp-$language.zip"
-            $script:ExpectedPackageUrl = "https://github.com/unit/epp/releases/download/epp-packages-42-1/$file"
+            $file = 'released-package.zip'
+            $script:ExpectedPackageUrl = "https://github.com/unit/epp/releases/download/epp-packages-42-1-$language/$file"
+            $script:ExpectedChecksumsUrl = "https://github.com/unit/epp/releases/download/epp-packages-42-1-$language/SHA256SUMS.txt"
             $selection = @{
                 Id = $language; DisplayName = $language; BuildStrategy = 'ready'; Url = $script:ExpectedPackageUrl
-                ChecksumsUrl = 'https://github.com/unit/epp/releases/download/epp-packages-42-1/SHA256SUMS.txt'
+                ChecksumsUrl = $script:ExpectedChecksumsUrl
             }
             $script:ChecksumText = "$hash  $file"
             $script:Downloads.Clear()
@@ -87,7 +89,7 @@ try {
             Assert ($package.RequiresRemoteBuild -eq $false -and $package.SourceSha256 -ceq $hash -and
                 $package.Sha256 -ceq $hash -and $package.Path -ceq (Join-Path $Directory $file)) 'Preserve the verified deployment ZIP and its SHA-256.'
             Assert ($script:Downloads.Count -eq 2 -and $script:Downloads[0] -ceq $selection.ChecksumsUrl -and
-                $script:Downloads[1] -ceq $selection.Url) 'Verify aggregate release checksums before consuming the selected language asset.'
+                $script:Downloads[1] -ceq $selection.Url) 'Verify the language release checksum before consuming its asset.'
             $script:CorruptDownload = $true
             Assert-Throws { Get-EppPackage -Selection $selection -Directory $Directory } 'does not match its published SHA-256'
             $script:CorruptDownload = $false
@@ -95,6 +97,8 @@ try {
             $script:Downloads.Clear()
             Assert-Throws { Get-EppPackage -Selection $selection -Directory $Directory } 'exactly one SHA-256 entry'
             Assert ($script:Downloads.Count -eq 1) 'Reject ambiguous checksums before downloading the ZIP.'
+            $script:ChecksumText = "$('0' * 64)  $file"
+            Assert-Throws { Get-EppPackage -Selection $selection -Directory $Directory } 'does not match its published SHA-256'
             $script:ChecksumText = "$hash  $file"
             $selection.BuildStrategy = if ($language -eq 'dotnet') { 'dotnet-publish' } else { 'remote-build' }
             Assert-Throws { Get-EppPackage -Selection $selection -Directory $Directory } 'deployment ZIPs'
@@ -108,10 +112,10 @@ try {
         }
         $path = New-TestArchive ($required.python + 'other/cacert.pem') '-----BEGIN CERTIFICATE-----'
         Assert-Throws { Assert-EppArchive -Path $path -Language python -Kind ready } 'local settings or key material'
-        foreach ($text in @('', 'invalid  epp-python.zip', "$('a' * 64)  epp-dotnet.zip")) {
-            Assert-Throws { Get-EppPublishedChecksum -Text $text -FileName 'epp-python.zip' } 'exactly one SHA-256 entry'
+        foreach ($text in @('', 'invalid  released-package.zip', "$('a' * 64)  other.zip", "$('a' * 64)  Released-package.zip")) {
+            Assert-Throws { Get-EppPublishedChecksum -Text $text -FileName 'released-package.zip' } 'exactly one SHA-256 entry'
         }
-        Assert ((Get-EppPublishedChecksum -Text "$('A' * 64) *epp-python.zip" -FileName 'epp-python.zip') -ceq ('a' * 64)) 'Accept standard binary checksum format and normalize its case.'
+        Assert ((Get-EppPublishedChecksum -Text "$('A' * 64) *released-package.zip" -FileName 'released-package.zip') -ceq ('a' * 64)) 'Accept standard binary checksum format and normalize its case.'
     } $directory
     Write-Host 'Package regression tests passed.'
 }

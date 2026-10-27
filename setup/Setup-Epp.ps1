@@ -22,7 +22,8 @@
 .PARAMETER SourceRepository
     Public GitHub owner/repository containing the setup files. Use with SourceRef to test a fork.
 .PARAMETER PackageReleaseTag
-    Optional stable epp-packages release tag. By default, setup uses the latest stable CI package release.
+    Optional exact stable epp-packages-<run>-<attempt>-<language> tag (javascript, dotnet, or python).
+    By default, setup uses the latest stable CI release for the selected language; C# uses dotnet.
 .PARAMETER ServicePlan
     FC1 for Flex Consumption with a free usage grant, or EP1 for Premium with a warm instance.
     Prompts with FC1 as the interactive default when omitted; required for unattended setup.
