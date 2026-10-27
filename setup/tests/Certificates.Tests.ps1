@@ -21,8 +21,6 @@ try {
         }
         $script:Exists = $false
         $script:ReadError = ''
-        $script:CreateError = ''
-        $script:SettingsError = ''
         $script:Calls = [Collections.Generic.List[string]]::new()
         $script:GraphWrites = 0
         $script:GraphError = ''
@@ -35,6 +33,8 @@ try {
         $script:ReferenceError = ''
         $script:AccessError = ''
         $script:RoleAssignments = @()
+        $script:RoleReadOverride = ''
+        $script:OutputMutation = $null
         $script:Sleeps = 0
         function script:Write-Host {
             param([Parameter(ValueFromPipeline)] $Object, $ForegroundColor, [switch] $NoNewline)
@@ -88,34 +88,15 @@ try {
                     }
                     return $script:Bundle | ConvertTo-Json -Depth 8
                 }
-                '^keyvault certificate create ' {
-                    if ($script:CreateError) { throw $script:CreateError }
-                    $path = $Arguments[[Array]::IndexOf($Arguments, '--policy') + 1].Substring(1)
-                    $name = $Arguments[[Array]::IndexOf($Arguments, '--name') + 1]
-                    $vault = $Arguments[[Array]::IndexOf($Arguments, '--vault-name') + 1]
-                    Set-TestBundle -Certificate $script:CreatedCertificate -VaultName $vault -Name $name
-                    $script:Bundle.policy = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
-                }
                 '^keyvault secret list-versions ' { return ConvertTo-Json -InputObject $script:SecretVersions -Depth 8 }
                 '^keyvault show ' { return $script:Vault | ConvertTo-Json -Depth 8 }
-                '^functionapp config appsettings set ' {
-                    if ($script:SettingsError) { throw $script:SettingsError }
-                    $path = $Arguments[[Array]::IndexOf($Arguments, '--settings') + 1].Substring(1)
-                    $script:Settings = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
+                '^role assignment list ' {
+                    if ($script:RoleReadOverride) { return $script:RoleReadOverride }
+                    return ConvertTo-Json -InputObject $script:RoleAssignments -Depth 8
                 }
                 '^functionapp config appsettings list ' {
                     Assert ($command.Contains("[?name=='EPP_ENCRYPTION_KEY_ID'].value")) 'Read back only the nonsecret key ID.'
                     return ConvertTo-Json -InputObject @($script:Settings.EPP_ENCRYPTION_KEY_ID)
-                }
-                '^functionapp identity show ' { return '77777777-7777-7777-7777-777777777777' }
-                '^role assignment list ' { return ConvertTo-Json -InputObject $script:RoleAssignments }
-                '^role assignment create ' {
-                    if ($script:AccessError) { throw $script:AccessError }
-                }
-                '^rest --method put .*accessPolicies/add' {
-                    if ($script:AccessError) { throw $script:AccessError }
-                    $path = $Arguments[[Array]::IndexOf($Arguments, '--body') + 1].Substring(1)
-                    $script:AccessPolicy = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable
                 }
                 '^rest --method post .*configreferences/appsettings/refresh' {
                     if ($script:ReferenceError) { throw $script:ReferenceError }
@@ -131,7 +112,24 @@ try {
                     foreach ($key in $script:ReferenceOverride.Keys) { $properties[$key] = $script:ReferenceOverride[$key] }
                     return @{ properties = $properties } | ConvertTo-Json
                 }
-                '^deployment sub create ' { return $script:DeploymentOutputs | ConvertTo-Json -Depth 8 }
+                '^deployment sub create ' {
+                    if ($script:AccessError) { throw $script:AccessError }
+                    $path = $Arguments[[Array]::IndexOf($Arguments, '--parameters') + 1].Substring(1)
+                    $script:DeploymentParameters = (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable).parameters
+                    $plan = $script:DeploymentParameters.certificatePlan.value
+                    if ($plan.action -ne 'Reuse') {
+                        Set-TestBundle -Certificate $script:CreatedCertificate -VaultName $plan.vaultName -Name $plan.certificateName
+                    }
+                    $script:Settings = @{
+                        EPP_DECRYPTION_KEY_PEM = "@Microsoft.KeyVault(SecretUri=$($script:Bundle.sid))"
+                        EPP_ENCRYPTION_KEY_ID = $plan.keyId
+                    }
+                    $outputs = @{} + $script:DeploymentOutputs
+                    $outputs.certificateBundle = @{ value = $script:Bundle }
+                    $outputs.certificateSecretVersions = @{ value = $script:SecretVersions }
+                    if ($script:OutputMutation) { & $script:OutputMutation $outputs }
+                    return $outputs | ConvertTo-Json -Depth 12
+                }
                 default { throw "Unexpected Azure call (no network allowed): $command" }
             }
         }
@@ -164,17 +162,15 @@ try {
         try {
             Set-TestBundle $certificate
             $certificateId = $script:Bundle.id
-            $script:Exists = $false
-            $script:CreatedCertificate = $certificate
             $inputs = @{
                 TenantId = '11111111-1111-1111-1111-111111111111'; TenantRegionScope = 'NA'
                 SubscriptionId = '33333333-3333-3333-3333-333333333333'; ApplicationId = '22222222-2222-2222-2222-222222222222'
                 ServicePlan = 'FC1'; Language = 'javascript'; ProviderAuthentication = 'apiKey'
                 Location = 'westus2'; ResourcePrefix = 'unit'; PackageSha256 = ('a' * 64); SourcePackageSha256 = ('a' * 64)
-                PackageFile = 'epp-javascript.zip'; SourceRevision = ('a' * 40)
+                PackageFile = 'released-package.zip'; SourceRevision = ('a' * 40)
                 SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
-                PackageReleaseTag = 'epp-packages-1-1'
-                PackageUrl = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
+                PackageReleaseTag = 'epp-packages-1-1-javascript'
+                PackageUrl = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1-javascript/released-package.zip'
                 ProviderTenantId = '44444444-4444-4444-4444-444444444444'
                 ProviderAllowedTenantIds = @('44444444-4444-4444-4444-444444444444')
             }
@@ -187,35 +183,21 @@ try {
                     enableRbacAuthorization = $true; accessPolicies = @()
                 }
             }
-            $parameters = @{ Inputs = $inputs; VaultName = 'epptestvault'; OutputDirectory = $Directory; Directory = $Directory }
-            $issued = Get-EppEncryptionCertificate @parameters
-            $policy = $script:Bundle.policy
-            Assert ($script:Calls.Count -eq 4 -and $script:Calls[1] -like 'keyvault certificate create *' -and
-                $script:Calls[-1] -like 'keyvault secret list-versions *') 'Expected show/create/show and secret metadata only.'
-            Assert ($policy.x509CertificateProperties.subject -ceq 'CN=ExternalPhoneProvider') 'Subject must not be personalized.'
-            Assert ($policy.issuerParameters.name -ceq 'Self' -and $policy.x509CertificateProperties.validityInMonths -eq 12) 'Expected 12-month self-signed issuance.'
-            Assert ($policy.keyProperties.keyType -ceq 'RSA' -and $policy.keyProperties.keySize -eq 2048) 'Expected RSA-2048.'
-            Assert ($policy.keyProperties.exportable -eq $true -and $policy.keyProperties.reuseKey -eq $true) 'Expected exportable, reusable key.'
-            Assert ($policy.secretProperties.contentType -ceq 'application/x-pem-file') 'Expected PEM backing secret.'
-            Assert ($policy.lifetimeActions[0].action.actionType -ceq 'EmailContacts') 'Renewal must remain manual.'
+            $issued = ConvertFrom-EppCertificateBundle -Bundle $script:Bundle -RequireSetupPolicy
+            Assert-EppCertificateSecret -SecretId $issued.SecretId -Versions $script:SecretVersions
+            Assert ($script:Calls.Count -eq 0) 'ARM certificate outputs must be validated locally without Azure calls.'
             Assert ($issued.SecretId -ceq $script:Bundle.sid -and -not $issued.Certificate.HasPrivateKey) 'Return secret ID and public certificate only.'
-            Assert (-not (Test-Path (Join-Path $Directory 'certificate-policy.json'))) 'Temporary policy was not removed.'
-            $publicBytes = [IO.File]::ReadAllBytes((Join-Path $Directory "$($certificate.Thumbprint).cer"))
-            Assert ([Convert]::ToBase64String($publicBytes) -ceq $script:Bundle.cer) 'Saved output must contain only public DER.'
             $script:Calls.Clear()
-            $reused = Get-EppEncryptionCertificate @parameters
+            $reused = Get-EppExistingEncryptionCertificate -CertificateId $certificateId -SubscriptionId $inputs.SubscriptionId
             Assert ($script:Calls.Count -eq 2 -and $reused.Certificate.Thumbprint -ceq $certificate.Thumbprint) 'Rerun must reuse the existing certificate.'
             $reused.Certificate.Dispose()
 
             foreach ($errorText in @('(Forbidden) denied', '(VaultNotFound) absent', '(ServiceUnavailable) unavailable')) {
                 $script:ReadError = $errorText; $script:Calls.Clear()
-                Assert-Throws { Get-EppEncryptionCertificate @parameters } ([regex]::Escape($errorText))
+                Assert-Throws { Get-EppExistingEncryptionCertificate -CertificateId $certificateId -SubscriptionId $inputs.SubscriptionId } ([regex]::Escape($errorText))
                 Assert ($script:Calls.Count -eq 1) 'Read errors must not trigger creation.'
             }
-            $script:ReadError = ''; $script:Exists = $false; $script:CreateError = '(Conflict) pending operation exists'
-            Assert-Throws { Get-EppEncryptionCertificate @parameters } '\(Conflict\)'
-            Assert (-not (Test-Path (Join-Path $Directory 'certificate-policy.json'))) 'Failed issuance left its temporary policy.'
-            $script:CreateError = ''; $script:Exists = $true
+            $script:ReadError = ''
             foreach ($mutation in @(
                 { $script:Bundle.attributes.enabled = $false },
                 { $script:Bundle.policy.keyProperties.exportable = $false },
@@ -224,7 +206,7 @@ try {
             )) {
                 $saved = $script:Bundle | ConvertTo-Json -Depth 8
                 & $mutation
-                Assert-Throws { Get-EppEncryptionCertificate @parameters } 'incompatible certificate'
+                Assert-Throws { ConvertFrom-EppCertificateBundle -Bundle $script:Bundle -RequireSetupPolicy } 'incompatible certificate'
                 $script:Bundle = $saved | ConvertFrom-Json -AsHashtable
             }
             foreach ($mutation in @(
@@ -411,7 +393,8 @@ try {
             Assert ($replacePlan.RemoveKeyIds.Count -eq 2 -and $replacePlan.CertificateName -ceq $retryPlan.CertificateName -and
                 $replacePlan.CertificateName -cne 'phone-provider-encryption') 'Replacement must stage a separate, repeatable certificate name.'
             $context.CertificatePlan = $replacePlan; $script:CreatedCertificate = $other
-            $replacement = Get-EppEncryptionCertificate @parameters -CertificateName $replacePlan.CertificateName
+            Set-TestBundle -Certificate $other -Name $replacePlan.CertificateName
+            $replacement = ConvertFrom-EppCertificateBundle -Bundle $script:Bundle -RequireSetupPolicy
             try {
                 $registration.Certificate = $replacement.Certificate
                 Set-EppApplicationEndpoint @registration -KeyId $replacePlan.KeyId
@@ -425,13 +408,11 @@ try {
             } 'exactly one'
 
             Set-TestBundle $certificate
-            $settings = @{ Inputs = $inputs; Names = @{ resourceGroup = 'epp-test-rg'; functionApp = 'epp-test-app' }; SecretId = $issued.SecretId; KeyId = $keyId; Directory = $Directory }
-            Set-EppEncryptionSettings @settings
+            $script:Settings = @{
+                EPP_DECRYPTION_KEY_PEM = "@Microsoft.KeyVault(SecretUri=$($issued.SecretId))"
+                EPP_ENCRYPTION_KEY_ID = $keyId
+            }
             Assert ($script:Settings.EPP_DECRYPTION_KEY_PEM -ceq "@Microsoft.KeyVault(SecretUri=$($issued.SecretId))" -and $script:Settings.EPP_ENCRYPTION_KEY_ID -eq $keyId) 'Use the selected version and Entra key ID.'
-            $script:SettingsError = 'App settings write failed'
-            Assert-Throws { Set-EppEncryptionSettings @settings } 'App settings write failed'
-            Assert (-not (Test-Path (Join-Path $Directory 'encryption-appsettings.json'))) 'Failed settings update left its temporary file.'
-            $script:SettingsError = ''
             $referenceArgs = @{ Inputs = $inputs; Names = $names; SecretId = $issued.SecretId; KeyId = $keyId }
             Assert-EppEncryptionReference @referenceArgs
             $script:ReferenceStates.Enqueue('AccessToKeyVaultDenied'); $script:Sleeps = 0
@@ -448,41 +429,19 @@ try {
             $script:ReferenceStatus = 'Resolved'
             $script:Settings.EPP_ENCRYPTION_KEY_ID = $secondId
             Assert-Throws { Assert-EppEncryptionReference @referenceArgs } 'does not match the approved'
-            Set-EppEncryptionSettings @settings
+            $script:Settings.EPP_ENCRYPTION_KEY_ID = $keyId
 
             $script:Application.KeyCredentials = @($first, $signing)
             $externalNames = @{} + $names; $externalNames.keyVault = 'differentvault'
             $externalArgs = @{} + $planArgs; $externalArgs.Names = $externalNames
             $externalPlan = Get-EppCertificatePlan @externalArgs @reuseArgs -NonInteractive
-            $script:Calls.Clear()
-            Initialize-EppCertificateAccess -Inputs $inputs -Names $externalNames -Plan $externalPlan -Directory $Directory
-            $roleCommand = $script:Calls | Where-Object { $_ -like 'role assignment create *' }
-            Assert ($roleCommand -like "*/secrets/phone-provider-encryption*" -and $roleCommand -like '*--assignee-object-id 77777777-7777-7777-7777-777777777777*') 'Grant only certificate-secret access to the Function system identity.'
-            $script:RoleAssignments = @(@{ principalId = '77777777-7777-7777-7777-777777777777'; roleDefinitionId = "scope/$script:KeyVaultSecretsUserRoleId" })
-            $script:Calls.Clear()
-            Initialize-EppCertificateAccess -Inputs $inputs -Names $externalNames -Plan $externalPlan -Directory $Directory
-            Assert (@($script:Calls | Where-Object { $_ -like 'role assignment create *' }).Count -eq 0) 'Reuse an existing secret-read grant.'
-            $script:RoleAssignments = @()
             $script:Vault.properties.enableRbacAuthorization = $false
-            Assert-Throws {
-                Initialize-EppCertificateAccess -Inputs $inputs -Names $externalNames -Plan $externalPlan -Directory $Directory
-            } 'permission model changed'
             $externalPlan = Get-EppCertificatePlan @externalArgs @reuseArgs -NonInteractive
             $script:Vault.properties.accessPolicies = @(@{
                 tenantId = $inputs.TenantId; objectId = '77777777-7777-7777-7777-777777777777'
                 permissions = @{ keys = @('sign'); secrets = @('list'); certificates = @('get') }
             })
-            Initialize-EppCertificateAccess -Inputs $inputs -Names $externalNames -Plan $externalPlan -Directory $Directory
-            $permissions = $script:AccessPolicy.properties.accessPolicies[0].permissions
-            Assert ($permissions.keys -contains 'sign' -and $permissions.secrets -contains 'list' -and
-                $permissions.secrets -contains 'get' -and $permissions.certificates -contains 'get') 'Adding secret read must preserve existing access-policy permissions.'
-            Assert (-not (Test-Path (Join-Path $Directory 'certificate-access-policy.json'))) 'Temporary access-policy files must be removed.'
-            $script:AccessError = 'access policy update denied'
-            Assert-Throws {
-                Initialize-EppCertificateAccess -Inputs $inputs -Names $externalNames -Plan $externalPlan -Directory $Directory
-            } 'access policy update denied'
-            Assert (-not (Test-Path (Join-Path $Directory 'certificate-access-policy.json'))) 'Failed permission writes must also remove their temporary file.'
-            $script:AccessError = ''
+            Assert ($externalPlan.VaultRbac -eq $false) 'Plan the source vault permission model for the native ARM grant.'
             $script:Vault.properties.enableRbacAuthorization = $true
             $script:Vault.properties.tenantId = $secondId
             Assert-Throws { Get-EppCertificatePlan @externalArgs @reuseArgs -NonInteractive } 'Function application tenant'
@@ -529,8 +488,9 @@ try {
             }
             foreach ($action in @('Create', 'Reuse', 'Replace')) {
                 $inputs.Language = if ($action -eq 'Reuse') { 'dotnet' } else { 'javascript' }
-                $inputs.PackageFile = if ($inputs.Language -eq 'dotnet') { 'epp-dotnet.zip' } else { 'epp-javascript.zip' }
-                $inputs.PackageUrl = "https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/$($inputs.PackageFile)"
+                $inputs.PackageFile = 'released-package.zip'
+                $inputs.PackageReleaseTag = "epp-packages-1-1-$($inputs.Language)"
+                $inputs.PackageUrl = "https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/$($inputs.PackageReleaseTag)/$($inputs.PackageFile)"
                 Set-TestBundle $certificate
                 $script:Application.KeyCredentials = if ($action -eq 'Create') { @($signing) } else { @($first, (New-TestCredential $other $secondId), $signing) }
                 $context.CertificatePlan = if ($action -eq 'Reuse') { Get-EppCertificatePlan @planArgs @reuseArgs -NonInteractive }
@@ -540,6 +500,53 @@ try {
                 $snapshotBefore = Get-EppKeyCredentialSnapshot $script:Application.KeyCredentials
                 Assert-Throws { Invoke-EppDeployment @deployment } 'reference check failed'
                 Assert ($script:GraphWrites -eq 0 -and (Get-EppKeyCredentialSnapshot $script:Application.KeyCredentials) -ceq $snapshotBefore) 'Failed access validation must leave all registered credentials intact.'
+                $script:ReferenceError = ''
+                foreach ($case in @(
+                    @{
+                        Mutation = { param($outputs); $outputs.certificateBundle.value.id = $outputs.certificateBundle.value.id.Replace('/certificates/', '/secrets/') }
+                        Pattern = 'versioned Key Vault URL'
+                    },
+                    @{
+                        Mutation = { param($outputs); $outputs.certificateBundle.value.attributes.enabled = $false }
+                        Pattern = 'incompatible certificate'
+                    },
+                    @{
+                        Mutation = { param($outputs); $outputs.certificateSecretVersions.value = @() }
+                        Pattern = 'certificate-managed PEM secret'
+                    },
+                    @{
+                        Mutation = { param($outputs); $outputs.certificateSecretVersions.value[0].managed = $false }
+                        Pattern = 'certificate-managed PEM secret'
+                    },
+                    @{
+                        Mutation = {
+                            param($outputs)
+                            foreach ($field in @('id', 'sid')) {
+                                $outputs.certificateBundle.value[$field] = $outputs.certificateBundle.value[$field].Replace('/phone-provider-encryption', '/unapproved-certificate')
+                            }
+                        }
+                        Pattern = 'outside the approved vault or certificate name'
+                    }
+                )) {
+                    Set-TestBundle $certificate
+                    $script:OutputMutation = $case.Mutation
+                    $script:Calls.Clear()
+                    Assert-Throws { Invoke-EppDeployment @deployment } $case.Pattern
+                    Assert ($script:GraphWrites -eq 0 -and -not $script:Calls.Contains('publish') -and
+                        (Get-EppKeyCredentialSnapshot $script:Application.KeyCredentials) -ceq $snapshotBefore) 'Invalid ARM certificate output must stop locally before Graph changes or publication.'
+                }
+                $script:OutputMutation = $null
+                Set-TestBundle $certificate
+                if ($action -eq 'Reuse') {
+                    $script:OutputMutation = {
+                        param($outputs)
+                        $outputs.certificateBundle.value.id = $outputs.certificateBundle.value.id.Replace(('a' * 32), ('c' * 32))
+                    }
+                    Assert-Throws { Invoke-EppDeployment @deployment } 'changed after approval'
+                    Assert ($script:GraphWrites -eq 0) 'A different returned certificate version must never change registered credentials.'
+                    $script:OutputMutation = $null
+                    Set-TestBundle $certificate
+                }
                 $script:ReferenceError = ''; $script:Calls.Clear()
                 $result = Invoke-EppDeployment @deployment
                 Assert ($result.certificateAction -ceq $action -and $result.certificateReferenceResolved -eq $true) 'The persisted result must identify the action and resolved reference.'
@@ -558,6 +565,12 @@ try {
                 Assert ($referenceIndex -ge 0 -and $referenceIndex -lt $graphIndex -and
                     $graphIndex -lt [Array]::IndexOf($trace, 'publish')) 'Resolve the staged private-key reference before one Graph update, then publish.'
                 Assert (@($script:Application.KeyCredentials | Where-Object Usage -eq Encrypt).Count -eq 1) 'Each completed deployment must leave exactly one encryption credential.'
+                Assert ($script:DeploymentParameters.certificatePlan.value.keyId -ceq $context.CertificatePlan.KeyId -and
+                    $script:DeploymentParameters.certificatePlan.value.certificateName -ceq $context.CertificatePlan.CertificateName) 'ARM must receive the reviewed key ID and exact planned create/reuse/replacement name.'
+                Assert ($script:DeploymentParameters.certificatePlan.value.existingRoleAssignments.Count -eq 0) 'Create/Replace and same-vault reuse must pass an empty source-vault RBAC snapshot.'
+                Assert (@($script:Calls | Where-Object { $_ -match '^keyvault (certificate create|secret show)|^role assignment create|^functionapp config appsettings set' }).Count -eq 0) 'Certificate issuance, vault grants, and app settings writes belong to ARM, never local imperative helpers.'
+                $publicBytes = [IO.File]::ReadAllBytes((Join-Path $Directory "$($result.certificateThumbprint).cer"))
+                Assert ([Convert]::ToBase64String($publicBytes) -ceq $script:Bundle.cer) 'Persist only the validated public DER certificate.'
             }
             Assert (@(Get-ChildItem -LiteralPath $Directory -Filter 'deployment-*.json').Count -eq 3) 'Successful scenarios must persist a deployment summary.'
 
@@ -566,15 +579,53 @@ try {
             $context.CertificatePlan = Get-EppCertificatePlan @externalArgs @reuseArgs -NonInteractive
             $externalDeployment = @{} + $deployment; $externalDeployment.Names = $externalNames
             $script:DeploymentOutputs.keyVaultName.value = $externalNames.keyVault
+            foreach ($change in @(
+                { $script:Vault.properties.enableRbacAuthorization = $false },
+                { $script:Vault.properties.accessPolicies = @(@{ objectId = 'changed-after-approval' }) }
+            )) {
+                $savedVault = $script:Vault | ConvertTo-Json -Depth 10
+                & $change
+                $script:Calls.Clear(); $script:GraphWrites = 0
+                Assert-Throws { Invoke-EppDeployment @externalDeployment } 'permission model changed after approval'
+                Assert (@($script:Calls | Where-Object { $_ -like 'deployment sub create *' }).Count -eq 0 -and
+                    $script:GraphWrites -eq 0) 'Reject source-vault permission drift before ARM or Graph changes.'
+                $script:Vault = $savedVault | ConvertFrom-Json -AsHashtable
+            }
+            $script:RoleReadOverride = '{}'
+            Assert-Throws { Invoke-EppDeployment @externalDeployment } 'invalid source-vault role-assignment list'
+            $script:RoleReadOverride = ''
             $script:AccessError = 'source vault role denied'; $script:GraphWrites = 0
             $snapshotBefore = Get-EppKeyCredentialSnapshot $script:Application.KeyCredentials
             Assert-Throws { Invoke-EppDeployment @externalDeployment } 'source vault role denied'
             Assert ($script:GraphWrites -eq 0 -and (Get-EppKeyCredentialSnapshot $script:Application.KeyCredentials) -ceq $snapshotBefore) 'External-vault permission failures must leave every encryption credential intact.'
             $script:AccessError = ''; $script:Calls.Clear()
+            $script:RoleAssignments = @(@{
+                principalId = '77777777-7777-7777-7777-777777777777'
+                roleDefinitionId = "/subscriptions/$($inputs.SubscriptionId)/providers/Microsoft.Authorization/roleDefinitions/$script:KeyVaultSecretsUserRoleId"
+                scope = "$($context.CertificatePlan.VaultResourceId)/secrets/$($context.CertificatePlan.CertificateName)"
+            })
             $result = Invoke-EppDeployment @externalDeployment
             Assert ($result.certificateId -ceq $certificateId -and $result.resources.keyVault -ceq $externalNames.keyVault) 'Reuse must keep the source certificate separate from the deployment/provider vault.'
             Assert (@($script:Calls | Where-Object { $_ -like 'keyvault certificate create *' }).Count -eq 0) 'External reuse must not issue another certificate.'
             Assert (@(Get-ChildItem -LiteralPath $Directory -Filter 'deployment-*.json').Count -eq 4) 'External reuse must also persist its completed summary.'
+            $armPlan = $script:DeploymentParameters.certificatePlan.value
+            Assert ($armPlan.existingRoleAssignments.Count -eq 2 -and
+                $armPlan.existingRoleAssignments[0].principalId -ceq $script:RoleAssignments[0].principalId) 'Pass existing source-vault and secret-scoped grants to ARM rather than recreating them locally.'
+            Assert (@($script:Calls | Where-Object { $_ -like 'role assignment list *' }).Count -eq 2) 'Read inherited grants at the source vault and certificate-secret scopes only.'
+            $script:Vault.properties.enableRbacAuthorization = $false
+            $script:Vault.properties.accessPolicies = @(@{
+                tenantId = $inputs.TenantId; objectId = '77777777-7777-7777-7777-777777777777'
+                permissions = @{ keys = @('sign'); secrets = @('list'); certificates = @('get') }
+            })
+            $context.CertificatePlan = Get-EppCertificatePlan @externalArgs @reuseArgs -NonInteractive
+            $script:Calls.Clear()
+            $null = Invoke-EppDeployment @externalDeployment
+            $armPlan = $script:DeploymentParameters.certificatePlan.value
+            $permissions = $armPlan.existingPolicies[0].permissions
+            Assert ($armPlan.vaultRbac -eq $false -and $permissions.keys -contains 'sign' -and
+                $permissions.secrets -contains 'list' -and $permissions.certificates -contains 'get') 'Carry all existing access-policy permissions into the native ARM grant template.'
+            Assert (@($script:Calls | Where-Object { $_ -like 'role assignment *' }).Count -eq 0) 'Access-policy source vaults must not use imperative RBAC writes or reads.'
+            $script:Vault.properties.enableRbacAuthorization = $true
             $script:DeploymentOutputs.keyVaultName.value = $names.keyVault
 
             $script:SetupContext = $context; $script:TestProvider = $provider
@@ -595,8 +646,8 @@ try {
                 param($AssetDirectory, $Language, $SourceRepository, $PackageReleaseTag, [switch] $NonInteractive)
                 return @{
                     Id = 'javascript'; DisplayName = 'Node.js'; BuildStrategy = 'ready'
-                    Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
-                    ReleaseTag = 'epp-packages-1-1'
+                    Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1-javascript/released-package.zip'
+                    ReleaseTag = 'epp-packages-1-1-javascript'
                 }
             }
             function script:Get-EppPackage { param($Selection, $Directory); throw 'package-boundary' }

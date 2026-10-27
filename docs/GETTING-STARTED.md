@@ -42,7 +42,8 @@ Prepare:
 - **Administrators:** Azure deployment and role-assignment access, a Privileged Role Administrator
   for setup, and an Authentication Policy Administrator for activation.
 - **Azure region and budget:** check availability and subscription quota for your chosen Linux
-  plan. Azure resources and provider services can incur charges.
+  plan and the certificate deployment script's Container Instances and supporting storage.
+  Azure resources and provider services can incur charges.
 
 Check the [full prerequisites](../setup/docs/README.md#prerequisites-for-step-2). Setup can install
 Bicep, but not Azure CLI.

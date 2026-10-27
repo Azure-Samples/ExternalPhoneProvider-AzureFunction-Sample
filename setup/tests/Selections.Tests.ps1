@@ -399,8 +399,9 @@ try {
             param($AssetDirectory, $Language, $SourceRepository, $PackageReleaseTag, [switch] $NonInteractive)
             return @{
                 Id = 'javascript'; DisplayName = 'JavaScript'; BuildStrategy = 'ready'
-                Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
-                ReleaseTag = 'epp-packages-1-1'
+                Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1-javascript/released-package.zip'
+                ChecksumsUrl = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1-javascript/SHA256SUMS.txt'
+                ReleaseTag = 'epp-packages-1-1-javascript'
             }
         }
         function script:Connect-EppContext {

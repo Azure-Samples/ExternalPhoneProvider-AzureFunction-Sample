@@ -134,7 +134,10 @@ Use a Function package supporting Telesign OAuth and complete the
 ### Add API-key provider secrets
 
 This applies to API-key adapters such as Sinch, not the guided OAuth providers. Use the exact
-secret names required by the selected adapter.
+secret names required by the selected adapter. The credential administrator needs separate
+secret-write permission, such as **Key Vault Secrets Officer** on the provider vault.
+Setup's certificate identity has certificate and metadata permissions, not provider-secret write
+permission, and setup does not grant that role to the local operator.
 
 1. In the deployment summary, find `resources.keyVault`.
 2. Open that vault in **Azure portal > Key vaults**.

@@ -193,7 +193,8 @@ another Python runtime is not required to fix this check.
 ## A required Azure resource provider is not registered
 
 Setup lists missing providers such as `Microsoft.Web` during preflight. After approval, it
-registers only the six required namespaces. Declining approval registers nothing.
+registers only the required namespaces, including Container Instances and deployment scripts.
+Declining approval registers nothing.
 
 Registered providers are skipped. Setup proceeds from `Registering` when the region is exposed.
 Polling is limited to 60 checks at 10-second intervals and 12 regional propagation retries.
@@ -251,6 +252,7 @@ Download `released-package.zip` and `SHA256SUMS.txt` from that same stable langu
 Missing or duplicate assets, drafts, prereleases, and wrong-language pins fail closed.
 Exactly one valid checksum entry must match; missing, duplicate, malformed, or mismatched entries
 fail closed. **Never bypass verification or supply a replacement hash.**
+The `released-package.zip` filename is required by Flex Consumption ARM publication.
 
 **Fix:** align the launcher and [source/package versions](README.md#source-versioning).
 Pin `-PackageReleaseTag` to reproduce a release. Public-fork branches need both source options;
@@ -273,17 +275,31 @@ Confirm the Function uses .NET 8 isolated and align the selected
 selected [source/package versions](README.md#source-versioning).
 Build custom ZIPs with `package-python.ps1` on Linux, not with Windows Python dependencies.
 
-**FC1:** use Azure CLI **2.60.0+** and One Deploy with `--build-remote false`. Do not add
+**FC1:** use Azure CLI **2.60.0+** and the native ARM `onedeploy` extension. Do not add
 `SCM_DO_BUILD_DURING_DEPLOYMENT`, `ENABLE_ORYX_BUILD`, `FUNCTIONS_WORKER_RUNTIME`, or
 `WEBSITE_RUN_FROM_PACKAGE`; these are not Flex configuration.
 
 **EP1:** use Azure CLI **2.48.1+** with a user account allowed to publish to the Function App.
-Setup uploads the verified ZIP to private Blob storage and configures managed-identity
-run-from-package.
+The native ARM `ZipDeploy` extension deploys the release URL with `WEBSITE_RUN_FROM_PACKAGE=1`.
 
 SCM basic authentication remains disabled. Both plans record the verified package hash.
 
-After publication or startup failure, setup closes public ingress. If that fails, inspect it immediately.
+Check the `epp-publish-*` deployment, Azure's access to GitHub and redirected release assets, and
+the Function runtime logs. After publication or startup failure, setup closes public ingress
+through ARM. If that fails, inspect it immediately.
+
+## ARM certificate deployment fails
+
+Inspect the nested `epp-certificate` deployment and its deployment-script execution logs.
+The dedicated setup identity needs Key Vault Certificates Officer and Key Vault Reader on the
+setup vault; allow time for RBAC propagation. The deployer needs deployment-script, Container
+Instances, and supporting-storage permissions plus identity assignment and scoped role-assignment
+rights. Verify regional availability and quota. Reused vaults must permit metadata access from the
+deployment script and private-key access from the Function; existing network rules are not changed.
+An `accessPoliciesValid` parameter failure means a matching legacy policy is duplicated,
+cross-tenant, or application-restricted; ask the vault administrator to review it rather than
+overwriting its permissions.
+Certificate issuance never falls back from an authorization error to replacement.
 
 ## Azure CLI paths are combined during deployment
 

@@ -5,9 +5,14 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $module = Import-Module (Join-Path $ModulePath 'support\Epp.Setup.psm1') -Force -PassThru
 $directory = Join-Path ([IO.Path]::GetTempPath()) "epp-application-tests-$([Guid]::NewGuid().ToString('N'))"
+$rsa = [Security.Cryptography.RSA]::Create(2048)
+$request = [Security.Cryptography.X509Certificates.CertificateRequest]::new(
+    'CN=ExternalPhoneProvider', $rsa, [Security.Cryptography.HashAlgorithmName]::SHA256,
+    [Security.Cryptography.RSASignaturePadding]::Pkcs1)
+$certificate = $request.CreateSelfSigned([DateTimeOffset]::UtcNow.AddMinutes(-5), [DateTimeOffset]::UtcNow.AddYears(1))
 try {
     & $module {
-        param($ModulePath, $Directory)
+        param($ModulePath, $Directory, $PublicCertificate)
 
         function script:Assert($Condition, [string] $Message) {
             if (-not $Condition) { throw $Message }
@@ -58,7 +63,7 @@ try {
             $script:GroupChecks = 0; $script:Initializations = 0
             $script:PlanInputs = $null; $script:PlanNames = $null; $script:PlanKeyId = $null
             $script:DeploymentInputs = $null; $script:DeploymentContext = $null
-            $script:StopAtInitialization = $true; $script:DeploymentParameters = $null; $script:CertificateDisposed = $false
+            $script:StopAtInitialization = $true; $script:DeploymentParameters = $null
         }
         function script:Write-Host {
             param([Parameter(ValueFromPipeline)] $Object, $ForegroundColor, [switch] $NoNewline)
@@ -145,8 +150,8 @@ try {
             param($AssetDirectory, $Language, $SourceRepository, $PackageReleaseTag, [switch] $NonInteractive)
             return @{
                 Id = 'javascript'; DisplayName = 'JavaScript'; BuildStrategy = 'ready'
-                Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
-                ReleaseTag = 'epp-packages-1-1'
+                Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1-javascript/released-package.zip'
+                ReleaseTag = 'epp-packages-1-1-javascript'
             }
         }
         function script:Get-EppPackage {
@@ -178,13 +183,29 @@ try {
                 foreach ($key in $expectedNames.Keys) {
                     Assert ($names[$key] -ceq $expectedNames[$key]) 'Pass final names, never placeholders, to Bicep.'
                 }
+                $plan = $script:DeploymentParameters.certificatePlan.value
+                Assert ($plan.vaultName -ceq $names.keyVault -and $plan.keyId -ceq $script:PlanKeyId) 'ARM must receive the finalized vault and approved encryption key.'
+                $secretId = "https://$($plan.vaultName).vault.azure.net/secrets/$($plan.certificateName)/$('b' * 32)"
                 return @{
                     functionAppName = @{ value = $names.functionApp }; storageAccountName = @{ value = $names.storageAccount }
                     keyVaultName = @{ value = $names.keyVault }; resourceGroupName = @{ value = $names.resourceGroup }
                     outboundPrincipalId = @{ value = $script:Operator }
                     endpointUrl = @{ value = "https://$($names.functionApp).azurewebsites.net/api/SendOtp" }
                     identifierUri = @{ value = "api://$script:AppId" }
-                } | ConvertTo-Json -Depth 4
+                    certificateBundle = @{ value = @{
+                        id = "https://$($plan.vaultName).vault.azure.net/certificates/$($plan.certificateName)/$('a' * 32)"
+                        sid = $secretId; cer = [Convert]::ToBase64String($PublicCertificate.RawData)
+                        attributes = @{ enabled = $true }
+                        policy = @{
+                            keyProperties = @{ keyType = 'RSA'; keySize = 2048; exportable = $true; reuseKey = $true }
+                            secretProperties = @{ contentType = 'application/x-pem-file' }
+                            lifetimeActions = @(@{ action = @{ actionType = 'EmailContacts' } })
+                        }
+                    } }
+                    certificateSecretVersions = @{ value = @(@{
+                        id = $secretId; managed = $true; contentType = 'application/x-pem-file'; attributes = @{ enabled = $true }
+                    }) }
+                } | ConvertTo-Json -Depth 10
             }
             throw "Unexpected Azure call (no network allowed): $command"
         }
@@ -212,24 +233,6 @@ try {
         function script:Initialize-EppResourceProviders {
             param($Inputs)
             Assert ($script:Approved -and $Inputs.ApplicationId -ceq $script:AppId) 'Register resource providers only after the new app exists.'
-        }
-        function script:Get-EppEncryptionCertificate {
-            param($Inputs, $VaultName, $CertificateName, $OutputDirectory, $Directory)
-            $certificate = [pscustomobject]@{ Thumbprint = 'A' * 40; NotAfter = [DateTime]::UtcNow.AddYears(1) }
-            $certificate | Add-Member -MemberType ScriptMethod -Name Dispose -Value { $script:CertificateDisposed = $true }
-            return @{
-                Certificate = $certificate
-                CertificateId = "https://$VaultName.vault.azure.net/certificates/$CertificateName/$('a' * 32)"
-                SecretId = "https://$VaultName.vault.azure.net/secrets/$CertificateName/$('b' * 32)"
-            }
-        }
-        function script:Initialize-EppCertificateAccess {
-            param($Inputs, $Names, $Plan, $Directory)
-            Assert ($Plan.VaultName -ceq $Names.keyVault) 'Use the finalized vault in the approved certificate plan.'
-        }
-        function script:Set-EppEncryptionSettings {
-            param($Inputs, $Names, $SecretId, $KeyId, $Directory)
-            Assert ($SecretId.StartsWith("https://$($Names.keyVault).vault.azure.net/secrets/")) 'Bind decryption to the real vault.'
         }
         function script:Assert-EppEncryptionReference { param($Inputs, $Names, $SecretId, $KeyId) }
         function script:Set-EppApplicationEndpoint {
@@ -398,12 +401,16 @@ try {
             }
             Assert ($summary.encryptionKeyId -ceq $script:PlanKeyId -and
                 $summary.certificateSecretId.StartsWith("https://$($record.resources.keyVault).vault.azure.net/secrets/")) 'Persist the reviewed key ID and finalized certificate location.'
-            Assert ($script:CertificateDisposed -and $script:Warnings.Count -eq 0) 'Complete cleanup without a failure warning.'
+            $publicPath = Join-Path $setup.OutputDirectory "$($PublicCertificate.Thumbprint).cer"
+            Assert ((Test-Path -LiteralPath $publicPath) -and $script:Warnings.Count -eq 0) 'Persist the validated public certificate without a failure warning.'
+            Assert ([Convert]::ToBase64String([IO.File]::ReadAllBytes($publicPath)) -ceq
+                [Convert]::ToBase64String($PublicCertificate.RawData)) 'Deployment output must contain only the public DER certificate.'
         }
-    } $ModulePath $directory
+    } $ModulePath $directory $certificate
     Write-Host 'New application planning, alphabetized providers, approval, creation, deterministic names, recovery, and existing-app checks passed.'
 }
 finally {
+    $certificate.Dispose(); $rsa.Dispose()
     Remove-Module -ModuleInfo $module -Force
     if (Test-Path -LiteralPath $directory) { Remove-Item -LiteralPath $directory -Recurse -Force }
 }

@@ -1081,6 +1081,8 @@ function Get-EppResourceProviderRequirements {
         @{ Namespace = 'Microsoft.OperationalInsights'; Type = 'workspaces' }
         @{ Namespace = 'Microsoft.Insights'; Type = 'components' }
         @{ Namespace = 'Microsoft.ManagedIdentity'; Type = 'userAssignedIdentities' }
+        @{ Namespace = 'Microsoft.ContainerInstance'; Type = 'containerGroups' }
+        @{ Namespace = 'Microsoft.Resources'; Type = 'deploymentScripts' }
     )
 }
 
@@ -1396,10 +1398,11 @@ function Get-EppResourceRows {
         [pscustomobject]@{ Resource = 'Function App'; Name = $Names.functionApp; Description = 'Hosts the External Phone Provider endpoint.' }
         [pscustomobject]@{ Resource = 'Hosting plan'; Name = $Names.hostingPlan; Description = $planDescription }
         [pscustomobject]@{ Resource = 'Storage account'; Name = $Names.storageAccount; Description = 'Provides Function host storage and private package storage.' }
-        [pscustomobject]@{ Resource = 'Blob container'; Name = 'packages'; Description = 'Stores the verified deployment package privately.' }
+        [pscustomobject]@{ Resource = 'Blob container'; Name = 'packages'; Description = 'Private deployment storage for Flex Consumption.' }
         [pscustomobject]@{ Resource = 'Key Vault'; Name = $Names.keyVault; Description = 'Stores provider credentials and newly issued encryption certificates.' }
         [pscustomobject]@{ Resource = 'Function App identity'; Name = 'System-assigned'; Description = 'Accesses package storage, host storage, Key Vault, and monitoring.' }
         [pscustomobject]@{ Resource = 'Outbound identity'; Name = $Names.outboundIdentity; Description = 'Supports outbound provider authentication when required.' }
+        [pscustomobject]@{ Resource = 'Setup identity'; Name = "$($Names.outboundIdentity)-setup"; Description = 'Runs ARM-hosted certificate operations without private-key retrieval.' }
         [pscustomobject]@{ Resource = 'Log Analytics'; Name = $Names.logAnalytics; Description = 'Stores platform and application diagnostic logs.' }
         [pscustomobject]@{ Resource = 'Application Insights'; Name = $Names.applicationInsights; Description = 'Collects Function App telemetry.' }
         [pscustomobject]@{ Resource = 'Diagnostic settings'; Name = 'Configured'; Description = 'Routes supported resource logs and metrics to Log Analytics.' }
@@ -1464,9 +1467,10 @@ function Show-EppPlan {
     Write-Host '      Storage Queue Data Contributor and Storage Table Data Contributor - use Azure Functions host storage.'
     Write-Host '      Key Vault Secrets User - read provider credentials and the encryption private key.'
     Write-Host '      Monitoring Metrics Publisher - publish platform metrics.'
-    Write-Host '  - Setup operator, scoped to this Key Vault:'
+    Write-Host '  - Dedicated setup managed identity, scoped to this Key Vault:'
     Write-Host '      Key Vault Certificates Officer - issue and inspect the encryption certificate.'
-    Write-Host '      Key Vault Secrets Officer - manage provider credentials.'
+    Write-Host '      Key Vault Reader - inspect certificate backing-secret metadata, not private keys.'
+    Write-Host '      ARM-hosted certificate execution uses temporary Container Instances and supporting storage (additional permissions, quota, and charges).'
     if ($Inputs['NewApplicationDisplayName'] -and -not $Inputs['ApplicationId']) {
         Write-Host "  - Create a dedicated Microsoft Entra app registration named '$($Inputs.NewApplicationDisplayName)' in the selected tenant."
         Write-Host '      No client secret or redirect URI is created. An existing app with the same name is not adopted.'
@@ -1496,7 +1500,8 @@ function Show-EppPlan {
     }
 
     Write-Host "`nDeployment notes" -ForegroundColor Cyan
-    Write-Host '  - Deploy the verified package, synchronize Function triggers, and enable HTTPS ingress after Easy Auth is verified.'
+    Write-Host '  - Deploy the verified GitHub release URL through ARM and enable HTTPS ingress only after Easy Auth is verified.'
+    Write-Host '  - Azure fetches the release URL again; use trusted immutable release assets because ARM does not enforce the locally verified hash.'
     Write-Host '  - Azure resource and Function deployment may each take several minutes. Keep this session open until deployment completes.'
     if ($Inputs.ServicePlan -eq 'FC1') {
         Write-Host '  - Flex Consumption: publish through One Deploy. No always-ready instances.'
@@ -1542,7 +1547,10 @@ function Show-EppCertificatePlan {
                 Write-Host '  WARNING: access-policy vaults grant secret read access vault-wide, not just to this certificate.' -ForegroundColor Yellow
             }
         }
-        Write-Host '  Reuse does not change external-vault network rules; the Function must be able to reach the certificate vault.'
+        if ($Plan.VaultName -ine $Names.keyVault) {
+            Write-Host '  Grant the setup identity metadata-read access to the source vault; it never retrieves the private key.'
+        }
+        Write-Host '  Reuse does not change external-vault network rules; both the Function and the hosted setup script must reach the certificate vault.'
         Write-Host '  Existing certificate issuance policies are not changed; endpoint certificate synchronization remains manual.'
     }
     else {
@@ -1832,14 +1840,16 @@ function ConvertFrom-EppCertificateBundle {
 }
 
 function Assert-EppCertificateSecret {
-    param([string] $SecretId, [string] $SubscriptionId)
+    param([string] $SecretId, [string] $SubscriptionId, [object[]] $Versions)
 
     $secret = ConvertTo-EppKeyVaultObjectId $SecretId secrets
     # Listing version metadata never retrieves the private-key value.
-    $versions = Invoke-EppDataOperation {
-        Invoke-EppAz keyvault secret list-versions --vault-name $secret.VaultName --name $secret.Name `
-            --subscription $SubscriptionId --output json
-    } | ConvertFrom-Json -AsHashtable -NoEnumerate
+    if (-not $PSBoundParameters.ContainsKey('Versions')) {
+        $Versions = Invoke-EppDataOperation {
+            Invoke-EppAz keyvault secret list-versions --vault-name $secret.VaultName --name $secret.Name `
+                --subscription $SubscriptionId --output json
+        } | ConvertFrom-Json -AsHashtable -NoEnumerate
+    }
     if ($versions -isnot [array]) { throw 'Key Vault returned an invalid secret-version list.' }
     $matching = @($versions | Where-Object { $_['id'] -ieq $SecretId })
     if ($matching.Count -ne 1 -or $matching[0]['managed'] -ne $true -or
@@ -1953,7 +1963,7 @@ function Get-EppCertificatePlan {
             Thumbprint = $null; ExpiresUtc = $null
             VaultName = $Names.keyVault; VaultSubscriptionId = $Inputs.SubscriptionId
             VaultResourceId = "/subscriptions/$($Inputs.SubscriptionId)/resourceGroups/$($Names.resourceGroup)/providers/Microsoft.KeyVault/vaults/$($Names.keyVault)"
-            VaultRbac = $true
+            VaultRbac = $true; VaultAccessPolicies = @()
         }
         if ($action -ne 'Reuse') {
             if ($EncryptionKeyId -or $KeyVaultCertificateId -or $KeyVaultSubscriptionId) {
@@ -2003,6 +2013,7 @@ function Get-EppCertificatePlan {
             $plan.ExpiresUtc = $issued.Certificate.NotAfter.ToUniversalTime().ToString('o')
             $plan.VaultName = $certificateLocation.VaultName; $plan.VaultSubscriptionId = $subscription
             $plan.VaultResourceId = $vault['id']; $plan.VaultRbac = $vault['properties']['enableRbacAuthorization'] -eq $true
+            $plan.VaultAccessPolicies = @($vault['properties']['accessPolicies'] | Where-Object { $null -ne $_ })
             return $plan
         }
         catch {
@@ -2013,55 +2024,6 @@ function Get-EppCertificatePlan {
         }
         finally { if ($issued) { $issued.Certificate.Dispose() } }
     }
-}
-
-function Get-EppEncryptionCertificate {
-    param(
-        [hashtable] $Inputs, [string] $VaultName, [string] $OutputDirectory, [string] $Directory,
-        [string] $CertificateName = $script:EppCertificateName
-    )
-
-    $readCertificate = {
-        Invoke-EppAz keyvault certificate show --vault-name $VaultName --name $CertificateName `
-            --subscription $Inputs.SubscriptionId --output json | ConvertFrom-Json -AsHashtable
-    }
-    try { $bundle = Invoke-EppDataOperation $readCertificate }
-    catch {
-        if ($_.Exception.Message -notmatch '\(CertificateNotFound\)') { throw }
-        $policy = @{
-            issuerParameters = @{ name = 'Self' }
-            keyProperties = @{ exportable = $true; keyType = 'RSA'; keySize = 2048; reuseKey = $true }
-            secretProperties = @{ contentType = 'application/x-pem-file' }
-            x509CertificateProperties = @{
-                subject = $script:EppCertificateSubject
-                validityInMonths = 12
-                keyUsage = @('keyEncipherment', 'dataEncipherment')
-            }
-            lifetimeActions = @(@{ action = @{ actionType = 'EmailContacts' }; trigger = @{ daysBeforeExpiry = 30 } })
-        }
-        $policyPath = Join-Path $Directory 'certificate-policy.json'
-        try {
-            $policy | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $policyPath -Encoding utf8NoBOM
-            # Azure CLI waits for self-signed issuance; no separate polling loop is needed.
-            Invoke-EppDataOperation {
-                Invoke-EppAz keyvault certificate create --vault-name $VaultName --name $CertificateName `
-                    --policy "@$policyPath" --subscription $Inputs.SubscriptionId --output none
-            } | Out-Null
-        }
-        finally { if (Test-Path -LiteralPath $policyPath) { Remove-Item -LiteralPath $policyPath -Force } }
-        $bundle = Invoke-EppDataOperation $readCertificate
-    }
-    $issued = ConvertFrom-EppCertificateBundle -Bundle $bundle -RequireSetupPolicy
-    try {
-        $location = ConvertTo-EppKeyVaultObjectId $issued.CertificateId certificates
-        if ($location.VaultName -ine $VaultName -or $location.Name -ine $CertificateName) {
-            throw 'Key Vault returned a certificate outside the approved vault and name.'
-        }
-        Assert-EppCertificateSecret -SecretId $issued.SecretId -SubscriptionId $Inputs.SubscriptionId
-        [IO.File]::WriteAllBytes((Join-Path $OutputDirectory "$($issued.Certificate.Thumbprint).cer"), $issued.Certificate.RawData)
-        return $issued
-    }
-    catch { $issued.Certificate.Dispose(); throw }
 }
 
 function Assert-EppApplicationEncryption {
@@ -2122,70 +2084,6 @@ function Assert-EppGraphAccess {
         CallerPrincipalId = [string]$callerPrincipal.Id
         GraphPrincipalId = [string]$graphPrincipal.Id
     }
-}
-
-function Initialize-EppCertificateAccess {
-    param([hashtable] $Inputs, [Collections.IDictionary] $Names, [Collections.IDictionary] $Plan, [string] $Directory)
-
-    if ($Plan.Action -ne 'Reuse' -or $Plan.VaultName -ieq $Names.keyVault) { return }
-    $vault = Get-EppCertificateVault -Inputs $Inputs -VaultName $Plan.VaultName -SubscriptionId $Plan.VaultSubscriptionId
-    if ($vault['id'] -ine $Plan.VaultResourceId -or
-        ($vault['properties']['enableRbacAuthorization'] -eq $true) -ne $Plan.VaultRbac) {
-        throw 'The reused vault or its permission model changed after approval. Rerun setup and review a new plan.'
-    }
-    $principalId = ConvertTo-EppGuid (Invoke-EppAz functionapp identity show --resource-group $Names.resourceGroup `
-        --name $Names.functionApp --subscription $Inputs.SubscriptionId --query principalId --output tsv)
-    if ($Plan.VaultRbac) {
-        $scope = "$($Plan.VaultResourceId)/secrets/$($Plan.CertificateName)"
-        $assignments = Invoke-EppAz role assignment list --scope $scope --include-inherited `
-            --subscription $Plan.VaultSubscriptionId --output json | ConvertFrom-Json -AsHashtable -NoEnumerate
-        if ($assignments -isnot [array]) { throw 'Azure returned an invalid certificate-secret role-assignment list.' }
-        if (@($assignments | Where-Object {
-            $_['principalId'] -ieq $principalId -and $_['roleDefinitionId'] -like "*/$script:KeyVaultSecretsUserRoleId"
-        }).Count) { return }
-        $sha = [Security.Cryptography.SHA256]::Create()
-        try {
-            $hash = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes("$scope|$principalId|$script:KeyVaultSecretsUserRoleId".ToLowerInvariant()))
-            $assignmentId = [Guid]::new([byte[]]($hash[0..15])).ToString()
-        }
-        finally { $sha.Dispose() }
-        Invoke-EppAz role assignment create --name $assignmentId --scope $scope --role $script:KeyVaultSecretsUserRoleId `
-            --assignee-object-id $principalId --assignee-principal-type ServicePrincipal `
-            --subscription $Plan.VaultSubscriptionId --output none | Out-Null
-        return
-    }
-    $existing = @($vault['properties']['accessPolicies'] | Where-Object { $_ -and $_['objectId'] -ieq $principalId })
-    if ($existing.Count -gt 1 -or ($existing.Count -and
-        ($existing[0]['tenantId'] -ine $Inputs.TenantId -or $existing[0]['applicationId'] -or
-            $existing[0]['permissions'] -isnot [Collections.IDictionary]))) {
-        throw 'The Function identity has an ambiguous or application-restricted vault access policy. Have the vault administrator review it.'
-    }
-    $permissions = if ($existing.Count) { @{} + $existing[0]['permissions'] } else { @{} }
-    if (@($permissions['secrets']) -contains 'get' -or @($permissions['secrets']) -contains 'all') { return }
-    $permissions['secrets'] = @($permissions['secrets'] | Where-Object { $_ }) + @('get')
-    $entry = @{ tenantId = $Inputs.TenantId; objectId = $principalId; permissions = $permissions }
-    $path = Join-Path $Directory 'certificate-access-policy.json'
-    try {
-        @{ properties = @{ accessPolicies = @($entry) } } | ConvertTo-Json -Depth 8 |
-            Set-Content -LiteralPath $path -Encoding utf8NoBOM
-        Invoke-EppAz rest --method put --url "https://management.azure.com$($Plan.VaultResourceId)/accessPolicies/add?api-version=2024-11-01" `
-            --body "@$path" --subscription $Plan.VaultSubscriptionId --output none | Out-Null
-    }
-    finally { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
-}
-
-function Set-EppEncryptionSettings {
-    param([hashtable] $Inputs, [Collections.IDictionary] $Names, [string] $SecretId, [string] $KeyId, [string] $Directory)
-
-    $reference = "@Microsoft.KeyVault(SecretUri=$SecretId)"
-    $path = Join-Path $Directory 'encryption-appsettings.json'
-    try {
-        @{ EPP_DECRYPTION_KEY_PEM = $reference; EPP_ENCRYPTION_KEY_ID = $KeyId } |
-            ConvertTo-Json | Set-Content -LiteralPath $path -Encoding utf8NoBOM
-        Invoke-EppAz functionapp config appsettings set --resource-group $Names.resourceGroup --name $Names.functionApp `
-            --subscription $Inputs.SubscriptionId --settings "@$path" --output none | Out-Null
-    }
-    finally { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
 }
 
 function Assert-EppEncryptionReference {
@@ -2331,80 +2229,36 @@ function Assert-EppAuthentication {
 }
 
 function Set-EppPublicAccess {
-    param([string] $SiteId, [string] $SubscriptionId, [ValidateSet('Enabled', 'Disabled')][string] $Access)
+    param(
+        [string] $SiteId, [string] $SubscriptionId, [ValidateSet('Enabled', 'Disabled')][string] $Access,
+        [string] $AssetDirectory, [string] $Directory
+    )
 
-    Invoke-EppAz resource update --ids $SiteId --api-version 2024-04-01 --set "properties.publicNetworkAccess=$Access" `
-        --subscription $SubscriptionId --output none | Out-Null
+    $site = Invoke-EppAz rest --method get --url "https://management.azure.com$SiteId`?api-version=2024-04-01" `
+        --subscription $SubscriptionId --output json | ConvertFrom-Json -AsHashtable
+    if ($site -isnot [Collections.IDictionary] -or $site['id'] -ine $SiteId -or
+        $site['properties'] -isnot [Collections.IDictionary]) { throw 'Azure returned invalid Function metadata; ingress was not changed.' }
+    Invoke-EppGroupDeployment -Inputs @{ SubscriptionId = $SubscriptionId } -ResourceGroup ($SiteId.Split('/')[4]) `
+        -AssetDirectory $AssetDirectory -TemplateName ingress -Directory $Directory -Parameters @{ site = $site; access = $Access } | Out-Null
 }
 
-function Set-EppPackageSettings {
-    param([string] $SiteId, [string] $SubscriptionId, [string] $PackageUrl, [string] $Directory)
+function Invoke-EppGroupDeployment {
+    param(
+        [hashtable] $Inputs, [string] $ResourceGroup, [string] $AssetDirectory,
+        [ValidateSet('ingress', 'publish')][string] $TemplateName, [string] $Directory, [hashtable] $Parameters
+    )
 
-    $current = Invoke-EppAz rest --method post `
-        --url "https://management.azure.com$SiteId/config/appsettings/list?api-version=2024-04-01" `
-        --subscription $SubscriptionId --output json | ConvertFrom-Json -AsHashtable
-    if ($current['properties'] -isnot [Collections.IDictionary]) { throw 'Could not read existing Function App settings.' }
-    $settings = $current['properties']
-    $settings['WEBSITE_RUN_FROM_PACKAGE'] = $PackageUrl
-    $settings['WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID'] = 'SystemAssigned'
-    $settings['SCM_DO_BUILD_DURING_DEPLOYMENT'] = 'false'
-    $settings['ENABLE_ORYX_BUILD'] = 'false'
-    $settings.Remove('SCM_RUN_FROM_PACKAGE')
-    $path = Join-Path $Directory 'runtime-appsettings.json'
+    $path = Join-Path $Directory "$TemplateName.parameters.json"
     try {
-        @{ properties = $settings } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $path -Encoding utf8NoBOM
-        Invoke-EppAz rest --method put --url "https://management.azure.com$SiteId/config/appsettings?api-version=2024-04-01" `
-            --body "@$path" --headers 'Content-Type=application/json' --subscription $SubscriptionId --output none | Out-Null
+        $values = @{}
+        foreach ($name in $Parameters.Keys) { $values[$name] = @{ value = $Parameters[$name] } }
+        @{ parameters = $values } | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $path -Encoding utf8NoBOM
+        Invoke-EppAz -Activity "Deploying Function $TemplateName through ARM" deployment group create `
+            --name "epp-$TemplateName-$([Guid]::NewGuid().ToString('N').Substring(0, 8))" `
+            --resource-group $ResourceGroup --subscription $Inputs.SubscriptionId `
+            --template-file (Join-Path $AssetDirectory "$TemplateName.json") --parameters "@$path" --output none | Out-Null
     }
     finally { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
-}
-
-function Build-EppPythonPackage {
-    param([hashtable] $Inputs, [Collections.IDictionary] $Names, [string] $SiteId, [string] $SourcePath, [string] $Directory)
-
-    Invoke-EppAz -Activity 'Preparing the Python deployment package in Azure' `
-        functionapp deployment source config-zip --resource-group $Names.resourceGroup --name $Names.functionApp `
-        --subscription $Inputs.SubscriptionId --src $SourcePath --build-remote true --timeout 1800 --output none | Out-Null
-    $site = Invoke-EppAz rest --method get --url "https://management.azure.com$SiteId`?api-version=2024-04-01" `
-        --subscription $Inputs.SubscriptionId --output json | ConvertFrom-Json -AsHashtable
-    $hosts = @($site['properties']['enabledHostNames'] | Where-Object { $_ -match '^[a-zA-Z0-9-]+\.scm\.(?:[a-zA-Z0-9-]+\.)?azurewebsites\.net$' })
-    if ($hosts.Count -ne 1) { throw 'Azure did not return exactly one public-cloud SCM hostname for the Function App.' }
-    $token = $null
-    $secureToken = $null
-    $path = Join-Path $Directory 'python-ready.zip'
-    try {
-        $token = Invoke-EppAz account get-access-token --subscription $Inputs.SubscriptionId `
-            --resource 'https://management.azure.com/' --query accessToken --output tsv
-        if ([string]::IsNullOrWhiteSpace($token)) { throw 'Azure CLI did not return an SCM access token.' }
-        $secureToken = ConvertTo-SecureString $token -AsPlainText -Force
-        Invoke-WebRequest -Uri "https://$($hosts[0])/api/zip/site/wwwroot/" -Authentication Bearer -Token $secureToken `
-            -OutFile $path -TimeoutSec 300 -MaximumRedirection 0
-    }
-    finally {
-        $token = $null
-        if ($secureToken) { $secureToken.Dispose() }
-    }
-    # The source ZIP must never become the persistent run-from-package artifact.
-    Assert-EppArchive -Path $path -Language python -Kind ready
-    return $path
-}
-
-function Sync-EppFunctionTriggers {
-    param([string] $SiteId, [string] $SubscriptionId)
-
-    for ($attempt = 1; $attempt -le 12; $attempt++) {
-        try {
-            Invoke-EppAz rest --method post --url "https://management.azure.com$SiteId/syncfunctiontriggers?api-version=2024-04-01" `
-                --subscription $SubscriptionId --output none | Out-Null
-            return
-        }
-        catch {
-            $transientHostError = $_.Exception.Message -match 'BadGateway|ServiceUnavailable|GatewayTimeout|Encountered an error \(InternalServerError\) from host runtime'
-            if ($attempt -eq 12 -or -not $transientHostError) { throw }
-            Write-Warning "Waiting for the Function host to load the package ($attempt/12). Easy Auth remains enforced."
-            Start-Sleep -Seconds 10
-        }
-    }
 }
 
 function Assert-EppFunctionPublished {
@@ -2461,6 +2315,24 @@ function Invoke-EppDeployment {
     Initialize-EppResourceProviders -Inputs $Inputs
     $settings = @{} + $ProviderConfiguration.Settings
     $settings.EPP_PROVIDER_AUTH_MODE = $Inputs.ProviderAuthentication
+    $certificatePlan = $Context.CertificatePlan
+    $existingRoleAssignments = @()
+    if ($certificatePlan.Action -eq 'Reuse') {
+        $vault = Get-EppCertificateVault -Inputs $Inputs -VaultName $certificatePlan.VaultName -SubscriptionId $certificatePlan.VaultSubscriptionId
+        if ($vault['id'] -ine $certificatePlan.VaultResourceId -or
+            ($vault['properties']['enableRbacAuthorization'] -eq $true) -ne $certificatePlan.VaultRbac -or
+            -not (Test-EppJsonEqual @($vault['properties']['accessPolicies'] | Where-Object { $null -ne $_ }) $certificatePlan.VaultAccessPolicies)) {
+            throw 'The reused vault or its permission model changed after approval. Rerun setup.'
+        }
+        if ($certificatePlan.VaultRbac -and $certificatePlan.VaultName -ine $Names.keyVault) {
+            foreach ($scope in @($certificatePlan.VaultResourceId, "$($certificatePlan.VaultResourceId)/secrets/$($certificatePlan.CertificateName)")) {
+                $assignments = Invoke-EppAz role assignment list --scope $scope --include-inherited `
+                    --subscription $certificatePlan.VaultSubscriptionId --output json | ConvertFrom-Json -AsHashtable -NoEnumerate
+                if ($assignments -isnot [array]) { throw 'Azure returned an invalid source-vault role-assignment list.' }
+                $existingRoleAssignments += $assignments
+            }
+        }
+    }
     $parameters = @{
         resourceNames = @{ value = $Names }
         location = @{ value = $Inputs.Location }
@@ -2468,12 +2340,18 @@ function Invoke-EppDeployment {
         applicationId = @{ value = $Inputs.ApplicationId }
         tokenVersion = @{ value = $Context.TokenVersion }
         callerApplicationId = @{ value = $script:MicrosoftPhoneProviderAppId }
-        deployerObjectId = @{ value = $Context.OperatorId }
         providerSettings = @{ value = $settings }
-        packageBlobName = @{ value = "$($Inputs.PackageSha256).zip" }
         language = @{ value = $Inputs.Language }
-        remoteBuild = @{ value = [bool]$Package.RequiresRemoteBuild }
         servicePlan = @{ value = $Inputs.ServicePlan }
+        certificatePlan = @{ value = @{
+            action = $certificatePlan.Action; keyId = $certificatePlan.KeyId
+            certificateName = $certificatePlan.CertificateName; certificateId = $certificatePlan.CertificateId
+            vaultName = $certificatePlan.VaultName; vaultSubscriptionId = $certificatePlan.VaultSubscriptionId
+            vaultResourceId = $certificatePlan.VaultResourceId; vaultRbac = $certificatePlan.VaultRbac
+            existingPolicies = $certificatePlan.VaultAccessPolicies
+            existingRoleAssignments = $existingRoleAssignments
+        } }
+        executionId = @{ value = [Guid]::NewGuid().ToString() }
     }
     $parameterPath = Join-Path $WorkingDirectory 'deployment.parameters.json'
     @{ '$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'; contentVersion = '1.0.0.0'; parameters = $parameters } |
@@ -2493,31 +2371,31 @@ function Invoke-EppDeployment {
     if ([Text.Encoding]::UTF8.GetByteCount($outputs.endpointUrl.value) -gt 100) { throw 'The deployed endpoint URL exceeds the EPP 100-byte limit.' }
     $issued = $null
     try {
-        $certificatePlan = $Context.CertificatePlan
-        if ($certificatePlan.Action -eq 'Reuse') {
-            $issued = Get-EppExistingEncryptionCertificate -CertificateId $certificatePlan.CertificateId `
-                -SubscriptionId $certificatePlan.VaultSubscriptionId
-            if ($issued.SecretId -ine $certificatePlan.SecretId -or $issued.Certificate.Thumbprint -ine $certificatePlan.Thumbprint) {
-                throw 'The selected certificate or backing secret changed after approval. Rerun setup and review a new plan.'
-            }
-            [IO.File]::WriteAllBytes((Join-Path $OutputDirectory "$($issued.Certificate.Thumbprint).cer"), $issued.Certificate.RawData)
+        $bundle = $outputs.certificateBundle.value | ConvertTo-Json -Depth 10 | ConvertFrom-Json -AsHashtable
+        $issued = ConvertFrom-EppCertificateBundle -Bundle $bundle -RequireSetupPolicy:($certificatePlan.Action -ne 'Reuse')
+        $location = ConvertTo-EppKeyVaultObjectId $issued.CertificateId certificates
+        if ($location.VaultName -ine $certificatePlan.VaultName -or $location.Name -ine $certificatePlan.CertificateName) {
+            throw 'ARM returned a certificate outside the approved vault or certificate name.'
         }
-        else {
-            $issued = Get-EppEncryptionCertificate -Inputs $Inputs -VaultName $Names.keyVault `
-                -CertificateName $certificatePlan.CertificateName -OutputDirectory $OutputDirectory -Directory $WorkingDirectory
+        $versions = @($outputs.certificateSecretVersions.value | ForEach-Object { $_ | ConvertTo-Json -Depth 8 | ConvertFrom-Json -AsHashtable })
+        Assert-EppCertificateSecret -SecretId $issued.SecretId -Versions $versions
+        if ($certificatePlan.Action -eq 'Reuse' -and
+            ($issued.CertificateId -ine $certificatePlan.CertificateId -or $issued.SecretId -ine $certificatePlan.SecretId -or
+                $issued.Certificate.Thumbprint -ine $certificatePlan.Thumbprint)) {
+            throw 'The selected certificate or backing secret changed after approval. Rerun setup and review a new plan.'
         }
+        [IO.File]::WriteAllBytes((Join-Path $OutputDirectory "$($issued.Certificate.Thumbprint).cer"), $issued.Certificate.RawData)
         $certificate = $issued.Certificate
         $keyId = $certificatePlan.KeyId
         Write-Host "Selected encryption key ID: $keyId"
         Write-Host "Key Vault certificate: $($issued.CertificateId)"
-        Initialize-EppCertificateAccess -Inputs $Inputs -Names $Names -Plan $certificatePlan -Directory $WorkingDirectory
-        Set-EppEncryptionSettings -Inputs $Inputs -Names $Names -SecretId $issued.SecretId -KeyId $keyId -Directory $WorkingDirectory
         Assert-EppEncryptionReference -Inputs $Inputs -Names $Names -SecretId $issued.SecretId -KeyId $keyId
         Set-EppApplicationEndpoint -Inputs $Inputs -Context $Context -Outputs $outputs -Certificate $certificate -KeyId $keyId `
             -ConfigureFederation:($Inputs.ProviderAuthentication -eq 'oauth')
         $graphAccess = Assert-EppGraphAccess -Inputs $Inputs -Certificate $certificate -KeyId $keyId `
             -IdentifierUri $outputs.identifierUri.value -CertificatePlan $certificatePlan
         $siteId = "/subscriptions/$($Inputs.SubscriptionId)/resourceGroups/$($Names.resourceGroup)/providers/Microsoft.Web/sites/$($Names.functionApp)"
+        $Inputs.ArmAssetDirectory = $AssetDirectory
         $Inputs.PackageSha256 = Publish-EppFunction -Inputs $Inputs -Names $Names -Context $Context -Outputs $outputs `
             -SiteId $siteId -Package $Package -Directory $WorkingDirectory
         $result = [ordered]@{
@@ -2568,63 +2446,30 @@ function Publish-EppFunction {
 
     if ($Inputs.ServicePlan -notin @('FC1', 'EP1')) { throw "Unknown service plan '$($Inputs.ServicePlan)'." }
     $ingressOpened = $false
-    $deployedHash = $Inputs.PackageSha256
     try {
+        if ($Package.RequiresRemoteBuild) { throw 'ARM publication requires a ready-to-deploy release ZIP. Select a current package release.' }
+        Assert-EppHttpsUrl $Inputs.PackageUrl
         Assert-EppAuthentication -SiteId $SiteId -Inputs $Inputs -Context $Context -IdentifierUri $Outputs.identifierUri.value
-        if ($Inputs.ServicePlan -eq 'FC1') {
-            $ingressOpened = $true
-            Set-EppPublicAccess -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId -Access Enabled
-            if ($Package.RequiresRemoteBuild) {
-                Write-Host 'Azure installs Python dependencies and prepares the Function deployment package. No local Python installation is required.'
-            }
-            $remoteBuild = ([bool]$Package.RequiresRemoteBuild).ToString().ToLowerInvariant()
-            Invoke-EppAz -Activity 'Deploying the Azure Function' `
-                functionapp deployment source config-zip --resource-group $Names.resourceGroup --name $Names.functionApp `
-                --subscription $Inputs.SubscriptionId --src $Package.Path --build-remote $remoteBuild --timeout 1800 --output none | Out-Null
-            # One Deploy builds and stores Python output in Azure; its bytes are not downloaded or hashed locally.
-            if ($Package.RequiresRemoteBuild) { $deployedHash = $null }
-        }
-        else {
-            $packagePath = $Package.Path
-            if ($Package.RequiresRemoteBuild) {
-                $ingressOpened = $true
-                Set-EppPublicAccess -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId -Access Enabled
-                $packagePath = Build-EppPythonPackage -Inputs $Inputs -Names $Names -SiteId $SiteId -SourcePath $Package.Path -Directory $Directory
-                $deployedHash = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
-            }
-            Invoke-EppDataOperation {
-                Invoke-EppAz -Activity 'Publishing the Azure Function package' `
-                    storage blob upload --account-name $Names.storageAccount --container-name packages `
-                    --name "$deployedHash.zip" --file $packagePath --auth-mode login --overwrite true `
-                    --subscription $Inputs.SubscriptionId --output none
+        $ingressOpened = $true
+        Set-EppPublicAccess -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId -Access Enabled `
+            -AssetDirectory $Inputs.ArmAssetDirectory -Directory $Directory
+        Invoke-EppGroupDeployment -Inputs $Inputs -ResourceGroup $Names.resourceGroup -AssetDirectory $Inputs.ArmAssetDirectory `
+            -TemplateName publish -Directory $Directory -Parameters @{
+                functionAppName = $Names.functionApp; location = $Inputs.Location
+                packageUri = $Inputs.PackageUrl; servicePlan = $Inputs.ServicePlan
             } | Out-Null
-            if ($Package.RequiresRemoteBuild) {
-                if ($Outputs.packageContainerUrl.value -cne "https://$($Names.storageAccount).blob.core.windows.net/packages/") {
-                    throw 'Azure returned an unexpected package storage URL. The app will not mount it.'
-                }
-                $packageUrl = "$($Outputs.packageContainerUrl.value)$deployedHash.zip"
-                Assert-EppHttpsUrl $packageUrl
-                Set-EppPackageSettings -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId -PackageUrl $packageUrl -Directory $Directory
-            }
-            if (-not $ingressOpened) {
-                $ingressOpened = $true
-                Set-EppPublicAccess -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId -Access Enabled
-            }
-            Invoke-EppAz -Activity 'Starting the Azure Function' functionapp restart --resource-group $Names.resourceGroup --name $Names.functionApp `
-                --subscription $Inputs.SubscriptionId --output none | Out-Null
-            Sync-EppFunctionTriggers -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId
-        }
         Assert-EppFunctionPublished -Inputs $Inputs -Names $Names
     }
     catch {
         $deploymentError = $_
         if ($ingressOpened) {
-            try { Set-EppPublicAccess -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId -Access Disabled }
+            try { Set-EppPublicAccess -SiteId $SiteId -SubscriptionId $Inputs.SubscriptionId -Access Disabled `
+                -AssetDirectory $Inputs.ArmAssetDirectory -Directory $Directory }
             catch { throw [AggregateException]::new('Deployment failed and public ingress could not be disabled. Inspect the Function App immediately.', [Exception[]]@($deploymentError.Exception, $_.Exception)) }
         }
         throw $deploymentError
     }
-    return $deployedHash
+    return $Inputs.PackageSha256
 }
 
 function Invoke-EppSetup {
@@ -2837,8 +2682,10 @@ function Invoke-EppSetup {
         $inputs.SourcePackageSha256 = $package.SourceSha256
         $inputs.PackageUrl = $selection.Url
         $inputs.PackageReleaseTag = $selection.ReleaseTag
-        Invoke-EppAz bicep build --file (Join-Path $assetDirectory 'infra/main.bicep') `
-            --outfile (Join-Path $assetDirectory 'main.json') | Out-Null
+        foreach ($template in @('main', 'ingress', 'publish')) {
+            Invoke-EppAz bicep build --file (Join-Path $assetDirectory "infra/$template.bicep") `
+                --outfile (Join-Path $assetDirectory "$template.json") | Out-Null
+        }
         Show-EppPlan -Inputs $inputs -Names $names -ProviderConfiguration $providerConfiguration -Context $context
         if (-not (Confirm-EppDeployment -NonInteractive:$NonInteractive -ApproveDeployment:$ApproveDeployment)) {
             Write-Host 'Cancelled. No Azure resources or app registrations were changed.' -ForegroundColor Yellow

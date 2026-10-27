@@ -1,14 +1,14 @@
 #Requires -Version 7.0
-param([string] $TemplatePath)
+param([string] $TemplatePath, [string] $PublishTemplatePath, [string] $IngressTemplatePath)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $module = Import-Module (Join-Path $PSScriptRoot '../support/Epp.Setup.psm1') -Force -PassThru
-$directory = Join-Path ([IO.Path]::GetTempPath()) "epp-plan-tests-$([Guid]::NewGuid().ToString('N'))"
+$directory = Join-Path (Get-Location) ".epp-plan-tests-$([Guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $directory | Out-Null
 try {
     & $module {
-        param($Directory, $TemplatePath)
+        param($Directory, $TemplatePath, $PublishTemplatePath, $IngressTemplatePath)
 
         function script:Assert($Condition, [string] $Message) {
             if (-not $Condition) { throw $Message }
@@ -31,6 +31,9 @@ try {
         $script:AuthError = ''
         $script:StartupError = ''
         $script:CloseError = ''
+        $script:OpenError = ''
+        $script:InvalidSite = $false
+        $script:GroupParameters = @{}
         $script:CliVersion = '2.60.0'
         function script:Write-Host {
             param([Parameter(ValueFromPipeline)] $Object, $ForegroundColor, [switch] $NoNewline)
@@ -54,11 +57,36 @@ try {
                     Assert ($query.sku -ceq 'ElasticPremium' -and $query.linuxWorkersEnabled -ceq 'true') 'EP1 must keep the Premium/Linux regional filter.'
                     return '{"value":[{"name":"West US 2"}]}'
                 }
-                '^(functionapp deployment source config-zip|storage blob upload) ' {
-                    if ($script:PublicationError) { throw $script:PublicationError }
-                    return ''
+                '^rest --method get .*Microsoft.Web/sites/' {
+                    if ($script:InvalidSite) { return '{"id":"wrong-site","properties":{}}' }
+                    return @{
+                        id = $script:SiteId; name = 'unit'; location = 'westus2'; kind = 'functionapp,linux'
+                        identity = @{
+                            type = 'SystemAssigned, UserAssigned'; principalId = 'identity'
+                            userAssignedIdentities = @{ '/subscriptions/unit/resourceGroups/unit/providers/Microsoft.ManagedIdentity/userAssignedIdentities/outbound' = @{} }
+                        }
+                        tags = @{ managedBy = 'EPP-Setup'; customTag = 'preserve-tag' }
+                        properties = @{ serverFarmId = 'preserve-plan'; publicNetworkAccess = 'Disabled'; httpsOnly = $true }
+                    } | ConvertTo-Json -Depth 6
                 }
-                '^functionapp restart ' { return '' }
+                '^deployment group create ' {
+                    $path = $Arguments[[Array]::IndexOf($Arguments, '--parameters') + 1].Substring(1)
+                    $template = $Arguments[[Array]::IndexOf($Arguments, '--template-file') + 1]
+                    $parameters = (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable).parameters
+                    if ($template -match 'ingress\.json$') {
+                        $access = $parameters.access.value
+                        $script:GroupParameters["ingress:$access"] = $parameters
+                        $script:Calls.Add("ingress:$access")
+                        if ($access -eq 'Enabled' -and $script:OpenError) { throw $script:OpenError }
+                        if ($access -eq 'Disabled' -and $script:CloseError) { throw $script:CloseError }
+                    }
+                    elseif ($template -match 'publish\.json$') {
+                        $script:GroupParameters.publish = $parameters
+                        $script:Calls.Add('publish')
+                        if ($script:PublicationError) { throw $script:PublicationError }
+                    }
+                    else { throw "Unexpected group template: $template" }
+                }
                 '^deployment sub create ' {
                     $path = $Arguments[[Array]::IndexOf($Arguments, '--parameters') + 1].Substring(1)
                     $template = $Arguments[[Array]::IndexOf($Arguments, '--template-file') + 1]
@@ -94,12 +122,13 @@ try {
             SubscriptionId = '33333333-3333-3333-3333-333333333333'
             Location = 'westus2'; ResourcePrefix = 'unit'; Platform = 'Node.js'; Language = 'javascript'
             ProviderAuthentication = 'oauth'; ServicePlan = 'FC1'; BuildStrategy = 'ready'
-            PackageFile = 'epp-javascript.zip'
-            PackageReleaseTag = 'epp-packages-1-1'
-            PackageUrl = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
+            PackageFile = 'released-package.zip'
+            PackageReleaseTag = 'epp-packages-1-1-javascript'
+            PackageUrl = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1-javascript/released-package.zip'
             SourceRevision = ('a' * 40)
             SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
             PackageSha256 = ('a' * 64); SourcePackageSha256 = ('a' * 64)
+            ArmAssetDirectory = $Directory
         }
         $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix unit
         $provider = @{
@@ -121,6 +150,9 @@ try {
             CertificatePlan = @{
                 Action = 'Create'; KeyId = '66666666-6666-6666-6666-666666666666'
                 CertificateName = 'phone-provider-encryption'; VaultName = $names.keyVault
+                CertificateId = $null; VaultSubscriptionId = $inputs.SubscriptionId
+                VaultResourceId = "/subscriptions/$($inputs.SubscriptionId)/resourceGroups/$($names.resourceGroup)/providers/Microsoft.KeyVault/vaults/$($names.keyVault)"
+                VaultRbac = $true; VaultAccessPolicies = @()
                 RemoveKeyIds = @(); ExistingCertificates = @()
             }
             InvokeRoleExists = $true; ProviderTenantRestricted = $true
@@ -143,7 +175,8 @@ try {
             foreach ($setting in @('EPP_KEY_VAULT_CACHE_ENABLED', 'EPP_ACCESS_TOKEN_CACHE_ENABLED')) {
                 Assert (-not $plan.Contains($setting)) 'The approval must not advertise obsolete cache settings.'
             }
-            Assert ($plan.Contains('Deploy the verified package, synchronize Function triggers, and enable HTTPS ingress after Easy Auth is verified.')) 'Describe the package publication result and authentication requirement.'
+            Assert ($plan.Contains('Deploy the verified GitHub release URL through ARM') -and
+                $plan.Contains('ARM does not enforce the locally verified hash')) 'Disclose native publication and its second-fetch integrity boundary.'
             $script:Calls.Clear()
             Assert-EppServicePlanLocation -Inputs $inputs
             Assert ($script:Calls.Count -eq 1) 'Availability must check only the selected plan.'
@@ -200,55 +233,43 @@ try {
             $script:Calls.Add('authentication')
             if ($script:AuthError) { throw $script:AuthError }
         }
-        function script:Set-EppPublicAccess {
-            param($SiteId, $SubscriptionId, $Access)
-            $script:Calls.Add("ingress:$Access")
-            if ($Access -eq 'Disabled' -and $script:CloseError) { throw $script:CloseError }
-        }
-        function script:Sync-EppFunctionTriggers { param($SiteId, $SubscriptionId); $script:Calls.Add('triggers') }
         function script:Assert-EppFunctionPublished {
             param($Inputs, $Names)
             $script:Calls.Add('published')
             if ($script:StartupError) { throw $script:StartupError }
         }
         function script:Invoke-EppDataOperation { param([scriptblock] $Operation); & $Operation }
-        function script:Build-EppPythonPackage {
-            param($Inputs, $Names, $SiteId, $SourcePath, $Directory)
-            throw 'Unexpected package rebuild during Python ZIP publication.'
-        }
-        function script:Set-EppPackageSettings {
-            param($SiteId, $SubscriptionId, $PackageUrl, $Directory)
-            $script:Calls.Add("package-settings:$PackageUrl")
-        }
+        $script:SiteId = "/subscriptions/$($inputs.SubscriptionId)/resourceGroups/$($names.resourceGroup)/providers/Microsoft.Web/sites/$($names.functionApp)"
         $publish = @{
-            Inputs = $inputs; Names = $names; Context = $context; SiteId = '/subscriptions/unit/resourceGroups/unit/providers/Microsoft.Web/sites/unit'
+            Inputs = $inputs; Names = $names; Context = $context; SiteId = $script:SiteId
             Outputs = @{ identifierUri = @{ value = 'api://unit' }; packageContainerUrl = @{ value = "https://$($names.storageAccount).blob.core.windows.net/packages/" } }
-            Package = @{ Path = (Join-Path $Directory 'ready.zip'); RequiresRemoteBuild = $false }
+            Package = @{ Path = (Join-Path $Directory 'source.zip'); RequiresRemoteBuild = $false }
             Directory = $Directory
         }
         foreach ($id in @('FC1', 'EP1')) {
             foreach ($language in @('javascript', 'dotnet', 'python')) {
                 $inputs.ServicePlan = $id; $inputs.Language = $language
-                $publish.Package.RequiresRemoteBuild = $false
+                $inputs.PackageReleaseTag = "epp-packages-1-1-$language"
+                $inputs.PackageUrl = "https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/$($inputs.PackageReleaseTag)/released-package.zip"
                 $script:Calls.Clear(); $script:Activities.Clear()
                 $hash = Publish-EppFunction @publish
                 $trace = $script:Calls -join "`n"
                 Assert ($script:Calls[0] -ceq 'authentication') 'Authentication must be verified before any publication or ingress change.'
                 Assert ($script:Calls[-1] -ceq 'published') 'Publication must finish with Function metadata readback.'
                 Assert ($script:Activities.Count -gt 0) 'Every plan/language publication path must provide an activity indicator.'
-                if ($id -eq 'FC1') {
-                    Assert ($script:Calls[1] -ceq 'ingress:Enabled') 'Flex must open its authenticated deployment endpoint before One Deploy.'
-                    Assert ($trace.Contains('functionapp deployment source config-zip') -and $trace.Contains('--build-remote false') -and
-                        $trace.Contains("--src $($publish.Package.Path)")) 'Flex must upload the selected deployment ZIP with the configured publication flags.'
-                    Assert ($trace -notmatch 'storage blob upload|package-settings|python-build|functionapp restart|triggers') 'Flex must not use Premium publishing or run-from-package.'
-                    Assert ($hash -ceq $inputs.PackageSha256) 'Flex must retain the verified package hash for every language.'
-                }
-                else {
-                    Assert ($trace -match 'storage blob upload' -and $trace -match 'functionapp restart' -and $trace -match 'triggers') 'EP1 must retain managed-identity package publication and trigger synchronization.'
-                    Assert ($trace -notmatch 'deployment source config-zip') 'EP1 must not use the Flex publishing branch.'
-                    Assert ($hash -ceq $inputs.PackageSha256 -and $trace.Contains("$($inputs.PackageSha256).zip") -and
-                        $trace.Contains("--file $($publish.Package.Path)") -and $trace -notmatch 'python-build') 'EP1 must upload and mount the verified deployment ZIP for every language.'
-                }
+                Assert ($script:Calls.IndexOf('ingress:Enabled') -lt $script:Calls.IndexOf('publish')) 'Open ingress through ARM only after authentication, before native publication.'
+                Assert ($script:GroupParameters.publish.servicePlan.value -ceq $id -and
+                    $script:GroupParameters.publish.packageUri.value -ceq $inputs.PackageUrl -and
+                    $script:GroupParameters.publish.functionAppName.value -ceq $names.functionApp) 'Publish the exact release ZIP to the approved plan and Function.'
+                Assert ($script:GroupParameters['ingress:Enabled'].site.value.properties.serverFarmId -ceq 'preserve-plan') 'The ingress wrapper must pass existing site metadata to ARM.'
+                $ingressSite = $script:GroupParameters['ingress:Enabled'].site.value
+                Assert ($ingressSite.identity.type -ceq 'SystemAssigned, UserAssigned' -and
+                    $ingressSite.identity.userAssignedIdentities.Count -eq 1 -and
+                    $ingressSite.tags.customTag -ceq 'preserve-tag') 'Ingress must pass through both Function identities and existing tags.'
+                Assert ($trace -notmatch 'config-zip|storage blob upload|functionapp restart|triggers|build-remote') 'All languages must use native ARM publication without remote builds or imperative restart/sync.'
+                Assert ($hash -ceq $inputs.PackageSha256) 'All six publication paths must retain the verified release hash.'
+                Assert (-not (Test-Path (Join-Path $Directory 'publish.parameters.json')) -and
+                    -not (Test-Path (Join-Path $Directory 'ingress.parameters.json'))) 'Remove ARM parameter files after publication.'
             }
         }
         foreach ($id in @('FC1', 'EP1')) {
@@ -258,13 +279,25 @@ try {
             Assert ($script:Calls.Count -eq 1) 'Failed authentication must not open ingress or publish.'
             $script:AuthError = ''; $script:PublicationError = 'publication-rejected'; $script:Calls.Clear()
             Assert-Throws { Publish-EppFunction @publish } 'publication-rejected'
-            if ($id -eq 'FC1') { Assert ($script:Calls[-1] -ceq 'ingress:Disabled') 'Failed One Deploy must close ingress.' }
+            Assert ($script:Calls[-1] -ceq 'ingress:Disabled') 'Failed native publication must close ingress for either plan.'
+            Assert (-not (Test-Path (Join-Path $Directory 'publish.parameters.json'))) 'Failed publication must remove its ARM parameter file.'
             $script:PublicationError = ''; $script:StartupError = 'startup-rejected'; $script:Calls.Clear()
             Assert-Throws { Publish-EppFunction @publish } 'startup-rejected'
             Assert ($script:Calls[-1] -ceq 'ingress:Disabled') 'Failed startup must close ingress for either plan.'
             $script:CloseError = 'close-rejected'
             Assert-Throws { Publish-EppFunction @publish } 'public ingress could not be disabled'
             $script:StartupError = ''; $script:CloseError = ''
+            $script:OpenError = 'open-rejected'; $script:Calls.Clear()
+            Assert-Throws { Publish-EppFunction @publish } 'open-rejected'
+            Assert ($script:Calls[-1] -ceq 'ingress:Disabled' -and -not $script:Calls.Contains('publish')) 'A failed ingress enable must close ingress without publication.'
+            $script:OpenError = ''; $script:InvalidSite = $true; $script:Calls.Clear()
+            Assert-Throws { Set-EppPublicAccess -SiteId $script:SiteId -SubscriptionId $inputs.SubscriptionId -Access Enabled -AssetDirectory $Directory -Directory $Directory } 'invalid Function metadata'
+            Assert (@($script:Calls | Where-Object { $_ -like 'deployment group create *' }).Count -eq 0) 'Invalid site metadata must not be sent to ARM.'
+            $script:InvalidSite = $false
+            $publish.Package.RequiresRemoteBuild = $true; $script:Calls.Clear()
+            Assert-Throws { Publish-EppFunction @publish } 'ready-to-deploy release ZIP'
+            Assert ($script:Calls.Count -eq 0) 'Reject source packages before authentication or ingress changes.'
+            $publish.Package.RequiresRemoteBuild = $false
         }
 
         function script:Get-EppGraphOperator { param($Inputs); return @{ Id = 'operator' } }
@@ -291,12 +324,15 @@ try {
 
         if ($TemplatePath) {
             $template = Get-Content -LiteralPath $TemplatePath -Raw | ConvertFrom-Json -AsHashtable
-            $inner = ($template.resources | Where-Object type -eq 'Microsoft.Resources/deployments').properties.template
+            $inner = ($template.resources | Where-Object { $_.type -eq 'Microsoft.Resources/deployments' -and $_.name -ceq 'epp-endpoint' }).properties.template
             Assert (($inner.parameters.servicePlan.allowedValues -join ',') -ceq 'FC1,EP1') 'Bicep must restrict service plans to the two offered SKUs.'
             Assert ($inner.variables.isFlexConsumption -ceq "[equals(parameters('servicePlan'), 'FC1')]") 'The Flex condition must use the selected SKU.'
             $plan = $inner.resources | Where-Object type -eq 'Microsoft.Web/serverfarms'
             Assert ($plan.sku -ceq "[if(variables('isFlexConsumption'), createObject('name', 'FC1', 'tier', 'FlexConsumption'), createObject('name', 'EP1', 'tier', 'ElasticPremium', 'capacity', 1))]") 'Bicep must deploy the selected SKU, tier, and Premium capacity.'
             $settings = ($inner.resources | Where-Object { $_.type -eq 'Microsoft.Web/sites/config' -and $_.name -like '*appsettings*' }).properties
+            Assert ($settings.Contains('listApplicationSettings') -and
+                $settings.Contains("'WEBSITE_RUN_FROM_PACKAGE', '1'") -and
+                $settings.Contains("'SCM_DO_BUILD_DURING_DEPLOYMENT', 'false'")) 'Initial native settings must merge existing values and configure Premium ZIP mounting without builds.'
             foreach ($setting in @('EPP_KEY_VAULT_CACHE_ENABLED', 'EPP_ACCESS_TOKEN_CACHE_ENABLED')) {
                 Assert (-not $settings.Contains($setting)) 'Bicep must not configure removed credential caches.'
             }
@@ -309,8 +345,64 @@ try {
             Assert ($functionAppConfig -is [string] -and $functionAppConfig.StartsWith("[if(variables('isFlexConsumption'), ") -and $functionAppConfig.EndsWith(', null())]')) 'Only functionAppConfig must be conditional on FC1, with no Flex configuration for EP1.'
             Assert ($functionAppConfig.Contains("'deployment', createObject('storage', createObject('type', 'blobContainer'") -and $functionAppConfig.Contains("reference(resourceId('Microsoft.Storage/storageAccounts', parameters('resourceNames').storageAccount), '2023-05-01').primaryEndpoints.blob")) 'Flex must retain its deployment container and storage endpoint lookup.'
             Assert ($functionAppConfig.Contains("'instanceMemoryMB', 2048, 'maximumInstanceCount', 40, 'alwaysReady', createArray()") -and $functionAppConfig.Contains("'type', 'SystemAssignedIdentity'")) 'Flex must retain 2048 MB, up to 40 on-demand instances, zero always-ready instances, and managed-identity deployment storage.'
+            Assert ($template.outputs.certificateBundle.type -ceq 'object' -and
+                $template.outputs.certificateSecretVersions.type -ceq 'array') 'ARM must return public certificate metadata and secret-version metadata for local validation.'
+            $encryption = ($template.resources | Where-Object name -eq 'epp-encryption-settings').properties.template
+            $encryptionSettings = ($encryption.resources | Where-Object type -eq 'Microsoft.Web/sites/config').properties
+            Assert ($encryptionSettings.Contains("listApplicationSettings") -and
+                $encryptionSettings.Contains("'EPP_DECRYPTION_KEY_PEM'") -and
+                $encryptionSettings.Contains("'@Microsoft.KeyVault(SecretUri={0})'") -and
+                $encryptionSettings.Contains("'EPP_ENCRYPTION_KEY_ID'")) 'Native settings must preserve existing settings and pin the approved secret version/key ID.'
+            $certificateTemplate = ($template.resources | Where-Object name -eq 'epp-certificate').properties.template
+            $operation = $certificateTemplate.resources | Where-Object type -eq 'Microsoft.Resources/deploymentScripts'
+            Assert ($operation.kind -ceq 'AzurePowerShell' -and
+                $operation.identity.type -ceq 'UserAssigned' -and
+                $operation.properties.cleanupPreference -ceq 'Always' -and
+                $operation.properties.timeout -ceq 'PT15M') 'Certificate operations must run in ARM with a managed identity, bounded timeout, and cleanup.'
+            $sourceDeployment = $template.resources | Where-Object name -eq 'epp-certificate-access'
+            $access = $sourceDeployment.properties.template
+            $validation = $access.resources | Where-Object name -eq 'epp-certificate-policy-validation'
+            $allowed = $validation.properties.template.parameters.accessPoliciesValid.allowedValues
+            Assert ($allowed.Count -eq 1 -and $allowed[0] -eq $true -and
+                $validation.properties.parameters.accessPoliciesValid.value -ceq "[variables('accessPoliciesValid')]") 'A native nested deployment must reject invalid legacy policies before vault access changes.'
+            Assert (-not $sourceDeployment.properties.parameters.ContainsKey('accessPoliciesValid')) 'Main must not evaluate identity-dependent policy guards inside reference-bearing lambdas.'
+            $policyGuard = $access.variables | ConvertTo-Json -Depth 20 -Compress
+            Assert ($policyGuard.Contains('functionPrincipalId') -and $policyGuard.Contains('setupPrincipalId') -and
+                $policyGuard.Contains('lessOrEquals(length(') -and -not $policyGuard.Contains('reference(') -and
+                $policyGuard.Contains('tenantId') -and $policyGuard.Contains('applicationId')) 'Validate duplicate, tenant, and application restrictions locally using parameter IDs only.'
+            $grants = @($access.resources | Where-Object type -eq 'Microsoft.Authorization/roleAssignments')
+            Assert ($grants.Count -eq 2 -and
+                @($grants | Where-Object { $_.condition.Contains('existingFunctionGrants') -or $_.condition.Contains('existingSetupGrants') }).Count -eq 2) 'Native external-vault grants must skip existing matching RBAC assignments.'
+            Assert ($sourceDeployment.subscriptionId -ceq "[parameters('certificatePlan').vaultSubscriptionId]" -and
+                $sourceDeployment.resourceGroup.Contains("parameters('certificatePlan').vaultResourceId")) 'Deploy external-vault grants in the approved source subscription and resource group.'
+            $endpointGrants = @($inner.resources | Where-Object type -eq 'Microsoft.Authorization/roleAssignments')
+            Assert (@($endpointGrants | Where-Object { $_.properties.principalType -ceq 'User' }).Count -eq 0 -and
+                -not $inner.parameters.ContainsKey('deployerObjectId')) 'Setup must not grant the local operator vault or package-upload data roles.'
+            Assert ($inner.variables.keyVaultReaderRoleId.Contains('21090545-7ca7-4776-b22c-e363652d74d2') -and
+                -not $inner.variables.ContainsKey('keyVaultSecretsOfficerRoleId') -and
+                $inner.variables.keyVaultCertificatesOfficerRoleId.Contains('a4417e6f-fecd-4de8-b567-7b0420556985')) 'The setup identity receives certificate officer and metadata reader, not secrets officer.'
+            $policyResource = $access.resources | Where-Object type -eq 'Microsoft.KeyVault/vaults/accessPolicies'
+            Assert (($policyResource.dependsOn -join ',').Contains('epp-certificate-policy-validation')) 'Legacy policy updates must depend on successful native policy validation.'
+            $policy = $policyResource.properties.accessPolicies | ConvertTo-Json -Depth 20 -Compress
+            Assert ($policy.Contains('functionPermissions') -and $policy.Contains('setupPermissions') -and
+                $policy.Contains("'get'") -and $policy.Contains("'list'")) 'Native access-policy grants must preserve existing permissions while adding secret read and metadata access.'
         }
-    } $directory $TemplatePath
+        if ($PublishTemplatePath) {
+            $template = Get-Content -LiteralPath $PublishTemplatePath -Raw | ConvertFrom-Json -AsHashtable
+            $extension = $template.resources | Where-Object type -eq 'Microsoft.Web/sites/extensions'
+            Assert ($extension.name.Contains("'onedeploy'") -and $extension.name.Contains("'ZipDeploy'") -and
+                $extension.properties.remoteBuild -eq $false -and
+                $extension.properties.packageUri -ceq "[parameters('packageUri')]") 'Publish templates must select the native plan-specific extension and mount the exact release ZIP without building.'
+        }
+        if ($IngressTemplatePath) {
+            $template = Get-Content -LiteralPath $IngressTemplatePath -Raw | ConvertFrom-Json -AsHashtable
+            $site = $template.resources | Where-Object type -eq 'Microsoft.Web/sites'
+            Assert ($site.identity -ceq "[parameters('site').identity]" -and
+                $site.tags.Contains("parameters('site'), 'tags'") -and
+                $site.properties.Contains("union(parameters('site').properties") -and
+                $site.properties.Contains("'publicNetworkAccess', parameters('access')")) 'Native ingress updates must preserve site properties and identity while changing access only.'
+        }
+    } $directory $TemplatePath $PublishTemplatePath $IngressTemplatePath
     Write-Host 'Service plan selection, approval, availability, migration guards, CLI versions, and publication checks passed.'
 }
 finally {

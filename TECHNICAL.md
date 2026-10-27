@@ -85,6 +85,10 @@ Successful `main` builds publish one versioned release per language.
 PR builds publish workflow artifacts only, with each ZIP and checksum under its language folder.
 These folders separate identical asset names locally; the ZIP itself contains the Function payload,
 not a wrapper folder. Packaging does not deploy or verify delivery.
+The `released-package.zip` filename meets the
+[Flex Consumption ARM filename requirement](https://learn.microsoft.com/azure/azure-functions/functions-infrastructure-as-code#deployment-package).
+Use trusted immutable release assets: setup verifies the local download, but ARM fetches the URL
+again and does not enforce that locally verified SHA-256.
 
 ## Build ZIPs locally
 

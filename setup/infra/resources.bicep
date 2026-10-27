@@ -3,12 +3,9 @@ param location string
 param tenantId string
 param applicationId string
 param callerApplicationId string
-param deployerObjectId string
 param tokenVersion int
 param providerSettings object
-param packageBlobName string
 param language string
-param remoteBuild bool
 @allowed(['FC1', 'EP1'])
 param servicePlan string = 'EP1'
 
@@ -40,12 +37,11 @@ var tags = {
   eppServicePlan: servicePlan
 }
 var blobDataOwnerRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')
-var blobDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
 var queueDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')
 var tableDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3')
 var keyVaultSecretsUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
-var keyVaultSecretsOfficerRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
 var keyVaultCertificatesOfficerRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a4417e6f-fecd-4de8-b567-7b0420556985')
+var keyVaultReaderRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '21090545-7ca7-4776-b22c-e363652d74d2')
 var monitoringMetricsPublisherRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')
 
 resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -62,6 +58,12 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
 
 resource outboundIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: resourceNames.outboundIdentity
+  location: location
+  tags: tags
+}
+
+resource setupIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: '${resourceNames.outboundIdentity}-setup'
   location: location
   tags: tags
 }
@@ -208,13 +210,13 @@ var audience = tokenVersion == 2 ? applicationId : identifierUri
 resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: functionApp
   name: 'appsettings'
-  properties: union(providerSettings, {
+  properties: union(functionApp.listApplicationSettings().properties, providerSettings, {
     AzureWebJobsStorage__accountName: storage.name
     AzureWebJobsStorage__credential: 'managedidentity'
     APPLICATIONINSIGHTS_CONNECTION_STRING: insights.properties.ConnectionString
     APPLICATIONINSIGHTS_AUTHENTICATION_STRING: 'Authorization=AAD'
     KEY_VAULT_URL: vault.properties.vaultUri
-    // Setup pins the encryption settings after Key Vault issues the certificate.
+    // The encryption module pins the versioned reference after certificate execution.
     EPP_OUTBOUND_CLIENT_ID: applicationId
     EPP_OUTBOUND_MI_CLIENT_ID: outboundIdentity.properties.clientId
     EPP_EXPECTED_AUDIENCE: audience
@@ -224,12 +226,8 @@ resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   }, isFlexConsumption ? {} : union({
     FUNCTIONS_EXTENSION_VERSION: '~4'
     FUNCTIONS_WORKER_RUNTIME: runtime.worker
-  }, remoteBuild ? {
-    SCM_DO_BUILD_DURING_DEPLOYMENT: 'true'
-    ENABLE_ORYX_BUILD: 'true'
-  } : {
-    WEBSITE_RUN_FROM_PACKAGE: '${storage.properties.primaryEndpoints.blob}${packages.name}/${packageBlobName}'
-    WEBSITE_RUN_FROM_PACKAGE_BLOB_MI_RESOURCE_ID: 'SystemAssigned'
+  }, {
+    WEBSITE_RUN_FROM_PACKAGE: '1'
     SCM_DO_BUILD_DURING_DEPLOYMENT: 'false'
     ENABLE_ORYX_BUILD: 'false'
   }))
@@ -287,16 +285,6 @@ resource systemStorageRoles 'Microsoft.Authorization/roleAssignments@2022-04-01'
   }
 }]
 
-resource packageUploadRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!isFlexConsumption) {
-  name: guid(storage.id, deployerObjectId, blobDataContributorRoleId)
-  scope: storage
-  properties: {
-    principalId: deployerObjectId
-    principalType: 'User'
-    roleDefinitionId: blobDataContributorRoleId
-  }
-}
-
 resource vaultReadRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(vault.id, functionApp.id, keyVaultSecretsUserRoleId)
   scope: vault
@@ -307,22 +295,22 @@ resource vaultReadRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-resource vaultWriteRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(vault.id, deployerObjectId, keyVaultSecretsOfficerRoleId)
+resource vaultMetadataRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(vault.id, setupIdentity.id, keyVaultReaderRoleId)
   scope: vault
   properties: {
-    principalId: deployerObjectId
-    principalType: 'User'
-    roleDefinitionId: keyVaultSecretsOfficerRoleId
+    principalId: setupIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: keyVaultReaderRoleId
   }
 }
 
 resource vaultCertificateRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(vault.id, deployerObjectId, keyVaultCertificatesOfficerRoleId)
+  name: guid(vault.id, setupIdentity.id, keyVaultCertificatesOfficerRoleId)
   scope: vault
   properties: {
-    principalId: deployerObjectId
-    principalType: 'User'
+    principalId: setupIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
     roleDefinitionId: keyVaultCertificatesOfficerRoleId
   }
 }
@@ -377,6 +365,9 @@ output functionAppName string = functionApp.name
 output storageAccountName string = storage.name
 output keyVaultName string = vault.name
 output outboundPrincipalId string = outboundIdentity.properties.principalId
+output functionPrincipalId string = functionApp.identity.principalId
+output setupPrincipalId string = setupIdentity.properties.principalId
+output setupIdentityResourceId string = setupIdentity.id
 output endpointUrl string = 'https://${functionApp.properties.defaultHostName}/api/SendOtp'
 output identifierUri string = identifierUri
 output packageContainerUrl string = '${storage.properties.primaryEndpoints.blob}${packages.name}/'

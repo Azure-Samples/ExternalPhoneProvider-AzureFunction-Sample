@@ -23,6 +23,9 @@ jobs:
       - name: Test certificate setup without Azure access
         shell: pwsh
         run: ./setup/tests/Certificates.Tests.ps1
+      - name: Test ARM-hosted certificate operations without Azure access
+        shell: pwsh
+        run: ./setup/tests/CertificateOperations.Tests.ps1
       - name: Test CLI-backed Graph operations without Azure access
         shell: pwsh
         run: ./setup/tests/Graph.Tests.ps1
@@ -49,11 +52,17 @@ jobs:
         run: |
           az bicep install
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          az bicep build --file (Join-Path $env:GITHUB_WORKSPACE 'setup/infra/main.bicep') --outfile (Join-Path $env:RUNNER_TEMP 'epp-main.json')
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($template in @('main', 'publish', 'ingress')) {
+            az bicep build --file (Join-Path $env:GITHUB_WORKSPACE "setup/infra/$template.bicep") --outfile (Join-Path $env:RUNNER_TEMP "epp-$template.json")
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Test service plans without Azure access
         shell: pwsh
-        run: ./setup/tests/ServicePlans.Tests.ps1 -TemplatePath (Join-Path $env:RUNNER_TEMP 'epp-main.json')
+        run: |
+          ./setup/tests/ServicePlans.Tests.ps1 `
+            -TemplatePath (Join-Path $env:RUNNER_TEMP 'epp-main.json') `
+            -PublishTemplatePath (Join-Path $env:RUNNER_TEMP 'epp-publish.json') `
+            -IngressTemplatePath (Join-Path $env:RUNNER_TEMP 'epp-ingress.json')
 
   javascript:
     name: JavaScript (Node.js)

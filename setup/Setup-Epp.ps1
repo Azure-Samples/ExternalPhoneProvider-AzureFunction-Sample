@@ -108,7 +108,12 @@ try {
     $sourceBaseUri = "https://raw.githubusercontent.com/$repository/$revision/setup"
     Write-Host "Downloading deployment tools from $repository at $revision"
 
-    foreach ($file in @('support/Epp.Setup.psm1', 'support/Epp.Packages.ps1', 'support/Epp.Graph.ps1', 'providers/catalog.json', 'packages/catalog.json', 'infra/main.bicep', 'infra/resources.bicep')) {
+    foreach ($file in @(
+        'support/Epp.Setup.psm1', 'support/Epp.Packages.ps1', 'support/Epp.Graph.ps1',
+        'providers/catalog.json', 'packages/catalog.json', 'infra/main.bicep', 'infra/resources.bicep',
+        'infra/certificate-access.bicep', 'infra/certificate.bicep', 'infra/Invoke-Certificate.ps1',
+        'infra/encryption-settings.bicep', 'infra/ingress.bicep', 'infra/publish.bicep'
+    )) {
         $destination = Join-Path $downloadDirectory $file
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Invoke-WebRequest -Uri "$sourceBaseUri/$file" -OutFile $destination -TimeoutSec 60 -MaximumRedirection 0

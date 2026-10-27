@@ -29,7 +29,7 @@ and selects the **EU** provider route for EU tenants or **Global** otherwise, wi
 `.\Setup-Epp.ps1 -Language csharp` or `.\Setup-Epp.ps1 -Language python`.
 The legacy `-Language dotnet` value remains accepted for C#.
 Setup selects `released-package.zip` from the matching language's stable release and verifies it
-against that release's `SHA256SUMS.txt` before publishing.
+against that release's `SHA256SUMS.txt` before ARM publication.
 See [source/package selection](#source-versioning).
 
 Both channels are configured. Profile objects `deployment.routes.global` and
@@ -172,14 +172,21 @@ Setup configures:
 - **Azure Cloud Shell in PowerShell mode, or PowerShell 7+**, with an Azure CLI user login.
   Certificate issuance stays in Key Vault; no local certificate-store cmdlets are needed.
 - Azure CLI **2.60.0+ for FC1** or **2.48.1+ for EP1** on `PATH`, with GitHub, Azure,
-  Microsoft Graph, Key Vault, and required SCM access. Setup can install Bicep after confirmation,
+  Microsoft Graph, Key Vault, and required deployment endpoints. Azure must also be able to fetch
+  GitHub release assets. Setup can install Bicep after confirmation,
   but Azure CLI must already be installed.
 - An Azure **user** allowed to deploy at subscription scope and create scoped role assignments.
-  Bicep grants **Key Vault Certificates Officer** and **Key Vault Secrets Officer** on this vault.
+  ARM grants the dedicated setup managed identity **Key Vault Certificates Officer** and
+  **Key Vault Reader** on the setup vault. The operator is not granted vault data-plane roles.
+  Certificate execution also requires deployment-script, Container Instances, supporting-storage,
+  managed-identity assignment, and scoped RBAC permissions, with regional availability and quota.
 - **Certificate reuse:** the operator needs source-vault ARM read, certificate read, and
   secret-version metadata read. A different vault also requires permission to grant the Function
   secret read through RBAC or an access policy. The vault must be in the customer tenant;
   use `-KeyVaultSubscriptionId` for another subscription. Setup never reads the private key locally.
+  ARM grants the setup identity metadata-read access to a different source vault.
+  Both the Function and hosted certificate script need a network path to it; setup does not change
+  the source vault's network rules.
 - A Microsoft Entra **Privileged Role Administrator** for granting the Microsoft first-party service
   principal Graph `Application.Read.All`. Microsoft Graph operations use the current Azure CLI
   user session through `az ad` and `az rest`; Azure subscription roles alone do not grant these
@@ -208,7 +215,9 @@ group, so access to an unrelated group does not cover the deployment. Activate e
 
 Azure roles do not grant Entra/Graph permissions, and Entra roles do not grant Azure/vault access.
 The signed-in user needs the listed Entra roles for setup. An Authentication Policy Administrator
-handles activation separately. Setup grants vault roles only to its operator and Function identity.
+handles activation separately. ARM grants vault permissions to the Function and dedicated setup
+identity. Provider-credential administration requires separate secret-write access, such as
+**Key Vault Secrets Officer** on the provider vault; certificate setup does not grant it.
 
 ### Install and check workstation tools
 
@@ -232,6 +241,8 @@ Interactive setup can install missing Bicep.
 | Python | Python 3.11, Functions v4 | Application and Linux x64 dependencies in `.python_packages/lib/site-packages` |
 
 Setup verifies and publishes the selected ZIP, recording its SHA-256 in the deployment summary.
+Azure fetches the versioned release URL separately; ARM does not independently verify the hash
+of that second download. Use trusted immutable release assets.
 
 For [unattended execution](#noninteractive-example), preinstall prerequisites or allow Bicep
 installation with `-InstallPrerequisites`. Azure CLI must already be installed. Sign-in, MFA,
@@ -321,14 +332,15 @@ The flow is:
    select **Reuse** and supply its versioned Key Vault location. Reuse of one among several also
    removes the others after approval. Use **0** or **Cancel** to stop the certificate decision.
 9. **Review the complete plan**, including resource names, tenant/subscription, language, service plan,
-   automatic package verification/build, provider
+   package verification, provider
    settings, scoped roles, the exact encryption key IDs to keep/remove, certificate location or
    staging name, and application configuration. Bicep receives these
    exact names for existing apps; it does not independently calculate a different naming scheme.
    For a new app, the plan instead shows its requested display name and name patterns containing
    `<app-id-hash>`. After approval assigns the client ID, setup calculates and displays the final
    eight-character suffix and checks resource ownership before deploying Azure resources.
-   The plan also lists the six required **Azure resource providers** and their registration states.
+   The plan also lists the required **Azure resource providers** and their registration states,
+   including Container Instances and deployment scripts.
    These Azure service registrations are separate from your phone-provider selection.
 10. **Enter `Yes` or `Y` to deploy.** `No`, `N`, or Enter cancels without Azure or app-registration changes. Responses
     are case-insensitive. Invalid answers prompt again; individual resources do not request
@@ -433,7 +445,8 @@ tenant before choosing creation again.
 
 Setup rechecks the subscription and registers only missing `Microsoft.Web`, `Microsoft.Storage`,
 `Microsoft.KeyVault`, `Microsoft.OperationalInsights`, `Microsoft.Insights`, and
-`Microsoft.ManagedIdentity` providers before certificates or deployment. Preflight registers nothing.
+`Microsoft.ManagedIdentity`, `Microsoft.ContainerInstance`, and `Microsoft.Resources` providers before
+certificates or deployment. Preflight registers nothing.
 Existing registrations are reused; `Registering` is sufficient once the requested region is exposed.
 Polling/recognized propagation retries are bounded; permission and unsupported-region errors stop setup.
 Subscription-wide registrations are not undone after later failures. See
@@ -465,28 +478,34 @@ subscription/app/prefix can reconfigure the existing endpoint. See
 
 The plan creates or updates the complete deployment. This includes a dedicated resource group,
 Linux FC1 or EP1 hosting plan, Function App, storage, private package container, and Key Vault.
-It also includes Log Analytics, Application Insights, an outbound managed identity, diagnostics,
+It also includes Log Analytics, Application Insights, outbound and setup managed identities, diagnostics,
 Easy Auth, and scoped role assignments. Storage and package access use managed identity instead
 of account keys or Azure Storage shared access signatures.
 Telemetry uses the system identity; the outbound identity is selected explicitly, not through
 a global `AZURE_CLIENT_ID`.
 
-The Function starts with public ingress disabled. After Bicep creates the vault and permissions,
-setup applies the [approved certificate action](#encryption-certificate-selection).
+The Function starts with public ingress disabled. After ARM creates the vault and permissions,
+an ARM-hosted Azure PowerShell deployment script applies the
+[approved certificate action](#encryption-certificate-selection) using the dedicated setup identity.
+Only public certificate bytes and backing-secret version metadata are returned; neither the script
+nor the setup workstation retrieves the private key. ARM adds external-vault permissions when needed
+and merges the versioned decryption reference and key ID into the Function settings.
 New certificates are self-signed, exportable RSA-2048 with subject/display name
 **`CN=ExternalPhoneProvider`**. Initial creation uses `phone-provider-encryption`; replacement uses
 a suffixed staging name; reuse preserves the selected key ID/display name.
 Setup pins `EPP_DECRYPTION_KEY_PEM` to its **versioned PEM backing secret**, verifies resolution,
 and registers one encryption entry without changing other credentials.
 It **verifies Easy Auth before enabling ingress**.
-SCM basic authentication stays disabled for both plans. FC1 uses Entra-authenticated **One Deploy**
-for every language. Its `functionAppConfig` defines runtime, scaling,
-and managed-identity deployment storage; setup does not write Premium-only runtime/build or
-`WEBSITE_RUN_FROM_PACKAGE` settings. One Deploy handles publication and trigger synchronization.
-EP1 uploads the verified ZIP to private Blob storage and uses managed-identity
-run-from-package for every language. EP1 then restarts and synchronizes triggers.
+SCM basic authentication stays disabled for both plans. For every language ARM deploys a public,
+versioned GitHub release URL: FC1 uses the **onedeploy** extension and EP1 uses **ZipDeploy** with
+`WEBSITE_RUN_FROM_PACKAGE=1`. FC1's `functionAppConfig` defines runtime, scaling, and managed-identity
+deployment storage; setup does not write Premium-only runtime/build or
+`WEBSITE_RUN_FROM_PACKAGE` settings to FC1.
+Setup downloads the release for local checksum/archive verification, and Azure fetches it again
+for deployment. Use trusted immutable releases: the ARM extension does not enforce the local
+SHA-256, so a mutable asset could change between those downloads.
 Both plans verify that `SendOtp` is registered before reporting success.
-On publication/startup failure it disables public ingress again; failure to close ingress is reported
+On publication/startup failure a separate ARM deployment disables public ingress again; failure to close ingress is reported
 explicitly rather than hidden.
 Key-reference checks use bounded identity/role propagation retries. Failure stops certificate
 registration, but infrastructure/settings may have changed. Metadata resolution does not replace
@@ -585,7 +604,7 @@ configuration metadata, not provider credentials or private-key bytes. Keep it a
 | `certificateAction`, `removedEncryptionKeyIds`, `certificateVaultSubscriptionId` | Review whether creation, reuse, or replacement occurred, the exact retired application key IDs, and the source certificate's subscription. |
 | `certificateReferenceResolved` | `true` means the Function's exact secret reference resolved before registration. It is not proof of successful authorized decryption or provider delivery. |
 | `endpointServicePrincipalId`, `microsoftPhoneProviderServicePrincipalId` | Tenant-local enterprise-application Object IDs; neither is the endpoint app client ID. |
-| `source`, `sourceRevision`, `packageReleaseTag`, `packageUrl`, `sourcePackageSha256`, `packageSha256`, `language`, `servicePlan` | Commit-pinned setup source, package release provenance, and language/plan. C# is recorded as `csharp`; older summaries can contain `dotnet`. `sourcePackageSha256` and `packageSha256` identify the downloaded and deployed ZIP and match. |
+| `source`, `sourceRevision`, `packageReleaseTag`, `packageUrl`, `sourcePackageSha256`, `packageSha256`, `language`, `servicePlan` | Commit-pinned setup source, full language-specific release tag, exact package URL, and language/plan. C# is recorded as `csharp`; older summaries can contain `dotnet`. Both hashes identify the locally verified release ZIP, not an independently verified ARM second download. |
 | `policyChanged` | Expected `false`: deployment has not activated policy. |
 
 The `provider` field must match your selected provider. For example, a record for the Global route
@@ -612,8 +631,8 @@ Use **Reuse** for a rerun with the exact registered certificate and its versione
 location. Reuse never issues a certificate or adds a new credential. If there are older or duplicate
 encryption entries, approve which key ID to keep and which entries to retire.
 
-For the Create/Replace paths, only a certificate-not-found response triggers issuance. Azure CLI
-waits for self-signed issuance. Other errors, including pending-operation conflicts, stop setup
+For the Create/Replace paths, only an HTTP 404 `CertificateNotFound` response triggers issuance.
+The ARM-hosted script issues once and polls for completion. Other errors, including pending-operation conflicts, stop setup
 rather than overwriting a disabled, incompatible, or near-expiry staged certificate. Keep more than
 30 days of validity remaining. No Key Vault version is deleted as part of application cleanup.
 
@@ -650,6 +669,11 @@ repository's latest stable `epp-packages-<run>-<attempt>-<language>` release, wh
 Each release contains only its language ZIP and `SHA256SUMS.txt`; setup verifies the ZIP using that
 release's checksum. Draft, prerelease, unrelated, wrong-language, and ambiguous assets are rejected.
 The plan/summary records the full resolved tag, URLs, and hashes.
+This literal filename is required by
+[Flex ARM publication](https://learn.microsoft.com/azure/azure-functions/functions-infrastructure-as-code#deployment-package);
+both hosting plans use the selected language package directly.
+Catalog version 3 requires the current package assets; source-only releases are incompatible.
+Publish a matching package release before Azure deployment with this setup version.
 
 For repeatable deployment, pin a reviewed full SHA **and**
 `-PackageReleaseTag epp-packages-<run>-<attempt>-javascript` (or `-dotnet`/`-python` matching `-Language`).
@@ -657,7 +681,8 @@ Use the actual full tag recorded in the plan/summary. To test custom source, pub
 matching stable release; align both source options with the downloaded launcher. Local unpushed
 changes are not downloadable.
 
-Trust the selected repository: its PowerShell executes locally. Provider JSON selects data, not
+Trust the selected repository: its PowerShell executes locally and its certificate script executes
+in Azure under the dedicated setup identity. Provider JSON selects data, not
 another executable script. Downloads fail closed and temporary files are removed on success/failure.
 
 ### Offline setup checks
@@ -666,9 +691,15 @@ From the repository root, compile the infrastructure and run all setup regressio
 Azure sign-in or resource changes:
 
 ```powershell
-$templatePath = Join-Path ([IO.Path]::GetTempPath()) "epp-main-$([Guid]::NewGuid().ToString('N')).json"
-az bicep build --file .\setup\infra\main.bicep --outfile $templatePath
-if ($LASTEXITCODE -ne 0) { throw 'Bicep compilation failed.' }
+$templateDirectory = Join-Path ([IO.Path]::GetTempPath()) "epp-bicep-$([Guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path $templateDirectory | Out-Null
+$templatePaths = @()
+foreach ($name in @('main', 'ingress', 'publish')) {
+    $path = Join-Path $templateDirectory "$name.json"
+    az bicep build --file ".\setup\infra\$name.bicep" --outfile $path
+    if ($LASTEXITCODE -ne 0) { throw "$name Bicep compilation failed." }
+    $templatePaths += $path
+}
 
 $tests = @(
     'Launcher.Tests.ps1',
@@ -680,6 +711,7 @@ $tests = @(
     'Progress.Tests.ps1',
     'Packages.Tests.ps1',
     'Certificates.Tests.ps1',
+    'CertificateOperations.Tests.ps1',
     'Providers.Tests.ps1'
 )
 foreach ($test in $tests) {
@@ -688,9 +720,12 @@ foreach ($test in $tests) {
 }
 
 pwsh -NoProfile -File .\setup\tests\ServicePlans.Tests.ps1 `
-    -TemplatePath $templatePath
+    -TemplatePath (Join-Path $templateDirectory 'main.json') `
+    -PublishTemplatePath (Join-Path $templateDirectory 'publish.json') `
+    -IngressTemplatePath (Join-Path $templateDirectory 'ingress.json')
 if ($LASTEXITCODE -ne 0) { throw 'ServicePlans.Tests.ps1 failed.' }
-Remove-Item -LiteralPath $templatePath
+Remove-Item -LiteralPath $templatePaths
+Remove-Item -LiteralPath $templateDirectory
 ```
 
 The suites cover launcher downloads and cleanup; account, subscription, application, and region
@@ -701,7 +736,10 @@ defaults, confirmation aliases, certificate choices, provider and package select
 deployment. Progress checks use a local CLI stand-in to verify animation, output handling, and
 cancellation. GitHub, Azure, Microsoft Graph, certificate, and publication calls are mocked.
 Package checks also cover required runtime files, archive paths, private-key exclusion,
-checksum failures, and ZIP consumption. CI runs the same eleven suites on Windows and Linux.
+checksum failures, and ZIP consumption. Certificate-script checks cover metadata-only access,
+URI/pagination boundaries, issuance, reuse, and bounded retries. Native-template checks cover grants,
+settings preservation, and all six plan/language publication paths, including ingress failure handling.
+CI runs the same twelve suites on Windows and Linux.
 They do not certify live deployments, RBAC propagation,
 Key Vault issuance, Entra behavior, or provider delivery.
 
