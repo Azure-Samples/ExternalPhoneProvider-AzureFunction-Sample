@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $runner = Join-Path $PSScriptRoot '..\infra\Invoke-Certificate.ps1'
 $originalPlan = $env:EPP_CERTIFICATE_PLAN
+$module = Import-Module (Join-Path $PSScriptRoot '..\support\Epp.Setup.psm1') -Force -PassThru
 $rsa = [Security.Cryptography.RSA]::Create(2048)
 $request = [Security.Cryptography.X509Certificates.CertificateRequest]::new(
     'CN=ExternalPhoneProvider', $rsa, [Security.Cryptography.HashAlgorithmName]::SHA256,
@@ -103,7 +104,13 @@ function Invoke-Case {
     $env:EPP_CERTIFICATE_PLAN = $script:Plan | ConvertTo-Json -Depth 8
     return & {
         . $runner
-        return $DeploymentScriptOutputs
+        Assert (($DeploymentScriptOutputs.Keys | Sort-Object) -join ',' -ceq 'bundleJson,secretVersionsJson') 'Encode public certificate and secret-version metadata as JSON strings before the host serializes outputs.'
+        $wire = $DeploymentScriptOutputs | ConvertTo-Json -Depth 2 -Compress -WarningAction Stop | ConvertFrom-Json -AsHashtable
+        Assert ($wire.bundleJson -is [string] -and $wire.secretVersionsJson -is [string]) 'Deployment-script transport must use scalar JSON strings that survive shallow host serialization.'
+        return @{
+            bundle = ConvertFrom-Json -InputObject $wire.bundleJson -AsHashtable
+            secretVersions = ConvertFrom-Json -InputObject $wire.secretVersionsJson -AsHashtable -NoEnumerate
+        }
     }
 }
 try {
@@ -122,9 +129,15 @@ try {
             $output.bundle.policy.keyProperties.reuseKey -eq $true -and
             $output.bundle.policy.secretProperties.contentType -ceq 'application/x-pem-file' -and
             $output.bundle.policy.lifetimeActions[0].action.actionType -ceq 'EmailContacts') 'Normalize REST policy names to the local CLI validation contract.'
-        Assert ($output.secretVersions.Count -eq 1 -and $output.secretVersions[0].managed -eq $true -and
+        Assert ($output.secretVersions -is [array] -and $output.secretVersions.Count -eq 1 -and $output.secretVersions[0].managed -eq $true -and
             [DateTimeOffset]$output.secretVersions[0].attributes.notBefore -lt [DateTimeOffset]::UtcNow -and
             [DateTimeOffset]$output.secretVersions[0].attributes.expires -gt [DateTimeOffset]::UtcNow.AddDays(30)) 'Normalize secret metadata timestamps without reading secret values.'
+        & $module {
+            param($Bundle, $Versions, $RequireSetupPolicy)
+            $issued = ConvertFrom-EppCertificateBundle -Bundle $Bundle -RequireSetupPolicy:$RequireSetupPolicy
+            try { Assert-EppCertificateSecret -SecretId $issued.SecretId -Versions $Versions }
+            finally { $issued.Certificate.Dispose() }
+        } $output.bundle $output.secretVersions ($action -ne 'Reuse')
         $posts = @($script:Calls | Where-Object Method -eq POST)
         if ($action -eq 'Reuse') {
             Assert ($posts.Count -eq 0 -and $script:Calls[0].Uri -ceq "$($script:Plan.certificateId)?api-version=7.4") 'Reuse reads only the approved version, never creates.'
@@ -146,6 +159,11 @@ try {
         Assert (@($script:Calls | Where-Object { $_.Uri -like '*/secrets/*' -and $_.Uri -cne $script:VersionsUri }).Count -eq 0) 'Never fetch private secret values.'
         Assert ($script:Sleeps.Count -eq 0) 'An immediately available certificate must not poll unnecessarily.'
     }
+
+    Reset-Case Reuse
+    $script:Pages[$script:VersionsUri].value = @()
+    $output = Invoke-Case
+    Assert ($output.secretVersions -is [array] -and $output.secretVersions.Count -eq 0) 'Keep empty secret-version metadata as an array across JSON transport.'
 
     Reset-Case
     $null = Invoke-Case
@@ -210,7 +228,9 @@ try {
     $second = @{} + $script:Version; $second.id = $second.id.Replace(('b' * 32), ('c' * 32))
     $script:Pages[$next] = @{ value = @($second) }
     $output = Invoke-Case
-    Assert ($output.secretVersions.Count -eq 2 -and $script:Calls[-1].Uri -ceq $next) 'Follow approved same-collection pagination and retain every version.'
+    Assert ($output.secretVersions -is [array] -and $output.secretVersions.Count -eq 2 -and
+        $output.secretVersions[1].attributes.enabled -eq $true -and
+        $script:Calls[-1].Uri -ceq $next) 'Follow approved same-collection pagination and preserve every version and its nested attributes across transport.'
     $boundaryFailures = [Collections.Generic.List[string]]::new()
     foreach ($next in @(
         'https://other.vault.azure.net/secrets/phone-provider-encryption/versions?api-version=7.4',
@@ -260,9 +280,10 @@ try {
     Assert-Throws { Invoke-Case } 'exact approved certificate version'
     Assert ($script:Calls.Count -eq 0) 'Reuse requires a pinned certificate version.'
     Assert ($boundaryFailures.Count -eq 0) ("Unsafe pagination was not rejected before requesting data:`n" + ($boundaryFailures -join "`n"))
-    Write-Host 'ARM-hosted certificate issuance, reuse, metadata normalization, pagination boundaries, and bounded retries passed.'
+    Write-Host 'ARM-hosted certificate issuance, reuse, metadata transport, local validation, pagination boundaries, and bounded retries passed.'
 }
 finally {
     $env:EPP_CERTIFICATE_PLAN = $originalPlan
     $certificate.Dispose(); $rsa.Dispose()
+    Remove-Module -ModuleInfo $module -Force
 }

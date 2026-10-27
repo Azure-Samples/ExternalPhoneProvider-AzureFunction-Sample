@@ -737,6 +737,7 @@ deployment. Progress checks use a local CLI stand-in to verify animation, output
 cancellation. GitHub, Azure, Microsoft Graph, certificate, and publication calls are mocked.
 Package checks also cover required runtime files, archive paths, private-key exclusion,
 checksum failures, and ZIP consumption. Certificate-script checks cover metadata-only access,
+depth-safe output transport and local certificate validation,
 URI/pagination boundaries, issuance, reuse, and bounded retries. Native-template checks cover grants,
 settings preservation and read/write deployment boundaries, and all six plan/language publication
 paths, including ingress failure handling.

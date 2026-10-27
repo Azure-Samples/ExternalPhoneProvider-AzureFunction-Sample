@@ -200,6 +200,8 @@ try {
             $script:ReadError = ''
             foreach ($mutation in @(
                 { $script:Bundle.attributes.enabled = $false },
+                { $script:Bundle.policy.keyProperties = 'System.Collections.Hashtable' },
+                { $script:Bundle.policy.secretProperties = 'System.Collections.Hashtable' },
                 { $script:Bundle.policy.keyProperties.exportable = $false },
                 { $script:Bundle.policy.secretProperties.contentType = 'application/x-pkcs12' },
                 { $script:Bundle.policy.lifetimeActions[0].action.actionType = 'AutoRenew' }
@@ -210,6 +212,7 @@ try {
                 $script:Bundle = $saved | ConvertFrom-Json -AsHashtable
             }
             foreach ($mutation in @(
+                { $script:SecretVersions[0].attributes = 'System.Collections.Hashtable' },
                 { $script:SecretVersions[0].attributes.enabled = $false },
                 { $script:SecretVersions[0].managed = $false },
                 { $script:SecretVersions[0].contentType = 'application/x-pkcs12' },

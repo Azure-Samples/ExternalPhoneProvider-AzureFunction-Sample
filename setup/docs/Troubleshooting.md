@@ -319,6 +319,15 @@ cross-tenant, or application-restricted; ask the vault administrator to review i
 overwriting its permissions.
 Certificate issuance never falls back from an authorization error to replacement.
 
+If that deployment succeeds but setup reports an incompatible certificate, inspect its public
+output metadata. Policy fields or secret-version attributes containing the literal
+`System.Collections.Hashtable` indicate nested output serialization loss; this alone does not
+establish that the certificate is incompatible. The script transports public certificate and
+secret-version metadata as JSON strings, which ARM decodes into typed objects and arrays before
+local validation. Use a reviewed setup revision with this output transport. Do not bypass the
+compatibility checks, grant the operator private-key access, or replace a certificate solely to
+work around malformed output.
+
 ## Azure CLI paths are combined during deployment
 
 **Symptom:** `Invoke-EppAz` reports an `EndInvoke` failure because a command such as

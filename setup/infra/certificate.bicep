@@ -29,5 +29,5 @@ resource certificate 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
   }
 }
 
-output bundle object = certificate.properties.outputs.bundle
-output secretVersions array = certificate.properties.outputs.secretVersions
+output bundle object = json(certificate.properties.outputs.bundleJson)
+output secretVersions array = json(certificate.properties.outputs.secretVersionsJson)

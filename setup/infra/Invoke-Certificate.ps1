@@ -105,7 +105,10 @@ try {
         }
         $secretUri = if ($page.PSObject.Properties['nextLink']) { $page.nextLink } else { $null }
     } while ($secretUri)
-    # Only public certificate bytes and secret-version metadata leave the vault.
-    $DeploymentScriptOutputs = @{ bundle = $bundle; secretVersions = $versions }
+    # Keep nested public metadata intact through the host's shallow output serialization; ARM decodes it.
+    $DeploymentScriptOutputs = @{
+        bundleJson = ConvertTo-Json -InputObject $bundle -Depth 10 -Compress
+        secretVersionsJson = ConvertTo-Json -InputObject @($versions) -Depth 8 -Compress
+    }
 }
 finally { $token.Dispose() }

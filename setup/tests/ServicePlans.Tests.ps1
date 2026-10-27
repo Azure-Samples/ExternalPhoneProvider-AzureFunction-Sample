@@ -377,6 +377,12 @@ try {
                 $operation.identity.type -ceq 'UserAssigned' -and
                 $operation.properties.cleanupPreference -ceq 'Always' -and
                 $operation.properties.timeout -ceq 'PT15M') 'Certificate operations must run in ARM with a managed identity, bounded timeout, and cleanup.'
+            Assert ($certificateTemplate.outputs.bundle.type -ceq 'object' -and
+                $certificateTemplate.outputs.bundle.value.StartsWith('[json(', [StringComparison]::Ordinal) -and
+                $certificateTemplate.outputs.bundle.value.EndsWith('.outputs.bundleJson)]', [StringComparison]::Ordinal) -and
+                $certificateTemplate.outputs.secretVersions.type -ceq 'array' -and
+                $certificateTemplate.outputs.secretVersions.value.StartsWith('[json(', [StringComparison]::Ordinal) -and
+                $certificateTemplate.outputs.secretVersions.value.EndsWith('.outputs.secretVersionsJson)]', [StringComparison]::Ordinal)) 'ARM must decode depth-safe JSON strings into typed public certificate and secret-version outputs.'
             $sourceDeployment = $template.resources | Where-Object name -eq 'epp-certificate-access'
             $access = $sourceDeployment.properties.template
             $validation = $access.resources | Where-Object name -eq 'epp-certificate-policy-validation'
