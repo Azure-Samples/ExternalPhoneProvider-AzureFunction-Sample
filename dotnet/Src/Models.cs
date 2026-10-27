@@ -5,6 +5,20 @@ namespace Epp.Otp;
 
 public enum Outcome { Continue, Fail, Block }
 
+public sealed class RiskContext
+{
+    [JsonPropertyName("scenario"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Scenario { get; init; }
+
+    [JsonPropertyName("ipAddress"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? IpAddress { get; init; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> AdditionalProperties { get; init; } = new();
+
+    public override string ToString() => nameof(RiskContext);
+}
+
 public sealed record EndpointSuccessResponse(
     [property: JsonPropertyName("nonce")] string Nonce,
     [property: JsonPropertyName("correlationId")] string CorrelationId,
@@ -27,7 +41,7 @@ public sealed record OtpDelivery(
     string? CorrelationId,
     string? Locale,
     string? Otp = null,
-    Dictionary<string, JsonElement>? RiskContext = null)
+    RiskContext? RiskContext = null)
 {
     public override string ToString() => nameof(OtpDelivery);
 }

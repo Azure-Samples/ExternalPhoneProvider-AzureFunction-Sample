@@ -199,7 +199,9 @@ def send_otp(req: func.HttpRequest, context: func.Context = None) -> func.HttpRe
             provider_status, log = _send_to_provider(delivery, log)
             if provider_status >= 400:
                 raise InvalidRequest(
-                    provider_status, "provider_delivery_failed", correlation_id=correlation_id)
+                    provider_status,
+                    "provider_blocked" if provider_status == 422 else "provider_delivery_failed",
+                    correlation_id=correlation_id)
 
         status_code = 200
         body = {

@@ -29,6 +29,19 @@ const provider = Object.freeze({
         }
         const correlationId = typeof delivery.correlationId === 'string' && delivery.correlationId
             ? delivery.correlationId : delivery.messageId;
+        const body = {
+            recipient: { phone_number: delivery.phoneNumber },
+            message,
+            channels: [{ channel }],
+            correlation_id: correlationId,
+        };
+        for (const [source, target] of [
+            ['scenario', 'account_lifecycle_event'], ['ipAddress', 'originating_ip'],
+        ]) {
+            const value = delivery.riskContext?.[source];
+            if (value == null) continue;
+            body[target] = value;
+        }
         return {
             url: endpoint,
             method: 'POST',
@@ -37,12 +50,7 @@ const provider = Object.freeze({
                 'Content-Type': 'application/json',
                 Accept: 'application/json',
             },
-            body: JSON.stringify({
-                recipient: { phone_number: delivery.phoneNumber },
-                message,
-                channels: [{ channel }],
-                correlation_id: correlationId,
-            }),
+            body: JSON.stringify(body),
         };
     },
 
@@ -53,8 +61,9 @@ const provider = Object.freeze({
             ? payload.status : {};
         const code = typeof statusObject.code === 'number' && Number.isInteger(statusObject.code)
             ? String(statusObject.code) : 'UNKNOWN';
-        const recognized = SUCCESS.has(code);
-        const mappedOutcome = recognized ? OUTCOME.CONTINUE : OUTCOME.FAIL;
+        const recognized = SUCCESS.has(code) || code === '3072';
+        const mappedOutcome = code === '3072' ? OUTCOME.BLOCK
+            : recognized ? OUTCOME.CONTINUE : OUTCOME.FAIL;
         const outcome = response.ok ? mappedOutcome : OUTCOME.FAIL;
         return new ProviderResult({
             outcome,

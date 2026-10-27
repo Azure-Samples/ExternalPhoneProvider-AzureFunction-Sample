@@ -30,7 +30,7 @@ phone numbers, OTPs, private keys, encrypted bodies, and raw responses. Keep bod
 | Cannot see an offer or EPP activation/test capability | Customer onboarding owner verifies the [Security Store and feature-access gate](../../docs/ONBOARDING.md#before-purchasing-or-deploying) with provider/Microsoft support. | Do not infer eligibility from Azure Owner or a successful purchase. |
 | Setup reports success, but no OTP delivery | Finish [provider OAuth authorization](../../docs/ONBOARDING.md#complete-provider-authentication); confirm authorized testing and policy activation are separately complete. | Do not redeploy all runtimes or paste credentials into local settings. |
 | Endpoint returns 401/403 with no invocation | Azure operator checks Easy Auth, issuer/audience/caller restrictions, network access, and available platform/auth logs. An ordinary customer CLI token is not the allowlisted Microsoft caller. | Do not disable Easy Auth, add a test caller, or interpret rejection as readiness. |
-| App failure after invocation, including 401 | Inspect correlated `request_failed` and provider-response events. A provider's 401/403 is mapped to a handler 401; this differs from Easy Auth rejection. | Do not change inbound trust to fix outbound provider authorization. |
+| App failure after invocation | Inspect correlated `request_failed` and provider-response events. Provider 401/403 maps to handler 400; an explicit provider block maps to 422 with `provider_blocked`. | Do not change inbound trust to fix outbound provider authorization. Existing SAS may still use permitted native fallback after a provider block. |
 | `decryption_failed` or unresolved key reference | Compare summary certificate/thumbprint/key ID and versioned reference; verify Function identity vault access and reference resolution, then use an authorized evaluation. | Do not export the private key, remove certificates outside approved cleanup, or assume new vault versions automatically update Entra. |
 | Provider credentials unavailable | For guided providers, check customer federation and provider authorization in `AccessTokenScopeTenant`, plus the API scope. API-key adapters such as Sinch require their configured vault secrets. | Evaluation does not validate outbound credentials. |
 | Telesign profile is not deployment-ready | Have the provider owner complete `AccessTokenScopeTenant` and both routes' `appId`/`scope` placeholders. | Do not invent values, substitute the Security Store or customer tenant, or bypass validation. |
@@ -412,6 +412,10 @@ Setup closes public ingress after persistent publication failure.
 2. **After invocation:** correlate [runtime events](../../docs/MONITORING.md#runtime-specific-log-discovery).
    Confirm `EPP_PROVIDER_SMS_ENDPOINT` or `EPP_PROVIDER_VOICE_ENDPOINT` and account access.
    The selected URL is required and the handler does not use the other channel's URL; deploy a supporting package.
+   Provider HTTP `401`/`403` returns `400`; an explicit risk block returns `422` and
+   `provider_blocked`. Review [existing SAS behavior](../../docs/CONTRACT.md#provider-blocks-and-existing-sas-behavior):
+   neither completed response triggers an HTTP retry or endpoint failure/slowdown-breaker accounting,
+   but permitted native fallback is not suppressed.
 3. Complete [provider authentication](../../docs/ONBOARDING.md#complete-provider-authentication):
    provider-side authorization for OAuth, or exact vault secrets for an API-key adapter.
    `EPP_PROVIDER_TENANT_ID` must match the access-token tenant, which can differ from the Security Store tenant.

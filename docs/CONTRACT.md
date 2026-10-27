@@ -116,9 +116,12 @@ Microsoft Entra ID supplies `otp` for SMS and voice, with a generated test code 
 mode. It belongs inside the encrypted delivery context, not the outer request body. Requests
 that omit it or set it to `null` remain supported.
 
-`riskContext` can include signals such as a scenario name or IP address. The shared handler
-preserves the supplied object but does not interpret, log, return, or forward its fields to the
-built-in providers. A custom adapter must explicitly map any fields it needs.
+`riskContext` has optional `scenario` and `ipAddress` strings; other fields retain arbitrary JSON
+values. Missing/null common fields are absent, and empty strings are preserved. Non-string common
+fields return `400` (`decryption_failed`) before provider work, including evaluation.
+Telesign maps the common fields to `account_lifecycle_event` and `originating_ip` unchanged;
+other built-in providers ignore them. Risk data is never logged or returned. See
+[shared model details](../TECHNICAL.md#request-validation-and-runtime-differences).
 
 See [JWE validation and key handling](../TECHNICAL.md#jwe-validation-and-key-handling) for limits,
 algorithms, key settings, and runtime behavior.
@@ -171,15 +174,32 @@ Failures omit `nonce` and `providerStatus`.
 | Status | Description |
 | --- | --- |
 | `200 OK` | Evaluation completed or the provider accepted the request. |
-| `400 Bad Request` | Invalid request or encrypted content, a missing or unrecognized provider setting, or a provider `4xx` response that maps to `400`. Provider authentication failures and throttling map to the statuses listed separately below. |
-| `401 Unauthorized` | Caller or provider authentication failed. |
-| `403 Forbidden` | Caller access was denied or the provider blocked the request. |
+| `400 Bad Request` | Invalid request or encrypted content, a missing or unrecognized provider setting, or a provider `4xx` response other than throttling. Includes provider HTTP `401`/`403`, which indicate outbound provider authorization/configuration failures, not inbound caller authentication. |
+| `401 Unauthorized` | SAS-to-Function caller authentication failed. Not used for provider authentication failures. |
+| `403 Forbidden` | SAS-to-Function caller authorization or platform access was denied. Not used for provider blocks. |
+| `422 Unprocessable Entity` | The provider explicitly blocked delivery for risk or policy reasons. Not an authentication failure or accepted delivery. See existing SAS behavior below. |
 | `429 Too Many Requests` | Provider throttling. |
 | `500 Internal Server Error` | Unexpected Function or provider response-processing failure. |
 | `502 Bad Gateway` | Missing or invalid provider endpoint, mismatched authentication mode, or failure to obtain credentials, reach the provider, or process its response. |
 | `504 Gateway Timeout` | Provider request timed out. |
 
 Check a timed-out live request before retrying. The provider might already have accepted it.
+
+### Provider blocks and existing SAS behavior
+
+An explicit provider block, such as Telesign `3072` or Soprano `BLOCKED`, returns HTTP `422` with
+`error: "provider_blocked"`. The response contains no nonce or success `providerStatus`.
+The existing SAS implementation classifies a completed `422` response as `ClientError`, reported
+as `EndpointClientError`, not as a distinct provider-blocked outcome. Like `400` (including mapped
+provider HTTP `401`/`403`), it does not trigger an HTTP retry or count toward either the endpoint
+failure or slowdown circuit breaker. The Function logs the provider block explicitly; SAS retains its generic client
+error classification and the HTTP status.
+
+This status mapping does not disable SAS native fallback when it is enabled and permitted.
+A sample-only response change cannot guarantee that a provider risk decision prevents all
+delivery through another route. Do not return `200` to suppress fallback: that would falsely
+acknowledge delivery. Transport or response-body read failures can also prevent SAS from observing
+a completed response and retain their existing timeout/network classification.
 
 ## Error response
 
@@ -205,7 +225,8 @@ Error categories are:
 - `bad_request` for invalid request data or an incomplete decrypted delivery context.
 - `decryption_failed` when the encrypted delivery context cannot be decrypted or parsed.
 - `provider_delivery_failed` for provider selection, configuration, credentials, transport, or
-  mapped provider-response failures.
+  mapped provider-response failures other than explicit blocks.
+- `provider_blocked` for an explicit provider risk or policy block (HTTP `422`).
 - `delivery_failed` for an unexpected handler failure.
 
 These JSON errors come from the SendOtp handler. Easy Auth can reject a request before the handler

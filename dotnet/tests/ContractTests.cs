@@ -118,7 +118,7 @@ public class ContractTests
     [InlineData("SENT", Outcome.Continue, null)]
     [InlineData("DELIVERED", Outcome.Continue, null)]
     [InlineData("QUEUED", Outcome.Continue, null)]
-    [InlineData("BLOCKED", Outcome.Block, null)]
+    [InlineData("BLOCKED", Outcome.Block, "provider_blocked")]
     [InlineData("FAILED", Outcome.Fail, "provider_rejected")]
     [InlineData("REJECTED", Outcome.Fail, "provider_rejected")]
     [InlineData("FILTERED", Outcome.Fail, "provider_rejected")]
@@ -283,6 +283,51 @@ public class ContractTests
             correlation_id = delivery.CorrelationId,
         };
         Assert.Equal(JsonSerializer.Serialize(expected), request.Body);
+    }
+
+    [Theory]
+    [InlineData(null, null, null)]
+    [InlineData("{\"scenario\":null,\"ipAddress\":null}", null, null)]
+    [InlineData("{\"scenario\":\"signin\"}", "signin", null)]
+    [InlineData("{\"scenario\":\"signIn\",\"ipAddress\":\"2001:db8::1\",\"other\":\"PRIVATE-RISK\"}", "signIn", "2001:db8::1")]
+    [InlineData("{\"scenario\":\"\",\"ipAddress\":\"\"}", "", "")]
+    public async Task TelesignMapsOptionalRiskStringsUnchanged(
+        string? riskJson, string? lifecycleEvent, string? originatingIp)
+    {
+        foreach (var channel in new[] { "sms", "voice" })
+        {
+            var delivery = Delivery(channel) with
+            {
+                RiskContext = riskJson is null ? null
+                    : JsonSerializer.Deserialize<RiskContext>(riskJson),
+            };
+            var request = await new TelesignProvider().CaptureRequestAsync(
+                channel, "https://verify.telesign.com/integration/msft/cyot", delivery,
+                new ProviderCredentials("oauth", AccessToken: "provider-token"), new TestEnv());
+            using var body = JsonDocument.Parse(request.Body);
+            var json = body.RootElement;
+            Assert.Equal(lifecycleEvent is not null, json.TryGetProperty("account_lifecycle_event", out var lifecycle));
+            Assert.Equal(originatingIp is not null, json.TryGetProperty("originating_ip", out var ip));
+            if (lifecycleEvent is not null) Assert.Equal(lifecycleEvent, lifecycle.GetString());
+            if (originatingIp is not null) Assert.Equal(originatingIp, ip.GetString());
+            Assert.Equal(4 + (lifecycleEvent is null ? 0 : 1) + (originatingIp is null ? 0 : 1),
+                json.EnumerateObject().Count());
+        }
+    }
+
+    [Theory]
+    [InlineData(200, Outcome.Block, 422, "provider_blocked")]
+    [InlineData(500, Outcome.Fail, 502, "provider_http_error")]
+    [InlineData(429, Outcome.Fail, 429, "provider_http_error")]
+    public async Task TelesignRecognizesRiskBlocksWithoutOverridingHttpFailures(
+        int httpStatus, Outcome outcome, int endpointStatus, string? reason)
+    {
+        using var response = JsonResponse(httpStatus, "{\"status\":{\"code\":3072}}");
+        var result = await new TelesignProvider().SendResponseAsync(response, default);
+        Assert.Equal(outcome, result.Outcome);
+        Assert.True(result.StatusRecognized);
+        Assert.Equal(reason, result.FailureReason);
+        Assert.Equal(endpointStatus, PhoneProviderBase.ToEndpointHttpStatus(result));
     }
 
     [Fact]

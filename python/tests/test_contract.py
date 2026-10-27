@@ -1,9 +1,11 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from src.models import DeliveryContext, EntraSendOtpPayload, Outcome, OtpDelivery, ProviderResult
+from src.models import DeliveryContext, EntraSendOtpPayload, Outcome, OtpDelivery, ProviderResult, RiskContext
+from src.provider import to_endpoint_http_status
 from src.providers.infobip import InfobipProvider
 from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
@@ -159,6 +161,40 @@ def test_telesign_request_contract(channel):
         assert "9, 1, 8, 2, 7, 3" in body["message"]["text"]
     else:
         assert body["message"]["text"] == MESSAGE
+
+
+@pytest.mark.parametrize("channel", ["sms", "voice"])
+@pytest.mark.parametrize("risk_context,expected", [
+    (None, {}), ({"scenario": None, "ipAddress": None}, {}),
+    ({"scenario": "signin"}, {"account_lifecycle_event": "signin"}),
+    ({"scenario": "signIn", "ipAddress": "2001:db8::1", "other": "PRIVATE-RISK"},
+     {"account_lifecycle_event": "signIn", "originating_ip": "2001:db8::1"}),
+    ({"scenario": "", "ipAddress": ""}, {"account_lifecycle_event": "", "originating_ip": ""}),
+])
+def test_telesign_maps_optional_risk_strings_unchanged(channel, risk_context, expected):
+    provider = TelesignProvider()
+    credential = {"mode": "oauth", "access_token": "provider-token"}
+    endpoint = "https://verify.telesign.com/integration/msft/cyot"
+    baseline = provider.build_request(channel, endpoint, _delivery(channel), credential, {})
+    request = provider.build_request(
+        channel, endpoint, replace(_delivery(channel), risk_context=RiskContext.from_payload(risk_context)),
+        credential, {})
+    assert json.loads(request.body) == {**json.loads(baseline.body), **expected}
+
+
+@pytest.mark.parametrize("http_status,outcome,endpoint_status,reason", [
+    (200, Outcome.BLOCK, 422, "provider_blocked"),
+    (500, Outcome.FAIL, 502, "provider_http_error"),
+    (429, Outcome.FAIL, 429, "provider_http_error"),
+])
+def test_telesign_recognizes_risk_blocks_without_overriding_http_failures(
+    http_status, outcome, endpoint_status, reason,
+):
+    result = TelesignProvider().map_response({"status": {"code": 3072}}, http_status)
+    assert result.outcome == outcome
+    assert result.status_recognized is True
+    assert result.failure_reason == reason
+    assert to_endpoint_http_status(result) == endpoint_status
 
 
 def test_telesign_enforces_integer_status_codes():

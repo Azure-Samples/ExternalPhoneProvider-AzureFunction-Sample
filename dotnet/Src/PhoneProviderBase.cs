@@ -170,9 +170,8 @@ public abstract class PhoneProviderBase
     internal static int ToEndpointHttpStatus(ProviderResult result) => result.Outcome switch
     {
         Outcome.Continue => 200,
-        Outcome.Block => 403,
+        Outcome.Block => 422,
         Outcome.Fail when result.ProviderHttpStatus == 429 => 429,
-        Outcome.Fail when result.ProviderHttpStatus is 401 or 403 => 401,
         Outcome.Fail when result.ProviderHttpStatus >= 400 && result.ProviderHttpStatus < 500 => 400,
         _ => 502,
     };
@@ -184,6 +183,8 @@ public abstract class PhoneProviderBase
     {
         if ((int)httpStatus is < 200 or >= 300)
             return "provider_http_error";
+        if (outcome == Outcome.Block)
+            return "provider_blocked";
         if (outcome != Outcome.Fail)
             return null;
         return statusRecognized

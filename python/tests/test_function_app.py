@@ -13,6 +13,7 @@ import function_app
 import src.provider as provider_module
 from src.jwe import JweDecryptor
 from src.credentials import CredentialTokenService
+from src.models import RiskContext
 
 _KEY = jwk.JWK.generate(kty="RSA", size=2048)
 _PRIVATE_PEM = _KEY.export_to_pem(True, None).decode()
@@ -120,7 +121,7 @@ def test_optional_otp_reaches_provider_without_evaluation_io(
 
 @pytest.mark.parametrize("channel", [1, 2])
 @pytest.mark.parametrize("fixture", _FIXTURES["riskContexts"], ids=lambda case: case["name"])
-def test_risk_context_dictionary_reaches_adapter_without_changing_provider_payload(
+def test_typed_risk_context_reaches_adapter_without_changing_provider_payload(
     monkeypatch, caplog, channel, fixture
 ):
     caplog.set_level(logging.INFO)
@@ -145,7 +146,12 @@ def test_risk_context_dictionary_reaches_adapter_without_changing_provider_paylo
     assert json.loads(response.get_body()) == expected
     build_request.assert_called_once()
     delivery = build_request.call_args.args[2]
-    assert json.dumps(delivery.risk_context) == json.dumps(context.get("riskContext"))
+    if context.get("riskContext") is None:
+        assert delivery.risk_context is None
+    else:
+        assert isinstance(delivery.risk_context, RiskContext)
+        assert delivery.risk_context.to_payload() == context["riskContext"]
+        assert "PRIVATE-RISK" not in repr(delivery.risk_context)
     assert delivery.message == _MESSAGE
     assert delivery.channel == ("sms" if channel == 1 else "voice")
     assert "PRIVATE-RISK" not in repr(delivery)
@@ -158,6 +164,17 @@ def test_risk_context_dictionary_reaches_adapter_without_changing_provider_paylo
     assert "PRIVATE-RISK" not in json.dumps([vars(record) for record in _events(caplog)], default=str)
     assert all("riskContext" not in record.__dict__ and "risk_context" not in record.__dict__
                for record in _events(caplog))
+
+
+@pytest.mark.parametrize("mode", [1, 2])
+@pytest.mark.parametrize("risk_context", _FIXTURES["invalidRiskContextFields"])
+def test_invalid_common_risk_fields_fail_before_provider_work(mode, risk_context):
+    response = _HANDLER(_request(_envelope(
+        mode=mode, encryptedDeliveryContext=_encrypt(context={**_CONTEXT, "riskContext": risk_context}))))
+    assert response.status_code == 400
+    assert json.loads(response.get_body())["error"] == "decryption_failed"
+    function_app._credentials.get_credentials.assert_not_called()
+    provider_module.requests.request.assert_not_called()
 
 
 @pytest.mark.parametrize("mode", [1, 2])
@@ -516,6 +533,8 @@ def test_live_acceptance_waits_for_provider_and_preserves_wire_message(monkeypat
 
 @pytest.mark.parametrize("status,payload,expected,reason", [
     (429, {"status": "ENROUTE"}, 429, "provider_http_error"),
+    (401, {"status": "FAILED"}, 400, "provider_http_error"),
+    (403, {"status": "FAILED"}, 400, "provider_http_error"),
     (200, {"status": "FAILED"}, 502, "provider_rejected"),
     (200, {}, 502, "unrecognized_provider_status"),
 ])
@@ -540,6 +559,31 @@ def test_provider_failures_preserve_safe_classification(
         if record.event_name == "request_failed")
     assert failure.failureStage == "provider_response"
     assert failure.failureReason == reason
+
+
+@pytest.mark.parametrize("provider,payload", [
+    ("telesign", {"status": {"code": 3072, "description": "PRIVATE-RISK"}}),
+    ("soprano", {"status": "BLOCKED", "description": "PRIVATE-RISK"}),
+])
+def test_provider_blocks_return_422_without_nonce_or_provider_retry(
+    monkeypatch, caplog, provider, payload,
+):
+    caplog.set_level(logging.INFO)
+    monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
+    request = Mock(return_value=Mock(status_code=200, json=Mock(return_value=payload)))
+    monkeypatch.setattr(provider_module.requests, "request", request)
+    response = _HANDLER(_request(_envelope()))
+    body = json.loads(response.get_body())
+    assert response.status_code == 422
+    assert body["error"] == "provider_blocked"
+    assert "nonce" not in body
+    assert "providerStatus" not in body
+    request.assert_called_once()
+    processed = next(record for record in _events(caplog)
+                     if record.event_name == "provider_response_processed")
+    assert processed.providerOutcome == "Block"
+    assert processed.failureReason == "provider_blocked"
+    assert "PRIVATE-RISK" not in caplog.text
 
 
 def test_invalid_provider_json_has_specific_failure_reason(monkeypatch, caplog):
