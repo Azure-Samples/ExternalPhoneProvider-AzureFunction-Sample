@@ -4,9 +4,9 @@
 <a id="http-contract"></a>
 <a id="send-otp-api"></a>
 
-[Documentation](README.md) | [Technical details](../TECHNICAL.md) | [Add Twilio](BRING-YOUR-OWN-PROVIDER.md)
+[Documentation](README.md) | [Technical details](../TECHNICAL.md) | [BYOT provider guide](BRING-YOUR-OWN-PROVIDER.md)
 
-Receive an encrypted SMS or voice request from **Microsoft Entra ID**.
+This endpoint receives encrypted SMS or voice requests from **Microsoft Entra ID**.
 
 | | |
 | --- | --- |
@@ -21,7 +21,7 @@ Receive an encrypted SMS or voice request from **Microsoft Entra ID**.
 
 ## Authentication
 
-Configure Easy Auth with:
+Before testing the endpoint, configure Easy Auth with:
 
 - HTTPS required.
 - Unauthenticated requests returned as `401`.
@@ -50,7 +50,7 @@ Authorization: Bearer <access-token>
 | `x-ms-correlation-id` | Optional correlation value. |
 | `x-ms-client-request-id` | Optional request identifier. |
 
-The Function does not forward the bearer token to the phone provider.
+The Function never forwards the bearer token to the phone provider.
 
 ## Request body
 
@@ -79,7 +79,7 @@ The Function does not forward the bearer token to the phone provider.
 | `correlationId` | No | Sign-in correlation value. |
 | `ttlSeconds` | No | Positive integer up to `2147483647`. The sample validates this value but does not enforce passcode expiry or a delivery deadline. |
 
-Use the documented channel and mode values. When supplying `ttlSeconds`, use an integer. See
+Use the documented channel and mode values. If you supply `ttlSeconds`, use an integer. See
 [request validation and runtime differences](../TECHNICAL.md#request-validation-and-runtime-differences).
 
 ### Encrypted delivery context
@@ -112,9 +112,8 @@ The JWE uses `RSA-OAEP-256` and `A256GCM`. After decryption, the JSON contains:
 | `extension` | No | Legacy office-voice data. The shared handler does not forward it to built-in providers. |
 | `riskContext` | No | JSON key-value object containing risk signals; may be `null`. |
 
-Microsoft Entra ID supplies `otp` for SMS and voice, with a generated test code in evaluation
-mode. It belongs inside the encrypted delivery context, not the outer request body. Requests
-that omit it or set it to `null` remain supported.
+Microsoft Entra ID puts `otp` inside the encrypted delivery context, not the outer request body.
+Evaluation uses a generated test code. `otp` can be omitted or `null`.
 
 `riskContext` has optional `scenario` and `ipAddress` strings; other fields retain arbitrary JSON
 values. Missing/null common fields are absent, and empty strings are preserved. Non-string common
@@ -137,7 +136,7 @@ algorithms, key settings, and runtime behavior.
 - **Live:** sends through the configured provider and returns success after recognized provider
   acceptance.
 
-Provider acceptance is not proof of recipient delivery.
+Provider acceptance does not prove delivery.
 
 ## Response
 
@@ -230,9 +229,8 @@ Error categories are:
 - `delivery_failed` for an unexpected handler failure.
 
 These JSON errors come from the SendOtp handler. Easy Auth can reject a request before the handler
-runs. The .NET Functions host can also reject a request while binding its input, before the handler
-runs. Those responses can have a different format. When `reason` is present, it is a fixed
-validation message rather than an exception message.
+runs. The .NET Functions host can reject input during binding. Those responses can use a different
+format. When present, `reason` is a fixed validation message, not an exception.
 
 Unavailable provider credentials, for example, return `502 Bad Gateway`. The safe diagnostic
 detail is recorded as
@@ -241,7 +239,7 @@ logs, not exposed in the response.
 
 ### Diagnose a credential failure
 
-When a live request cannot obtain provider credentials, current packages emit the following events:
+When a live request cannot obtain provider credentials, current packages emit these events:
 
 | Signal | Meaning |
 | --- | --- |
@@ -296,6 +294,6 @@ for corrective steps.
 
 - [Technical implementation details](../TECHNICAL.md#http-implementation-details)
 - [Built-in providers](../TECHNICAL.md#built-in-providers)
-- [Add Twilio](BRING-YOUR-OWN-PROVIDER.md)
+- [BYOT provider guide](BRING-YOUR-OWN-PROVIDER.md)
 - [Application log reference](LOGGING.md)
 - [Deployment validation](ONBOARDING.md#validate-the-deployed-endpoint)

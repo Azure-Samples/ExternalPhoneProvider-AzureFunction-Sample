@@ -4,12 +4,11 @@
 
 [Documentation](README.md) | [Normal deployment](GETTING-STARTED.md) | [Provider interface](../TECHNICAL.md#provider-result-mapping)
 
-The sample does not implement automatic secondary-provider attempts. This advanced design shows
-how a customer-owned implementation can add one controlled primary-to-secondary attempt around
-`/api/SendOtp`.
+The sample does not implement automatic secondary-provider attempts. This advanced design
+describes one controlled primary-to-secondary attempt around `/api/SendOtp`.
 
-Use the secondary **only after proof that the primary did not accept the request**. Timeouts,
-lost responses, and generic errors are uncertain and must not trigger an automatic resend.
+Use the secondary **only with proof that the primary did not accept the request**. Timeouts, lost
+responses, and generic errors are uncertain and must not trigger an automatic resend.
 
 | Step | Task |
 | --- | --- |
@@ -37,7 +36,7 @@ const providerOrder = Object.freeze({
 Reject unsupported channels and request-supplied provider configuration. Do not use round-robin,
 fan-out, recursive provider switching, or primary retries. Attempt the secondary at most once.
 
-Keep **routing order** separate from **secondary-attempt eligibility**. Use this policy:
+Keep **routing order** separate from **secondary-attempt eligibility**:
 
 | Primary result | Action |
 | --- | --- |
@@ -55,8 +54,7 @@ authentication and provider controls still apply.
 
 [config.js](../javascript/src/functions/config.js) accepts `readConfig(settings)`, so each
 account can use its own immutable settings without changing `process.env` per request.
-The following customer-owned format is not loaded by the sample. Replace each
-`<supported-adapter-name>` with a registered adapter.
+The sample does not load this format. Replace each `<supported-adapter-name>` with a registered adapter.
 
 ```json
 [
@@ -106,7 +104,7 @@ identity to the Function App. Grant the vault-reading identity scoped secret-rea
 as Key Vault Secrets User under RBAC or the approved access-policy equivalent. If using
 the system-assigned identity, grant that identity instead. Client-ID settings do not attach
 identities or grant access. Complete provider account, recipient, sender, and consent prerequisites.
-see [provider onboarding](ONBOARDING.md#complete-provider-authentication).
+See [provider onboarding](ONBOARDING.md#complete-provider-authentication).
 
 <a id="3-give-each-context-its-own-credential-service-and-lifecycle"></a>
 ## 3. Credential isolation
@@ -159,8 +157,8 @@ for another account.
 <a id="4-add-durable-operation-state-before-enabling-secondary-attempts"></a>
 ## 4. Operation state
 
-Add a **durable attempt store and idempotency contract** before allowing a second submission.
-Agree on a stable, authorized operation key with the caller and test owner. Generated invocation
+Add a **durable attempt store and idempotency contract** before a second submission. Agree on a
+stable, authorized operation key with the caller and test owner. Generated invocation
 IDs, correlation GUIDs, and nonces serve other purposes. Bind the operation key to the authorized
 caller, request, and fixed policy so another request cannot reuse it for a different delivery.
 
@@ -280,7 +278,7 @@ even when the primary result would otherwise allow it.
 <a id="7-validate-offline-then-deploy-only-after-separate-approval"></a>
 ## 7. Validation and deployment
 
-Before editing, run the existing JavaScript tests from the repository root. Restore missing
+Before editing code, run the existing JavaScript tests from the repository root. Restore missing
 dependencies from the existing lockfile only when needed:
 
 ```powershell

@@ -4,7 +4,7 @@
 
 [Documentation](docs/README.md) | [First deployment](docs/GETTING-STARTED.md) | [HTTP contract](docs/CONTRACT.md)
 
-This reference covers implementation details, app settings, packages, and built-in providers.
+This reference covers implementation details, settings, packages, and built-in providers.
 
 | Task | Section |
 | --- | --- |
@@ -22,9 +22,9 @@ This reference covers implementation details, app settings, packages, and built-
 
 See the [single-region diagram in the sample overview](README.md#architecture).
 
-Microsoft Entra ID sends an authenticated, encrypted request. Easy Auth checks the caller, the
-Function decrypts the request, and the selected adapter submits a live message. Success means
-provider acceptance, not confirmed delivery.
+Microsoft Entra ID sends an authenticated, encrypted request. Easy Auth checks the caller. The
+Function decrypts the request, and the selected adapter sends the message. Success means provider
+acceptance, not delivery.
 
 East US is illustrative. API-key integrations use provider secrets. OAuth integrations use
 managed-identity token exchange. See [provider settings and credential acquisition](#provider-settings-and-credential-acquisition)
@@ -47,15 +47,16 @@ It covers capacity, shared keys, dependencies, readiness, regional recovery dril
 | Python (v2 model) | Available | [python/](python/) |
 
 Choose **one language and one provider per Function App**. All implementations share the
-[HTTP, configuration, and trust contract](docs/CONTRACT.md). Runtime behavior can differ.
+[HTTP and trust contract](docs/CONTRACT.md), but runtime behavior can differ.
 
-For local work, use the selected runtime guide. To add Twilio, use
-[Add Twilio](docs/BRING-YOUR-OWN-PROVIDER.md).
+For local work, use the selected runtime guide. To add a provider, use the
+[BYOT provider guide](docs/BRING-YOUR-OWN-PROVIDER.md).
 
 ## Guided EPP setup
 
-Follow the [five-step guide](docs/GETTING-STARTED.md). `Setup-Epp.ps1` retrieves its support files
-from one commit and deploys after plan approval. See the [setup reference](setup/docs/README.md#step-2---download-and-run-one-script).
+Follow the [five-step guide](docs/GETTING-STARTED.md). `Setup-Epp.ps1` gets its support files from
+one commit and deploys only after you approve the plan. See the
+[setup reference](setup/docs/README.md#step-2---download-and-run-one-script).
 
 Review [application permissions](setup/docs/README.md#step-1---manually-create-the-application)
 and [certificate selection](setup/docs/README.md#encryption-certificate-selection). Setup pins one
@@ -65,7 +66,7 @@ One deployment accepts SMS and voice. Each request's `channel` selects its confi
 
 ## Download a Function ZIP
 
-Guided setup selects and publishes the language ZIP automatically. Use this section for manual deployment.
+Guided setup selects and publishes the language ZIP. For a custom deployment:
 
 Open the [package releases](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases)
 and choose the newest stable tag ending in your language ID. Each language release contains
@@ -102,8 +103,8 @@ pwsh -File ./package-dotnet.ps1
 pwsh -File ./package-python.ps1
 ```
 
-Choose one command. Each ZIP has `host.json` at its root and excludes local settings, credentials,
-and tests.
+Choose one command. Each ZIP contains root-level `host.json` and excludes local settings,
+credentials, and tests.
 
 JavaScript installs production dependencies from the lockfile in a temporary folder. Review
 packaging for native dependencies or required lifecycle scripts. It does not modify `node_modules`.
@@ -140,8 +141,7 @@ not in application environment settings or incoming request data.
 
 ## HTTP implementation details
 
-Use [Send OTP](docs/CONTRACT.md) for the public request and response. This section covers runtime
-implementation details.
+See [Send OTP](docs/CONTRACT.md) for the public request and response. Runtime details follow.
 
 ### JWE validation and key handling
 
@@ -212,8 +212,8 @@ The shared outcomes are `Continue`, `Block`, and `Fail`.
 | Missing or invalid endpoint, authentication-mode mismatch, credential or network failure, or unknown response | `502` |
 | Provider timeout | `504` |
 
-Unknown or incomplete provider responses fail closed. Check a timed-out live request before
-retrying because the provider might already have accepted it.
+Unknown or incomplete provider responses fail closed. Before retrying a timeout, check whether the
+provider accepted the request.
 
 HTTP `401` and `403` are reserved for inbound SAS-to-Function authentication, authorization, or
 platform access failures. HTTP `422` carries `error: "provider_blocked"` without a nonce.
@@ -228,7 +228,7 @@ Provider adapters use these safe failure labels: `provider_http_error`, `provide
 ## Configure environment variables
 
 For guided deployment, inspect the [values and ownership table](docs/ONBOARDING.md#values-and-ownership).
-The following settings are for local or manual deployment.
+For local or custom deployment:
 
 Start from [sample settings](docs/local.settings.sample.json). Every `Values` entry is a string.
 
@@ -353,12 +353,12 @@ Recognized success groups remain `ACCEPTED`, `PENDING`, and `DELIVERED` on succe
 unknown statuses fail closed.
 
 Set `EPP_PROVIDER_ACCOUNT_NAME` to an Infobip-approved sender/caller ID and confirm it works for
-both intended channels. The adapter's existing `Verify` fallback is not proof of sender approval.
+both channels. The adapter's default `Verify` value is not proof of sender approval.
 
 For an older API-key deployment, deploy a package containing this OAuth update and rerun setup
 with `-Provider infobip` to configure federation and the provider tenant/scope. Review
 `EPP_PROVIDER_AUTH_MODE=oauth` and the regional base URLs. Updating settings alone does not upgrade
-an older adapter; this version has no API-key fallback. Complete
+an older adapter; this version supports OAuth only. Complete
 [provider authorization](docs/ONBOARDING.md#complete-provider-authentication) before live use.
 
 ### Soprano

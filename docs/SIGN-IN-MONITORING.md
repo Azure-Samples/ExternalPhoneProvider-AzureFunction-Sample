@@ -2,8 +2,8 @@
 
 [Documentation](README.md) | [Function monitoring](MONITORING.md)
 
-Sign-in records explain identity activity. Monitor Function execution, provider acceptance, and
-delivery through their own data sources.
+Sign-in records explain identity activity. Function execution, provider acceptance, and delivery
+use separate data sources.
 
 | Task | Start here |
 | --- | --- |
@@ -15,8 +15,8 @@ delivery through their own data sources.
 
 ## Recommended monitors
 
-Choose exact tenant, application, service-principal, managed-identity, and resource IDs. Display
-names can change and are not reliable alert filters.
+Filter on exact tenant, application, service-principal, managed-identity, and resource IDs.
+Display names can change and are not reliable alert filters.
 
 ### Integration sign-in failures
 
@@ -42,8 +42,8 @@ names can change and are not reliable alert filters.
 - **Notify:** recurring errors or failures above the normal baseline
 - **Check first:** overall result, recent app or policy changes, and later recovery records
 
-Keep the streams separate. A successful authentication step does not make the complete sign-in
-successful. Set thresholds from representative traffic, not a universal sample value.
+Keep the streams separate. A successful authentication step does not make the whole sign-in
+successful. Set thresholds from representative traffic, not a universal sample.
 
 <a id="1-choose-your-tenant-and-access"></a>
 ## Find a sign-in
@@ -119,8 +119,8 @@ differ.*
 | `ManagedIdentitySignInLogs` | `AADManagedIdentitySignInLogs` |
 | `AuditLogs` | `AuditLogs` |
 
-Initial export is not immediate and does not backfill all portal history. Record the observed
-arrival delay before setting alert windows.
+Initial export is delayed and does not backfill all portal history. Measure the delay before
+setting alert windows.
 
 <a id="4-check-your-data-and-choose-a-query"></a>
 ### 4. Confirm the data
@@ -134,8 +134,8 @@ arrival delay before setting alert windows.
 6. Add tenant and application filters before aggregation.
 7. Run the query across normal, peak, and quiet periods, then save it with its scope and baseline.
 
-No matching rows is not a healthy result. Check the destination, category, time range, access,
-source activity, and ingestion delay.
+No matching rows does not prove health. Check destination, category, time range, access, source
+activity, and ingestion delay.
 
 For the first alert, the official **Failed Signin reasons** query is a useful starting point.
 `ResultType` is a string in `SigninLogs`. Treat empty results separately and do not confuse
@@ -154,8 +154,8 @@ authentication codes with provider HTTP status codes.
 7. Create the rule disabled when access must be granted after creation, then enable it after role
    propagation and testing.
 
-Creating alerts requires workspace read access, rule write access, and access to the action group.
-The operator's successful interactive query does not prove that the alert identity can read data.
+Creating alerts requires workspace read access, rule write access, and action-group access. A
+successful interactive query does not prove that the alert identity can read data.
 
 <a id="6-test-then-hand-over"></a>
 ### 6. Test and hand over

@@ -2,7 +2,7 @@
 
 [Documentation](README.md) | [Find deployed logs](MONITORING.md#runtime-specific-log-discovery) | [HTTP contract](CONTRACT.md)
 
-This reference defines safe event fields, request flow, and runtime differences.
+This reference covers safe event fields, request flow, and runtime differences.
 
 | Need | Section |
 | --- | --- |
@@ -23,8 +23,8 @@ responses.** Keep body tracing off.
 | Python | Standard `logging`. `otp_log.py` defines fixed event IDs, names, levels, and fields. An immutable `LoggerAdapter` supplies Function and Microsoft trace identifiers. |
 | .NET | Standard `ILogger`. `OtpLog` defines source-generated IDs/names. `ILogger.BeginScope` supplies `FunctionName`, `FunctionRequestId`, `FunctionInvocationId`, `MsClientRequestId`, `MsCorrelationId`, and `MsCorrelationIdSource`. |
 
-Each invocation ends with `request_completed`. Exporters control formatting and property
-preservation. Field names differ by runtime, so verify the
+Each handler invocation ends with `request_completed`. Exporters control formatting and preserve
+properties differently. Field names differ by runtime, so verify the
 [deployed schema](MONITORING.md#runtime-specific-log-discovery).
 
 ## Event sequence
@@ -87,12 +87,12 @@ examples below. Raw error text, responses and credentials are never logged. Pyth
 | [`AADSTS70021`](https://login.microsoftonline.com/error?code=70021) | No matching federation; check issuer, subject and audience. |
 | [`AADSTS700016`](https://login.microsoftonline.com/error?code=700016) | Application not found in the requested directory; check app and tenant IDs. This alone does not prove missing provider consent. |
 
-The event does not identify which acquisition step failed or infer a root cause. A null value
-does not establish that authentication succeeded or that the failure was unrelated to Entra.
+The event does not identify the failed acquisition step or root cause. A null value does not prove
+that authentication succeeded or that the failure was unrelated to Microsoft Entra ID.
 
 ## Safe fields and identifiers
 
-Build metadata from validated allowlisted fields. Exclude unknown, tenant, locale, risk, and
+Use only validated, allowlisted fields for metadata. Exclude unknown, tenant, locale, risk, and
 decrypted values.
 
 `providerCredentialSource` is `managed_identity_client_assertion` for app tokens and `key_vault`

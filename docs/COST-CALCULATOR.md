@@ -1,11 +1,10 @@
 # Estimate telecom-provider and Azure hosting costs
 
 Estimate SMS and voice traffic before onboarding a provider. The report groups recent
-authentication steps by calling code. Apply provider rates to estimate a telecom budget.
-This guide also describes the Azure resources to include when
-estimating the separate cost of hosting the provider integration.
+authentication steps by calling code. Apply provider rates for a telecom estimate, then estimate
+Azure hosting separately.
 
-The guide separates the estimate into two parts:
+Build the estimate in two parts:
 
 1. Telecom-provider costs based on estimated SMS and voice requests.
 2. Azure hosting costs for running and monitoring the provider integration.
@@ -13,8 +12,8 @@ The guide separates the estimate into two parts:
 ## 1. Estimate telecom-provider costs
 
 > [!IMPORTANT]
-> This is not a billing report. Confirm retries, secondary-provider attempts, message segments,
-> destinations, taxes, fees, and pricing with the provider.
+> This is not a bill. Confirm retries, secondary-provider attempts, message segments,
+> destinations, taxes, fees, and prices with the provider.
 
 | Step | Task |
 | --- | --- |
@@ -48,8 +47,8 @@ approved folder.
 
 ### Generate the activity report
 
-The script installs the required modules, finds SMS and voice authentication steps, matches masked
-details to registered phone methods, and groups the result. Set `$start` and `$end` first.
+The script installs required modules, finds SMS and voice authentication steps, matches masked
+details to registered phone methods, and groups the results. Set `$start` and `$end` first.
 
 ```powershell
 # 1. Install required modules if they are missing
@@ -184,8 +183,8 @@ Microsoft Entra ID default retention period are available."** Selecting an earli
 
 ### Convert activity into a cost estimate
 
-The exported report contains one row per calling code and authentication method. It counts
-each SMS or voice authentication step as one estimated request:
+The report has one row per calling code and authentication method. Each SMS or voice
+authentication step counts as one estimated request:
 
 ```text
 Estimated SMS/voice requests = matching authentication-step count
@@ -207,7 +206,7 @@ contingency for growth, retries, approved secondary-provider behavior, and seaso
 <a id="confirm-the-final-estimate-with-your-provider"></a>
 ### Confirm provider rates
 
-Confirm the following with the provider:
+Confirm these items with the provider:
 
 - How each international calling code maps to the provider's destination pricing.
 - Country and carrier coverage, sender registration, and route-specific rates.
@@ -230,9 +229,7 @@ and service capabilities can change, so do not use an old estimate as an approve
 
 ### Get a quick planning estimate
 
-If you need a rough estimate rather than a detailed calculation, select the deployment
-profile that meets your availability requirements and use the closest monthly request
-volume in the following table.
+For a rough estimate, choose the required availability profile and closest monthly request volume.
 
 | Deployment profile | 50,000 requests/month | 1 million requests/month | 10 million requests/month |
 | --- | ---: | ---: | ---: |
@@ -250,8 +247,8 @@ telecom-provider charges, taxes, support plans, and customer-specific discounts.
 costs can vary by region, agreement, traffic pattern, telemetry retention, and service
 pricing.
 
-Use the table for early planning only. For an approved budget, enter your expected volume
-and required deployment profile in the Azure Pricing Calculator. If your volume falls
+Use the table only for early planning. For an approved budget, enter your expected volume and
+deployment profile in the Azure Pricing Calculator. If your volume falls
 between columns, use the next higher column for a conservative estimate; do not scale the
 table values linearly because some profiles include fixed baseline capacity.
 

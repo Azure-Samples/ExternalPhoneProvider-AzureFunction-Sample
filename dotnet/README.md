@@ -4,23 +4,23 @@
 
 [Documentation](../docs/README.md) | [Settings](#environment-configuration) | [Request behavior](#request-behavior) | [Source](#source)
 
-Implements the shared [contract](../docs/CONTRACT.md) with one provider per deployment.
-Target: .NET 8 isolated worker, Azure Functions v4.
+This Azure Function implements the shared [contract](../docs/CONTRACT.md) with one provider per
+deployment. It uses .NET 8 isolated worker and Azure Functions v4.
 
 ## Setup and deployment
 
 **Sample deployment:** follow the [five-step guide](../docs/GETTING-STARTED.md), then complete
 [provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
 
-**Custom package development:** follow these steps from `dotnet/`:
+**Custom development:** from `dotnet/`:
 
 1. Create the [local settings below](#environment-configuration). Select an adapter's fixed `Name`
    from [Providers/](Src/Providers/), configure it, and complete
    [provider authentication](../docs/ONBOARDING.md#complete-provider-authentication).
 2. Build [dotnet.csproj](dotnet.csproj), run [xUnit tests](tests/Epp.Otp.Tests.csproj), and start
    Core Tools here, **on loopback only, without tunnels**. It has no Easy Auth.
-3. For manual deployment, publish to a compatible .NET isolated Function App. Inspect the output
-   for private settings and complete the
+3. Publish to a compatible .NET isolated Function App and inspect the output for private settings.
+   Complete the
    [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist), then run
    [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint) to verify
    platform authentication.
@@ -46,7 +46,7 @@ For local evaluation, start Azurite and replace the test-key placeholder in this
 ```
 
 For live delivery, use the [shared settings table](../TECHNICAL.md#configure-environment-variables)
-for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter-specific options.
+for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter options.
 Keep `Values` as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"1500"`.
 Replace the placeholders. API-key adapters store credentials in Key Vault. Each selected channel
 requires a valid endpoint; a missing or invalid endpoint never uses the other channel.
@@ -79,7 +79,7 @@ For built-in message and voice mapping, see
 
 ## Source
 
-To add Twilio, follow the [Twilio integration guide](../docs/BRING-YOUR-OWN-PROVIDER.md).
+To add a provider, follow the [BYOT provider guide](../docs/BRING-YOUR-OWN-PROVIDER.md).
 Keep caller authentication and public responses in the shared handler.
 
 For deployed diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
@@ -92,8 +92,8 @@ provider. `PhoneProviderBase.SendJsonAsync<TResponse>` owns bounded HTTP transpo
 mapping. Each provider maps its statuses to `ProviderResult`. Request-aware routing or multiple
 accounts require a separate trust, configuration, credential, and test design.
 
-`CredentialTokenService` invokes the selected provider's credential retrieval for each live
-request with a 2.5-second cancellation budget. API-key secrets are read from Key Vault each time.
+`CredentialTokenService` gets the selected provider's credentials for each live request with a
+2.5-second cancellation budget. API-key secrets are read from Key Vault each time.
 The OAuth providers share `OAuthCredentialSource` and reuse Azure Identity SDK credential instances,
 leaving token caching and renewal to the SDK. There is no custom credential cache, hosted warmup service, polling, or
 retry cooldown. Evaluation does no provider credential work. See

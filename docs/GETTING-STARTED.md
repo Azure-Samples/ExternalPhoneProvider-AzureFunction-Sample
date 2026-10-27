@@ -5,7 +5,7 @@
 [Documentation](README.md) | [Setup reference](../setup/docs/README.md) | [Troubleshooting](../setup/docs/Troubleshooting.md)
 
 **External Phone Provider (EPP)** connects Microsoft Entra ID to your phone provider for SMS
-and voice one-time passwords. This guide deploys one regional endpoint for that integration.
+and voice one-time passwords. Deploy one regional endpoint in five steps.
 
 | Step | Task |
 | --- | --- |
@@ -15,13 +15,13 @@ and voice one-time passwords. This guide deploys one regional endpoint for that 
 | 4 | [Connect the provider and test](#4-connect-your-provider-and-test) |
 | 5 | [Activate and hand over](#5-activate-and-hand-over) |
 
-Complete the steps in order. Portal labels can differ from the screenshots.
+Complete the steps in order in nonproduction. Portal labels can differ from the screenshots.
 
 ## 1. Get ready
 
-Use a separate test environment with its own application registration and resource prefix.
+Use a separate test environment with its own app registration and resource prefix.
 
-Before purchasing or deploying, confirm provider EPP access in
+Before spending or deploying, confirm provider EPP access in
 [Microsoft Security Store](https://securitystore.microsoft.com/private-solutions) and arrange
 Microsoft's approved test and activation process. See
 [access and support](ONBOARDING.md#before-purchasing-or-deploying).
@@ -51,19 +51,16 @@ Assign an **onboarding owner** and review [production readiness](../TECHNICAL.md
 
 ## 2. Register your application
 
-You can create the dedicated application during guided setup or register it manually.
+Use a dedicated app registration. Create it during setup or before you begin.
 
-**Create during setup:** in Step 3, press Enter to choose **Create a new application**, then Enter to use
-**EPP Application** or enter your own display name, and choose a provider by name from the
-alphabetized list (**Infobip, Soprano, Telesign**). Blank provider-name input prompts again instead of
-canceling or selecting a default.
-Setup creates the registration only after you approve the final deployment plan.
-Canceling before approval creates no application. The signed-in user must be allowed to register
-applications in the customer tenant.
+**Create during setup:** in Step 3, press Enter to choose **Create a new application**. Press Enter
+again to use **EPP Application**, or enter another display name. Then choose **Infobip**,
+**Soprano**, or **Telesign** by name. There is no default provider; blank input prompts again.
+Setup creates the registration only after you approve the final deployment plan. Canceling before
+approval creates nothing. The signed-in user must be allowed to register applications.
 
-**Register manually or use an existing dedicated app:** keep its tenant and application client
-IDs handy. To register manually, open the customer tenant's
-**Microsoft Entra admin center > App registrations > New registration**:
+**Use or create a dedicated app:** keep its tenant ID and application client ID handy. To create
+one, open **Microsoft Entra admin center > App registrations > New registration**:
 
 1. Give the application a recognizable name.
 2. Select **Accounts in this organizational directory only**. Leave the redirect URI blank,
@@ -120,11 +117,10 @@ On a shared workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` for a fresh 
 JavaScript is used by default, without a language prompt. To deploy another language, run
 `.\Setup-Epp.ps1 -Language csharp` or `.\Setup-Epp.ps1 -Language python`.
 
-Select the tenant and subscription, then select an existing application, enter its **client ID**,
-or choose **Create a new application** and accept **EPP Application** or enter your own display name.
-Enter accepts the displayed menu default rather than canceling: the current CLI tenant/subscription
-when eligible (otherwise the first eligible option), and **Create a new application** for the app.
-Use **0** or **Cancel** where offered to stop.
+Select the tenant and subscription. Then select an existing application, enter its **client ID**,
+or choose **Create a new application**. Enter accepts the displayed default: the current eligible
+CLI tenant or subscription (otherwise the first eligible option), and **Create a new application**
+for the app. Use **0** or **Cancel** where offered to stop.
 Setup detects the tenant's replication scope and selects the corresponding provider route;
 it does not ask you to choose EU or Global. Select the Azure region, then complete the remaining settings:
 
@@ -173,7 +169,7 @@ Azure resource deployment and Function publication can each take several minutes
 open; a rotating indicator identifies the operation in progress, without a percentage or estimated
 completion time. Unattended or redirected output uses static status messages instead.
 
-Wait for **Deployment completed successfully** and the saved summary before Step 4. Setup creates or updates
+Before Step 4, wait for **Deployment completed successfully** and save the summary. Setup creates or updates
 the Function App, hosting plan, storage, Key Vault, identities, Log Analytics, Application
 Insights, diagnostics, Easy Auth, and scoped role assignments. Do not precreate these resources.
 **Save the output: the endpoint URL and Application (client) ID are required for policy updates.**
@@ -202,7 +198,7 @@ listed in your deployment summary.
 
 ## 4. Connect your provider and test
 
-Next, complete [provider authentication](ONBOARDING.md#complete-provider-authentication).
+First, complete [provider authentication](ONBOARDING.md#complete-provider-authentication).
 API-key integrations use the
 [setup-created vault and exact secret names](ONBOARDING.md#where-to-enter-api-key-credentials-in-key-vault).
 OAuth uses the provider-administrator handoff, not API-key secrets.
@@ -217,7 +213,7 @@ In your Function App, open **Settings > Authentication**. Check that authenticat
 *The Function and identity-provider labels remain visible. Only the client ID is hidden. The
 **Microsoft Entra ID** identity provider validates the caller; it is not the SMS or voice provider.*
 
-Complete the [approved endpoint checks](ONBOARDING.md#validate-the-deployed-endpoint):
+Then complete the [approved endpoint checks](ONBOARDING.md#validate-the-deployed-endpoint):
 
 1. Confirm that missing or unauthorized caller credentials are rejected.
 2. Run an authorized **evaluation** to check authentication and decryption without a provider send.
@@ -225,8 +221,8 @@ Complete the [approved endpoint checks](ONBOARDING.md#validate-the-deployed-endp
    channel you intend to activate** and confirm provider acceptance and recipient delivery separately.
 4. Check that the request and relevant logs appear in Application Insights.
 
-Use Microsoft's approved caller and test procedure for these checks. An ordinary Azure CLI token
-cannot represent that caller. Activate the endpoint after every required check passes. If a live
+Use Microsoft's approved caller and test procedure. An ordinary Azure CLI token cannot represent
+that caller. Activate the endpoint after every required check passes. If a live
 send times out, investigate its outcome before trying again because the provider may already have
 accepted it. Retain only safe evidence: resource IDs, UTC times, status, latency, correlation IDs,
 and sanitized outcomes.

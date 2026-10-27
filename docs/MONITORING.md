@@ -4,8 +4,8 @@
 
 [Documentation](README.md) | [Application Insights](APPLICATION-INSIGHTS.md) | [Log fields](LOGGING.md) | [Troubleshooting](../setup/docs/Troubleshooting.md#after-deployment-triage)
 
-Guided setup creates Application Insights and Log Analytics. Start here to confirm telemetry,
-review failures and latency, and create alerts.
+Guided setup creates Application Insights and Log Analytics. Confirm telemetry, review failures
+and latency, and add alerts.
 
 | Task | Start here |
 | --- | --- |
@@ -18,7 +18,7 @@ review failures and latency, and create alerts.
 | Diagnose missing data | [Collection and data quality](#collection-and-data-quality) |
 | Monitor Microsoft Entra ID sign-ins | [Sign-in monitoring](SIGN-IN-MONITORING.md) |
 
-Run queries only after an [authorized test](ONBOARDING.md#validate-the-deployed-endpoint).
+Run these queries only after an [authorized test](ONBOARDING.md#validate-the-deployed-endpoint).
 Keep phone numbers, OTPs, request bodies, credentials, tokens, nonces, and raw provider responses
 out of queries, alerts, exports, and screenshots.
 
@@ -40,7 +40,7 @@ out of queries, alerts, exports, and screenshots.
     application IDs, the instrumentation key, and the connection string remain hidden.*
 
 Record the Function App, Application Insights resource, workspace, runtime, region, deployment
-version, owner, and expected traffic or test schedule. For several regions, keep one row per origin.
+version, owner, and expected traffic or test schedule. Use one row per regional origin.
 
 Connection strings and resource identifiers are private operational data. Grant read access only
 to the required workspace. Application telemetry uses `AppRequests`, `AppTraces`, and related
@@ -59,7 +59,7 @@ AppRequests
 | order by LastSeen desc
 ```
 
-Use the observed `AppRoleName`, `_ResourceId`, and request `Name` in later queries. Do not assume
+Copy the observed `AppRoleName`, `_ResourceId`, and request `Name` into later queries. Do not assume
 that every deployment records the operation as `SendOtp`.
 
 <a id="run-a-first-query-and-read-the-results"></a>
@@ -76,8 +76,7 @@ AppRequests
 ![CYOT-CONSTO workspace Logs in KQL mode with a query scoped to the consto Function App and one aggregate result row](images/onboarding/logs-query-results.png)
 
 `StoredRows` counts stored telemetry, not delivered messages. Sampling can change the count.
-Evaluation and live calls can both return `200`. No rows means no matching data in this scope and
-time range, not proof that the endpoint is healthy.
+Evaluation and live calls can both return `200`. No rows means no matching data in this scope and time range. It does not prove health.
 
 <a id="2-single-region-function-queries"></a>
 ## Function requests
@@ -117,7 +116,7 @@ AppRequests
 | order by TimeGenerated asc
 ```
 
-Investigate application `4xx` separately from provider or host `5xx`. Easy Auth can reject a
+Investigate application `4xx` separately from provider or host `5xx`. Easy Auth can reject
 request before the Function runs, so some `401` or `403` responses may not create an
 `AppRequests` row or application event.
 
@@ -260,8 +259,8 @@ Expected
 ```
 
 For an alert, append `| where MissingTelemetry` and trigger when table rows are greater than zero.
-Use this only when traffic or an authorized scheduled test is expected. Idle or standby origins can
-legitimately have no request rows.
+Run this query only when traffic or an authorized scheduled test is expected. Idle or standby
+origins can have no request rows.
 
 ## Alerts
 
@@ -298,7 +297,7 @@ contacts. Cost budgets notify but do not stop spending.
 
 <a id="6-build-a-shared-operations-workbook"></a>
 
-Create a Workbook only after the queries are verified. Include:
+Create a Workbook only after verifying the queries. Include:
 
 - request volume, failure percentage, and p95/p99 latency
 - expected origins and last-seen status
