@@ -73,7 +73,7 @@ For built-in message and voice mapping, see
 
 ## Source
 
-To add Twilio, follow the [Twilio integration guide](../docs/BRING-YOUR-OWN-PROVIDER.md).
+To add a provider, follow the [BYOT provider guide](../docs/BRING-YOUR-OWN-PROVIDER.md).
 Keep caller authentication and public responses in the shared handler.
 
 For diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and

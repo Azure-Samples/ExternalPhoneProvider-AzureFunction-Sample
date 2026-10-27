@@ -27,7 +27,7 @@ Choose the guide for your task.
   - [JavaScript](../javascript/README.md)
   - [C#](../dotnet/README.md)
   - [Python](../python/README.md)
-- [Add Twilio](BRING-YOUR-OWN-PROVIDER.md)
+- [Bring your own telephony provider (BYOT)](BRING-YOUR-OWN-PROVIDER.md)
 
 ## Operate
 

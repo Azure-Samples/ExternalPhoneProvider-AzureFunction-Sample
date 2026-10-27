@@ -23,7 +23,7 @@ C#, or Python. JavaScript is the default.
 - JavaScript, C#, and Python implementations of one [HTTP and trust contract](docs/CONTRACT.md).
 - Guided Azure deployment with Easy Auth, Key Vault, and monitoring.
 - Evaluation mode checks authentication and decryption without sending a message.
-- Built-in provider integrations and an [Add Twilio](docs/BRING-YOUR-OWN-PROVIDER.md) guide.
+- Built-in provider integrations and a [BYOT provider guide](docs/BRING-YOUR-OWN-PROVIDER.md).
 
 ## Requirements
 
@@ -70,7 +70,7 @@ Before live use, review [production readiness](TECHNICAL.md#production-readiness
 | Resolve a problem | [Troubleshooting](setup/docs/Troubleshooting.md) |
 | Monitor the endpoint | [Monitoring](docs/MONITORING.md) |
 | Review the API | [Send OTP](docs/CONTRACT.md) |
-| Add Twilio | [Twilio integration guide](docs/BRING-YOUR-OWN-PROVIDER.md) |
+| Add a provider | [BYOT provider guide](docs/BRING-YOUR-OWN-PROVIDER.md) |
 | Work on a runtime | [JavaScript](javascript/README.md), [C#](dotnet/README.md), or [Python](python/README.md) |
 
 <a id="optional-designs"></a>

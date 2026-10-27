@@ -114,8 +114,8 @@ Guided setup supports **Infobip, Soprano, and Telesign**.
 | Soprano | OAuth client assertion through managed identity federation | Complete provider-side authorization and confirm tenant, app, scope, account, and channels |
 | Telesign | OAuth client assertion through managed identity federation | Complete [OAuth configuration and handoff](#telesign-oauth-configuration-and-handoff) |
 
-Sinch is bundled but does not have a guided setup profile. Twilio requires the
-[Add Twilio](BRING-YOUR-OWN-PROVIDER.md) development process.
+Sinch is bundled but does not have a guided setup profile. Other providers require the
+[BYOT provider guide](BRING-YOUR-OWN-PROVIDER.md) development process.
 
 Infobip retains the previously tested SMS and advanced voice API contracts, using OAuth rather
 than API-key authentication. Its channel settings are HTTPS regional base URLs, not the complete

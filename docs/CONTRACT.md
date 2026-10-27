@@ -4,7 +4,7 @@
 <a id="http-contract"></a>
 <a id="send-otp-api"></a>
 
-[Documentation](README.md) | [Technical details](../TECHNICAL.md) | [Add Twilio](BRING-YOUR-OWN-PROVIDER.md)
+[Documentation](README.md) | [Technical details](../TECHNICAL.md) | [BYOT provider guide](BRING-YOUR-OWN-PROVIDER.md)
 
 This endpoint receives encrypted SMS or voice requests from **Microsoft Entra ID**.
 
@@ -294,6 +294,6 @@ for corrective steps.
 
 - [Technical implementation details](../TECHNICAL.md#http-implementation-details)
 - [Built-in providers](../TECHNICAL.md#built-in-providers)
-- [Add Twilio](BRING-YOUR-OWN-PROVIDER.md)
+- [BYOT provider guide](BRING-YOUR-OWN-PROVIDER.md)
 - [Application log reference](LOGGING.md)
 - [Deployment validation](ONBOARDING.md#validate-the-deployed-endpoint)

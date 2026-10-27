@@ -49,8 +49,8 @@ It covers capacity, shared keys, dependencies, readiness, regional recovery dril
 Choose **one language and one provider per Function App**. All implementations share the
 [HTTP and trust contract](docs/CONTRACT.md), but runtime behavior can differ.
 
-For local work, use the selected runtime guide. To add Twilio, use
-[Add Twilio](docs/BRING-YOUR-OWN-PROVIDER.md).
+For local work, use the selected runtime guide. To add a provider, use the
+[BYOT provider guide](docs/BRING-YOUR-OWN-PROVIDER.md).
 
 ## Guided EPP setup
 
