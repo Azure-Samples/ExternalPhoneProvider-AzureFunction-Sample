@@ -329,12 +329,15 @@ try {
             Assert ($inner.variables.isFlexConsumption -ceq "[equals(parameters('servicePlan'), 'FC1')]") 'The Flex condition must use the selected SKU.'
             $plan = $inner.resources | Where-Object type -eq 'Microsoft.Web/serverfarms'
             Assert ($plan.sku -ceq "[if(variables('isFlexConsumption'), createObject('name', 'FC1', 'tier', 'FlexConsumption'), createObject('name', 'EP1', 'tier', 'ElasticPremium', 'capacity', 1))]") 'Bicep must deploy the selected SKU, tier, and Premium capacity.'
-            $settings = ($inner.resources | Where-Object { $_.type -eq 'Microsoft.Web/sites/config' -and $_.name -like '*appsettings*' }).properties
+            Assert (@($inner.resources | Where-Object { $_.type -eq 'Microsoft.Web/sites/config' -and $_.name -like '*appsettings*' }).Count -eq 0) 'Initial settings reads and writes must not target the same resource in one template.'
+            $settingsDeployment = $inner.resources | Where-Object { $_.type -eq 'Microsoft.Resources/deployments' -and $_.name -ceq 'epp-app-settings' }
+            $settings = $settingsDeployment.properties.parameters.appSettings.value
             $settingsRead = "list(format('{0}/config/appsettings', resourceId('Microsoft.Web/sites', parameters('resourceNames').functionApp)), '2024-04-01').properties"
             Assert ($settings.StartsWith("[union($settingsRead, ", [StringComparison]::Ordinal) -and
                 -not $settings.Contains('listApplicationSettings') -and
                 $settings.Contains("'WEBSITE_RUN_FROM_PACKAGE', '1'") -and
                 $settings.Contains("'SCM_DO_BUILD_DURING_DEPLOYMENT', 'false'")) 'Initial settings must read the appsettings child through its list action, merge existing values, and configure Premium ZIP mounting without builds.'
+            Assert ($settingsDeployment.dependsOn -ccontains "[resourceId('Microsoft.Web/sites', parameters('resourceNames').functionApp)]") 'Read existing settings only after the Function exists.'
             foreach ($setting in @('EPP_KEY_VAULT_CACHE_ENABLED', 'EPP_ACCESS_TOKEN_CACHE_ENABLED')) {
                 Assert (-not $settings.Contains($setting)) 'Bicep must not configure removed credential caches.'
             }
@@ -350,13 +353,24 @@ try {
             Assert ($template.outputs.certificateBundle.type -ceq 'object' -and
                 $template.outputs.certificateSecretVersions.type -ceq 'array') 'ARM must return public certificate metadata and secret-version metadata for local validation.'
             $encryption = ($template.resources | Where-Object name -eq 'epp-encryption-settings').properties.template
-            $encryptionSettings = ($encryption.resources | Where-Object type -eq 'Microsoft.Web/sites/config').properties
+            Assert (@($encryption.resources | Where-Object type -eq 'Microsoft.Web/sites/config').Count -eq 0) 'Encryption settings reads and writes must not target the same resource in one template.'
+            $encryptionSettingsDeployment = $encryption.resources | Where-Object { $_.type -eq 'Microsoft.Resources/deployments' -and $_.name -ceq 'epp-encryption-app-settings' }
+            $encryptionSettings = $encryptionSettingsDeployment.properties.parameters.appSettings.value
             $encryptionSettingsRead = "list(format('{0}/config/appsettings', resourceId('Microsoft.Web/sites', parameters('functionAppName'))), '2024-04-01').properties"
             Assert ($encryptionSettings.StartsWith("[union($encryptionSettingsRead, ", [StringComparison]::Ordinal) -and
                 -not $encryptionSettings.Contains('listApplicationSettings') -and
                 $encryptionSettings.Contains("'EPP_DECRYPTION_KEY_PEM'") -and
                 $encryptionSettings.Contains("'@Microsoft.KeyVault(SecretUri={0})'") -and
                 $encryptionSettings.Contains("'EPP_ENCRYPTION_KEY_ID'")) 'Encryption settings must read the appsettings child through its list action, preserve existing values, and pin the approved secret version/key ID.'
+            foreach ($deployment in @($settingsDeployment, $encryptionSettingsDeployment)) {
+                $writer = $deployment.properties.template
+                $writtenSettings = @($writer.resources | Where-Object type -eq 'Microsoft.Web/sites/config')
+                Assert ($deployment.properties.expressionEvaluationOptions.scope -ceq 'inner' -and
+                    $writer.parameters.appSettings.type -ceq 'secureObject') 'Settings snapshots must cross an inner-scope deployment boundary as secure objects.'
+                Assert ($writer.resources.Count -eq 1 -and $writtenSettings.Count -eq 1 -and
+                    $writtenSettings[0].name -ceq "[format('{0}/{1}', parameters('functionAppName'), 'appsettings')]" -and
+                    $writtenSettings[0].properties -ceq "[parameters('appSettings')]") 'The shared settings writer must apply only the supplied snapshot without reading its own target.'
+            }
             $certificateTemplate = ($template.resources | Where-Object name -eq 'epp-certificate').properties.template
             $operation = $certificateTemplate.resources | Where-Object type -eq 'Microsoft.Resources/deploymentScripts'
             Assert ($operation.kind -ceq 'AzurePowerShell' -and

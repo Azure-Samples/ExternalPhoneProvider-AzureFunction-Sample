@@ -738,7 +738,8 @@ cancellation. GitHub, Azure, Microsoft Graph, certificate, and publication calls
 Package checks also cover required runtime files, archive paths, private-key exclusion,
 checksum failures, and ZIP consumption. Certificate-script checks cover metadata-only access,
 URI/pagination boundaries, issuance, reuse, and bounded retries. Native-template checks cover grants,
-settings preservation, and all six plan/language publication paths, including ingress failure handling.
+settings preservation and read/write deployment boundaries, and all six plan/language publication
+paths, including ingress failure handling.
 CI runs the same twelve suites on Windows and Linux.
 They do not certify live deployments, RBAC propagation,
 Key Vault issuance, Entra behavior, or provider delivery.

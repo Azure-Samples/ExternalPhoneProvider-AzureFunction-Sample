@@ -296,10 +296,15 @@ on `Microsoft.Web/sites` returning `NotFound` identifies an unsupported ARM acti
 download or certificate error.
 
 The supported settings read is `POST /sites/<name>/config/appsettings/list`.
-Both the initial settings and encryption-settings templates use ARM `list()` on the
-`config/appsettings` child resource, merging its properties before applying approved values.
-Use a reviewed source revision with that endpoint and rerun with the original application ID
-and resource prefix. Do not delete the partially created resources or change hosting plans.
+Reading that resource with ARM `list()` in the same template that declares its write causes
+`Circular dependency detected ... /config/appsettings`, even when Bicep compilation succeeds.
+Both settings stages read and merge the existing values in their parent deployment, then pass
+the snapshot through a secure object parameter to an inner-scope settings writer. The writer
+only applies that snapshot; it must not read its own target.
+
+Use a reviewed source revision with this read/write boundary and rerun with the original
+application ID and resource prefix. Do not delete the partially created resources or change
+hosting plans.
 
 ## ARM certificate deployment fails
 

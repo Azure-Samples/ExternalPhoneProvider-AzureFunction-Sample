@@ -12,7 +12,7 @@ $requiredAssets = @(
     'support/Epp.Setup.psm1', 'support/Epp.Packages.ps1', 'support/Epp.Graph.ps1'
     'providers/catalog.json', 'packages/catalog.json', 'infra/main.bicep', 'infra/resources.bicep'
     'infra/certificate-access.bicep', 'infra/certificate.bicep', 'infra/Invoke-Certificate.ps1'
-    'infra/encryption-settings.bicep', 'infra/ingress.bicep', 'infra/publish.bicep'
+    'infra/encryption-settings.bicep', 'infra/app-settings.bicep', 'infra/ingress.bicep', 'infra/publish.bicep'
     'providers/telesign.json', 'providers/soprano.json', 'providers/infobip.json'
 )
 

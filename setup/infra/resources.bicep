@@ -207,30 +207,32 @@ var identifierUri = 'api://${functionApp.properties.defaultHostName}/${applicati
 var issuer = tokenVersion == 2 ? '${environment().authentication.loginEndpoint}${tenantId}/v2.0' : 'https://sts.windows.net/${tenantId}/'
 var audience = tokenVersion == 2 ? applicationId : identifierUri
 
-resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
-  parent: functionApp
-  name: 'appsettings'
-  properties: union(list('${functionApp.id}/config/appsettings', '2024-04-01').properties, providerSettings, {
-    AzureWebJobsStorage__accountName: storage.name
-    AzureWebJobsStorage__credential: 'managedidentity'
-    APPLICATIONINSIGHTS_CONNECTION_STRING: insights.properties.ConnectionString
-    APPLICATIONINSIGHTS_AUTHENTICATION_STRING: 'Authorization=AAD'
-    KEY_VAULT_URL: vault.properties.vaultUri
-    // The encryption module pins the versioned reference after certificate execution.
-    EPP_OUTBOUND_CLIENT_ID: applicationId
-    EPP_OUTBOUND_MI_CLIENT_ID: outboundIdentity.properties.clientId
-    EPP_EXPECTED_AUDIENCE: audience
-    EPP_EXPECTED_ISSUER: issuer
-    EPP_EXPECTED_CLIENT_ID: callerApplicationId
-    EPP_TENANT_ID: tenantId
-  }, isFlexConsumption ? {} : union({
-    FUNCTIONS_EXTENSION_VERSION: '~4'
-    FUNCTIONS_WORKER_RUNTIME: runtime.worker
-  }, {
-    WEBSITE_RUN_FROM_PACKAGE: '1'
-    SCM_DO_BUILD_DURING_DEPLOYMENT: 'false'
-    ENABLE_ORYX_BUILD: 'false'
-  }))
+module appSettings 'app-settings.bicep' = {
+  name: 'epp-app-settings'
+  params: {
+    functionAppName: functionApp.name
+    appSettings: union(list('${functionApp.id}/config/appsettings', '2024-04-01').properties, providerSettings, {
+      AzureWebJobsStorage__accountName: storage.name
+      AzureWebJobsStorage__credential: 'managedidentity'
+      APPLICATIONINSIGHTS_CONNECTION_STRING: insights.properties.ConnectionString
+      APPLICATIONINSIGHTS_AUTHENTICATION_STRING: 'Authorization=AAD'
+      KEY_VAULT_URL: vault.properties.vaultUri
+      // The encryption module pins the versioned reference after certificate execution.
+      EPP_OUTBOUND_CLIENT_ID: applicationId
+      EPP_OUTBOUND_MI_CLIENT_ID: outboundIdentity.properties.clientId
+      EPP_EXPECTED_AUDIENCE: audience
+      EPP_EXPECTED_ISSUER: issuer
+      EPP_EXPECTED_CLIENT_ID: callerApplicationId
+      EPP_TENANT_ID: tenantId
+    }, isFlexConsumption ? {} : union({
+      FUNCTIONS_EXTENSION_VERSION: '~4'
+      FUNCTIONS_WORKER_RUNTIME: runtime.worker
+    }, {
+      WEBSITE_RUN_FROM_PACKAGE: '1'
+      SCM_DO_BUILD_DURING_DEPLOYMENT: 'false'
+      ENABLE_ORYX_BUILD: 'false'
+    }))
+  }
 }
 
 resource authentication 'Microsoft.Web/sites/config@2024-04-01' = {
