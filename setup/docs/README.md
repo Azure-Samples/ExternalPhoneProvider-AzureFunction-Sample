@@ -28,7 +28,8 @@ and selects the **EU** provider route for EU tenants or **Global** otherwise, wi
 **JavaScript** is the default language, without a prompt. To use another language, run
 `.\Setup-Epp.ps1 -Language csharp` or `.\Setup-Epp.ps1 -Language python`.
 The legacy `-Language dotnet` value remains accepted for C#.
-Setup selects the language ZIP from a stable release and verifies it against `SHA256SUMS.txt` before publishing.
+Setup selects `released-package.zip` from the matching language's stable release and verifies it
+against that release's `SHA256SUMS.txt` before publishing.
 See [source/package selection](#source-versioning).
 
 Both channels are configured. Profile objects `deployment.routes.global` and
@@ -298,8 +299,9 @@ The flow is:
    Existing allowed provider tenants are preserved; provider options are never numbered.
    The selected [profile](#availability) supplies both channel URLs and auth/timing values.
    The launcher has no endpoint/credential overrides or `PackageUrl`/`PackageSha256` inputs.
-   It uses `packages/catalog.json` and the latest stable CI release, or your
-   `-PackageReleaseTag epp-packages-<run>-<attempt>`. Malformed/disabled profiles fail before resource creation.
+   It uses `packages/catalog.json` and the latest stable CI release for the selected language, or your
+   `-PackageReleaseTag epp-packages-<run>-<attempt>-<language>`. Use `javascript`, `dotnet`, or `python`
+   as the tag suffix. Malformed/disabled profiles fail before resource creation.
 5. **Service plan selection:** choose **Flex Consumption FC1** (free usage grant, zero always-ready
    instances, the Enter default) or **Premium EP1** (warm instance).
    Supply `-ServicePlan FC1` or `-ServicePlan EP1` to reuse a known selection.
@@ -642,11 +644,16 @@ follow [safe recovery](Troubleshooting.md#recover-without-destructive-cleanup).
 
 Defaults are `-SourceRepository Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample` and
 `-SourceRef main`. Setup resolves one commit for supporting PowerShell, Bicep, both catalogs,
-and all catalog-listed profiles. The package catalog names assets from that repository's latest
-stable `epp-packages-*` release; `SHA256SUMS.txt` verifies them. The plan/summary records URLs and hashes.
+and all catalog-listed profiles. The package catalog selects `released-package.zip` from that
+repository's latest stable `epp-packages-<run>-<attempt>-<language>` release, where the suffix is
+`javascript`, `dotnet`, or `python`. C# aliases select `dotnet` releases.
+Each release contains only its language ZIP and `SHA256SUMS.txt`; setup verifies the ZIP using that
+release's checksum. Draft, prerelease, unrelated, wrong-language, and ambiguous assets are rejected.
+The plan/summary records the full resolved tag, URLs, and hashes.
 
 For repeatable deployment, pin a reviewed full SHA **and**
-`-PackageReleaseTag epp-packages-<run>-<attempt>`. To test custom source, publish a public fork and
+`-PackageReleaseTag epp-packages-<run>-<attempt>-javascript` (or `-dotnet`/`-python` matching `-Language`).
+Use the actual full tag recorded in the plan/summary. To test custom source, publish a public fork and
 matching stable release; align both source options with the downloaded launcher. Local unpushed
 changes are not downloadable.
 

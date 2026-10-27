@@ -5,19 +5,19 @@
     {
       "id": "javascript",
       "displayName": "JavaScript",
-      "assetName": "epp-javascript.zip",
+      "assetName": "released-package.zip",
       "buildStrategy": "ready"
     },
     {
       "id": "dotnet",
       "displayName": "C#",
-      "assetName": "epp-dotnet.zip",
+      "assetName": "released-package.zip",
       "buildStrategy": "ready"
     },
     {
       "id": "python",
       "displayName": "Python",
-      "assetName": "epp-python.zip",
+      "assetName": "released-package.zip",
       "buildStrategy": "ready"
     }
   ]

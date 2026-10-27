@@ -245,7 +245,10 @@ URL/hash arguments. **Expected:** one language choice, with package URL/checksum
 
 ## A checksum or package download fails
 
-**Check:** GitHub access, the selected `epp-packages-*` release, asset, and `SHA256SUMS.txt`.
+**Check:** GitHub access and the selected `epp-packages-<run>-<attempt>-<language>` release.
+Its suffix must match `javascript`, `dotnet` (including C# aliases), or `python`.
+Download `released-package.zip` and `SHA256SUMS.txt` from that same stable language release.
+Missing or duplicate assets, drafts, prereleases, and wrong-language pins fail closed.
 Exactly one valid checksum entry must match; missing, duplicate, malformed, or mismatched entries
 fail closed. **Never bypass verification or supply a replacement hash.**
 
@@ -256,7 +259,7 @@ a full SHA avoids branch-resolution API rate limits. Private raw downloads are u
 <a id="net-build-fails"></a>
 ## .NET package fails to load
 
-**Expected:** guided setup downloads `epp-dotnet.zip` containing framework-dependent .NET 8
+**Expected:** guided setup downloads `released-package.zip` from the `-dotnet` release, containing framework-dependent .NET 8
 Linux x64 publish output, Function metadata, and `.azurefunctions` extension assemblies.
 Confirm the Function uses .NET 8 isolated and align the selected
 [source/package versions](README.md#source-versioning). For custom packaging errors, see
@@ -265,7 +268,7 @@ Confirm the Function uses .NET 8 isolated and align the selected
 <a id="python-remote-build-fails"></a>
 ## Python dependencies or startup fail
 
-**Expected:** `epp-python.zip` includes Linux x64 Python 3.11 dependencies under
+**Expected:** `released-package.zip` from the `-python` release includes Linux x64 Python 3.11 dependencies under
 `.python_packages/lib/site-packages`. Confirm the Function uses Python 3.11 and align the
 selected [source/package versions](README.md#source-versioning).
 Build custom ZIPs with `package-python.ps1` on Linux, not with Windows Python dependencies.
