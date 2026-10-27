@@ -159,13 +159,13 @@ provider-neutral delivery object (`OtpDelivery.otp` in JavaScript/Python, `OtpDe
 It is not converted to a number or extracted from `message`, and is not logged or returned in
 the HTTP response. Existing built-in provider message and voice mappings remain unchanged.
 
-The optional `riskContext` must be a JSON object or `null`. It can contain signals such as a
-scenario name or IP address. It is passed unchanged to provider adapters as
-`OtpDelivery.riskContext` in JavaScript, `OtpDelivery.RiskContext`
-(`Dictionary<string, JsonElement>`) in C#, and `OtpDelivery.risk_context`
-(`dict[str, object]`) in Python. The shared handler does not require or interpret individual
-fields. Risk data is not logged or returned in HTTP responses, and built-in adapters do not
-forward it to providers. A custom adapter must explicitly map each field it uses.
+The optional `riskContext` must be a JSON object or `null`. All runtimes parse it into the
+shared `RiskContext` model with optional `scenario` and `ipAddress` strings and additional
+properties for unknown signals. Values are preserved without normalization. Invalid common-field
+types return `400` before provider work, including evaluation.
+Adapters access common fields directly and extensions through `additionalProperties` (JavaScript),
+`AdditionalProperties` (C#), or `additional_properties` (Python). Python uses `ip_address` for
+the common IP field. Providers explicitly map supported fields; never forward or log the whole context.
 
 Current runtimes do not read an incoming `textToVoice` property. The Soprano adapters build their
 provider `text2voice` object from `message` and `locale`.
@@ -199,9 +199,9 @@ The shared outcomes are `Continue`, `Block`, and `Fail`.
 | Result | HTTP status |
 | --- | --- |
 | Recognized acceptance | `200` |
-| Recognized block | `403` |
+| Recognized provider risk/policy block | `422` |
 | Provider `429` | `429` |
-| Provider `401` or `403` | `401` |
+| Provider `401` or `403` | `400` |
 | Other provider `4xx` | `400` |
 | Missing or unregistered provider selection | `400` |
 | Missing or invalid endpoint, authentication-mode mismatch, credential or network failure, or unknown response | `502` |
@@ -210,7 +210,14 @@ The shared outcomes are `Continue`, `Block`, and `Fail`.
 Unknown or incomplete provider responses fail closed. Check a timed-out live request before
 retrying because the provider might already have accepted it.
 
-Provider adapters use these safe failure labels: `provider_http_error`, `provider_rejected`,
+HTTP `401` and `403` are reserved for inbound SAS-to-Function authentication, authorization, or
+platform access failures. HTTP `422` carries `error: "provider_blocked"` without a nonce.
+Existing SAS classifies completed `400` and `422` responses as endpoint client errors, without
+HTTP retry or endpoint failure/slowdown-breaker accounting. This does not suppress permitted native
+fallback or add a distinct provider-blocked SAS log category.
+See [existing SAS behavior and limitations](docs/CONTRACT.md#provider-blocks-and-existing-sas-behavior).
+
+Provider adapters use these safe failure labels: `provider_http_error`, `provider_blocked`, `provider_rejected`,
 `unrecognized_provider_status`, `missing_provider_message_id`, and `invalid_provider_json`.
 
 ## Configure environment variables
@@ -379,14 +386,25 @@ The adapter sends `recipient.phone_number`, `message.text`, optional `message.la
 standalone six-digit runs with commas and repeats the message twice.
 `phoneNumber` must match `^\+[1-9][0-9]{1,14}$`.
 
+When present in the decrypted `riskContext`, `scenario` maps to `account_lifecycle_event` and
+`ipAddress` maps to `originating_ip`. String values are forwarded unchanged, including casing;
+missing or `null` values are omitted. The shared `RiskContext` model rejects non-string common
+fields during parsing before provider work. Other risk fields are not forwarded, and no risk
+fields are logged. Telesign documents lifecycle values
+`create`, `sign-in`, `transact`, `update`, and `delete`; the adapter does not normalize values such
+as `signIn` or `signin`, so the provider may reject them.
+
 Recognized success codes:
 
 - SMS: `200`, `203`, `290`, `291`, `292`
 - Voice: `100`, `101`, `102`, `103`
 - Either channel: `3001` on a successful HTTP response
 
-Unknown or malformed statuses fail closed. Acceptance does not confirm handset receipt or
-completed audio.
+On a successful HTTP response, Intelligence status `3072` maps to a blocked outcome and endpoint
+HTTP `422` with `error: "provider_blocked"`, not an authentication failure or provider outage.
+Non-successful provider HTTP responses still override status
+mapping. Unknown or malformed statuses fail closed. Acceptance does not confirm handset receipt
+or completed audio. Evaluation remains provider-independent and does not call Telesign shutter mode.
 
 ## Production readiness
 

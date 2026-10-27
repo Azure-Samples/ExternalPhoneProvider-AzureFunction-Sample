@@ -12,6 +12,7 @@ const { parseEntraPayload } = require('./entraPayload');
 const { OtpDelivery } = require('./delivery');
 const { decryptDeliveryContext } = require('./jwe');
 const { selectProvider } = require('./providers');
+const { OUTCOME } = require('./providerResult');
 const { credentialTokenService, aadstsCode } = require('./credentials');
 const {
     ProviderTransportError,
@@ -255,7 +256,7 @@ app.http('SendOtp', {
             if (result.httpStatus >= 400) {
                 fail('provider_response', result.failureReason || 'provider_rejected', result.httpStatus);
                 return respond(result.httpStatus, {
-                    error: 'provider_delivery_failed',
+                    error: result.outcome === OUTCOME.BLOCK ? 'provider_blocked' : 'provider_delivery_failed',
                     correlationId,
                     requestId,
                 });

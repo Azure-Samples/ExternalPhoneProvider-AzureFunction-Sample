@@ -9,6 +9,7 @@ const { ClientAssertionCredential, ManagedIdentityCredential } = require('@azure
 const { SecretClient } = require('@azure/keyvault-secrets');
 const fixtures = require('../../tests/fixtures/contract.json');
 const providers = require('../src/functions/providers');
+const { RiskContext } = require('../src/functions/delivery');
 const jwe = require('../src/functions/jwe');
 const {
     CredentialTokenService,
@@ -249,7 +250,9 @@ for (const channel of ['sms', 'voice']) {
             assert.deepEqual(result.jsonBody, expected);
             assert.equal(createRequest.mock.callCount(), 1);
             const input = createRequest.mock.calls[0].arguments[0];
-            assert.deepEqual(input.delivery.riskContext, overrides.riskContext);
+            const risk = input.delivery.riskContext;
+            assert.deepEqual(risk?.toJSON() ?? risk, overrides.riskContext);
+            if (risk != null) assert.ok(risk instanceof RiskContext);
             assert.equal(input.delivery.message, context.message);
             assert.equal(input.delivery.channel, channel);
             const withoutRisk = provider.createRequest({
@@ -263,6 +266,16 @@ for (const channel of ['sms', 'voice']) {
 }
 
 for (const mode of [1, 2]) {
+    test(`mode ${mode}: invalid common risk fields fail before provider work`, async () => {
+        for (const riskContext of fixtures.invalidRiskContextFields) {
+            failure(await invoke(await envelope({ mode }, { ...baseDelivery, riskContext })),
+                400, 'decryption_failed');
+        }
+        assert.deepEqual([
+            getSecret.mock.callCount(), getToken.mock.callCount(), fetchMock.mock.callCount(),
+        ], [0, 0, 0]);
+    });
+
     test(`mode ${mode}: non-object risk context fails before provider work`, async () => {
         for (const riskContext of fixtures.invalidRiskContexts) {
             const result = await invoke(await envelope({ mode }, { ...baseDelivery, riskContext }));
@@ -803,6 +816,36 @@ test('provider network, timeout, invalid JSON, unknown status and HTTP failures 
         assert.equal(records.at(-1).eventName, 'request_completed');
     }
 });
+
+for (const [providerName, payload] of [
+    ['telesign', { status: { code: 3072, description: 'PRIVATE-RISK' } }],
+    ['soprano', { status: 'BLOCKED', description: 'PRIVATE-RISK' }],
+]) {
+    test(`${providerName} risk blocks return 422, not authentication failure or success`, async () => {
+        process.env.EPP_PROVIDER_NAME = providerName;
+        fetchMock.mock.mockImplementation(async () => ({
+            ok: true, status: 200, text: async () => JSON.stringify(payload),
+        }));
+        const result = await invoke(await envelope());
+        failure(result, 422, 'provider_blocked');
+        assert.equal(result.jsonBody.providerStatus, undefined);
+        assert.equal(fetchMock.mock.callCount(), 1);
+        assert.equal(event('provider_response_processed').providerOutcome, 'Block');
+        assert.equal(event('request_failed').failureReason, 'provider_blocked');
+    });
+}
+
+for (const status of [401, 403]) {
+    test(`provider HTTP ${status} returns upstream failure, not SAS authentication failure`, async () => {
+        fetchMock.mock.mockImplementation(async () => ({
+            ok: false, status, text: async () => JSON.stringify({ status: 'REJECTED' }),
+        }));
+        failure(await invoke(await envelope()), 400);
+        assert.equal(event('provider_response_processed').providerHttpStatus, status);
+        assert.equal(event('request_failed').failureReason, 'provider_http_error');
+        assert.equal(fetchMock.mock.callCount(), 1);
+    });
+}
 
 test('Sinch successful HTTP without a nonblank message ID fails closed', async () => {
     process.env.EPP_PROVIDER_NAME = 'sinch';

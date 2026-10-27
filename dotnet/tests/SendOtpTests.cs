@@ -67,7 +67,7 @@ public class SendOtpTests
     [Theory]
     [InlineData("sms")]
     [InlineData("voice")]
-    public async Task RiskContextDictionaryReachesAdapterWithoutChangingProviderPayload(string channel)
+    public async Task TypedRiskContextReachesAdapterWithoutChangingProviderPayload(string channel)
     {
         using var fixtures = ReadContractFixtures();
         foreach (var fixture in fixtures.RootElement.GetProperty("riskContexts").EnumerateArray())
@@ -83,8 +83,9 @@ public class SendOtpTests
             var delivery = Assert.IsType<OtpDelivery>(rig.Infobip.Delivery);
             if (changes.TryGetProperty("riskContext", out var expected) && expected.ValueKind != JsonValueKind.Null)
             {
-                var riskContext = Assert.IsType<Dictionary<string, JsonElement>>(delivery.RiskContext);
+                var riskContext = Assert.IsType<RiskContext>(delivery.RiskContext);
                 Assert.Equal(JsonSerializer.Serialize(expected), JsonSerializer.Serialize(riskContext));
+                Assert.Equal(nameof(RiskContext), riskContext.ToString());
             }
             else
             {
@@ -111,7 +112,8 @@ public class SendOtpTests
     {
         using var rig = new HandlerRig();
         using var fixtures = ReadContractFixtures();
-        foreach (var riskContext in fixtures.RootElement.GetProperty("invalidRiskContexts").EnumerateArray())
+        foreach (var riskContext in fixtures.RootElement.GetProperty("invalidRiskContexts").EnumerateArray()
+            .Concat(fixtures.RootElement.GetProperty("invalidRiskContextFields").EnumerateArray()))
         {
             var changes = JsonSerializer.SerializeToElement(new { riskContext });
             var result = await rig.Invoke(mode, deliveryOverrides: changes);
@@ -443,7 +445,7 @@ public class SendOtpTests
         Assert.Equal((1, 0), (rig.Http.Calls, rig.Secrets.Calls));
         rig.Http.Respond = _ => Task.FromResult(Json(401,
             provider == "telesign" ? "{\"status\":{\"code\":999}}" : "{\"status\":\"REJECTED\"}"));
-        AssertFailure(rig, await rig.Invoke(), 401);
+        AssertFailure(rig, await rig.Invoke(), 400);
         Assert.Equal((2, 0), (rig.Http.Calls, rig.Secrets.Calls));
     }
 
@@ -511,10 +513,10 @@ public class SendOtpTests
 
     [Theory]
     [InlineData(Outcome.Continue, 503, 200)]
-    [InlineData(Outcome.Block, 200, 403)]
+    [InlineData(Outcome.Block, 200, 422)]
     [InlineData(Outcome.Fail, 429, 429)]
-    [InlineData(Outcome.Fail, 401, 401)]
-    [InlineData(Outcome.Fail, 403, 401)]
+    [InlineData(Outcome.Fail, 401, 400)]
+    [InlineData(Outcome.Fail, 403, 400)]
     [InlineData(Outcome.Fail, 400, 400)]
     [InlineData(Outcome.Fail, 499, 400)]
     [InlineData(Outcome.Fail, 200, 502)]
@@ -524,6 +526,33 @@ public class SendOtpTests
     {
         var result = new ProviderResult(outcome, true, providerHttpStatus);
         Assert.Equal(expected, PhoneProviderBase.ToEndpointHttpStatus(result));
+    }
+
+    [Theory]
+    [InlineData("telesign", "{\"status\":{\"code\":3072,\"description\":\"PRIVATE-RISK\"}}")]
+    [InlineData("soprano", "{\"status\":\"BLOCKED\",\"description\":\"PRIVATE-RISK\"}")]
+    public async Task ProviderBlocksReturn422WithoutNonceOrProviderRetry(string provider, string payload)
+    {
+        using var rig = new HandlerRig();
+        ConfigureOAuth(rig, provider);
+        rig.Http.Respond = _ => Task.FromResult(Json(200, payload));
+        AssertFailure(rig, await rig.Invoke(), 422, "provider_blocked");
+        Assert.Equal(1, rig.Http.Calls);
+        var summary = Summary(rig);
+        Assert.Equal("provider_blocked", summary.GetProperty("failureReason").GetString());
+        Assert.DoesNotContain("PRIVATE-RISK", string.Join("\n", rig.Log.Messages));
+    }
+
+    [Theory]
+    [InlineData(401)]
+    [InlineData(403)]
+    public async Task ProviderAuthenticationFailuresDoNotMasqueradeAsInboundAuth(int status)
+    {
+        using var rig = new HandlerRig();
+        rig.Http.Respond = _ => Task.FromResult(Json(status, "{}"));
+        AssertFailure(rig, await rig.Invoke(), 400);
+        Assert.Equal(1, rig.Http.Calls);
+        Assert.Equal(status, Summary(rig).GetProperty("providerHttpStatus").GetInt32());
     }
 
     [Fact]

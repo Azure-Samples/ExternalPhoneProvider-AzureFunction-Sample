@@ -53,9 +53,13 @@ Evaluation skips provider work and emits `evaluation_completed`, `response_prepa
 
 Failures emit `request_failed` with stage, reason, and HTTP status (`FailureStage` and
 `FailureReason` in .NET). Provider results use
-`Outcome` and a safe classification: `provider_http_error`, `provider_rejected`, `unrecognized_provider_status`,
+`Outcome` and a safe classification: `provider_http_error`, `provider_blocked`, `provider_rejected`, `unrecognized_provider_status`,
 `missing_provider_message_id`, or `invalid_provider_json`. `provider_response_processed` includes
 that classification, upstream HTTP status, and normalized status, never descriptions/bodies.
+Explicit risk/policy blocks use outcome `Block`, reason `provider_blocked`, and endpoint HTTP `422`.
+Provider HTTP `401`/`403` remains visible as upstream status but returns endpoint `400`, not an
+inbound SAS authentication error or server outage. Existing SAS logs completed `400`/`422`
+responses as endpoint client errors; it does not interpret `provider_blocked` as a separate outcome.
 Credential acquisition failures use `request_failed` with stage `provider_credentials`, reason
 `credential_unavailable`, and HTTP `502`. A preceding `provider_credential_resolution_failed`
 event supplies the [internal diagnostic](#credential-diagnostics). There are no background credential-refresh events.

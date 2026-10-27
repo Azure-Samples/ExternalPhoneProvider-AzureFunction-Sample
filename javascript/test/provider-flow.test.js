@@ -6,7 +6,7 @@ const { inspect } = require('node:util');
 const fixtures = require('../../tests/fixtures/contract.json');
 const { AppConfig, readConfig } = require('../src/functions/config');
 const { parseEntraPayload } = require('../src/functions/entraPayload');
-const { DeliveryContext, OtpDelivery } = require('../src/functions/delivery');
+const { RiskContext, DeliveryContext, OtpDelivery } = require('../src/functions/delivery');
 const { OUTCOME } = require('../src/functions/providerResult');
 const { selectProvider } = require('../src/functions/providers');
 const {
@@ -94,13 +94,19 @@ test('delivery models preserve optional OTP strings without coercion or message 
     }
 });
 
-test('delivery models retain arbitrary risk dictionaries without inspecting their fields', () => {
+test('delivery models retain typed common risk fields and arbitrary extensions', () => {
     for (const { overrides } of fixtures.riskContexts) {
         const context = DeliveryContext.fromPayload({ ...delivery, nonce: 'nonce', ...overrides });
         assert.ok(context.isComplete);
-        assert.deepEqual(context.riskContext, overrides.riskContext);
+        assert.deepEqual(context.riskContext?.toJSON() ?? context.riskContext, overrides.riskContext);
+        if (context.riskContext != null) {
+            assert.ok(context.riskContext instanceof RiskContext);
+            assert.equal(inspect(context.riskContext), '[RiskContext]');
+            assert.ok(Object.isFrozen(context.riskContext));
+            assert.ok(Object.isFrozen(context.riskContext.additionalProperties));
+        }
         const request = new OtpDelivery({ ...delivery, riskContext: context.riskContext });
-        assert.deepEqual(request.riskContext, overrides.riskContext);
+        assert.equal(request.riskContext, context.riskContext);
         assert.equal(inspect(context), '[DeliveryContext]');
         assert.equal(inspect(request), '[OtpDelivery]');
     }
@@ -321,6 +327,43 @@ test('Telesign request validates E.164 and voice pacing remains unchanged', () =
     }
 });
 
+test('Telesign forwards only optional Intelligence strings without normalization', () => {
+    const telesign = selectProvider('telesign');
+    for (const channel of ['sms', 'voice']) {
+        const requestInput = {
+            ...input, channel, credential: { mode: 'oauth', accessToken: 'provider-token' },
+        };
+        const baseline = JSON.parse(telesign.createRequest(requestInput).body);
+        for (const [riskContext, expected] of [
+            [undefined, {}],
+            [{ scenario: null, ipAddress: null }, {}],
+            [{ scenario: 'signin' }, { account_lifecycle_event: 'signin' }],
+            [{ scenario: 'signIn', ipAddress: '2001:db8::1', other: 'PRIVATE-RISK' },
+                { account_lifecycle_event: 'signIn', originating_ip: '2001:db8::1' }],
+            [{ scenario: '', ipAddress: '' }, { account_lifecycle_event: '', originating_ip: '' }],
+        ]) {
+            const request = telesign.createRequest({
+                ...requestInput, delivery: new OtpDelivery({ ...delivery, riskContext }),
+            });
+            assert.deepEqual(JSON.parse(request.body), { ...baseline, ...expected });
+        }
+    }
+});
+
+test('Telesign recognizes Intelligence blocks without overriding HTTP failures', () => {
+    const telesign = selectProvider('telesign');
+    for (const [httpStatus, outcome, endpointStatus, failureReason] of [
+        [200, OUTCOME.BLOCK, 422, 'provider_blocked'],
+        [500, OUTCOME.FAIL, 502, 'provider_http_error'],
+        [429, OUTCOME.FAIL, 429, 'provider_http_error'],
+    ]) {
+        const result = telesign.interpretResponse(response({ status: { code: 3072 } }, httpStatus));
+        assert.deepEqual(
+            [result.outcome, result.statusRecognized, result.httpStatus, result.failureReason],
+            [outcome, true, endpointStatus, failureReason]);
+    }
+});
+
 test('Telesign status.code must be an integer number', () => {
     const telesign = selectProvider('telesign');
     for (const [code, outcome, normalized] of [
@@ -361,6 +404,8 @@ test('providers fail closed with fixed safe classifications', () => {
         [selectProvider('infobip'), response({ messages: [{ status: { name: 'REJECTED' } }] }),
             'provider_rejected', 502],
         [selectProvider('telesign'), response({ status: { code: 290 } }, 429), 'provider_http_error', 429],
+        [selectProvider('telesign'), response({ status: { code: 3400 } }, 401), 'provider_http_error', 400],
+        [selectProvider('telesign'), response({ status: { code: 3400 } }, 403), 'provider_http_error', 400],
         [selectProvider('sinch'), response({ id: 'id' }, 500), 'provider_http_error', 502],
     ];
     for (const [provider, providerResponse, reason, httpStatus] of cases) {
