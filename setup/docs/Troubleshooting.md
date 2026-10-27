@@ -288,6 +288,19 @@ Check the `epp-publish-*` deployment, Azure's access to GitHub and redirected re
 the Function runtime logs. After publication or startup failure, setup closes public ingress
 through ARM. If that fails, inspect it immediately.
 
+## ARM deployment fails while reading Function settings
+
+If `deployment sub` reports only a nested `DeploymentFailed` or an empty `BadRequest`, inspect
+the failed resource-group deployment's operations. An action named `listApplicationSettings`
+on `Microsoft.Web/sites` returning `NotFound` identifies an unsupported ARM action, not a package
+download or certificate error.
+
+The supported settings read is `POST /sites/<name>/config/appsettings/list`.
+Both the initial settings and encryption-settings templates use ARM `list()` on the
+`config/appsettings` child resource, merging its properties before applying approved values.
+Use a reviewed source revision with that endpoint and rerun with the original application ID
+and resource prefix. Do not delete the partially created resources or change hosting plans.
+
 ## ARM certificate deployment fails
 
 Inspect the nested `epp-certificate` deployment and its deployment-script execution logs.

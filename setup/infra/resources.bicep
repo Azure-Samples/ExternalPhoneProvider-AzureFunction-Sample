@@ -210,7 +210,7 @@ var audience = tokenVersion == 2 ? applicationId : identifierUri
 resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: functionApp
   name: 'appsettings'
-  properties: union(functionApp.listApplicationSettings().properties, providerSettings, {
+  properties: union(list('${functionApp.id}/config/appsettings', '2024-04-01').properties, providerSettings, {
     AzureWebJobsStorage__accountName: storage.name
     AzureWebJobsStorage__credential: 'managedidentity'
     APPLICATIONINSIGHTS_CONNECTION_STRING: insights.properties.ConnectionString

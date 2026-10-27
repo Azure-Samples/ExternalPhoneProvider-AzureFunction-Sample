@@ -330,9 +330,11 @@ try {
             $plan = $inner.resources | Where-Object type -eq 'Microsoft.Web/serverfarms'
             Assert ($plan.sku -ceq "[if(variables('isFlexConsumption'), createObject('name', 'FC1', 'tier', 'FlexConsumption'), createObject('name', 'EP1', 'tier', 'ElasticPremium', 'capacity', 1))]") 'Bicep must deploy the selected SKU, tier, and Premium capacity.'
             $settings = ($inner.resources | Where-Object { $_.type -eq 'Microsoft.Web/sites/config' -and $_.name -like '*appsettings*' }).properties
-            Assert ($settings.Contains('listApplicationSettings') -and
+            $settingsRead = "list(format('{0}/config/appsettings', resourceId('Microsoft.Web/sites', parameters('resourceNames').functionApp)), '2024-04-01').properties"
+            Assert ($settings.StartsWith("[union($settingsRead, ", [StringComparison]::Ordinal) -and
+                -not $settings.Contains('listApplicationSettings') -and
                 $settings.Contains("'WEBSITE_RUN_FROM_PACKAGE', '1'") -and
-                $settings.Contains("'SCM_DO_BUILD_DURING_DEPLOYMENT', 'false'")) 'Initial native settings must merge existing values and configure Premium ZIP mounting without builds.'
+                $settings.Contains("'SCM_DO_BUILD_DURING_DEPLOYMENT', 'false'")) 'Initial settings must read the appsettings child through its list action, merge existing values, and configure Premium ZIP mounting without builds.'
             foreach ($setting in @('EPP_KEY_VAULT_CACHE_ENABLED', 'EPP_ACCESS_TOKEN_CACHE_ENABLED')) {
                 Assert (-not $settings.Contains($setting)) 'Bicep must not configure removed credential caches.'
             }
@@ -349,10 +351,12 @@ try {
                 $template.outputs.certificateSecretVersions.type -ceq 'array') 'ARM must return public certificate metadata and secret-version metadata for local validation.'
             $encryption = ($template.resources | Where-Object name -eq 'epp-encryption-settings').properties.template
             $encryptionSettings = ($encryption.resources | Where-Object type -eq 'Microsoft.Web/sites/config').properties
-            Assert ($encryptionSettings.Contains("listApplicationSettings") -and
+            $encryptionSettingsRead = "list(format('{0}/config/appsettings', resourceId('Microsoft.Web/sites', parameters('functionAppName'))), '2024-04-01').properties"
+            Assert ($encryptionSettings.StartsWith("[union($encryptionSettingsRead, ", [StringComparison]::Ordinal) -and
+                -not $encryptionSettings.Contains('listApplicationSettings') -and
                 $encryptionSettings.Contains("'EPP_DECRYPTION_KEY_PEM'") -and
                 $encryptionSettings.Contains("'@Microsoft.KeyVault(SecretUri={0})'") -and
-                $encryptionSettings.Contains("'EPP_ENCRYPTION_KEY_ID'")) 'Native settings must preserve existing settings and pin the approved secret version/key ID.'
+                $encryptionSettings.Contains("'EPP_ENCRYPTION_KEY_ID'")) 'Encryption settings must read the appsettings child through its list action, preserve existing values, and pin the approved secret version/key ID.'
             $certificateTemplate = ($template.resources | Where-Object name -eq 'epp-certificate').properties.template
             $operation = $certificateTemplate.resources | Where-Object type -eq 'Microsoft.Resources/deploymentScripts'
             Assert ($operation.kind -ceq 'AzurePowerShell' -and
