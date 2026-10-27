@@ -50,16 +50,24 @@ try {
 
         $packageCases = @(
             @{ Id = 'javascript'; File = 'epp-javascript.zip'; Strategy = 'ready' }
-            @{ Id = 'dotnet'; File = 'epp-dotnet-source.zip'; Strategy = 'dotnet-publish' }
-            @{ Id = 'python'; File = 'epp-python-source.zip'; Strategy = 'remote-build' }
+            @{ Id = 'dotnet'; File = 'epp-dotnet.zip'; Strategy = 'ready' }
+            @{ Id = 'python'; File = 'epp-python.zip'; Strategy = 'ready' }
         )
         $script:PackageRelease = [pscustomobject]@{
             tag_name = 'epp-packages-42-1'; draft = $false; prerelease = $false
             assets = @(@($packageCases.File) + 'SHA256SUMS.txt' | ForEach-Object { [pscustomobject]@{ name = $_ } })
         }
+        $script:ReleaseCalls = 0
         function script:Invoke-RestMethod {
             param($Uri, $Headers, $TimeoutSec)
+            $script:ReleaseCalls++
             Assert ($Uri -ceq $script:ExpectedReleaseUri) 'Resolve only the selected repository and release.'
+            if ($Uri.EndsWith('?per_page=100')) {
+                return @(
+                    [pscustomobject]@{ tag_name = 'epp-packages-43-1-python'; draft = $false; prerelease = $false }
+                    $script:PackageRelease
+                )
+            }
             return $script:PackageRelease
         }
         foreach ($repository in @('Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample', 'unit/epp-fork')) {
@@ -69,6 +77,7 @@ try {
                 }
                 else { "https://api.github.com/repos/$repository/releases?per_page=100" }
                 foreach ($case in $packageCases) {
+                    $script:ReleaseCalls = 0
                     $selection = Get-EppLanguage -AssetDirectory $SetupDirectory -Language $case.Id `
                         -SourceRepository $repository -PackageReleaseTag $tag -NonInteractive
                     $releaseUrl = "https://github.com/$repository/releases/download/epp-packages-42-1"
@@ -76,6 +85,7 @@ try {
                     Assert ($selection.Url -ceq "$releaseUrl/$($case.File)" -and
                         $selection.ChecksumsUrl -ceq "$releaseUrl/SHA256SUMS.txt" -and
                         $selection.ReleaseTag -ceq 'epp-packages-42-1') 'Resolve concrete, validated package and checksum URLs from the stable release.'
+                    Assert ($script:ReleaseCalls -eq 1) 'Use only the aggregate release; do not look up language-suffixed child releases.'
                 }
             }
         }

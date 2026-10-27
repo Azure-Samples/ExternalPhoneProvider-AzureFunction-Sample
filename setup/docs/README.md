@@ -28,7 +28,7 @@ and selects the **EU** provider route for EU tenants or **Global** otherwise, wi
 **JavaScript** is the default language, without a prompt. To use another language, run
 `.\Setup-Epp.ps1 -Language csharp` or `.\Setup-Epp.ps1 -Language python`.
 The legacy `-Language dotnet` value remains accepted for C#.
-Setup verifies `SHA256SUMS.txt`, builds as needed, and publishes; no package URL/hash input is needed.
+Setup selects the language ZIP from a stable release and verifies it against `SHA256SUMS.txt` before publishing.
 See [source/package selection](#source-versioning).
 
 Both channels are configured. Profile objects `deployment.routes.global` and
@@ -195,10 +195,6 @@ Setup configures:
 - The selected **Linux FC1 or EP1** plan available in the region with enough quota. Resolve
   [`SubscriptionIsOverQuotaForSku`](Troubleshooting.md#deployment-fails-with-subscriptionisoverquotaforsku)
   before retrying. The operator needs subscription-scoped `/register/action`.
-- **C# only:** install the .NET 8 SDK and allow NuGet access. Setup publishes for `linux-x64`,
-  packages, and deploys automatically.
-- **Python:** Azure builds Linux dependencies; no local Python/pip install is required. The source
-  archive is not a run-from-package artifact.
 
 ### Permissions are separate
 
@@ -217,28 +213,24 @@ handles activation separately. Setup grants vault roles only to its operator and
 
 Install missing tools using
 [PowerShell installation](https://learn.microsoft.com/en-us/powershell/scripting/install/install-powershell),
-[Azure CLI installation](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli?view=azure-cli-latest),
-and [.NET 8 SDK download](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) instructions
-(SDK only for C#).
+[Azure CLI installation](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli?view=azure-cli-latest)
+instructions.
 Open a new **PowerShell 7** window after installation, then check:
 
 ```powershell
 $PSVersionTable.PSVersion
 az version
-# Only when choosing csharp:
-dotnet --list-sdks
 ```
 
 Interactive setup can install missing Bicep.
 
-| Choice | Azure runtime | Automatic deployment path |
+| Choice | Azure runtime | Package contents |
 | --- | --- | --- |
-| JavaScript | Node.js 22, Functions v4 | Verify and publish the ready ZIP with its production dependencies |
-| C# | .NET 8 isolated, Functions v4 | Verify source ZIP, publish for Linux with .NET 8, repackage and publish |
-| Python | Python 3.11, Functions v4 | Verify source ZIP; One Deploy with remote build on FC1, or validate/download and publish the SCM-built output on EP1 |
+| JavaScript | Node.js 22, Functions v4 | Application and production dependencies |
+| C# | .NET 8 isolated, Functions v4 | Framework-dependent Linux x64 publish output, Function metadata, and extensions |
+| Python | Python 3.11, Functions v4 | Application and Linux x64 dependencies in `.python_packages/lib/site-packages` |
 
-Setup records source and built-package hashes separately. FC1 Python leaves `packageSha256` null
-because Azure builds the package.
+Setup verifies and publishes the selected ZIP, recording its SHA-256 in the deployment summary.
 
 For [unattended execution](#noninteractive-example), preinstall prerequisites or allow Bicep
 installation with `-InstallPrerequisites`. Azure CLI must already be installed. Sign-in, MFA,
@@ -340,7 +332,7 @@ The flow is:
     are case-insensitive. Invalid answers prompt again; individual resources do not request
     additional approvals.
 
-Azure resource deployment and Function publication can each take several minutes; sign-in, builds,
+Azure resource deployment and Function publication can each take several minutes; sign-in
 and permission propagation can add time. Keep the session open until deployment completes.
 A rotating activity indicator identifies long-running deployment operations without displaying
 elapsed time, a percentage, or a completion estimate. Redirected output and `-NonInteractive` runs
@@ -420,8 +412,8 @@ that switch authorizes the deployment phase without asking again.
 This is a cancellation at the approval gate, not an offline simulation. You can select an existing
 registration or plan a new one; neither is created or changed before approval.
 Before the plan appears, setup can download tools and packages, request required installation,
-and sign in through Azure CLI. It also checks permissions and regions, verifies package checksums,
-builds the C# package when selected, and compiles Bicep.
+and sign in through Azure CLI. It also checks permissions and regions, verifies package
+checksums and contents, and compiles Bicep.
 Installation, sign-in, and consent prompts are separate from deployment approval.
 A preflight error is not a successful preview.
 
@@ -486,12 +478,11 @@ Setup pins `EPP_DECRYPTION_KEY_PEM` to its **versioned PEM backing secret**, ver
 and registers one encryption entry without changing other credentials.
 It **verifies Easy Auth before enabling ingress**.
 SCM basic authentication stays disabled for both plans. FC1 uses Entra-authenticated **One Deploy**
-for every language, with remote build for Python. Its `functionAppConfig` defines runtime, scaling,
+for every language. Its `functionAppConfig` defines runtime, scaling,
 and managed-identity deployment storage; setup does not write Premium-only runtime/build or
 `WEBSITE_RUN_FROM_PACKAGE` settings. One Deploy handles publication and trigger synchronization.
-EP1 Python uses the Entra-authenticated SCM remote build: setup validates the built Python payload,
-stores it in private Blob storage, and switches to managed-identity run-from-package.
-It never mounts the unbuilt Python source ZIP. EP1 then restarts and synchronizes triggers.
+EP1 uploads the verified ZIP to private Blob storage and uses managed-identity
+run-from-package for every language. EP1 then restarts and synchronizes triggers.
 Both plans verify that `SendOtp` is registered before reporting success.
 On publication/startup failure it disables public ingress again; failure to close ingress is reported
 explicitly rather than hidden.
@@ -592,7 +583,7 @@ configuration metadata, not provider credentials or private-key bytes. Keep it a
 | `certificateAction`, `removedEncryptionKeyIds`, `certificateVaultSubscriptionId` | Review whether creation, reuse, or replacement occurred, the exact retired application key IDs, and the source certificate's subscription. |
 | `certificateReferenceResolved` | `true` means the Function's exact secret reference resolved before registration. It is not proof of successful authorized decryption or provider delivery. |
 | `endpointServicePrincipalId`, `microsoftPhoneProviderServicePrincipalId` | Tenant-local enterprise-application Object IDs; neither is the endpoint app client ID. |
-| `source`, `sourceRevision`, `packageReleaseTag`, `packageUrl`, `sourcePackageSha256`, `packageSha256`, `language`, `servicePlan` | Commit-pinned setup source, package release provenance, and language/plan. C# is recorded as `csharp`; older summaries can contain `dotnet`. FC1 Python's built hash can be null; source and built hashes describe different artifacts. |
+| `source`, `sourceRevision`, `packageReleaseTag`, `packageUrl`, `sourcePackageSha256`, `packageSha256`, `language`, `servicePlan` | Commit-pinned setup source, package release provenance, and language/plan. C# is recorded as `csharp`; older summaries can contain `dotnet`. `sourcePackageSha256` and `packageSha256` identify the downloaded and deployed ZIP and match. |
 | `policyChanged` | Expected `false`: deployment has not activated policy. |
 
 The `provider` field must match your selected provider. For example, a record for the Global route
@@ -680,6 +671,7 @@ $tests = @(
     'Selections.Tests.ps1',
     'Applications.Tests.ps1',
     'Progress.Tests.ps1',
+    'Packages.Tests.ps1',
     'Certificates.Tests.ps1',
     'Providers.Tests.ps1'
 )
@@ -701,7 +693,8 @@ checks. They also cover tenant-scope discovery, EU-only recommendations, languag
 defaults, confirmation aliases, certificate choices, provider and package selection, and FC1/EP1
 deployment. Progress checks use a local CLI stand-in to verify animation, output handling, and
 cancellation. GitHub, Azure, Microsoft Graph, certificate, and publication calls are mocked.
-CI runs the same ten suites on Windows and Linux.
+Package checks also cover required runtime files, archive paths, private-key exclusion,
+checksum failures, and ZIP consumption. CI runs the same eleven suites on Windows and Linux.
 They do not certify live deployments, RBAC propagation,
 Key Vault issuance, Entra behavior, or provider delivery.
 

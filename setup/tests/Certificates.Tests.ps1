@@ -529,7 +529,7 @@ try {
             }
             foreach ($action in @('Create', 'Reuse', 'Replace')) {
                 $inputs.Language = if ($action -eq 'Reuse') { 'dotnet' } else { 'javascript' }
-                $inputs.PackageFile = if ($inputs.Language -eq 'dotnet') { 'epp-dotnet-source.zip' } else { 'epp-javascript.zip' }
+                $inputs.PackageFile = if ($inputs.Language -eq 'dotnet') { 'epp-dotnet.zip' } else { 'epp-javascript.zip' }
                 $inputs.PackageUrl = "https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/$($inputs.PackageFile)"
                 Set-TestBundle $certificate
                 $script:Application.KeyCredentials = if ($action -eq 'Create') { @($signing) } else { @($first, (New-TestCredential $other $secondId), $signing) }

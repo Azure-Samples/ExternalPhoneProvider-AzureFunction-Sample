@@ -65,18 +65,18 @@ One deployment accepts SMS and voice. Each request's `channel` selects its confi
 
 ## Download a Function ZIP
 
-Guided setup already publishes the package. Use this section for manual deployment.
+Guided setup selects and publishes the language ZIP automatically. Use this section for manual deployment.
 
 Download the latest successful CI ZIP for your chosen language:
 
 | Language | Download | Contents |
 | --- | --- | --- |
-| JavaScript | [epp-javascript.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-javascript.zip) | Application and production dependencies |
-| .NET | [epp-dotnet-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-dotnet-source.zip) | C# Function source and project file. Build and publish before deployment. |
-| Python | [epp-python-source.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-python-source.zip) | Source for Azure remote build on Linux |
+| JavaScript | [epp-javascript.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-javascript.zip) | Node.js 22 application and production dependencies |
+| .NET | [epp-dotnet.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-dotnet.zip) | Framework-dependent .NET 8 Linux x64 publish output, including Azure Functions metadata and extensions |
+| Python | [epp-python.zip](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest/download/epp-python.zip) | Python 3.11 application with Linux x64 dependencies in `.python_packages/lib/site-packages` |
 
-Verify `SHA256SUMS.txt`, configure the runtime, settings, Key Vault, and **Easy Auth**, then build
-.NET or use Python remote build. Source ZIPs are not run-from-package artifacts.
+Deploy the ZIP to an Azure Functions v4 app on Linux x64 with the matching language runtime.
+Verify `SHA256SUMS.txt` and configure the matching runtime, settings, Key Vault, and **Easy Auth**.
 
 Successful `main` builds publish a versioned [release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/latest).
 PR builds publish workflow artifacts only. Packaging does not deploy or verify delivery.
@@ -88,8 +88,8 @@ Run one packaging script from the repository root. It creates a local ZIP withou
 | Language | Root-level script | Prerequisites | ZIP in `artifacts/` |
 | --- | --- | --- | --- |
 | JavaScript | [package-javascript.ps1](package-javascript.ps1) | PowerShell 7+, Node.js 20 or 22 with npm, npm registry access | `epp-javascript.zip` |
-| .NET | [package-dotnet.ps1](package-dotnet.ps1) | PowerShell 7+ to package. .NET 8 SDK and NuGet feed access when customers build. | `epp-dotnet-source.zip` |
-| Python | [package-python.ps1](package-python.ps1) | PowerShell 7+. Azure remote build required when deploying. | `epp-python-source.zip` |
+| .NET | [package-dotnet.ps1](package-dotnet.ps1) | PowerShell 7+, .NET 8 SDK, and NuGet feed access to build the ZIP | `epp-dotnet.zip` |
+| Python | [package-python.ps1](package-python.ps1) | Linux x64, PowerShell 7+, Python 3.11 with pip, and PyPI access to build the ZIP | `epp-python.zip` |
 
 ```powershell
 pwsh -File ./package-javascript.ps1
@@ -103,13 +103,13 @@ and tests.
 JavaScript installs production dependencies from the lockfile in a temporary folder. Review
 packaging for native dependencies or required lifecycle scripts. It does not modify `node_modules`.
 
-**The .NET download contains source.** Run
-`dotnet publish dotnet.csproj --configuration Release --output ../publish` with .NET 8, then deploy
-the publish output with `host.json` at its root. The archive includes `dotnet.csproj`,
-`Program.cs`, `Functions/`, and `Src/`, and excludes `bin/` and `obj/`.
+**The .NET script publishes for `linux-x64`** with `--self-contained false -p:UseAppHost=false`.
+The archive contains `dotnet.dll`, runtime configuration, Function metadata, and `.azurefunctions`
+extensions with `host.json` at its root. Azure supplies the .NET runtime.
 
-**The Python download contains source.** Deploy it to Linux with remote build so Azure installs
-`requirements.txt`.
+**Build Python packages on Linux with Python 3.11.** The script installs production binary wheels
+for `manylinux2014_x86_64` into `.python_packages/lib/site-packages`. CI checks the archive and
+imports the application using only the bundled dependencies.
 
 Existing archives are never overwritten. For another build, specify a new path:
 

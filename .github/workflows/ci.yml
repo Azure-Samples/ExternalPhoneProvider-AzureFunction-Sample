@@ -32,6 +32,9 @@ jobs:
       - name: Test provider setup without Azure access
         shell: pwsh
         run: ./setup/tests/Providers.Tests.ps1
+      - name: Test package and checksum validation without network access
+        shell: pwsh
+        run: ./setup/tests/Packages.Tests.ps1
       - name: Test application and region selection without Azure access
         shell: pwsh
         run: ./setup/tests/Selections.Tests.ps1
