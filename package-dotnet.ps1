@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 [CmdletBinding()]
 param(
-    [string]$OutputPath = (Join-Path $PSScriptRoot 'artifacts/epp-dotnet-source.zip')
+    [string]$OutputPath = (Join-Path $PSScriptRoot 'artifacts/epp-dotnet.zip')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,24 +13,17 @@ $stage = Join-Path $temporary 'app'
 
 try {
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
-    foreach ($name in @('host.json', 'dotnet.csproj', 'Program.cs')) {
-        Copy-Item -LiteralPath (Join-Path $source $name) -Destination $stage
+    dotnet publish (Join-Path $source 'dotnet.csproj') --configuration Release --runtime linux-x64 `
+        --self-contained false -p:UseAppHost=false --output $stage --nologo
+    if ($LASTEXITCODE -ne 0) { throw '.NET publish failed.' }
+    foreach ($name in @('host.json', 'dotnet.dll', 'functions.metadata', 'worker.config.json', '.azurefunctions')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $stage $name))) { throw "Missing .NET publish output: $name." }
     }
-    foreach ($folder in @('Functions', 'Src')) {
-        foreach ($file in Get-ChildItem -LiteralPath (Join-Path $source $folder) -Recurse -File -Filter '*.cs') {
-            $relative = [IO.Path]::GetRelativePath($source, $file.FullName)
-            if ($relative -match '(^|[\\/])(tests?|bin|obj)([\\/]|$)') { continue }
-            $destination = Join-Path $stage $relative
-            New-Item -ItemType Directory -Path (Split-Path $destination) -Force | Out-Null
-            Copy-Item -LiteralPath $file.FullName -Destination $destination
-        }
-    }
-    if (-not (Test-Path -LiteralPath (Join-Path $stage 'Functions/SendOtp.cs'))) { throw 'Missing .NET function source.' }
     $zip = Join-Path $temporary 'app.zip'
     [IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip)
     New-Item -ItemType Directory -Path (Split-Path $archive) -Force | Out-Null
     [IO.File]::Move($zip, $archive)
-    Write-Host '.NET source ZIP created. Build/publish the extracted project before deployment; not ready for direct run-from-package.'
+    Write-Host 'Framework-dependent .NET 8 Linux x64 ZIP created.'
     Get-Item -LiteralPath $archive | Select-Object FullName, Length
 } finally {
     if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Recurse -Force }

@@ -1502,9 +1502,6 @@ function Show-EppPlan {
         Write-Host '  - Flex Consumption: publish through One Deploy. No always-ready instances.'
         Write-Host '  - FC1 includes a free usage grant. Usage beyond the grant, Key Vault, storage, and telemetry can incur charges.' -ForegroundColor Yellow
     }
-    if ($Inputs.BuildStrategy -eq 'remote-build') {
-        Write-Host '  - Azure installs Python dependencies and prepares the Function deployment package. No local Python installation is required.'
-    }
     if ($Inputs.ServicePlan -eq 'EP1') {
         Write-Host '  - Premium EP1, Key Vault, storage, and telemetry incur Azure charges.' -ForegroundColor Yellow
     }
@@ -2637,9 +2634,9 @@ function Invoke-EppSetup {
     .DESCRIPTION
         Uses commit-pinned infrastructure, provider profiles, and setup helpers downloaded by
         Setup-Epp.ps1. Downloads and verifies the selected Function ZIP from a stable GitHub release.
-        Azure CLI is required. The .NET selection also needs the .NET 8 SDK and NuGet access;
-        Python dependencies are built in Azure. The Azure CLI Bicep component is also required
-        and can be installed after confirmation. Interactive setup can create a dedicated app
+        Each language ZIP contains the application and its production dependencies.
+        Azure CLI and its Bicep component are required. The Bicep component can be installed
+        after confirmation. Interactive setup can create a dedicated app
         registration after deployment approval. Policy activation remains manual.
         Review the complete plan before approving resource or tenant changes.
         Microsoft Graph calls reuse the existing Azure CLI user session through az ad and az rest.

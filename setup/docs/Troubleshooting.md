@@ -14,7 +14,7 @@ Select the failed stage and keep existing resources. Before rerunning, use
 | New or existing app reports an unsupported provider-tenant restriction | [Unrestricted application audience](#new-app-fails-with-an-unsupported-provider-tenant-restriction) |
 | Region or hosting rejected | [Tenant scope and EU recommendations](#tenant-scope-discovery-or-eu-region-recommendations-fail), [quota](#deployment-fails-with-subscriptionisoverquotaforsku), [plan selection](#service-plan-selection-or-availability-fails), [FC1 object-reference error](#fc1-deployment-preflight-reports-an-object-reference-error), [EP1 location check](#appservice-list-locations-rejects-ep1) |
 | Certificate or resource registration fails | [Certificate selection](#certificate-selection-reuse-or-cleanup-fails), [resource providers](#a-required-azure-resource-provider-is-not-registered) |
-| Download, build, or parser failure | [Old package prompts](#setup-still-asks-for-packageurl-or-packagesha256), [checksum/download](#a-checksum-or-package-download-fails), [.NET](#net-build-fails), [Python](#python-remote-build-fails), [CLI JSON](#azure-cli-warnings-break-json-parsing) |
+| Download, package, or parser failure | [Old package prompts](#setup-still-asks-for-packageurl-or-packagesha256), [checksum/download](#a-checksum-or-package-download-fails), [.NET](#net-build-fails), [Python](#python-remote-build-fails), [CLI JSON](#azure-cli-warnings-break-json-parsing) |
 | Deployment stops after approval | [Combined Azure CLI paths](#azure-cli-paths-are-combined-during-deployment), [publication and startup](#deployment-stops-after-approval) |
 | Endpoint rejects calls, does not deliver, or has no logs | [After-deployment triage](#after-deployment-triage), [401/live delivery](#the-endpoint-returns-401-or-live-delivery-fails), [credential acquisition](#provider-credential-acquisition-fails) |
 | Optional regional routing fails | [Front Door checks](#optional-front-door-deployments) |
@@ -253,31 +253,34 @@ fail closed. **Never bypass verification or supply a replacement hash.**
 Pin `-PackageReleaseTag` to reproduce a release. Public-fork branches need both source options;
 a full SHA avoids branch-resolution API rate limits. Private raw downloads are unsupported.
 
-## .NET build fails
+<a id="net-build-fails"></a>
+## .NET package fails to load
 
-**Fix:** install the **.NET 8 SDK**, allow NuGet access, and inspect the reported `dotnet` error.
-**Expected:** setup selects 8.x, publishes verified source for Linux in its temporary workspace,
-checks output, and packages it before Azure resource creation. Source ZIPs are not runnable.
-Do not replace the source checksum with the built ZIP hash; setup calculates that separately.
+**Expected:** guided setup downloads `epp-dotnet.zip` containing framework-dependent .NET 8
+Linux x64 publish output, Function metadata, and `.azurefunctions` extension assemblies.
+Confirm the Function uses .NET 8 isolated and align the selected
+[source/package versions](README.md#source-versioning). For custom packaging errors, see
+[build prerequisites and commands](../../TECHNICAL.md#build-zips-locally).
 
-## Python remote build fails
+<a id="python-remote-build-fails"></a>
+## Python dependencies or startup fail
 
-**FC1:** use Azure CLI **2.60.0+** and One Deploy with `--build-remote true`. Flex stores the Azure-built
-payload in its configured managed-identity deployment container. Do not add
+**Expected:** `epp-python.zip` includes Linux x64 Python 3.11 dependencies under
+`.python_packages/lib/site-packages`. Confirm the Function uses Python 3.11 and align the
+selected [source/package versions](README.md#source-versioning).
+Build custom ZIPs with `package-python.ps1` on Linux, not with Windows Python dependencies.
+
+**FC1:** use Azure CLI **2.60.0+** and One Deploy with `--build-remote false`. Do not add
 `SCM_DO_BUILD_DURING_DEPLOYMENT`, `ENABLE_ORYX_BUILD`, `FUNCTIONS_WORKER_RUNTIME`, or
-`WEBSITE_RUN_FROM_PACKAGE`; these are not Flex configuration. The source hash is recorded, while the
-built-output hash is left null because the setup workstation does not download it.
+`WEBSITE_RUN_FROM_PACKAGE`; these are not Flex configuration.
 
-**EP1:** use Azure CLI **2.48.1+** with a user account allowed to publish to the Function App and network
-access to its SCM endpoint. Setup enables `SCM_DO_BUILD_DURING_DEPLOYMENT` and `ENABLE_ORYX_BUILD`,
-without `WEBSITE_RUN_FROM_PACKAGE` during the build, and requests Azure remote build explicitly.
-It never installs Windows Python dependencies for the Linux app.
+**EP1:** use Azure CLI **2.48.1+** with a user account allowed to publish to the Function App.
+Setup uploads the verified ZIP to private Blob storage and configures managed-identity
+run-from-package.
 
-SCM basic authentication remains disabled. For EP1, `site/wwwroot` must contain the Python
-dependency payload; setup rejects unbuilt source, stores the built output in private Blob storage,
-and clears temporary build settings.
+SCM basic authentication remains disabled. Both plans record the verified package hash.
 
-After build or startup failure, setup closes public ingress. If that fails, inspect it immediately.
+After publication or startup failure, setup closes public ingress. If that fails, inspect it immediately.
 
 ## Azure CLI paths are combined during deployment
 

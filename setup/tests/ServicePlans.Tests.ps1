@@ -143,11 +143,7 @@ try {
             foreach ($setting in @('EPP_KEY_VAULT_CACHE_ENABLED', 'EPP_ACCESS_TOKEN_CACHE_ENABLED')) {
                 Assert (-not $plan.Contains($setting)) 'The approval must not advertise obsolete cache settings.'
             }
-            $inputs.BuildStrategy = 'remote-build'
-            $script:Messages.Clear()
-            Show-EppPlan -Inputs $inputs -Names $names -ProviderConfiguration $provider -Context $context
-            Assert (($script:Messages -join "`n").Contains('Azure installs Python dependencies and prepares the Function deployment package. No local Python installation is required.')) 'Explain Python packaging only for the Python build strategy.'
-            $inputs.BuildStrategy = 'ready'
+            Assert ($plan.Contains('Deploy the verified package, synchronize Function triggers, and enable HTTPS ingress after Easy Auth is verified.')) 'Describe the package publication result and authentication requirement.'
             $script:Calls.Clear()
             Assert-EppServicePlanLocation -Inputs $inputs
             Assert ($script:Calls.Count -eq 1) 'Availability must check only the selected plan.'
@@ -218,25 +214,22 @@ try {
         function script:Invoke-EppDataOperation { param([scriptblock] $Operation); & $Operation }
         function script:Build-EppPythonPackage {
             param($Inputs, $Names, $SiteId, $SourcePath, $Directory)
-            $script:Calls.Add('python-build')
-            return Join-Path $Directory 'python-built.zip'
+            throw 'Unexpected package rebuild during Python ZIP publication.'
         }
         function script:Set-EppPackageSettings {
             param($SiteId, $SubscriptionId, $PackageUrl, $Directory)
             $script:Calls.Add("package-settings:$PackageUrl")
         }
-        Set-Content -LiteralPath (Join-Path $Directory 'python-built.zip') -Value 'synthetic built payload'
-        $builtHash = (Get-FileHash -LiteralPath (Join-Path $Directory 'python-built.zip') -Algorithm SHA256).Hash.ToLowerInvariant()
         $publish = @{
             Inputs = $inputs; Names = $names; Context = $context; SiteId = '/subscriptions/unit/resourceGroups/unit/providers/Microsoft.Web/sites/unit'
             Outputs = @{ identifierUri = @{ value = 'api://unit' }; packageContainerUrl = @{ value = "https://$($names.storageAccount).blob.core.windows.net/packages/" } }
-            Package = @{ Path = (Join-Path $Directory 'source.zip'); RequiresRemoteBuild = $false }
+            Package = @{ Path = (Join-Path $Directory 'ready.zip'); RequiresRemoteBuild = $false }
             Directory = $Directory
         }
         foreach ($id in @('FC1', 'EP1')) {
             foreach ($language in @('javascript', 'dotnet', 'python')) {
                 $inputs.ServicePlan = $id; $inputs.Language = $language
-                $publish.Package.RequiresRemoteBuild = $language -eq 'python'
+                $publish.Package.RequiresRemoteBuild = $false
                 $script:Calls.Clear(); $script:Activities.Clear()
                 $hash = Publish-EppFunction @publish
                 $trace = $script:Calls -join "`n"
@@ -244,20 +237,17 @@ try {
                 Assert ($script:Calls[-1] -ceq 'published') 'Publication must finish with Function metadata readback.'
                 Assert ($script:Activities.Count -gt 0) 'Every plan/language publication path must provide an activity indicator.'
                 if ($id -eq 'FC1') {
-                    $remoteBuild = ($language -eq 'python').ToString().ToLowerInvariant()
                     Assert ($script:Calls[1] -ceq 'ingress:Enabled') 'Flex must open its authenticated deployment endpoint before One Deploy.'
-                    Assert ($trace.Contains("functionapp deployment source config-zip") -and $trace.Contains("--build-remote $remoteBuild")) 'Flex must use One Deploy with the correct remote-build flag.'
+                    Assert ($trace.Contains('functionapp deployment source config-zip') -and $trace.Contains('--build-remote false') -and
+                        $trace.Contains("--src $($publish.Package.Path)")) 'Flex must upload the selected deployment ZIP with the configured publication flags.'
                     Assert ($trace -notmatch 'storage blob upload|package-settings|python-build|functionapp restart|triggers') 'Flex must not use Premium publishing or run-from-package.'
-                    if ($language -eq 'python') { Assert ($null -eq $hash) 'Do not label a Python source hash as the Azure-built output hash.' }
-                    else { Assert ($hash -ceq $inputs.PackageSha256) 'Ready Flex packages must retain the verified hash.' }
+                    Assert ($hash -ceq $inputs.PackageSha256) 'Flex must retain the verified package hash for every language.'
                 }
                 else {
                     Assert ($trace -match 'storage blob upload' -and $trace -match 'functionapp restart' -and $trace -match 'triggers') 'EP1 must retain managed-identity package publication and trigger synchronization.'
                     Assert ($trace -notmatch 'deployment source config-zip') 'EP1 must not use the Flex publishing branch.'
-                    if ($language -eq 'python') {
-                        Assert ($hash -ceq $builtHash -and $trace.Contains("$builtHash.zip")) 'EP1 Python must upload and mount the built, hashed output.'
-                    }
-                    else { Assert ($hash -ceq $inputs.PackageSha256) 'Ready EP1 packages must retain the verified hash.' }
+                    Assert ($hash -ceq $inputs.PackageSha256 -and $trace.Contains("$($inputs.PackageSha256).zip") -and
+                        $trace.Contains("--file $($publish.Package.Path)") -and $trace -notmatch 'python-build') 'EP1 must upload and mount the verified deployment ZIP for every language.'
                 }
             }
         }

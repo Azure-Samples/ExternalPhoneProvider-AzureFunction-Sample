@@ -39,7 +39,6 @@ Prepare:
 - **Shell:** Azure Cloud Shell in PowerShell mode, or PowerShell 7+ with an Azure CLI user login.
   Azure CLI 2.60.0+ is required for Flex Consumption (FC1), or 2.48.1+ for Premium (EP1).
   Allow access to GitHub, Azure, Microsoft Graph, Key Vault, and the deployment endpoints.
-  C# also needs the .NET 8 SDK and NuGet access.
 - **Administrators:** Azure deployment and role-assignment access, a Privileged Role Administrator
   for setup, and an Authentication Policy Administrator for activation.
 - **Azure region and budget:** check availability and subscription quota for your chosen Linux
@@ -136,7 +135,7 @@ it does not ask you to choose EU or Global. Select the Azure region, then comple
   unverifiable choice. Recommendations are not a data-residency or GDPR compliance guarantee.
 - **Provider:** enter or confirm the provider by name. New applications show all guided providers
   in alphabetical order, with no default selection. Setup downloads the language's matching
-  stable release asset, verifies `SHA256SUMS.txt`, and builds when required.
+  ZIP from a stable release and verifies it against `SHA256SUMS.txt`.
 - **Hosting:** Enter defaults to FC1, which can scale to zero and cold-start. EP1 has paid warm capacity. Review
   [plan details](../setup/docs/README.md#service-plan-selection) and the [cost estimate](COST-CALCULATOR.md).
 - **Resource prefix:** press Enter to use `epp`, or enter 2-8 lowercase letters/digits, starting
