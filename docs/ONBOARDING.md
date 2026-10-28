@@ -116,11 +116,6 @@ Guided setup supports **Infobip, Soprano, and Telesign**.
 Sinch is bundled but does not have a guided setup profile. Twilio requires the
 [Add Twilio](BRING-YOUR-OWN-PROVIDER.md) development process.
 
-Infobip retains the previously tested SMS and advanced voice API contracts, using OAuth rather
-than API-key authentication. Its channel settings are HTTPS regional base URLs, not the complete
-message paths in the Security Store manifest. See
-[Infobip routing and migration](../TECHNICAL.md#infobip).
-
 ### Telesign: OAuth configuration and handoff
 
 The provider owner must complete `deployment.AccessTokenScopeTenant` and both Global/EU routes'

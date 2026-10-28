@@ -179,7 +179,7 @@ public class SendOtpTests
     [Theory]
     [InlineData("telesign", "", "")]
     [InlineData("soprano", "", "")]
-    [InlineData("infobip", "/sms/3/messages", "/tts/3/advanced")]
+    [InlineData("infobip", "", "")]
     [InlineData("sinch", "/xms/v1/plan/batches", "/calling/v1/callouts")]
     public async Task RequestChannelSelectsDistinctConfiguredEndpoints(string provider, string smsPath, string voicePath)
     {

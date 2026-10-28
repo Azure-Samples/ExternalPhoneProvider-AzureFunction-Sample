@@ -239,8 +239,6 @@ try {
                     Assert ($settings.EPP_PROVIDER_APP_ID -ceq $route.appId -and $settings.EPP_PROVIDER_SCOPE -ceq $route.scope) 'Preserve regional OAuth settings.'
                 }
                 if ($id -eq 'infobip') {
-                    $baseUrl = if ($region -eq 'eu') { 'https://api-eu.infobip.com' } else { 'https://api.infobip.com' }
-                    Assert ($settings.EPP_PROVIDER_SMS_ENDPOINT -ceq $baseUrl -and $settings.EPP_PROVIDER_VOICE_ENDPOINT -ceq $baseUrl) 'Infobip adapters append the tested SMS and advanced voice paths to HTTPS regional base URLs.'
                     Assert ($settings.EPP_PROVIDER_AUTH_MODE -ceq 'oauth' -and
                         $settings.EPP_PROVIDER_TENANT_ID -ceq 'a7d072c3-504e-4385-9029-89283084be5d' -and
                         $settings.EPP_PROVIDER_APP_ID -ceq 'd1131a30-5ed5-49b7-8602-d978c8eb1677' -and

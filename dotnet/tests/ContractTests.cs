@@ -161,8 +161,8 @@ public class ContractTests
     }
 
     [Theory]
-    [InlineData("https://api.infobip.com")]
-    [InlineData("https://api-eu.infobip.com")]
+    [InlineData("https://provider.example/custom/messages")]
+    [InlineData("https://eu.provider.example/another/path")]
     public async Task InfobipOAuthRequestsKeepExactSmsAndVoiceWireContracts(string endpoint)
     {
         var env = new TestEnv { ["EPP_PROVIDER_ACCOUNT_NAME"] = "Verify" };
@@ -171,7 +171,7 @@ public class ContractTests
 
         var sms = await new InfobipProvider().CaptureRequestAsync(
             "sms", endpoint, Delivery(), credential, env);
-        AssertJsonRequest(sms, $"{endpoint}/sms/3/messages", "Bearer test-token");
+        AssertJsonRequest(sms, endpoint, "Bearer test-token");
         var expectedSms = new
         {
             messages = new[]
@@ -188,7 +188,7 @@ public class ContractTests
 
         var voice = await new InfobipProvider().CaptureRequestAsync(
             "voice", endpoint, Delivery("voice"), credential, env);
-        AssertJsonRequest(voice, $"{endpoint}/tts/3/advanced", "Bearer test-token");
+        AssertJsonRequest(voice, endpoint, "Bearer test-token");
         var expectedVoice = new
         {
             messages = new[]

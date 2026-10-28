@@ -38,7 +38,6 @@ public sealed class InfobipProvider : PhoneProviderBase
         var senderId = env.Get("EPP_PROVIDER_ACCOUNT_NAME") ?? "Verify";
         var messageId = delivery.CorrelationId ?? delivery.MessageId;
         object body;
-        string url;
 
         if (channel == "voice")
         {
@@ -51,7 +50,6 @@ public sealed class InfobipProvider : PhoneProviderBase
                         delivery.Locale ?? "en",
                         new Voice("Joanna", "female"))
                 ]);
-            url = $"{endpoint}/tts/3/advanced";
         }
         else
         {
@@ -62,10 +60,9 @@ public sealed class InfobipProvider : PhoneProviderBase
                         [new Destination(delivery.PhoneNumber, messageId)],
                         new SmsContent(delivery.Message))
                 ]);
-            url = $"{endpoint}/sms/3/messages";
         }
 
-        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = JsonContent.Create(body),
         };

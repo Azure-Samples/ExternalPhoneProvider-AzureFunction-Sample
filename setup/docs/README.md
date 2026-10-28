@@ -36,13 +36,12 @@ Both channels are configured. Profile objects `deployment.routes.global` and
 `deployment.routes.eu` define `smsEndpoint`, `voiceEndpoint`, tenant, authentication, and timing
 values. Setup writes the endpoints to `EPP_PROVIDER_SMS_ENDPOINT` and
 `EPP_PROVIDER_VOICE_ENDPOINT`; OAuth profiles also supply their API app ID and scope.
-Infobip's settings are HTTPS base URLs: its adapters append the tested `/sms/3/messages` and
-`/tts/3/advanced` paths without changing their request or response contracts.
+All guided providers use the complete HTTPS URLs from the selected profile without appending paths.
 
 Use a package that supports channel-specific settings; neither channel uses the other channel's URL.
 
-Soprano and Telesign currently use identical Global/EU URLs. Infobip uses `https://api.infobip.com`
-for Global and `https://api-eu.infobip.com` for EU. Each OAuth provider uses the same API app ID/scope
+Soprano and Telesign currently use identical Global/EU URLs. Infobip uses the `api.infobip.com`
+host for Global and `api-eu.infobip.com` for EU. Each OAuth provider uses the same API app ID/scope
 across its two routes, except that Telesign's OAuth values are pending provider confirmation.
 The route label is not a residency or Azure-region selection.
 Sinch remains a bundled adapter without a guided profile.
