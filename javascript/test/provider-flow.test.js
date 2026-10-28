@@ -230,24 +230,22 @@ test('Soprano accepts root or first array object with strict status and flexible
     }
 });
 
-test('Infobip uses OAuth with the tested SMS and advanced voice contracts on both setup routes', () => {
+test('Infobip uses configured URLs unchanged with OAuth on both setup routes', () => {
     const infobip = selectProvider('infobip');
     const profile = require('../../setup/providers/infobip.json');
     assert.equal(infobip.authenticationMode, 'oauth');
     assert.deepEqual(infobip.credentialSpec, { mode: 'oauth' });
-    for (const [region, baseUrl] of [
-        ['global', 'https://api.infobip.com'],
-        ['eu', 'https://api-eu.infobip.com'],
-    ]) {
+    for (const region of ['global', 'eu']) {
         for (const channel of ['sms', 'voice']) {
+            const endpoint = profile.deployment.routes[region][`${channel}Endpoint`];
             const request = infobip.createRequest({
                 ...input,
                 channel,
-                endpoint: profile.deployment.routes[region][`${channel}Endpoint`],
+                endpoint,
                 credential: { mode: 'oauth', accessToken: 'provider-token' },
                 env: { EPP_PROVIDER_ACCOUNT_NAME: 'EPP' },
             });
-            assert.equal(request.url, baseUrl + (channel === 'voice' ? '/tts/3/advanced' : '/sms/3/messages'));
+            assert.equal(request.url, endpoint);
             assert.equal(request.method, 'POST');
             assert.deepEqual(request.headers, {
                 Authorization: ['Bearer', 'provider-token'].join(' '),

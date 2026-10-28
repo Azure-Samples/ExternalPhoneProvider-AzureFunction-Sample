@@ -26,14 +26,14 @@ class InfobipProvider(PhoneProviderBase):
                 "language": delivery.locale or "en",
                 "voice": {"name": "Joanna", "gender": "female"},
             }]}
-            return OutboundRequest("POST", f"{endpoint}/tts/3/advanced", headers, json.dumps(body))
+            return OutboundRequest("POST", endpoint, headers, json.dumps(body))
 
         body = {"messages": [{
             "sender": sender_id,
             "destinations": [{"to": delivery.phone_number, "messageId": message_id}],
             "content": {"text": delivery.message},
         }]}
-        return OutboundRequest("POST", f"{endpoint}/sms/3/messages", headers, json.dumps(body))
+        return OutboundRequest("POST", endpoint, headers, json.dumps(body))
 
     def map_response(self, payload, http_status):
         messages = payload.get("messages") if isinstance(payload, dict) else None

@@ -413,7 +413,7 @@ def test_telesign_oauth_live_send_never_forwards_inbound_credentials(monkeypatch
 @pytest.mark.parametrize("provider,payload,sms_path,voice_path", [
     ("telesign", {"status": {"code": 3001}}, "", ""),
     ("soprano", {"status": "ENROUTE"}, "", ""),
-    ("infobip", {"messages": [{"status": {"groupName": "PENDING"}}]}, "/sms/3/messages", "/tts/3/advanced"),
+    ("infobip", {"messages": [{"status": {"groupName": "PENDING"}}]}, "", ""),
     ("sinch", {"id": "provider-id"}, "/xms/v1/plan/batches", "/calling/v1/callouts"),
 ])
 def test_request_channel_selects_distinct_configured_endpoints(monkeypatch, provider, payload, sms_path, voice_path):

@@ -627,7 +627,7 @@ for (const provider of ['telesign', 'soprano']) {
 for (const [provider, response, smsPath, voicePath] of [
     ['telesign', { status: { code: 3001 } }, '', ''],
     ['soprano', { status: 'ENROUTE' }, '', ''],
-    ['infobip', { messages: [{ status: { groupName: 'PENDING' } }] }, '/sms/3/messages', '/tts/3/advanced'],
+    ['infobip', { messages: [{ status: { groupName: 'PENDING' } }] }, '', ''],
     ['sinch', { id: 'provider-id' }, '/xms/v1/plan/batches', '/calling/v1/callouts'],
 ]) {
     test(`${provider}: request channel selects distinct configured endpoints`, async () => {

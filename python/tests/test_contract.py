@@ -88,20 +88,18 @@ def test_soprano_preserves_protocol_specific_mixed_response_shapes(body, expecte
     assert result.failure_reason == (None if recognized else "unrecognized_provider_status")
 
 
-@pytest.mark.parametrize("region,base_url", [
-    ("global", "https://api.infobip.com"),
-    ("eu", "https://api-eu.infobip.com"),
-])
+@pytest.mark.parametrize("region", ["global", "eu"])
 @pytest.mark.parametrize("channel", ["sms", "voice"])
-def test_infobip_oauth_preserves_tested_contract_on_both_setup_routes(region, base_url, channel):
+def test_infobip_uses_configured_urls_unchanged_with_oauth_on_both_setup_routes(region, channel):
     profile = json.loads((Path(__file__).parents[2] / "setup" / "providers" / "infobip.json").read_text())
     provider = InfobipProvider()
     assert provider.authentication_mode == "oauth"
     assert provider.credential_spec == {"mode": "oauth"}
+    endpoint = profile["deployment"]["routes"][region][f"{channel}Endpoint"]
     request = provider.build_request(
-        channel, profile["deployment"]["routes"][region][f"{channel}Endpoint"], _delivery(channel),
+        channel, endpoint, _delivery(channel),
         {"mode": "oauth", "access_token": "provider-token"}, {"EPP_PROVIDER_ACCOUNT_NAME": "EPP"})
-    assert request.url == base_url + ("/tts/3/advanced" if channel == "voice" else "/sms/3/messages")
+    assert request.url == endpoint
     assert request.method == "POST"
     assert request.headers == {
         "Authorization": " ".join(("Bearer", "provider-token")),

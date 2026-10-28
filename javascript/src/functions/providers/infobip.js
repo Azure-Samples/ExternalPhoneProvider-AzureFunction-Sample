@@ -20,7 +20,7 @@ const provider = Object.freeze({
         };
         if (channel === 'voice') {
             return {
-                url: `${endpoint}/tts/3/advanced`,
+                url: endpoint,
                 method: 'POST',
                 headers,
                 body: JSON.stringify({
@@ -35,7 +35,7 @@ const provider = Object.freeze({
             };
         }
         return {
-            url: `${endpoint}/sms/3/messages`,
+            url: endpoint,
             method: 'POST',
             headers,
             body: JSON.stringify({
