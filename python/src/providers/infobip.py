@@ -13,14 +13,12 @@ class InfobipProvider(PhoneProviderBase):
         return {"mode": self.authentication_mode}
 
     def build_request(self, channel, endpoint, delivery, credential, env):
-        sender_id = env.get("EPP_PROVIDER_ACCOUNT_NAME") or "Verify"
         authorization = " ".join(("Bearer", credential["access_token"]))
         headers = {"Authorization": authorization, "Content-Type": "application/json", "Accept": "application/json"}
         message_id = delivery.correlation_id or delivery.message_id
 
         if channel == "voice":
             body = {"messages": [{
-                "from": sender_id,
                 "destinations": [{"to": delivery.phone_number, "messageId": message_id}],
                 "text": delivery.message,
                 "language": delivery.locale or "en",
@@ -29,7 +27,6 @@ class InfobipProvider(PhoneProviderBase):
             return OutboundRequest("POST", endpoint, headers, json.dumps(body))
 
         body = {"messages": [{
-            "sender": sender_id,
             "destinations": [{"to": delivery.phone_number, "messageId": message_id}],
             "content": {"text": delivery.message},
         }]}

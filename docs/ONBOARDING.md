@@ -109,11 +109,11 @@ Guided setup supports **Infobip, Soprano, and Telesign**.
 
 | Provider | Authentication | Customer action |
 | --- | --- | --- |
-| Infobip | OAuth client assertion through managed identity federation | Complete provider-side authorization and configure an approved sender/caller ID in `EPP_PROVIDER_ACCOUNT_NAME`; no Infobip API-key secret |
+| Infobip | OAuth client assertion through managed identity federation | Complete provider-side authorization and confirm provider-managed sender/caller selection for both channels; no Infobip API-key secret |
 | Soprano | OAuth client assertion through managed identity federation | Complete provider-side authorization and confirm tenant, app, scope, account, and channels |
 | Telesign | OAuth client assertion through managed identity federation | Complete [OAuth configuration and handoff](#telesign-oauth-configuration-and-handoff) |
 
-Sinch is bundled but does not have a guided setup profile. Twilio requires the
+Twilio requires the
 [Add Twilio](BRING-YOUR-OWN-PROVIDER.md) development process.
 
 ### Telesign: OAuth configuration and handoff
@@ -128,7 +128,7 @@ Use a Function package supporting Telesign OAuth and complete the
 <a id="where-to-enter-api-key-credentials-in-key-vault"></a>
 ### Add API-key provider secrets
 
-This applies to API-key adapters such as Sinch, not the guided OAuth providers. Use the exact
+This applies to custom API-key adapters, not the bundled OAuth providers. Use the exact
 secret names required by the selected adapter.
 
 1. In the deployment summary, find `resources.keyVault`.
@@ -137,7 +137,7 @@ secret names required by the selected adapter.
 
   ![CYOT-CONSTO Key Vault Objects menu with the consto vault name, Secrets selected, and Generate/Import visible](images/onboarding/key-vault-secrets.png)
 
-4. Create the required secret with the raw credential, such as `sinch-api-token` for Sinch.
+4. Create each required secret with the raw credential and the exact name specified by your adapter.
 5. Verify its name, enabled state, dates, and version without viewing its value.
 6. Confirm the Function's system-assigned identity has **Key Vault Secrets User**.
 
@@ -182,9 +182,10 @@ access. Then inspect **App registrations > Certificates & secrets > Federated cr
 The identity client ID is not the federation subject. Customer-side configuration alone does not
 prove provider-side authorization. Verify the integration with an approved controlled live test.
 
-For Infobip, set the Function App's `EPP_PROVIDER_ACCOUNT_NAME` to the approved sender/caller ID
-and confirm account access to SMS, voice, and the selected regional host. Do not assume the existing
-`Verify` fallback is an approved voice caller ID. No API key or client secret is required.
+For Infobip, confirm account access to SMS, voice, and the selected regional host, plus
+provider-managed sender/caller selection for the intended destinations.
+Authentication uses managed-identity OAuth client assertion.
+See the [API schema references](../TECHNICAL.md#infobip).
 
 <a id="validate-the-deployed-endpoint"></a>
 <a id="4-package-deploy-and-verify"></a>

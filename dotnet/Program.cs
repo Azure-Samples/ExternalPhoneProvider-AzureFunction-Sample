@@ -20,7 +20,6 @@ builder.Services.AddSingleton<JweDecryptor>();
 builder.Services.AddSingleton<PhoneProviderBase, InfobipProvider>();
 builder.Services.AddSingleton<PhoneProviderBase, TelesignProvider>();
 builder.Services.AddSingleton<PhoneProviderBase, SopranoProvider>();
-builder.Services.AddSingleton<PhoneProviderBase, SinchProvider>();
 
 builder.Services.AddSingleton<CredentialTokenService>();
 builder.Services.AddSingleton<SendOtp>();
