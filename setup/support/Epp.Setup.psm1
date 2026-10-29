@@ -2283,7 +2283,7 @@ function Set-EppApplicationEndpoint {
 
     $issuer = "https://login.microsoftonline.com/$($Inputs.TenantId)/v2.0"
     $audience = 'api://AzureADTokenExchange'
-    $credentialName = "epp-$($Outputs.functionAppName.value)-outbound"
+    $credentialName = "epp-$($Outputs.outboundPrincipalId.value)-outbound"
     $credentials = Invoke-EppDirectoryCommand -Inputs $Inputs -Arguments @('ad', 'app', 'federated-credential', 'list', '--id', $application.Id)
     if ($credentials -isnot [Array]) { throw 'Azure CLI returned an invalid federated-credential list.' }
     $credentials = @($credentials | ForEach-Object { [pscustomobject]$_ })
@@ -2292,7 +2292,9 @@ function Set-EppApplicationEndpoint {
         @($_.Audiences).Count -eq 1 -and $_.Audiences[0] -ceq $audience
     })
     if (-not $matching.Count) {
-        if (@($credentials | Where-Object Name -eq $credentialName).Count) { throw 'The outbound federated credential name is already used for a different trust. It will not be overwritten.' }
+        if (@($credentials | Where-Object Name -eq $credentialName).Count) {
+            throw "The outbound federated credential '$credentialName' is already used for a different trust. Expected issuer '$issuer', subject '$($Outputs.outboundPrincipalId.value)', and audience '$audience'. It will not be overwritten."
+        }
         New-EppFederatedCredential -Inputs $Inputs -ObjectId $application.Id -Credential @{
             name = $credentialName; issuer = $issuer; subject = $Outputs.outboundPrincipalId.value; audiences = @($audience)
         }
