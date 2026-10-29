@@ -36,16 +36,14 @@ Both channels are configured. Profile objects `deployment.routes.global` and
 `deployment.routes.eu` define `smsEndpoint`, `voiceEndpoint`, tenant, authentication, and timing
 values. Setup writes the endpoints to `EPP_PROVIDER_SMS_ENDPOINT` and
 `EPP_PROVIDER_VOICE_ENDPOINT`; OAuth profiles also supply their API app ID and scope.
-Infobip's settings are HTTPS base URLs: its adapters append the tested `/sms/3/messages` and
-`/tts/3/advanced` paths without changing their request or response contracts.
+All guided providers use the complete HTTPS URLs from the selected profile without appending paths.
 
 Use a package that supports channel-specific settings; neither channel uses the other channel's URL.
 
-Soprano and Telesign currently use identical Global/EU URLs. Infobip uses `https://api.infobip.com`
-for Global and `https://api-eu.infobip.com` for EU. Each OAuth provider uses the same API app ID/scope
+Soprano and Telesign currently use identical Global/EU URLs. Infobip uses the `api.infobip.com`
+host for Global and `api-eu.infobip.com` for EU. Each OAuth provider uses the same API app ID/scope
 across its two routes, except that Telesign's OAuth values are pending provider confirmation.
 The route label is not a residency or Azure-region selection.
-Sinch remains a bundled adapter without a guided profile.
 
 ### Provider tenant configuration
 
@@ -167,6 +165,11 @@ Setup configures:
 - That Microsoft principal's tenant-wide Graph `Application.Read.All`, identifier URI, public JWE certificate, and Easy Auth caller restriction.
 - The disclosed outbound managed-identity federated credential for OAuth providers.
 
+New outbound federated credentials are named using the managed identity's principal ID, so a
+recreated identity does not collide with a credential for the previous identity. Exact
+issuer/subject/audience matches are reused under any name, including legacy Function-based names.
+Other trusts are preserved, not overwritten or automatically removed.
+
 ## Prerequisites for Step 2
 
 - **Azure Cloud Shell in PowerShell mode, or PowerShell 7+**, with an Azure CLI user login.
@@ -228,7 +231,7 @@ Interactive setup can install missing Bicep.
 | Choice | Azure runtime | Package contents |
 | --- | --- | --- |
 | JavaScript | Node.js 22, Functions v4 | Application and production dependencies |
-| C# | .NET 8 isolated, Functions v4 | Framework-dependent Linux x64 publish output, Function metadata, and extensions |
+| C# | .NET 10 isolated, Functions v4 | Framework-dependent Linux x64 publish output, Function metadata, and extensions |
 | Python | Python 3.11, Functions v4 | Application and Linux x64 dependencies in `.python_packages/lib/site-packages` |
 
 Setup verifies and publishes the selected ZIP, recording its SHA-256 in the deployment summary.

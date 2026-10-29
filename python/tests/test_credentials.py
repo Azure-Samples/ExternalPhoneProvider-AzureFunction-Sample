@@ -14,7 +14,6 @@ import src.credentials as credentials_module
 from src.config import read_config
 from src.credentials import CredentialTokenService
 from src.providers.infobip import InfobipProvider
-from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
 from src.providers.telesign import TelesignProvider
 
@@ -248,7 +247,7 @@ def test_invalid_configuration_does_not_poison_later_requests():
             with pytest.raises(ValueError, match="unavailable"):
                 manager.resolve(spec, CONFIG)
         secrets.resolve.assert_not_called()
-        provider = SinchProvider()
+        provider = SimpleNamespace(credential_spec={"mode": "apiKey", "key_vault_secret_name": "key"})
         manager.get_credentials(provider, CONFIG)
         manager.get_credentials(provider, CONFIG)
         assert secrets.resolve.call_count == 2

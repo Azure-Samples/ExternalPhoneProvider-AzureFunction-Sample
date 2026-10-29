@@ -19,7 +19,6 @@ from src.provider import (
     to_endpoint_http_status,
 )
 from src.providers.infobip import InfobipProvider
-from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
 from src.providers.telesign import TelesignProvider
 from src.secrets import SecretResolver
@@ -28,7 +27,7 @@ app = func.FunctionApp()
 
 _providers = {
     provider.name: provider
-    for provider in (InfobipProvider(), TelesignProvider(), SopranoProvider(), SinchProvider())
+    for provider in (InfobipProvider(), TelesignProvider(), SopranoProvider())
 }
 _credentials = CredentialTokenService(SecretResolver())
 _decryptor = JweDecryptor(os.environ)

@@ -7,7 +7,6 @@ import pytest
 from src.models import DeliveryContext, EntraSendOtpPayload, Outcome, OtpDelivery, ProviderResult, RiskContext
 from src.provider import to_endpoint_http_status
 from src.providers.infobip import InfobipProvider
-from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
 from src.providers.telesign import TelesignProvider
 
@@ -88,20 +87,18 @@ def test_soprano_preserves_protocol_specific_mixed_response_shapes(body, expecte
     assert result.failure_reason == (None if recognized else "unrecognized_provider_status")
 
 
-@pytest.mark.parametrize("region,base_url", [
-    ("global", "https://api.infobip.com"),
-    ("eu", "https://api-eu.infobip.com"),
-])
+@pytest.mark.parametrize("region", ["global", "eu"])
 @pytest.mark.parametrize("channel", ["sms", "voice"])
-def test_infobip_oauth_preserves_tested_contract_on_both_setup_routes(region, base_url, channel):
+def test_infobip_uses_configured_urls_unchanged_with_oauth_on_both_setup_routes(region, channel):
     profile = json.loads((Path(__file__).parents[2] / "setup" / "providers" / "infobip.json").read_text())
     provider = InfobipProvider()
     assert provider.authentication_mode == "oauth"
     assert provider.credential_spec == {"mode": "oauth"}
+    endpoint = profile["deployment"]["routes"][region][f"{channel}Endpoint"]
     request = provider.build_request(
-        channel, profile["deployment"]["routes"][region][f"{channel}Endpoint"], _delivery(channel),
-        {"mode": "oauth", "access_token": "provider-token"}, {"EPP_PROVIDER_ACCOUNT_NAME": "EPP"})
-    assert request.url == base_url + ("/tts/3/advanced" if channel == "voice" else "/sms/3/messages")
+        channel, endpoint, _delivery(channel),
+        {"mode": "oauth", "access_token": "provider-token"}, {})
+    assert request.url == endpoint
     assert request.method == "POST"
     assert request.headers == {
         "Authorization": " ".join(("Bearer", "provider-token")),
@@ -110,13 +107,11 @@ def test_infobip_oauth_preserves_tested_contract_on_both_setup_routes(region, ba
     }
     destinations = [{"to": "+15551234567", "messageId": "correlation-id"}]
     expected = {
-        "from": "EPP",
         "destinations": destinations,
         "text": MESSAGE,
         "language": "en-US",
         "voice": {"name": "Joanna", "gender": "female"},
     } if channel == "voice" else {
-        "sender": "EPP",
         "destinations": destinations,
         "content": {"text": MESSAGE},
     }
@@ -129,16 +124,6 @@ def test_infobip_contract_is_strict_and_provider_owned():
     }, 200)
     assert result == ProviderResult(
         Outcome.CONTINUE, True, 200, "message-id", "PENDING")
-
-
-def test_sinch_requires_a_provider_message_id_for_success():
-    provider = SinchProvider()
-    accepted = provider.map_response({"id": "message-id"}, 200)
-    assert accepted.outcome == Outcome.CONTINUE
-    assert accepted.provider_status_name == "Dispatched"
-    missing = provider.map_response({}, 200)
-    assert missing.outcome == Outcome.FAIL
-    assert missing.failure_reason == "missing_provider_message_id"
 
 
 @pytest.mark.parametrize("channel", ["sms", "voice"])

@@ -53,7 +53,7 @@ const envKeys = [
     'EPP_PROVIDER_SMS_ENDPOINT', 'EPP_PROVIDER_VOICE_ENDPOINT',
     'EPP_PROVIDER_AUTH_MODE', 'EPP_PROVIDER_TENANT_ID', 'EPP_PROVIDER_SCOPE',
     'EPP_OUTBOUND_CLIENT_ID', 'EPP_OUTBOUND_MI_CLIENT_ID', 'KEY_VAULT_URL',
-    'EPP_DECRYPTION_KEY_PEM', 'SINCH_SERVICE_PLAN_ID', 'SINCH_VOICE_ENDPOINT',
+    'EPP_DECRYPTION_KEY_PEM',
     'EPP_KEY_VAULT_CACHE_ENABLED', 'EPP_ACCESS_TOKEN_CACHE_ENABLED',
 ];
 const baseDelivery = {
@@ -290,17 +290,23 @@ for (const mode of [1, 2]) {
     });
 }
 
-for (const [provider, mode] of [['sinch', 'apiKey'], ['telesign', 'oauth'], ['soprano', 'oauth'], ['infobip', 'oauth']]) {
+for (const [provider, mode] of [['custom', 'apiKey'], ['telesign', 'oauth'], ['soprano', 'oauth'], ['infobip', 'oauth']]) {
     test(`${provider} ${mode}: only live requests acquire credentials and obsolete cache settings are ignored`, async () => {
         const apiKey = mode === 'apiKey';
         process.env.EPP_PROVIDER_NAME = provider;
         process.env.EPP_PROVIDER_AUTH_MODE = apiKey ? 'apiKey' : 'oauth';
         process.env.EPP_KEY_VAULT_CACHE_ENABLED = 'PRIVATE-OBSOLETE';
         process.env.EPP_ACCESS_TOKEN_CACHE_ENABLED = 'PRIVATE-OBSOLETE';
-        if (provider === 'sinch') {
-            process.env.SINCH_SERVICE_PLAN_ID = 'plan';
-            fetchMock.mock.mockImplementation(async () => ({
-                ok: true, status: 200, text: async () => JSON.stringify({ id: 'provider-id' }),
+        if (apiKey) {
+            const adapter = providers.selectProvider('soprano');
+            mock.method(providers, 'selectProvider', () => ({
+                ...adapter,
+                name: 'custom',
+                authenticationMode: 'apiKey',
+                credentialSpec: { mode: 'apiKey', keyVaultSecretName: 'custom-api-key' },
+                createRequest: (input) => adapter.createRequest({
+                    ...input, credential: { accessToken: input.credential.secret },
+                }),
             }));
         }
         if (provider === 'telesign') fetchMock.mock.mockImplementation(async () => ({
@@ -627,17 +633,14 @@ for (const provider of ['telesign', 'soprano']) {
 for (const [provider, response, smsPath, voicePath] of [
     ['telesign', { status: { code: 3001 } }, '', ''],
     ['soprano', { status: 'ENROUTE' }, '', ''],
-    ['infobip', { messages: [{ status: { groupName: 'PENDING' } }] }, '/sms/3/messages', '/tts/3/advanced'],
-    ['sinch', { id: 'provider-id' }, '/xms/v1/plan/batches', '/calling/v1/callouts'],
+    ['infobip', { messages: [{ status: { groupName: 'PENDING' } }] }, '', ''],
 ]) {
     test(`${provider}: request channel selects distinct configured endpoints`, async () => {
         Object.assign(process.env, {
             EPP_PROVIDER_NAME: provider,
-            EPP_PROVIDER_AUTH_MODE: provider === 'sinch' ? 'apiKey' : 'oauth',
+            EPP_PROVIDER_AUTH_MODE: 'oauth',
             EPP_PROVIDER_SMS_ENDPOINT: 'https://sms.provider.example/send',
             EPP_PROVIDER_VOICE_ENDPOINT: 'https://voice.provider.example/send',
-            SINCH_SERVICE_PLAN_ID: 'plan',
-            SINCH_VOICE_ENDPOINT: 'https://legacy.provider.example',
         });
         fetchMock.mock.mockImplementation(async () => ({
             ok: true, status: 200, text: async () => JSON.stringify(response),
@@ -846,19 +849,6 @@ for (const status of [401, 403]) {
         assert.equal(fetchMock.mock.callCount(), 1);
     });
 }
-
-test('Sinch successful HTTP without a nonblank message ID fails closed', async () => {
-    process.env.EPP_PROVIDER_NAME = 'sinch';
-    process.env.EPP_PROVIDER_AUTH_MODE = 'apiKey';
-    process.env.SINCH_SERVICE_PLAN_ID = 'plan';
-    fetchMock.mock.mockImplementation(async () => ({
-        ok: true,
-        status: 200,
-        text: async () => JSON.stringify({ id: ' ', status: 'Delivered' }),
-    }));
-    failure(await invoke(await envelope()), 502);
-    assert.equal(event('request_failed').failureReason, 'missing_provider_message_id');
-});
 
 test('Telesign strict integer status and voice pacing keep endpoint outcomes stable', async () => {
     process.env.EPP_PROVIDER_NAME = 'telesign';

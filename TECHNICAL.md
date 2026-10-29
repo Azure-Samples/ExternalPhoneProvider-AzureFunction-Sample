@@ -74,7 +74,7 @@ and choose the newest stable tag ending in your language ID. Each language relea
 | Language | Release tag | Contents |
 | --- | --- | --- |
 | JavaScript | `epp-packages-<run>-<attempt>-javascript` | Node.js 22 application and production dependencies |
-| .NET | `epp-packages-<run>-<attempt>-dotnet` | Framework-dependent .NET 8 Linux x64 publish output, including Azure Functions metadata and extensions |
+| .NET | `epp-packages-<run>-<attempt>-dotnet` | Framework-dependent .NET 10 Linux x64 publish output, including Azure Functions metadata and extensions |
 | Python | `epp-packages-<run>-<attempt>-python` | Python 3.11 application with Linux x64 dependencies in `.python_packages/lib/site-packages` |
 
 Deploy the ZIP to an Azure Functions v4 app on Linux x64 with the matching language runtime.
@@ -93,7 +93,7 @@ Run one packaging script from the repository root. It creates a local ZIP withou
 | Language | Root-level script | Prerequisites | ZIP in `artifacts/` |
 | --- | --- | --- | --- |
 | JavaScript | [package-javascript.ps1](package-javascript.ps1) | PowerShell 7+, Node.js 20 or 22 with npm, npm registry access | `javascript/released-package.zip` |
-| .NET | [package-dotnet.ps1](package-dotnet.ps1) | PowerShell 7+, .NET 8 SDK, and NuGet feed access to build the ZIP | `dotnet/released-package.zip` |
+| .NET | [package-dotnet.ps1](package-dotnet.ps1) | PowerShell 7+, .NET 10 SDK, and NuGet feed access to build the ZIP | `dotnet/released-package.zip` |
 | Python | [package-python.ps1](package-python.ps1) | Linux x64, PowerShell 7+, Python 3.11 with pip, and PyPI access to build the ZIP | `python/released-package.zip` |
 
 ```powershell
@@ -252,7 +252,7 @@ For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in JavaScript,
 - **Provider:** `EPP_PROVIDER_NAME`, `EPP_PROVIDER_AUTH_MODE`, and
   `EPP_PROVIDER_ENDPOINT_REGION`.
 - **Endpoints:** `EPP_PROVIDER_SMS_ENDPOINT` and `EPP_PROVIDER_VOICE_ENDPOINT`.
-- **Timeout and account:** `EPP_PROVIDER_TIMEOUT_MS` and `EPP_PROVIDER_ACCOUNT_NAME`.
+- **Timeout:** `EPP_PROVIDER_TIMEOUT_MS`.
 - **Key Vault:** `KEY_VAULT_URL` and optional `AZURE_CLIENT_ID`.
 - **OAuth:** `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE`, `EPP_OUTBOUND_CLIENT_ID`, and
   `EPP_OUTBOUND_MI_CLIENT_ID`.
@@ -338,29 +338,18 @@ Infobip uses OAuth only, with the same managed-identity client-assertion exchang
 tenant and API application ID; its OAuth scope is that application ID followed by `/.default`.
 Provider-side authorization of the customer application is still required.
 
-Both channel settings are **base URLs**, without a message path or trailing slash:
+Both channel settings are **complete HTTPS URLs**, used unchanged by the adapters:
 
-| Provider route | `EPP_PROVIDER_SMS_ENDPOINT` and `EPP_PROVIDER_VOICE_ENDPOINT` |
-| --- | --- |
-| Global | `https://api.infobip.com` |
-| EU | `https://api-eu.infobip.com` |
+| Provider route | `EPP_PROVIDER_SMS_ENDPOINT` | `EPP_PROVIDER_VOICE_ENDPOINT` |
+| --- | --- | --- |
+| Global | `https://api.infobip.com/sms/3/messages` | `https://api.infobip.com/tts/3/advanced` |
+| EU | `https://api-eu.infobip.com/sms/3/messages` | `https://api-eu.infobip.com/tts/3/advanced` |
 
-The adapters preserve the API-key-tested request and response contracts: append `/sms/3/messages`
-for SMS or `/tts/3/advanced` for voice, and send the existing `messages` payload with OAuth
-`Authorization: Bearer <access-token>` instead of `App <api-key>`. Voice does **not** switch to
-the manifest's `/tts/3/single` contract, and neither channel uses plain HTTP.
-Message text, destinations, correlation IDs, locale, and voice options are unchanged.
-Recognized success groups remain `ACCEPTED`, `PENDING`, and `DELIVERED` on successful HTTP responses;
-unknown statuses fail closed.
-
-Set `EPP_PROVIDER_ACCOUNT_NAME` to an Infobip-approved sender/caller ID and confirm it works for
-both intended channels. The adapter's existing `Verify` fallback is not proof of sender approval.
-
-For an older API-key deployment, deploy a package containing this OAuth update and rerun setup
-with `-Provider infobip` to configure federation and the provider tenant/scope. Review
-`EPP_PROVIDER_AUTH_MODE=oauth` and the regional base URLs. Updating settings alone does not upgrade
-an older adapter; this version has no API-key fallback. Complete
-[provider authorization](docs/ONBOARDING.md#complete-provider-authentication) before live use.
+Infobip manages sender selection for SMS and caller ID selection for voice.
+The SMS `sender` and voice `from` fields are optional in the published
+[SMS schema](https://www.infobip.com/docs/api/channels/sms/outbound-sms/send-message/send-sms-messages)
+and [voice schema](https://www.infobip.com/docs/api/channels/voice/voice-message/voice-message-sending-operations/send-advanced-voice-tts).
+Confirm provider-side sender/caller configuration and destination coverage for both channels.
 
 ### Soprano
 

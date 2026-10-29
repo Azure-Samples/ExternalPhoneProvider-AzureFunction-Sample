@@ -658,6 +658,68 @@ try {
             Assert ($saved.Count -eq 1 -and $saved[0].providerTenantId -ceq $result.providerTenantId -and
                 $saved[0].accessTokenScopeTenant -ceq $result.accessTokenScopeTenant -and
                 $saved[0].allowedProviderTenantIds -contains $result.accessTokenScopeTenant) 'Persist both tenant roles and the OAuth authority in the approved allowlist.'
+
+            $script:FederatedCredentials = @()
+            $script:FederationCreates = 0
+            function script:Invoke-EppDirectoryCommand {
+                param($Inputs, $Arguments)
+                Assert (($Arguments -join ' ') -ceq "ad app federated-credential list --id $($script:Application.Id)") 'List credentials only on the selected application.'
+                return ,$script:FederatedCredentials
+            }
+            function script:New-EppFederatedCredential {
+                param($Inputs, $ObjectId, $Credential)
+                Assert ($ObjectId -ceq $script:Application.Id) 'Create federation only on the selected application.'
+                Assert (@($script:FederatedCredentials | Where-Object name -eq $Credential.name).Count -eq 0) 'Never create a duplicate credential name.'
+                $script:FederationCreates++
+                $script:FederatedCredentials += $Credential
+            }
+            $context.CertificatePlan = Get-EppCertificatePlan @planArgs @reuseArgs -NonInteractive
+            $registration.ConfigureFederation = $true
+            $registration.Outputs.functionAppName = @{ value = $names.functionApp }
+            $registration.Outputs.outboundPrincipalId = @{ value = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }
+            $expectedName = 'epp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa-outbound'
+            $expectedIssuer = "https://login.microsoftonline.com/$($inputs.TenantId)/v2.0"
+            & $script:SetEndpointWithoutFederation @registration -KeyId $keyId
+            $trust = $script:FederatedCredentials[0]
+            Assert ($trust.name -ceq $expectedName -and $trust.issuer -ceq $expectedIssuer -and
+                $trust.subject -ceq $registration.Outputs.outboundPrincipalId.value -and
+                $trust.audiences.Count -eq 1 -and $trust.audiences[0] -ceq 'api://AzureADTokenExchange') 'Name new federation by principal ID and preserve the exact trust.'
+            & $script:SetEndpointWithoutFederation @registration -KeyId $keyId
+            Assert ($script:FederationCreates -eq 1) 'An unchanged rerun must reuse federation.'
+
+            $legacyTrust = @{} + $trust
+            $legacyTrust.name = "epp-$($names.functionApp)-outbound"
+            $script:FederatedCredentials = @($legacyTrust)
+            & $script:SetEndpointWithoutFederation @registration -KeyId $keyId
+            Assert ($script:FederationCreates -eq 1) 'Reuse an exact legacy trust without creating another credential.'
+            foreach ($mismatch in @(
+                @{ subject = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' },
+                @{ issuer = 'https://login.microsoftonline.com/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb/v2.0' },
+                @{ audiences = @('api://different-audience') },
+                @{ audiences = @('api://AzureADTokenExchange', 'api://extra-audience') }
+            )) {
+                $stale = @{} + $legacyTrust
+                foreach ($entry in $mismatch.GetEnumerator()) { $stale[$entry.Key] = $entry.Value }
+                $snapshot = $stale | ConvertTo-Json -Compress
+                $script:FederatedCredentials = @($stale)
+                & $script:SetEndpointWithoutFederation @registration -KeyId $keyId
+                Assert ($script:FederatedCredentials.Count -eq 2 -and
+                    $script:FederatedCredentials[1].name -ceq $expectedName -and
+                    ($script:FederatedCredentials[0] | ConvertTo-Json -Compress) -ceq $snapshot) 'A mismatched legacy trust must not block or be overwritten by the current identity trust.'
+            }
+            $registration.Outputs.outboundPrincipalId.value = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
+            & $script:SetEndpointWithoutFederation @registration -KeyId $keyId
+            Assert ($script:FederatedCredentials.Count -eq 3 -and
+                $script:FederatedCredentials[2].name -ceq 'epp-cccccccc-cccc-cccc-cccc-cccccccccccc-outbound') 'A recreated identity must get a distinct name even when the Function name is unchanged.'
+            $conflict = @{} + $script:FederatedCredentials[2]
+            $conflict.subject = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+            $script:FederatedCredentials = @($conflict)
+            $beforeCreates = $script:FederationCreates
+            Assert-Throws {
+                & $script:SetEndpointWithoutFederation @registration -KeyId $keyId
+            } "epp-cccccccc-cccc-cccc-cccc-cccccccccccc-outbound.*different trust.*Expected issuer.*subject.*audience.*not be overwritten"
+            Assert ($script:FederationCreates -eq $beforeCreates -and
+                $script:FederatedCredentials[0].subject -ceq $conflict.subject) 'A conflicting identity-specific name must still fail without replacing the trust.'
         }
         finally {
             if ($issued) { $issued.Certificate.Dispose() }
