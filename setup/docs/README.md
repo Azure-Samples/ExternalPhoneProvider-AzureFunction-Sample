@@ -165,6 +165,11 @@ Setup configures:
 - That Microsoft principal's tenant-wide Graph `Application.Read.All`, identifier URI, public JWE certificate, and Easy Auth caller restriction.
 - The disclosed outbound managed-identity federated credential for OAuth providers.
 
+New outbound federated credentials are named using the managed identity's principal ID, so a
+recreated identity does not collide with a credential for the previous identity. Exact
+issuer/subject/audience matches are reused under any name, including legacy Function-based names.
+Other trusts are preserved, not overwritten or automatically removed.
+
 ## Prerequisites for Step 2
 
 - **Azure Cloud Shell in PowerShell mode, or PowerShell 7+**, with an Azure CLI user login.
