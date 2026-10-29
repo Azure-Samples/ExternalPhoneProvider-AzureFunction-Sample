@@ -44,7 +44,6 @@ Soprano and Telesign currently use identical Global/EU URLs. Infobip uses the `a
 host for Global and `api-eu.infobip.com` for EU. Each OAuth provider uses the same API app ID/scope
 across its two routes, except that Telesign's OAuth values are pending provider confirmation.
 The route label is not a residency or Azure-region selection.
-Sinch remains a bundled adapter without a guided profile.
 
 ### Provider tenant configuration
 

@@ -76,7 +76,6 @@ The following customer-owned format is not loaded by the sample. Replace each
       "EPP_PROVIDER_NAME": "<supported-adapter-name>",
       "EPP_PROVIDER_AUTH_MODE": "apiKey",
       "EPP_PROVIDER_SMS_ENDPOINT": "<approved-secondary-sms-endpoint-or-base-url>",
-      "EPP_PROVIDER_ACCOUNT_NAME": "<approved-sender>",
       "KEY_VAULT_URL": "https://<secondary-vault>.vault.azure.net",
       "AZURE_CLIENT_ID": "<secondary-vault-reader-client-id>"
     }

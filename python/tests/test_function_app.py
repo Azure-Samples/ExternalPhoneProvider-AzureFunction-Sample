@@ -14,6 +14,7 @@ import src.provider as provider_module
 from src.jwe import JweDecryptor
 from src.credentials import CredentialTokenService
 from src.models import RiskContext
+from src.providers.soprano import SopranoProvider
 
 _KEY = jwk.JWK.generate(kty="RSA", size=2048)
 _PRIVATE_PEM = _KEY.export_to_pem(True, None).decode()
@@ -198,7 +199,6 @@ def test_non_object_risk_context_fails_before_provider_work(caplog, mode, risk_c
 
 
 @pytest.mark.parametrize(("provider", "mode"), [
-    ("sinch", "apiKey"),
     ("telesign", "oauth"),
     ("soprano", "oauth"),
     ("infobip", "oauth"),
@@ -206,7 +206,6 @@ def test_non_object_risk_context_fails_before_provider_work(caplog, mode, risk_c
 def test_only_live_requests_acquire_credentials(monkeypatch, provider, mode):
     monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
     monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", mode)
-    monkeypatch.setenv("SINCH_SERVICE_PLAN_ID", "plan")
     for name in ("EPP_KEY_VAULT_CACHE_ENABLED", "EPP_ACCESS_TOKEN_CACHE_ENABLED"):
         monkeypatch.setenv(name, "PRIVATE-OBSOLETE")
     function_app._credentials.get_credentials.return_value = {
@@ -215,8 +214,6 @@ def test_only_live_requests_acquire_credentials(monkeypatch, provider, mode):
     payload = {"messages": [{"status": {"groupName": "PENDING"}}]} if provider == "infobip" else {
         "status": {"code": 3001} if provider == "telesign" else "ENROUTE",
     }
-    if provider == "sinch":
-        payload = {"id": "provider-id"}
     provider_module.requests.request.return_value = Mock(status_code=200, json=Mock(return_value=payload))
     response = _HANDLER(_request(_envelope(mode=2)))
     assert response.status_code == 200 and json.loads(response.get_body())["nonce"] == _NONCE
@@ -228,9 +225,18 @@ def test_only_live_requests_acquire_credentials(monkeypatch, provider, mode):
 
 
 def test_credential_failure_is_request_correlated_and_next_request_recovers(monkeypatch, caplog):
+    class ApiKeyProvider(SopranoProvider):
+        name = "custom"
+        authentication_mode = "apiKey"
+        credential_spec = {"mode": "apiKey", "key_vault_secret_name": "custom-api-key"}
+
+        def build_request(self, channel, endpoint, delivery, credential, env):
+            return super().build_request(
+                channel, endpoint, delivery, {"access_token": credential["secret"]}, env)
+
     caplog.set_level(logging.INFO)
-    monkeypatch.setenv("EPP_PROVIDER_NAME", "sinch")
-    monkeypatch.setenv("SINCH_SERVICE_PLAN_ID", "plan")
+    monkeypatch.setitem(function_app._providers, "custom", ApiKeyProvider())
+    monkeypatch.setenv("EPP_PROVIDER_NAME", "custom")
     monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", "apiKey")
     monkeypatch.setenv("EPP_KEY_VAULT_CACHE_ENABLED", "PRIVATE-OBSOLETE")
     monkeypatch.setenv("EPP_ACCESS_TOKEN_CACHE_ENABLED", "PRIVATE-OBSOLETE")
@@ -249,7 +255,7 @@ def test_credential_failure_is_request_correlated_and_next_request_recovers(monk
         secrets.resolve.side_effect = None
         secrets.resolve.return_value = "key"
         provider_module.requests.request.return_value = Mock(
-            status_code=200, json=Mock(return_value={"id": "provider-id"}))
+            status_code=200, json=Mock(return_value={"status": "ENROUTE"}))
         assert _HANDLER(_request(_envelope())).status_code == 200
         assert secrets.resolve.call_count == 2
         provider_module.requests.request.assert_called_once()
@@ -414,16 +420,13 @@ def test_telesign_oauth_live_send_never_forwards_inbound_credentials(monkeypatch
     ("telesign", {"status": {"code": 3001}}, "", ""),
     ("soprano", {"status": "ENROUTE"}, "", ""),
     ("infobip", {"messages": [{"status": {"groupName": "PENDING"}}]}, "", ""),
-    ("sinch", {"id": "provider-id"}, "/xms/v1/plan/batches", "/calling/v1/callouts"),
 ])
 def test_request_channel_selects_distinct_configured_endpoints(monkeypatch, provider, payload, sms_path, voice_path):
-    mode = "apiKey" if provider == "sinch" else "oauth"
+    mode = "oauth"
     monkeypatch.setenv("EPP_PROVIDER_NAME", provider)
     monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", mode)
     monkeypatch.setenv("EPP_PROVIDER_SMS_ENDPOINT", "https://sms.provider.example/send")
     monkeypatch.setenv("EPP_PROVIDER_VOICE_ENDPOINT", "https://voice.provider.example/send")
-    monkeypatch.setenv("SINCH_SERVICE_PLAN_ID", "plan")
-    monkeypatch.setenv("SINCH_VOICE_ENDPOINT", "https://legacy.provider.example")
     function_app._credentials.get_credentials.return_value = {
         "mode": mode, "secret": "key", "identity": "customer", "access_token": "token",
     }

@@ -252,7 +252,7 @@ For example, `EPP_PROVIDER_NAME` becomes `config.providerName` in JavaScript,
 - **Provider:** `EPP_PROVIDER_NAME`, `EPP_PROVIDER_AUTH_MODE`, and
   `EPP_PROVIDER_ENDPOINT_REGION`.
 - **Endpoints:** `EPP_PROVIDER_SMS_ENDPOINT` and `EPP_PROVIDER_VOICE_ENDPOINT`.
-- **Timeout and account:** `EPP_PROVIDER_TIMEOUT_MS` and `EPP_PROVIDER_ACCOUNT_NAME`.
+- **Timeout:** `EPP_PROVIDER_TIMEOUT_MS`.
 - **Key Vault:** `KEY_VAULT_URL` and optional `AZURE_CLIENT_ID`.
 - **OAuth:** `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE`, `EPP_OUTBOUND_CLIENT_ID`, and
   `EPP_OUTBOUND_MI_CLIENT_ID`.
@@ -344,8 +344,11 @@ Both channel settings are **complete HTTPS URLs**, used unchanged by the adapter
 | Global | `https://api.infobip.com/sms/3/messages` | `https://api.infobip.com/tts/3/advanced` |
 | EU | `https://api-eu.infobip.com/sms/3/messages` | `https://api-eu.infobip.com/tts/3/advanced` |
 
-Set `EPP_PROVIDER_ACCOUNT_NAME` to an Infobip-approved sender/caller ID and confirm it works for
-both intended channels. The adapter's existing `Verify` fallback is not proof of sender approval.
+Infobip manages sender selection for SMS and caller ID selection for voice.
+The SMS `sender` and voice `from` fields are optional in the published
+[SMS schema](https://www.infobip.com/docs/api/channels/sms/outbound-sms/send-message/send-sms-messages)
+and [voice schema](https://www.infobip.com/docs/api/channels/voice/voice-message/voice-message-sending-operations/send-advanced-voice-tts).
+Confirm provider-side sender/caller configuration and destination coverage for both channels.
 
 ### Soprano
 
