@@ -259,9 +259,9 @@ a full SHA avoids branch-resolution API rate limits. Private raw downloads are u
 <a id="net-build-fails"></a>
 ## .NET package fails to load
 
-**Expected:** guided setup downloads `released-package.zip` from the `-dotnet` release, containing framework-dependent .NET 8
+**Expected:** guided setup downloads `released-package.zip` from the `-dotnet` release, containing framework-dependent .NET 10
 Linux x64 publish output, Function metadata, and `.azurefunctions` extension assemblies.
-Confirm the Function uses .NET 8 isolated and align the selected
+Confirm the Function uses .NET 10 isolated on Flex Consumption or Premium, not legacy Linux Consumption, and align the selected
 [source/package versions](README.md#source-versioning). For custom packaging errors, see
 [build prerequisites and commands](../../TECHNICAL.md#build-zips-locally).
 

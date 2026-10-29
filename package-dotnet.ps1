@@ -23,7 +23,7 @@ try {
     [IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip)
     New-Item -ItemType Directory -Path (Split-Path $archive) -Force | Out-Null
     [IO.File]::Move($zip, $archive)
-    Write-Host 'Framework-dependent .NET 8 Linux x64 ZIP created.'
+    Write-Host 'Framework-dependent .NET 10 Linux x64 ZIP created.'
     Get-Item -LiteralPath $archive | Select-Object FullName, Length
 } finally {
     if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Recurse -Force }

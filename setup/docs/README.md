@@ -226,7 +226,7 @@ Interactive setup can install missing Bicep.
 | Choice | Azure runtime | Package contents |
 | --- | --- | --- |
 | JavaScript | Node.js 22, Functions v4 | Application and production dependencies |
-| C# | .NET 8 isolated, Functions v4 | Framework-dependent Linux x64 publish output, Function metadata, and extensions |
+| C# | .NET 10 isolated, Functions v4 | Framework-dependent Linux x64 publish output, Function metadata, and extensions |
 | Python | Python 3.11, Functions v4 | Application and Linux x64 dependencies in `.python_packages/lib/site-packages` |
 
 Setup verifies and publishes the selected ZIP, recording its SHA-256 in the deployment summary.
