@@ -84,7 +84,7 @@ For diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
 Each live request reads API-key secrets from Key Vault or calls the reusable Azure Identity
 credential's token API. Only the SDK caches tokens and renews them as needed; there is no custom
 credential cache, startup warmup, polling, or retry cooldown. Evaluation does no provider credential
-work. Acquisition is bounded to 2.5 seconds, and shutdown aborts pending requests. See
+work. Acquisition is bounded to 5 seconds, and shutdown aborts pending requests. See
 [credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
 
 | Source | Purpose |

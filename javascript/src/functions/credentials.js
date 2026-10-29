@@ -11,7 +11,7 @@ const { AzureLogger } = require('@azure/logger');
 const API_KEY_MODE = 'apiKey';
 const OAUTH_MODE = 'oauth';
 const TOKEN_EXCHANGE_SCOPE = 'api://AzureADTokenExchange/.default';
-const ACQUISITION_TIMEOUT_MS = 2500;
+const ACQUISITION_TIMEOUT_MS = 5000;
 const TOKEN_SKEW_MS = 30000;
 const unavailable = (error) => new Error(aadstsCode(error) || 'provider credential unavailable');
 /** @type {AsyncLocalStorage<AbortSignal>} */

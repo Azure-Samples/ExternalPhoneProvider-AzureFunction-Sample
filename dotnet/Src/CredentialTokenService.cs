@@ -4,7 +4,7 @@ namespace Epp.Otp;
 
 public sealed class CredentialTokenService
 {
-    internal static readonly TimeSpan AcquisitionTimeout = TimeSpan.FromSeconds(2.5);
+    internal static readonly TimeSpan AcquisitionTimeout = TimeSpan.FromSeconds(5);
 
     public async Task<ProviderCredentials> GetCredentialsAsync(
         PhoneProviderBase provider,

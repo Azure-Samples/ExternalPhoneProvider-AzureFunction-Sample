@@ -93,7 +93,7 @@ mapping. Each provider maps its statuses to `ProviderResult`. Request-aware rout
 accounts require a separate trust, configuration, credential, and test design.
 
 `CredentialTokenService` invokes the selected provider's credential retrieval for each live
-request with a 2.5-second cancellation budget. API-key secrets are read from Key Vault each time.
+request with a 5-second cancellation budget. API-key secrets are read from Key Vault each time.
 The OAuth providers share `OAuthCredentialSource` and reuse Azure Identity SDK credential instances,
 leaving token caching and renewal to the SDK. There is no custom credential cache, hosted warmup service, polling, or
 retry cooldown. Evaluation does no provider credential work. See
