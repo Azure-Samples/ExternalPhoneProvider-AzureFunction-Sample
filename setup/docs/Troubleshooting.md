@@ -170,6 +170,10 @@ federation, provider tenant/scope, and provider permissions using the
 Match diagnostics to the deployed package version. Regardless of event names, verify permissions
 and identity configuration.
 
+Credential acquisition is bounded to 5 seconds in all runtimes.
+`EPP_PROVIDER_TIMEOUT_MS` controls the later provider HTTP call, not credential acquisition.
+Deploy the updated runtime package to use the longer budget; changing app settings alone is not enough.
+
 Current packages acquire credentials only during live requests, retain SDK token caching, and
 have no custom failure cooldown. The next live request can retry acquisition. Confirm the deployed
 package version before comparing event sequences. If moving to current behavior, upgrade through

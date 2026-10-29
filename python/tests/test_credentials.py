@@ -113,6 +113,20 @@ def test_acquisition_timeout_discards_late_values_and_does_not_delay_the_next_re
         manager.close()
 
 
+def test_default_acquisition_budget_allows_a_three_second_response():
+    assert credentials_module.ACQUISITION_TIMEOUT_SECONDS == 5
+
+    def read(_):
+        time.sleep(3)
+        return "synthetic-secret"
+
+    manager = CredentialTokenService(Mock(resolve=read))
+    try:
+        assert manager.resolve(AUTH, CONFIG)["secret"] == "synthetic-secret"
+    finally:
+        manager.close()
+
+
 @pytest.mark.parametrize("empty_secret", ["key", "id"])
 def test_empty_secrets_do_not_return_a_previous_or_partial_bundle(empty_secret):
     secrets = Mock(resolve=Mock(return_value="valid"))

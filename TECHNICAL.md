@@ -283,8 +283,9 @@ All runtimes acquire provider credentials on demand for each live request:
   another token exchange. Managed-identity assertions are obtained only when the SDK needs them.
 
 There are no application-owned provider credential caches, startup warmup, background refresh
-loops, or failure cooldowns. Evaluation skips provider credential work. Acquisition retains its
-2.5-second budget. A failure returns `502` with a request-correlated `credential_unavailable`
+loops, or failure cooldowns. Evaluation skips provider credential work. Acquisition has a
+5-second budget in all runtimes, separate from the provider
+HTTP timeout. A failure returns `502` with a request-correlated `credential_unavailable`
 log; the next live request can attempt acquisition again.
 
 `EPP_KEY_VAULT_CACHE_ENABLED` and `EPP_ACCESS_TOKEN_CACHE_ENABLED` are obsolete and ignored by

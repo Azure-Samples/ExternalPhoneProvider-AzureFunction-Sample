@@ -83,7 +83,7 @@ Verify which Python logging properties the host/export pipeline preserves.
 Each live request reads API-key secrets from Key Vault or calls the reusable Azure Identity
 credential's token API. Only the SDK caches tokens and renews them as needed; there is no custom
 credential cache, startup warmup, polling, or retry cooldown. Evaluation does no provider credential
-work. Request-scoped daemon threads bound the caller's acquisition wait to 2.5 seconds without
+work. Request-scoped daemon threads bound the caller's acquisition wait to 5 seconds without
 blocking process shutdown. Timed-out results are discarded; SDK network timeouts bound the
 underlying calls. See [credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
 
