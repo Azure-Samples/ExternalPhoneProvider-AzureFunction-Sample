@@ -294,6 +294,9 @@ try {
             $inner = ($template.resources | Where-Object type -eq 'Microsoft.Resources/deployments').properties.template
             Assert (($inner.parameters.servicePlan.allowedValues -join ',') -ceq 'FC1,EP1') 'Bicep must restrict service plans to the two offered SKUs.'
             Assert ($inner.variables.isFlexConsumption -ceq "[equals(parameters('servicePlan'), 'FC1')]") 'The Flex condition must use the selected SKU.'
+            $dotnetRuntime = $inner.variables.runtimes.dotnet
+            Assert ($dotnetRuntime.worker -ceq 'dotnet-isolated' -and $dotnetRuntime.stack -ceq 'DOTNET-ISOLATED|10.0' -and
+                $dotnetRuntime.version -ceq '10.0') 'Both hosting plans must target .NET 10 isolated.'
             $plan = $inner.resources | Where-Object type -eq 'Microsoft.Web/serverfarms'
             Assert ($plan.sku -ceq "[if(variables('isFlexConsumption'), createObject('name', 'FC1', 'tier', 'FlexConsumption'), createObject('name', 'EP1', 'tier', 'ElasticPremium', 'capacity', 1))]") 'Bicep must deploy the selected SKU, tier, and Premium capacity.'
             $settings = ($inner.resources | Where-Object { $_.type -eq 'Microsoft.Web/sites/config' -and $_.name -like '*appsettings*' }).properties
@@ -305,9 +308,11 @@ try {
             Assert ($site.serverFarmId -ceq "[resourceId('Microsoft.Web/serverfarms', parameters('resourceNames').hostingPlan)]") 'The hosting-plan ID must be explicit without a runtime reference.'
             Assert ($site.httpsOnly -eq $true -and $site.publicNetworkAccess -ceq 'Disabled') 'The Function must retain HTTPS-only access and initially disabled public ingress.'
             Assert ($site.keyVaultReferenceIdentity -ceq 'SystemAssigned') 'Certificate references must use the Function system identity, not the outbound identity.'
+            Assert ($site.siteConfig.Contains("'linuxFxVersion', variables('runtime').stack")) 'Premium must use the selected runtime stack.'
             $functionAppConfig = $site.functionAppConfig
             Assert ($functionAppConfig -is [string] -and $functionAppConfig.StartsWith("[if(variables('isFlexConsumption'), ") -and $functionAppConfig.EndsWith(', null())]')) 'Only functionAppConfig must be conditional on FC1, with no Flex configuration for EP1.'
             Assert ($functionAppConfig.Contains("'deployment', createObject('storage', createObject('type', 'blobContainer'") -and $functionAppConfig.Contains("reference(resourceId('Microsoft.Storage/storageAccounts', parameters('resourceNames').storageAccount), '2023-05-01').primaryEndpoints.blob")) 'Flex must retain its deployment container and storage endpoint lookup.'
+            Assert ($functionAppConfig.Contains("'runtime', createObject('name', variables('runtime').worker, 'version', variables('runtime').version)")) 'Flex must use the selected runtime name and version.'
             Assert ($functionAppConfig.Contains("'instanceMemoryMB', 2048, 'maximumInstanceCount', 40, 'alwaysReady', createArray()") -and $functionAppConfig.Contains("'type', 'SystemAssignedIdentity'")) 'Flex must retain 2048 MB, up to 40 on-demand instances, zero always-ready instances, and managed-identity deployment storage.'
         }
     } $directory $TemplatePath
