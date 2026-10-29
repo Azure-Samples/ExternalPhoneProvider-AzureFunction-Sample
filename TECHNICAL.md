@@ -74,7 +74,7 @@ and choose the newest stable tag ending in your language ID. Each language relea
 | Language | Release tag | Contents |
 | --- | --- | --- |
 | JavaScript | `epp-packages-<run>-<attempt>-javascript` | Node.js 22 application and production dependencies |
-| .NET | `epp-packages-<run>-<attempt>-dotnet` | Framework-dependent .NET 8 Linux x64 publish output, including Azure Functions metadata and extensions |
+| .NET | `epp-packages-<run>-<attempt>-dotnet` | Framework-dependent .NET 10 Linux x64 publish output, including Azure Functions metadata and extensions |
 | Python | `epp-packages-<run>-<attempt>-python` | Python 3.11 application with Linux x64 dependencies in `.python_packages/lib/site-packages` |
 
 Deploy the ZIP to an Azure Functions v4 app on Linux x64 with the matching language runtime.
@@ -93,7 +93,7 @@ Run one packaging script from the repository root. It creates a local ZIP withou
 | Language | Root-level script | Prerequisites | ZIP in `artifacts/` |
 | --- | --- | --- | --- |
 | JavaScript | [package-javascript.ps1](package-javascript.ps1) | PowerShell 7+, Node.js 20 or 22 with npm, npm registry access | `javascript/released-package.zip` |
-| .NET | [package-dotnet.ps1](package-dotnet.ps1) | PowerShell 7+, .NET 8 SDK, and NuGet feed access to build the ZIP | `dotnet/released-package.zip` |
+| .NET | [package-dotnet.ps1](package-dotnet.ps1) | PowerShell 7+, .NET 10 SDK, and NuGet feed access to build the ZIP | `dotnet/released-package.zip` |
 | Python | [package-python.ps1](package-python.ps1) | Linux x64, PowerShell 7+, Python 3.11 with pip, and PyPI access to build the ZIP | `python/released-package.zip` |
 
 ```powershell

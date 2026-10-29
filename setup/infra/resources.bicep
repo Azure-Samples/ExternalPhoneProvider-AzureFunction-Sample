@@ -22,8 +22,8 @@ var runtimes = {
   }
   dotnet: {
     worker: 'dotnet-isolated'
-    stack: 'DOTNET-ISOLATED|8.0'
-    version: '8.0'
+    stack: 'DOTNET-ISOLATED|10.0'
+    version: '10.0'
   }
   python: {
     worker: 'python'

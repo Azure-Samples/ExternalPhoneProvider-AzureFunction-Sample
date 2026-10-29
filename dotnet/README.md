@@ -5,7 +5,7 @@
 [Documentation](../docs/README.md) | [Settings](#environment-configuration) | [Request behavior](#request-behavior) | [Source](#source)
 
 Implements the shared [contract](../docs/CONTRACT.md) with one provider per deployment.
-Target: .NET 8 isolated worker, Azure Functions v4.
+Target: .NET 10 isolated worker, Azure Functions v4.
 
 ## Setup and deployment
 
@@ -13,6 +13,10 @@ Target: .NET 8 isolated worker, Azure Functions v4.
 [provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
 
 **Custom package development:** follow these steps from `dotnet/`:
+
+Install the .NET 10 SDK and current Azure Functions Core Tools v4.
+On Linux, use Flex Consumption or Premium hosting; .NET 10 is not supported on the legacy
+Linux Consumption plan.
 
 1. Create the [local settings below](#environment-configuration). Select an adapter's fixed `Name`
    from [Providers/](Src/Providers/), configure it, and complete
