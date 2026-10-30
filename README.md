@@ -1,91 +1,81 @@
-# External Phone Provider Azure Function Sample
+# External phone provider Azure Functions sample
 
-This **External Phone Provider (EPP)** sample connects Microsoft Entra ID to a phone provider
-for SMS and voice one-time passwords.
-Guided setup deploys **one regional endpoint** using JavaScript by default, with C# and Python options.
+This external phone provider (EPP) sample connects Microsoft Entra ID to a phone provider for
+SMS and voice one-time passwords (OTPs). It includes **Infobip, Soprano, and Telesign** adapters
+that use **OAuth through managed identity federation**.
 
-> [!IMPORTANT]
-> Start in a separate nonproduction environment. Confirm provider access and Microsoft's approved
-> test and activation process before deployment.
+Guided setup deploys one regional endpoint with one provider. Choose JavaScript, C#, or Python;
+JavaScript is the default.
 
-## Table of contents
+## Quick start
 
-- [Features](#features)
-- [Requirements](#requirements)
-- [Architecture](#architecture)
-- [Get started](#get-started)
-- [Guidance](#guidance)
-- [Advanced topics](#advanced-topics)
-- [Getting help](#getting-help)
+**[Start onboarding: download and run the setup script](docs/GETTING-STARTED.md#2-download-and-run-the-setup-script)**
+
+Guided setup creates your application registration, deploys the Azure resources, and configures
+the endpoint. Check the [required access and tools](docs/GETTING-STARTED.md#1-get-ready) first,
+then follow the download-and-run instructions. The guide continues with provider authorization,
+testing, and activation.
 
 ## Features
 
-- JavaScript, C#, and Python implementations of one [HTTP and trust contract](docs/CONTRACT.md).
-- Guided Azure deployment with Easy Auth, Key Vault, and monitoring.
-- Evaluation mode checks authentication and decryption without sending a message.
-- Built-in provider integrations and an [Add Twilio](docs/BRING-YOUR-OWN-PROVIDER.md) guide.
+- One [Send OTP API](docs/CONTRACT.md) for SMS, voice, and evaluation requests.
+- Guided deployment with Azure Functions authentication (Easy Auth), Key Vault, and monitoring.
+- Evaluation mode to check authentication and decryption without sending a message.
 
-## Requirements
+## Prerequisites
 
-- Use a separate test environment with a Microsoft Entra ID tenant, Azure subscription, and
-  unique resource name prefix. Supply a dedicated app registration or create one during guided setup.
-- Check [roles, permissions, tools, regional availability, and quota](setup/docs/README.md#prerequisites-for-step-2).
-- For Telesign, complete the [OAuth profile placeholders](docs/ONBOARDING.md#telesign-oauth-configuration-and-handoff)
-  before deployment.
-- Plan for Azure, telemetry, and provider charges. The [cost estimate](docs/COST-CALCULATOR.md) is not a bill.
-- Use Easy Auth to allow only the approved Microsoft caller.
+- A Microsoft Entra ID tenant and Azure subscription with the required
+  [roles, tools, regional availability, and quota](setup/docs/README.md#prerequisites).
+- A provider account with access to the intended channels and destinations. Check
+  [Microsoft's telephony-provider guidance](https://learn.microsoft.com/entra/identity/authentication/concept-phone-providers)
+  for current availability and onboarding requirements.
+- A separate test environment and resource prefix. Guided setup creates the dedicated application
+  registration for you.
+- A budget for [Azure hosting and provider charges](docs/COST-CALCULATOR.md).
 
 ## Architecture
 
-![Microsoft Entra ID sends an encrypted request through Easy Auth to a Function, which uses Key Vault and calls the phone provider](docs/images/single-region-architecture.png)
+![Single-region architecture showing Easy Auth, SendOtp, the Key Vault encryption certificate, outbound OAuth identity, monitoring, and phone delivery](docs/images/single-region-architecture.png)
 
-*Easy Auth checks the Microsoft caller before the Function decrypts the request.
-Live success confirms provider acceptance. Confirm delivery separately. Evaluation validates the
-request without sending a message.
-The diagram is a topology overview; current packages read API-key secrets for each live request,
-while Azure Identity owns OAuth token caching.
-See [architecture details](TECHNICAL.md#single-region-architecture).
-[Open the full-size diagram](docs/images/single-region-architecture.png).*
+[Open the full-size diagram](docs/images/single-region-architecture.svg).
+
+Easy Auth validates the Microsoft caller. The Function decrypts the request and, in live mode,
+submits it to the configured provider. A successful response confirms **provider acceptance**;
+confirm recipient delivery separately.
 
 ## Get started
 
-Follow the **[five-step setup guide](docs/GETTING-STARTED.md)** in order:
+Follow the **[deployment guide](docs/GETTING-STARTED.md)**:
 
-1. <a id="1-get-ready"></a>[Get ready](docs/GETTING-STARTED.md#1-get-ready): confirm access, approvals, permissions, and budget.
-2. <a id="2-register-your-application"></a>[Choose the app](docs/GETTING-STARTED.md#2-register-your-application): use an existing registration or create one during setup.
-3. <a id="3-run-guided-setup"></a>[Deploy](docs/GETTING-STARTED.md#3-run-guided-setup): choose the provider and hosting plan.
-4. <a id="4-connect-your-provider-and-test"></a>[Connect and test](docs/GETTING-STARTED.md#4-connect-your-provider-and-test): configure provider access and run approved checks.
-5. <a id="5-activate-and-hand-over"></a>[Activate and hand over](docs/GETTING-STARTED.md#5-activate-and-hand-over): activate after validation and assign owners.
+1. [Prepare access, tools, and budget](docs/GETTING-STARTED.md#1-get-ready).
+2. [Download and run the setup script](docs/GETTING-STARTED.md#2-download-and-run-the-setup-script).
+3. [Authorize the provider and test](docs/GETTING-STARTED.md#3-connect-your-provider-and-test).
+4. [Activate and hand over](docs/GETTING-STARTED.md#4-activate-and-hand-over).
 
-Before live use, review [production readiness](TECHNICAL.md#production-readiness).
+## Documentation
 
-<a id="find-more-detail"></a>
-<a id="deploy-and-configure"></a>
-<a id="operate"></a>
-<a id="develop"></a>
-## Guidance
-
-| Goal | Start here |
+| Task | Guide |
 | --- | --- |
-| Deploy and configure | [Five-step setup](docs/GETTING-STARTED.md) |
-| Find settings and provider details | [Technical reference](TECHNICAL.md) |
+| Deploy or rerun setup | [Setup reference](setup/docs/README.md) |
+| Configure provider access | [Configuration and validation](docs/ONBOARDING.md) |
+| Understand settings and provider behavior | [Technical reference](TECHNICAL.md) |
 | Resolve a problem | [Troubleshooting](setup/docs/Troubleshooting.md) |
-| Monitor the endpoint | [Monitoring](docs/MONITORING.md) |
-| Review the API | [Send OTP](docs/CONTRACT.md) |
-| Add Twilio | [Twilio integration guide](docs/BRING-YOUR-OWN-PROVIDER.md) |
-| Work on a runtime | [JavaScript](javascript/README.md), [C#](dotnet/README.md), or [Python](python/README.md) |
+| Monitor requests and failures | [Monitoring](docs/MONITORING.md) |
+| Review the request and response | [Send OTP API](docs/CONTRACT.md) |
+| Develop or extend the sample | [JavaScript](javascript/README.md), [C#](dotnet/README.md), [Python](python/README.md), or [add a provider](docs/BRING-YOUR-OWN-PROVIDER.md) |
 
-<a id="optional-designs"></a>
-### Advanced topics
+See the [documentation index](docs/README.md) for all guides.
 
-- [Multi-region routing](docs/FRONTDOOR.md)
-- [Secondary-provider design](docs/MULTI-PROVIDER-IMPLEMENTATION.md)
+### Advanced deployment guides
 
-## Getting help
+- [Multi-region resiliency](docs/MULTI-REGION-RESILIENCY.md).
+- [Configure multiple phone providers](docs/MULTI-PROVIDER-IMPLEMENTATION.md).
 
-- [Provider access, testing, and activation](docs/ONBOARDING.md#before-purchasing-or-deploying)
-- [Setup and endpoint troubleshooting](setup/docs/Troubleshooting.md)
-- [Repository issues](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/issues)
+## Get help
 
-Keep credentials, phone data, OTPs, encrypted bodies, and raw provider responses out of issues
-and support requests. See the [complete documentation index](docs/README.md).
+For provider access and account issues, use your provider's support channel. For Microsoft Entra ID
+configuration, use Microsoft support. Report sample issues in
+[GitHub Issues](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/issues).
+
+Keep credentials, phone numbers, OTPs, encrypted request bodies, and raw provider responses out
+of issues and support requests.

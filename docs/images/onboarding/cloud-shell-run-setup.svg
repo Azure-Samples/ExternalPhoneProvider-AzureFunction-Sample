@@ -1,28 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="312" viewBox="0 0 1100 312" role="img" aria-labelledby="title desc">
-  <title id="title">Azure Cloud Shell starting setup for CYOT-CONSTO</title>
-  <desc id="desc">Cloud Shell downloads and starts the setup script. The tenant ID is hidden; the non-sensitive application name and shell path remain visible.</desc>
-  <rect width="1100" height="312" fill="#062f63"/>
-  <rect width="1100" height="39" fill="#ffffff"/>
-  <line x1="0" y1="39" x2="1100" y2="39" stroke="#c7d0d9"/>
-  <g font-family="Segoe UI, sans-serif" font-size="13" fill="#4b5865">
-    <text x="16" y="25">↔ Switch to Bash</text><text x="128" y="25">↻ Restart</text><text x="214" y="25">☁ Manage files⌄</text>
-    <text x="337" y="25">▣ New session</text><text x="442" y="25">✎ Editor</text><text x="510" y="25">Open in VS Code for the Web</text>
-    <text x="728" y="25">Web preview⌄</text><text x="847" y="25">⚙ Settings⌄</text><text x="954" y="25">? Help⌄</text>
-  </g>
-  <g font-family="Consolas, monospace" font-size="13" fill="#f1f6fb">
-    <text x="5" y="58" fill="#36d7e9">Requesting a Cloud Shell.<tspan fill="#62ec71">Succeeded.</tspan></text>
-    <text x="5" y="77">Connecting terminal...</text>
-    <text x="5" y="107">Welcome to Azure Cloud Shell</text>
-    <text x="5" y="132">Type "az" to use Azure CLI</text><text x="5" y="150">Type "help" to learn about Cloud Shell</text>
-    <text x="5" y="178" fill="#fff100">Your Cloud Shell session will be ephemeral so no files or system changes will persist beyond your current session.</text>
-    <text x="5" y="204" fill="#b7d3ed">MOTD: You can now copy &amp; paste in Cloud Shell using Ctrl+C/Ctrl+V (Linux/Windows) or Cmd+C/Cmd+V (Mac).</text>
-    <text x="5" y="229" fill="#fff100">WARNING: TenantId '</text>
-    <rect x="142" y="214" width="88" height="19" rx="2" fill="#111827"/>
-    <text x="161" y="229" fill="#ffffff">hidden</text>
-    <text x="232" y="229" fill="#fff100">' contains more than one active subscription. Confirm the intended subscription.</text>
-    <text x="5" y="248" fill="#fff100">WARNING: Confirm the intended Azure subscription before continuing.</text>
-    <text x="5" y="268">Application: <tspan fill="#62ec71">CYOT-CONSTO</tspan></text>
-    <text x="5" y="287">PS ~/setup&gt; Invoke-WebRequest 'https://raw.githubusercontent.com/.../Setup-Epp.ps1' -OutFile ./Setup-Epp.ps1</text>
-    <text x="5" y="306">PS ~/setup&gt; ./Setup-Epp.ps1</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="330" viewBox="0 0 1320 330" role="img" aria-labelledby="title description">
+  <title id="title">Download and start guided setup in PowerShell</title>
+  <desc id="description">An illustrative PowerShell session downloads Setup-Epp.ps1 from the repository, pauses for script review, and runs the script.</desc>
+  <rect width="1320" height="330" rx="12" fill="#062f63"/>
+  <rect width="1320" height="54" rx="12" fill="#e7f2ff"/>
+  <text x="28" y="35" font-family="Segoe UI, Arial, sans-serif" font-size="21" fill="#172b4d" font-weight="600">Azure Cloud Shell or PowerShell 7 - download, review, and run</text>
+  <g font-family="Consolas, monospace" font-size="16" fill="#f1f6fb">
+    <text x="28" y="94" fill="#8fe0ef"># Download into your private working folder.</text>
+    <text x="28" y="128">PS&gt; Invoke-WebRequest `</text>
+    <text x="28" y="158">      -Uri 'https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/main/setup/Setup-Epp.ps1' `</text>
+    <text x="28" y="188">      -OutFile .\Setup-Epp.ps1</text>
+    <text x="28" y="234" fill="#8fe0ef"># Review the downloaded script before running it.</text>
+    <text x="28" y="270">PS&gt; .\Setup-Epp.ps1</text>
+    <text x="28" y="308" fill="#b9ddff">JavaScript is the default. Use -Language csharp or -Language python to choose another runtime.</text>
   </g>
 </svg>

@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1460" viewBox="0 0 1800 1460" role="img" aria-labelledby="title description">
+  <title id="title">Multiple phone providers: a controlled primary-to-secondary flow</title>
+  <desc id="description">After Easy Auth and decryption, evaluation returns without a provider call. Live delivery uses shared durable operation state and an isolated OAuth context for the primary account. Acceptance returns success. Blocks, invalid requests, and uncertain outcomes stop. Only verified nonacceptance or an eligible pre-dispatch failure can pass policy, remaining-time, and reservation checks for one secondary attempt. Each account keeps its own OAuth context.</desc>
+  <metadata>Microsoft Azure and Entra architecture icons used for documentation under their permitted-use terms: https://learn.microsoft.com/azure/architecture/icons/ and https://learn.microsoft.com/entra/architecture/architecture-icons . Product artwork is embedded unchanged.</metadata>
+  <defs>
+    <marker id="request-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L12 6L0 12Z" fill="#266fc3"/></marker>
+    <marker id="response-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L12 6L0 12Z" fill="#00854a"/></marker>
+    <marker id="stop-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L12 6L0 12Z" fill="#bf493c"/></marker>
+    <marker id="state-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L12 6L0 12Z" fill="#b46b00"/></marker>
+    <symbol id="entra" viewBox="0 0 32 32"><image data-icon="entra" width="32" height="32" href="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyBpZD0idXVpZC1mOGQ0ZDM5Mi03YzEyLTRiZDktYmFmZi02NmZiZjc4MTRiOTEiIGRhdGEtbmFtZT0iTGF5ZXIgMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAxOCAxOCI+CiAgPHBhdGggZD0ibTMuODAyLDE0LjAzMmMuMzg4LjI0MiwxLjAzMy41MTEsMS43MTUuNTExLjYyMSwwLDEuMTk4LS4xOCwxLjY3Ni0uNDg3LDAsMCwuMDAxLDAsLjAwMi0uMDAxbDEuODA1LTEuMTI4djQuMDczYy0uMjg2LDAtLjU3NC0uMDc4LS44MjQtLjIzNGwtNC4zNzQtMi43MzRaIiBmaWxsPSIjMjI1MDg2Ii8+CiAgPHBhdGggZD0ibTcuODUzLDEuNTA3TC4zNTMsOS45NjdjLS41NzkuNjU0LS40MjgsMS42NDIuMzIzLDIuMTExLDAsMCwyLjc3NiwxLjczNSwzLjEyNiwxLjk1NC4zODguMjQyLDEuMDMzLjUxMSwxLjcxNS41MTEuNjIxLDAsMS4xOTgtLjE4LDEuNjc2LS40ODcsMCwwLC4wMDEsMCwuMDAyLS4wMDFsMS44MDUtMS4xMjgtNC4zNjQtMi43MjgsNC4zNjUtNC45MjRWMXMwLDAsMCwwYy0uNDI0LDAtLjg0Ny4xNjktMS4xNDcuNTA3WiIgZmlsbD0iIzZkZiIvPgogIDxwb2x5Z29uIHBvaW50cz0iNC42MzYgMTAuMTk5IDQuNjg4IDEwLjIzMSA5IDEyLjkyNyA5LjAwMSAxMi45MjcgOS4wMDEgMTIuOTI3IDkuMDAxIDUuMjc2IDkgNS4yNzUgNC42MzYgMTAuMTk5IiBmaWxsPSIjY2JmOGZmIi8+CiAgPHBhdGggZD0ibTE3LjMyNCwxMi4wNzhjLjc1MS0uNDY5LjkwMi0xLjQ1Ny4zMjMtMi4xMTFsLTQuOTIxLTUuNTUxYy0uMzk3LS4xODUtLjg0Mi0uMjkxLTEuMzEzLS4yOTEtLjkyNSwwLTEuNzUyLjM5OS0yLjMwMiwxLjAyNmwtLjEwOS4xMjNoMHM0LjM2NCw0LjkyNCw0LjM2NCw0LjkyNGgwczAsMCwwLDBsLTQuMzY1LDIuNzI4djQuMDczYy4yODcsMCwuNTczLS4wNzguODIzLS4yMzRsNy41LTQuNjg4WiIgZmlsbD0iIzA3NDc5MyIvPgogIDxwYXRoIGQ9Im05LjAwMSwxdjQuMjc1cy4xMDktLjEyMy4xMDktLjEyM2MuNTUtLjYyNywxLjM3Ny0xLjAyNiwyLjMwMi0xLjAyNi40NzIsMCwuOTE2LjEwNywxLjMxMy4yOTFsLTIuNTc5LTIuOTA5Yy0uMjk5LS4zMzgtLjcyMy0uNTA3LTEuMTQ2LS41MDdaIiBmaWxsPSIjMDI5NGU0Ii8+CiAgPHBvbHlnb24gcG9pbnRzPSIxMy4zNjUgMTAuMTk5IDEzLjM2NSAxMC4xOTkgMTMuMzY1IDEwLjE5OSA5LjAwMSA1LjI3NiA5LjAwMSAxMi45MjYgMTMuMzY1IDEwLjE5OSIgZmlsbD0iIzk2YmNjMiIvPgo8L3N2Zz4="/></symbol>
+    <symbol id="function" viewBox="0 0 32 32"><image data-icon="function" width="32" height="32" href="data:image/svg+xml;base64,PHN2ZyBpZD0iYTJjODgzMDYtZmEwMy00ZTViLWIxOTItNDAxZjBiNzc4MDhiIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImI0MDNhY2E3LWYzODctNDQzNC05NmI0LWFlMTU3ZWRjODM1ZiIgeDE9Ii0xNzUuOTkzIiB5MT0iLTM0My43MjMiIHgyPSItMTc1Ljk5MyIgeTI9Ii0zNTkuMjMyIiBncmFkaWVudFRyYW5zZm9ybT0idHJhbnNsYXRlKDIxMi41NzMgMzcwLjU0OCkgc2NhbGUoMS4xNTYgMS4wMjkpIiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmVhMTFiIiAvPjxzdG9wIG9mZnNldD0iMC4yODQiIHN0b3AtY29sb3I9IiNmZWE1MWEiIC8+PHN0b3Agb2Zmc2V0PSIwLjU0NyIgc3RvcC1jb2xvcj0iI2ZlYjAxOCIgLz48c3RvcCBvZmZzZXQ9IjAuOCIgc3RvcC1jb2xvcj0iI2ZmYzMxNCIgLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNmZmQ3MGYiIC8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHRpdGxlPkljb24tY29tcHV0ZS0yOTwvdGl0bGU+PGc+PHBhdGggZD0iTTIuMzcsNy40NzVIMy4yYS4yNjcuMjY3LDAsMCwxLC4yNjcuMjY3djYuMTQ4YS41MzMuNTMzLDAsMCwxLS41MzMuNTMzSDIuMWEwLDAsMCwwLDEsMCwwVjcuNzQxYS4yNjcuMjY3LDAsMCwxLC4yNjctLjI2N1oiIHRyYW5zZm9ybT0idHJhbnNsYXRlKDEyLjUwNyAxNi43MDUpIHJvdGF0ZSgxMzQuOTE5KSIgZmlsbD0iIzUwZTZmZiIgLz48cGF0aCBkPSJNMi4zMjUsMy42aC44MzNhLjI2Ny4yNjcsMCwwLDEsLjI2Ny4yNjd2Ni41ODNhMCwwLDAsMCwxLDAsMEgyLjU5MWEuNTMzLjUzMywwLDAsMS0uNTMzLS41MzNWMy44NjVBLjI2Ny4yNjcsMCwwLDEsMi4zMjUsMy42WiIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoNS43NTkgMC4xMTQpIHJvdGF0ZSg0NC45MTkpIiBmaWxsPSIjMTQ5MGRmIiAvPjwvZz48Zz48cGF0aCBkPSJNMTQuNTMsNy40NzVoLjgzM2EuNTMzLjUzMywwLDAsMSwuNTMzLjUzM3Y2LjE0OGEuMjY3LjI2NywwLDAsMS0uMjY3LjI2N0gxNC44YS4yNjcuMjY3LDAsMCwxLS4yNjctLjI2N1Y3LjQ3NWEwLDAsMCwwLDEsMCwwWiIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMTIuMjIzIC03LjU1NSkgcm90YXRlKDQ1LjA4MSkiIGZpbGw9IiM1MGU2ZmYiIC8+PHBhdGggZD0iTTE1LjEwOCwzLjZoLjgzM2EwLDAsMCwwLDEsMCwwdjYuNTgzYS4yNjcuMjY3LDAsMCwxLS4yNjcuMjY3aC0uODMzYS4yNjcuMjY3LDAsMCwxLS4yNjctLjI2N1Y0LjEzMWEuNTMzLjUzMywwLDAsMSwuNTMzLS41MzNaIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgzMS4wMjIgMS4yMjIpIHJvdGF0ZSgxMzUuMDgxKSIgZmlsbD0iIzE0OTBkZiIgLz48L2c+PHBhdGggZD0iTTguNDU5LDkuOUg0Ljg3YS4xOTMuMTkzLDAsMCwxLS4yLS4xODEuMTY2LjE2NiwwLDAsMSwuMDE4LS4wNzVMOC45OTEsMS4xM2EuMjA2LjIwNiwwLDAsMSwuMTg2LS4xMDZoNC4yNDVhLjE5My4xOTMsMCwwLDEsLjIuMTgxLjE2NS4xNjUsMCwwLDEtLjAzNS4xTDguNTM0LDcuOTY2aDQuOTI4YS4xOTMuMTkzLDAsMCwxLC4yLjE4MS4xNzYuMTc2LDAsMCwxLS4wNTIuMTIyTDUuNDIxLDE2Ljc4OGMtLjA3Ny4wNDYtLjYyNC41LS4zNTYtLjE4OWgwWiIgZmlsbD0idXJsKCNiNDAzYWNhNy1mMzg3LTQ0MzQtOTZiNC1hZTE1N2VkYzgzNWYpIiAvPjwvc3ZnPg=="/></symbol>
+    <symbol id="identity" viewBox="0 0 32 32"><image data-icon="identity" width="32" height="32" href="data:image/svg+xml;base64,PHN2ZyBpZD0iZjgwN2NkZGUtMThmMi00NTc0LWJhMTQtZjBiMWVlZjk0YTRhIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImJiNjdiMTU0LWFmOGYtNGE1My1hOWNlLWFhMDQ2YjkzOThlOSIgeDE9IjEzLjE4IiB5MT0iMTMuMDEiIHgyPSI4LjYzIiB5Mj0iNC4zOCIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzE5ODhkOSIgLz48c3RvcCBvZmZzZXQ9IjAuOSIgc3RvcC1jb2xvcj0iIzU0YWVmMCIgLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iYTQ3ZDcxMzgtMDg0YS00NzFkLThkNjMtNzQ0ZTc1YjllOGEzIiB4MT0iMTEuMjIiIHkxPSIxMC41IiB4Mj0iMTQuMzciIHkyPSIxNS45MyIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iMC4xIiBzdG9wLWNvbG9yPSIjNTRhZWYwIiAvPjxzdG9wIG9mZnNldD0iMC4yOSIgc3RvcC1jb2xvcj0iIzRmYWJlZSIgLz48c3RvcCBvZmZzZXQ9IjAuNTEiIHN0b3AtY29sb3I9IiM0MWEyZTkiIC8+PHN0b3Agb2Zmc2V0PSIwLjc0IiBzdG9wLWNvbG9yPSIjMmE5M2UwIiAvPjxzdG9wIG9mZnNldD0iMC44OCIgc3RvcC1jb2xvcj0iIzE5ODhkOSIgLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48dGl0bGU+SWNvbi1pZGVudGl0eS0yMjc8L3RpdGxlPjxnPjxwb2x5Z29uIHBvaW50cz0iMS4xNSAxMC4yMiA4LjkzIDE1LjI3IDE2Ljg1IDEwLjIxIDE3Ljg1IDExLjM2IDguOTMgMTcuMTEgMC4xNSAxMS4zNyAxLjE1IDEwLjIyIiBmaWxsPSIjNTBlNmZmIiAvPjxwb2x5Z29uIHBvaW50cz0iMS43MyA5LjU4IDguOTMgMSAxNi4yOCA5LjU5IDguOTMgMTQuMjMgMS43MyA5LjU4IiBmaWxsPSIjZmZmIiAvPjxwb2x5Z29uIHBvaW50cz0iOC45MyAxIDguOTMgMTQuMjMgMS43MyA5LjU4IDguOTMgMSIgZmlsbD0iIzUwZTZmZiIgLz48cG9seWdvbiBwb2ludHM9IjguOTMgMSA4LjkzIDE0LjIzIDE2LjI4IDkuNTkgOC45MyAxIiBmaWxsPSJ1cmwoI2JiNjdiMTU0LWFmOGYtNGE1My1hOWNlLWFhMDQ2YjkzOThlOSkiIC8+PHBvbHlnb24gcG9pbnRzPSI4LjkzIDcuODMgMTYuMjggOS41OSA4LjkzIDE0LjIzIDguOTMgNy44MyIgZmlsbD0iIzUzYjFlMCIgLz48cG9seWdvbiBwb2ludHM9IjguOTMgMTQuMjMgMS43MyA5LjU4IDguOTMgNy44MyA4LjkzIDE0LjIzIiBmaWxsPSIjOWNlYmZmIiAvPjxwb2x5Z29uIHBvaW50cz0iOC45MyAxNy4xMSAxNy44NSAxMS4zNiAxNi44NSAxMC4yMSA4LjkzIDE1LjI3IDguOTMgMTcuMTEiIGZpbGw9InVybCgjYTQ3ZDcxMzgtMDg0YS00NzFkLThkNjMtNzQ0ZTc1YjllOGEzKSIgLz48Zz48cGF0aCBpZD0iZTE4OWE2MWYtNjMxYS00MTIyLWJiMmItMDc5ZTg2MDA0ZDk2IiBkPSJNMTYuMzIsMTEuODhhMS4xNiwxLjE2LDAsMCwwLDAtMS42NWgwbC0yLTJhMS4xNiwxLjE2LDAsMCwwLTEuNjQsMGgwbC0yLDJhMS4xOCwxLjE4LDAsMCwwLDAsMS42NWwxLjY3LDEuNjdhLjMyLjMyLDAsMCwxLC4wOS4yM3YzLjFhLjM2LjM2LDAsMCwwLC4xMi4yOGwuNzYuNzZhLjI1LjI1LDAsMCwwLC4zNywwbC43My0uNzNoMGwuNDQtLjQ0YS4xNS4xNSwwLDAsMCwwLS4yMWwtLjMxLS4zMWEuMTYuMTYsMCwwLDEsMC0uMjRsLjMxLS4zMWEuMTYuMTYsMCwwLDAsMC0uMjJsLS4zMS0uMzFhLjE1LjE1LDAsMCwxLDAtLjIzbC4zMS0uMzJhLjE1LjE1LDAsMCwwLDAtLjIxbC0uNDQtLjQ0di0uMTZaTTEzLjUsOC43MWEuNjYuNjYsMCwxLDEtLjY2LjY2LjY2LjY2LDAsMCwxLC42Ni0uNjZaIiBmaWxsPSIjZmZjYTAwIiAvPjxwYXRoIGlkPSJmYjcwMzNlZS00NjUwLTQ4ODYtODBjNy1lZGRmNjI1NjBmODUiIGQ9Ik0xMywxN2gwYS4xNC4xNCwwLDAsMCwuMjQtLjExVjE0LjMzYS4xNi4xNiwwLDAsMC0uMDYtLjEzaDBhLjE0LjE0LDAsMCwwLS4yMi4xM3YyLjUxQS4xNS4xNSwwLDAsMCwxMywxN1oiIGZpbGw9IiNmZjkzMDAiIG9wYWNpdHk9IjAuNzUiIC8+PHJlY3QgaWQ9ImIxNjZiOGMyLWI5ZWUtNGMzZC1iZjdhLTc3YmQ1Y2UwNTcwYiIgeD0iMTEuOSIgeT0iMTAuOSIgd2lkdGg9IjMuMjkiIGhlaWdodD0iMC4zOSIgcng9IjAuMTgiIGZpbGw9IiNmZjkzMDAiIG9wYWNpdHk9IjAuNzUiIC8+PHJlY3QgaWQ9ImJhZjQzN2ZlLTM0ODMtNGEyNS05NGJhLTFlODRhNjRjZDJlYiIgeD0iMTEuOSIgeT0iMTEuNTMiIHdpZHRoPSIzLjI5IiBoZWlnaHQ9IjAuMzkiIHJ4PSIwLjE4IiBmaWxsPSIjZmY5MzAwIiBvcGFjaXR5PSIwLjc1IiAvPjwvZz48L2c+PC9zdmc+"/></symbol>
+    <symbol id="auth" viewBox="0 0 32 32">
+      <path d="M16 2L29 7V17C29 24 22 29 16 31C10 29 3 24 3 17V7Z" fill="#d9effc"/>
+      <path d="M16 2L29 7V17C29 24 22 29 16 31V2Z" fill="#65b7ed"/>
+      <path d="M11 15V11A5 5 0 0 1 21 11V15" fill="none" stroke="#1268aa" stroke-width="2.4"/>
+      <rect x="9" y="14" width="14" height="11" rx="2" fill="#1268aa"/><circle cx="16" cy="19" r="1.5" fill="#fff"/><path d="M16 20V23" stroke="#fff" stroke-width="1.5"/>
+    </symbol>
+    <symbol id="api" viewBox="0 0 32 32"><rect width="32" height="32" rx="5" fill="#202c3b"/><text x="16" y="20" font-family="Consolas, monospace" font-size="12" style="fill: #fff;" text-anchor="middle">API</text></symbol>
+    <symbol id="state" viewBox="0 0 32 32"><path d="M3 8V24C3 31 29 31 29 24V8Z" fill="#4a93d8"/><ellipse cx="16" cy="8" rx="13" ry="5" fill="#9ad7f5"/><path d="M3 15C3 22 29 22 29 15M3 22C3 29 29 29 29 22" fill="none" stroke="#c6e8fa" stroke-width="1.4"/></symbol>
+    <symbol id="check" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="#d9f0e2"/><path d="M8 16L14 22L25 10" fill="none" stroke="#00854a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="stop" viewBox="0 0 32 32"><path d="M10 2H22L30 10V22L22 30H10L2 22V10Z" fill="#fbe4df" stroke="#bf493c" stroke-width="1.3"/><path d="M16 8V18" stroke="#bf493c" stroke-width="3" stroke-linecap="round"/><circle cx="16" cy="24" r="1.7" fill="#bf493c"/></symbol>
+    <symbol id="clock" viewBox="0 0 32 32"><circle cx="16" cy="16" r="13" fill="#fff3d9" stroke="#b46b00" stroke-width="1.5"/><path d="M16 7V16L22 20" fill="none" stroke="#b46b00" stroke-width="2.3" stroke-linecap="round"/></symbol>
+    <symbol id="reply" viewBox="0 0 32 32"><path d="M14 6L3 15L14 24V18H20C25 18 28 22 29 27V18C29 11 25 9 20 9H14Z" fill="#266fc3"/></symbol>
+    <style>
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #202327; }
+      .eyebrow { font-family: Consolas, monospace; font-size: 14px; letter-spacing: 1.5px; fill: #57616e; }
+      .title { font-size: 36px; font-weight: 700; }
+      .subtitle { font-size: 17px; fill: #535d69; }
+      .label { font-family: Consolas, monospace; font-size: 13px; font-weight: 700; letter-spacing: 0.8px; fill: #4c5561; }
+      .name { font-size: 19px; font-weight: 600; }
+      .detail { font-family: Consolas, monospace; font-size: 15px; fill: #626c79; }
+      .legend { font-family: Consolas, monospace; font-size: 13px; fill: #4c5561; }
+      .boundary { fill: #f8f8f6; stroke: #9da9b7; stroke-width: 1; stroke-dasharray: 4 3; }
+      .card { fill: #fff; stroke: #bcc4ce; stroke-width: 1.2; }
+      .request { fill: none; stroke: #266fc3; stroke-width: 2.4; marker-end: url(#request-arrow); }
+      .response { fill: none; stroke: #00854a; stroke-width: 2.2; stroke-dasharray: 7 5; marker-end: url(#response-arrow); }
+      .stop-path { fill: none; stroke: #bf493c; stroke-width: 2.2; marker-end: url(#stop-arrow); }
+      .state-path { fill: none; stroke: #b46b00; stroke-width: 2.2; marker-end: url(#state-arrow); }
+      .badge { stroke: #f8f8f6; stroke-width: 4; }
+      .number { fill: #fff; font-family: Consolas, monospace; font-size: 13px; font-weight: 700; text-anchor: middle; }
+      .step { font-size: 16px; font-weight: 600; }
+      .note { font-size: 15px; fill: #535d69; }
+    </style>
+  </defs>
+  <rect width="1800" height="1460" fill="#f5f5f2"/>
+  <text x="45" y="45" class="eyebrow">TOPOLOGY 3 / MULTI-PROVIDER DELIVERY</text>
+  <text x="45" y="90" class="title">One primary attempt, one controlled secondary attempt</text>
+  <text x="45" y="126" class="subtitle">Keep account credentials separate. Use the secondary only when the primary is known not to have accepted.</text>
+  <path d="M1490 48H1527" stroke="#266fc3" stroke-width="2.4"/><text x="1542" y="53" class="legend">Request / flow</text>
+  <path d="M1490 74H1527" stroke="#00854a" stroke-width="2.2" stroke-dasharray="7 4"/><text x="1542" y="79" class="legend">Response</text>
+  <path d="M1490 100H1527" stroke="#b46b00" stroke-width="2.2"/><text x="1542" y="105" class="legend">Durable coordination</text>
+  <path d="M1490 126H1527" stroke="#bf493c" stroke-width="2.2"/><text x="1542" y="131" class="legend">Stop / no resend</text>
+
+  <rect x="45" y="190" width="430" height="1062" rx="8" class="boundary"/>
+  <rect x="520" y="190" width="510" height="1062" rx="8" class="boundary"/>
+  <rect x="1090" y="190" width="665" height="1062" rx="8" class="boundary"/>
+  <use href="#entra" x="65" y="207" width="22" height="22"/><text x="99" y="223" class="label">CALLER AND OPERATION STATE</text>
+  <use href="#function" x="540" y="207" width="22" height="22"/><text x="574" y="223" class="label">FUNCTION ORCHESTRATION</text>
+  <text x="1112" y="223" class="label">PROVIDER ACCOUNTS AND OUTCOMES</text>
+
+  <rect x="70" y="255" width="380" height="112" rx="7" class="card"/>
+  <use href="#entra" x="94" y="294" width="34" height="34"/>
+  <text x="145" y="292" class="name">Microsoft Entra ID</text>
+  <text x="145" y="321" class="detail">Authenticated, encrypted request</text>
+  <text x="145" y="345" class="detail">Fixed endpoint and caller trust</text>
+  <rect x="550" y="255" width="450" height="112" rx="7" class="card"/>
+  <use href="#auth" x="574" y="294" width="34" height="34"/>
+  <text x="626" y="292" class="name">Authenticate and decrypt</text>
+  <text x="626" y="321" class="detail">Easy Auth / envelope validation</text>
+  <text x="626" y="345" class="detail">JWE decryption / required fields</text>
+  <path d="M450 310H550" class="request"/><circle cx="500" cy="310" r="13" fill="#266fc3" class="badge"/><text x="500" y="315" class="number">1</text>
+  <path d="M775 367V413" class="request"/>
+  <path d="M775 413L920 465L775 517L630 465Z" fill="#fff" stroke="#a9b5c5" stroke-width="1.3"/>
+  <text x="775" y="471" class="name" text-anchor="middle">Evaluation?</text>
+  <rect x="1130" y="413" width="595" height="104" rx="7" fill="#f7fcf8" stroke="#b3d4c0" stroke-width="1.2"/>
+  <use href="#check" x="1155" y="449" width="32" height="32"/><text x="1204" y="452" class="name">Return the nonce</text>
+  <text x="1204" y="482" class="detail">Evaluation ends before provider credentials or sending.</text>
+  <path d="M920 465H1130" class="response"/><text x="1013" y="452" class="legend">Yes</text>
+  <path d="M775 517V572" class="request"/><text x="795" y="547" class="legend">Live</text>
+
+  <rect x="70" y="572" width="380" height="154" rx="7" class="card"/>
+  <use href="#state" x="94" y="598" width="32" height="32"/><text x="145" y="620" class="name">Shared durable state</text>
+  <text x="94" y="652" class="detail">Claim operation / record dispatch intent</text>
+  <text x="94" y="678" class="detail">Coordinate duplicates and restarts</text>
+  <text x="94" y="704" class="detail">Reserve the secondary only once</text>
+  <rect x="550" y="572" width="450" height="154" rx="7" class="card"/>
+  <use href="#identity" x="574" y="611" width="34" height="34"/>
+  <text x="626" y="609" class="name">Primary attempt</text>
+  <text x="626" y="639" class="detail">Own token tenant, scope, and identity</text>
+  <text x="626" y="665" class="detail">Acquire credentials / build request</text>
+  <text x="626" y="691" class="detail">Record intent before dispatch</text>
+  <path d="M450 620H550" class="state-path"/><circle cx="500" cy="620" r="13" fill="#b46b00" class="badge"/><text x="500" y="625" class="number">2</text>
+  <rect x="1130" y="572" width="595" height="154" rx="7" class="card"/>
+  <use href="#api" x="1155" y="626" width="32" height="32"/>
+  <text x="1204" y="612" class="name">Primary provider account</text>
+  <text x="1204" y="645" class="detail">OAuth-authenticated SMS or voice request</text>
+  <text x="1204" y="674" class="detail">Interpret the provider's documented response</text>
+  <path d="M1000 619H1130" class="request"/><circle cx="1065" cy="619" r="13" fill="#266fc3" class="badge"/><text x="1065" y="624" class="number">3</text>
+  <path d="M1130 684H1000" class="response"/>
+  <path d="M775 726V773" class="request"/>
+
+  <path d="M775 773L925 830L775 887L625 830Z" fill="#fff" stroke="#a9b5c5" stroke-width="1.3"/>
+  <text x="775" y="837" class="name" text-anchor="middle">Primary outcome</text>
+  <rect x="70" y="782" width="380" height="106" rx="7" fill="#f7fcf8" stroke="#b3d4c0" stroke-width="1.2"/>
+  <use href="#check" x="94" y="818" width="32" height="32"/><text x="145" y="820" class="name">Return success</text>
+  <text x="145" y="850" class="detail">Nonce / no secondary send</text>
+  <path d="M625 830H450" class="response"/><text x="506" y="815" class="legend">Accepted</text>
+  <rect x="1130" y="770" width="595" height="139" rx="7" fill="#fff9f7" stroke="#dab8af" stroke-width="1.2"/>
+  <use href="#stop" x="1155" y="816" width="32" height="32"/><text x="1204" y="808" class="name">Stop without another send</text>
+  <text x="1204" y="839" class="detail">Block, invalid request, timeout, lost response,</text>
+  <text x="1204" y="865" class="detail">or unknown outcome. Investigate uncertain delivery.</text>
+  <path d="M925 830H1130" class="stop-path"/>
+  <path d="M775 887V966" class="request"/>
+  <text x="795" y="918" class="legend">Verified nonacceptance or</text>
+  <text x="795" y="940" class="legend">eligible pre-dispatch failure</text>
+
+  <rect x="550" y="966" width="450" height="106" rx="7" class="card"/>
+  <use href="#clock" x="574" y="1003" width="32" height="32"/><text x="626" y="1003" class="name">Check secondary eligibility</text>
+  <text x="626" y="1033" class="detail">Policy / time / atomic reservation</text>
+  <circle cx="535" cy="1019" r="13" fill="#b46b00" class="badge"/><text x="535" y="1024" class="number">4</text>
+  <path d="M1000 1019H1060V881H1130" class="stop-path"/><text x="1017" y="1003" class="legend">Denied</text>
+  <path d="M775 1072V1122" class="request"/><text x="795" y="1102" class="legend">Allowed</text>
+  <rect x="550" y="1122" width="450" height="106" rx="7" class="card"/>
+  <use href="#identity" x="574" y="1159" width="32" height="32"/><text x="626" y="1159" class="name">Secondary attempt</text>
+  <text x="626" y="1189" class="detail">Isolated account / one send attempt</text>
+  <rect x="1130" y="1122" width="595" height="106" rx="7" class="card"/>
+  <use href="#api" x="1155" y="1159" width="32" height="32"/><text x="1204" y="1159" class="name">Secondary provider account</text>
+  <text x="1204" y="1189" class="detail">Own OAuth context and configured channel URL</text>
+  <path d="M1000 1156H1130" class="request"/><circle cx="1065" cy="1156" r="13" fill="#266fc3" class="badge"/><text x="1065" y="1161" class="number">5</text>
+  <path d="M1130 1204H1000" class="response"/>
+  <rect x="70" y="1122" width="380" height="106" rx="7" class="card"/>
+  <use href="#reply" x="94" y="1159" width="32" height="32"/><text x="145" y="1159" class="name">Return the final result</text>
+  <text x="145" y="1189" class="detail">Record outcome / no further attempt</text>
+  <path d="M550 1175H450" class="request"/><circle cx="500" cy="1175" r="13" fill="#266fc3" class="badge"/><text x="500" y="1180" class="number">6</text>
+
+  <line x1="45" y1="1294" x2="1755" y2="1294" stroke="#c6ccd4"/>
+  <text x="45" y="1336" class="step"><tspan fill="#266fc3">01</tspan> Validate</text>
+  <text x="45" y="1367" class="note"><tspan x="45">Keep caller authentication,</tspan><tspan x="45" dy="23">decryption, and evaluation</tspan><tspan x="45" dy="23">ahead of provider work.</tspan></text>
+  <text x="335" y="1336" class="step"><tspan fill="#b46b00">02</tspan> Coordinate</text>
+  <text x="335" y="1367" class="note"><tspan x="335">Claim durable operation state.</tspan><tspan x="335" dy="23">If state is unavailable, stop</tspan><tspan x="335" dy="23">before a new send.</tspan></text>
+  <text x="625" y="1336" class="step"><tspan fill="#266fc3">03</tspan> Try the primary</text>
+  <text x="625" y="1367" class="note"><tspan x="625">Use account-specific OAuth.</tspan><tspan x="625" dy="23">Acceptance ends delivery;</tspan><tspan x="625" dy="23">uncertainty blocks resend.</tspan></text>
+  <text x="915" y="1336" class="step"><tspan fill="#b46b00">04</tspan> Apply policy</text>
+  <text x="915" y="1367" class="note"><tspan x="915">Require evidence, permission,</tspan><tspan x="915" dy="23">remaining time, and an atomic</tspan><tspan x="915" dy="23">secondary reservation.</tspan></text>
+  <text x="1205" y="1336" class="step"><tspan fill="#266fc3">05</tspan> Try the secondary</text>
+  <text x="1205" y="1367" class="note"><tspan x="1205">Use its own credential context.</tspan><tspan x="1205" dy="23">Record dispatch intent and</tspan><tspan x="1205" dy="23">make at most one attempt.</tspan></text>
+  <text x="1495" y="1336" class="step"><tspan fill="#266fc3">06</tspan> Complete</text>
+  <text x="1495" y="1367" class="note"><tspan x="1495">Return success only for</tspan><tspan x="1495" dy="23">recognized provider acceptance.</tspan><tspan x="1495" dy="23">Confirm recipient delivery.</tspan></text>
+</svg>
