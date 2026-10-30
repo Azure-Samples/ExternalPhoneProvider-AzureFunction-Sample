@@ -1,102 +1,33 @@
-# Deployment guide
-
-<a id="set-up-an-external-phone-provider-endpoint"></a>
+# Deploy an external phone provider endpoint
 
 [Documentation](README.md) | [Setup reference](../setup/docs/README.md) | [Troubleshooting](../setup/docs/Troubleshooting.md)
 
-**External Phone Provider (EPP)** connects Microsoft Entra ID to your phone provider for SMS
-and voice one-time passwords. This guide deploys one regional endpoint for that integration.
-
-| Step | Task |
-| --- | --- |
-| 1 | [Prepare access, tools, region, and budget](#1-get-ready) |
-| 2 | [Choose the endpoint application](#2-register-your-application) |
-| 3 | [Run guided setup](#3-run-guided-setup) |
-| 4 | [Connect the provider and test](#4-connect-your-provider-and-test) |
-| 5 | [Activate and hand over](#5-activate-and-hand-over) |
-
-Complete the steps in order. Portal labels can differ from the screenshots.
+Deploy one Azure Function endpoint that connects Microsoft Entra ID to **Infobip, Soprano, or
+Telesign** for SMS and voice. Complete these four steps in a test environment before live use.
 
 ## 1. Get ready
 
-Use a separate test environment with its own application registration and resource prefix.
+1. Review [Microsoft's telephony-provider guidance](https://learn.microsoft.com/entra/identity/authentication/concept-phone-providers)
+   and confirm provider availability, account access, channels, destinations, and pricing.
+2. Prepare a Microsoft Entra ID tenant, an Azure subscription, and an onboarding owner.
+3. Use **Azure Cloud Shell in PowerShell mode** or **PowerShell 7+** with Azure CLI installed.
+   Setup requires Azure CLI **2.60.0+ for Flex Consumption (FC1)** or **2.48.1+ for Premium (EP1)**.
+4. Arrange Azure deployment and role-assignment permissions and the required Microsoft Entra roles.
+   Setup needs a **Privileged Role Administrator** for its Microsoft Graph grant.
+   Activation is a separate task for an **Authentication Policy Administrator**.
+5. Check regional availability, quota, and the [cost estimate](COST-CALCULATOR.md).
 
-Before purchasing or deploying, confirm provider EPP access in
-[Microsoft Security Store](https://securitystore.microsoft.com/private-solutions) and arrange
-Microsoft's approved test and activation process. See
-[access and support](ONBOARDING.md#before-purchasing-or-deploying).
+See [prerequisites](../setup/docs/README.md#prerequisites) for the complete permissions and tools.
+Setup can install Bicep after confirmation.
 
-In Security Store, open **Private solutions** and select the approved subscription. Check
-[guided provider support](ONBOARDING.md#provider-credential-names).
+<a id="2-register-your-application"></a>
+<a id="2-let-guided-setup-create-your-application"></a>
+<a id="3-run-guided-setup"></a>
+<a id="3-download-and-run-the-setup-script"></a>
+## 2. Download and run the setup script
 
-Use the [cost estimate](COST-CALCULATOR.md), then confirm rates and fees with the provider.
-
-Prepare:
-
-- **Provider access:** confirm the selected integration, intended channels, account prerequisites,
-  and the approved onboarding route. Complete steps that do not require deployment-generated
-  identifiers; finish provider authentication in Step 4.
-- **Shell:** Azure Cloud Shell in PowerShell mode, or PowerShell 7+ with an Azure CLI user login.
-  Azure CLI 2.60.0+ is required for Flex Consumption (FC1), or 2.48.1+ for Premium (EP1).
-  Allow access to GitHub, Azure, Microsoft Graph, Key Vault, and the deployment endpoints.
-- **Administrators:** Azure deployment and role-assignment access, a Privileged Role Administrator
-  for setup, and an Authentication Policy Administrator for activation.
-- **Azure region and budget:** check availability and subscription quota for your chosen Linux
-  plan. Azure resources and provider services can incur charges.
-
-Check the [full prerequisites](../setup/docs/README.md#prerequisites-for-step-2). Setup can install
-Bicep, but not Azure CLI.
-
-Assign an **onboarding owner** and review [production readiness](../TECHNICAL.md#production-readiness).
-
-## 2. Register your application
-
-You can create the dedicated application during guided setup or register it manually.
-
-**Create during setup:** in Step 3, press Enter to choose **Create a new application**, then Enter to use
-**EPP Application** or enter your own display name, and choose a provider by name from the
-alphabetized list (**Infobip, Soprano, Telesign**). Blank provider-name input prompts again instead of
-canceling or selecting a default.
-Setup creates the registration only after you approve the final deployment plan.
-Canceling before approval creates no application. The signed-in user must be allowed to register
-applications in the customer tenant.
-
-**Register manually or use an existing dedicated app:** keep its tenant and application client
-IDs handy. To register manually, open the customer tenant's
-**Microsoft Entra admin center > App registrations > New registration**:
-
-1. Give the application a recognizable name.
-2. Select **Accounts in this organizational directory only**. Leave the redirect URI blank,
-   then select **Register**. Setup will make the app organizational multitenant and restrict
-   its allowed tenants after you approve the deployment plan.
-3. On **Overview**, save the **Directory (tenant) ID** and **Application (client) ID** privately.
-   Use the client ID, not the Object ID.
-
-![App registration form with CYOT-CONSTO, the test directory, Single tenant only selected, and no redirect URI](images/onboarding/app-registration.png)
-
-*Some portal versions label the account type **Single tenant only**. Select the customer directory.
-The CYOT-CONSTO example above uses a nonproduction test directory.*
-
-Use these labels to find the IDs:
-
-![CYOT-CONSTO App registration Overview with Application client ID and Directory tenant ID identified for setup and Object ID marked DO NOT USE](images/onboarding/app-registration-overview.png)
-
-*Use **Application (client) ID** for `-ApplicationId` and **Directory (tenant) ID** for `-TenantId`.
-The **Object ID** is not either of these setup inputs. All ID values are hidden in this example.*
-
-Do not add a client secret, redirect URI, EPP app role, or Microsoft Graph application permission
-manually. Setup reviews and applies its required application and enterprise-application changes
-only after deployment approval.
-See [application registration details](../setup/docs/README.md#step-1---manually-create-the-application).
-
-Keep the Azure subscription ID handy. The [setup values worksheet](ONBOARDING.md#inputs-you-supply-to-setup)
-lists every input. Use a new app and prefix for an independent endpoint. After the app exists,
-complete provider onboarding steps that require its application client ID; for setup-created
-applications, that ID becomes available after deployment approval.
-
-## 3. Run guided setup
-
-After the checks above, open **PowerShell 7** in a private working folder and download the script:
+First confirm the [required access and tools](#1-get-ready).
+Open PowerShell in a private working folder and download the launcher:
 
 ```powershell
 Invoke-WebRequest `
@@ -110,160 +41,119 @@ Review the downloaded script, then run it:
 .\Setup-Epp.ps1
 ```
 
-![Azure Cloud Shell in PowerShell mode downloading and starting setup for CYOT-CONSTO](images/onboarding/cloud-shell-run-setup.svg)
-
-*This CYOT-CONSTO nonproduction walkthrough keeps the recognizable application name and shell path visible.
-Only the tenant ID is hidden. Review the downloaded script before running it.*
-
-On a shared workstation, use `.\Setup-Epp.ps1 -ForceAuthentication` for a fresh sign-in.
-
-JavaScript is used by default, without a language prompt. To deploy another language, run
+JavaScript is the default. To choose another runtime, use
 `.\Setup-Epp.ps1 -Language csharp` or `.\Setup-Epp.ps1 -Language python`.
+On a shared workstation, add `-ForceAuthentication` for a fresh sign-in.
 
-Select the tenant and subscription, then select an existing application, enter its **client ID**,
-or choose **Create a new application** and accept **EPP Application** or enter your own display name.
-Enter accepts the displayed menu default rather than canceling: the current CLI tenant/subscription
-when eligible (otherwise the first eligible option), and **Create a new application** for the app.
-Use **0** or **Cancel** where offered to stop.
-Setup detects the tenant's replication scope and selects the corresponding provider route;
-it does not ask you to choose EU or Global. Select the Azure region, then complete the remaining settings:
+![Illustrative PowerShell session downloading, reviewing, and starting Setup-Epp.ps1](images/onboarding/cloud-shell-run-setup.png)
 
-- **Azure region:** EU tenants receive recommendations within the EU Data Boundary (EU/EFTA).
-  Enter selects the first displayed region.
-  Other tenants retain the existing Azure-recommended shortlist. All-region and manual selection,
-  including `-Location`, remain available; EU tenants receive a warning for an out-of-boundary or
-  unverifiable choice. Recommendations are not a data-residency or GDPR compliance guarantee.
-- **Provider:** enter or confirm the provider by name. New applications show all guided providers
-  in alphabetical order, with no default selection. Setup downloads the language's matching
-  ZIP from a stable release and verifies it against `SHA256SUMS.txt`.
-- **Hosting:** Enter defaults to FC1, which can scale to zero and cold-start. EP1 has paid warm capacity. Review
-  [plan details](../setup/docs/README.md#service-plan-selection) and the [cost estimate](COST-CALCULATOR.md).
-- **Resource prefix:** press Enter to use `epp`, or enter 2-8 lowercase letters/digits, starting
-  with a letter. When rerunning an existing deployment, use its original prefix.
+Complete the prompts:
 
-![Azure Cloud Shell shows the CYOT-CONSTO provider, platform, hosting plan, and resource prefix choices](images/onboarding/cloud-shell-choose-options.svg)
+| Choice | Guidance |
+| --- | --- |
+| Tenant and subscription | Select the customer environment prepared in Step 1. |
+| Application | Choose **Create a new application** and accept **EPP Application** or enter your own name. For a rerun, select the existing application. |
+| Azure region | Choose an available region that meets your organization's requirements. EU tenants receive EU Data Boundary recommendations. |
+| Provider | Enter **Infobip**, **Soprano**, or **Telesign**. |
+| Hosting plan | **FC1** is the default and can scale to zero. **EP1** maintains paid warm capacity. See [plan details](../setup/docs/README.md#service-plan-selection). |
+| Resource prefix | Use 2-8 lowercase letters or digits, starting with a letter. The default is `epp`. |
 
-*The walkthrough selected Telesign Global routing, Node.js, Flex Consumption FC1, and the
-`consto` resource prefix. These are example choices, not recommendations for every deployment.*
+Setup detects **EU or Global provider routing** from the tenant and configures both channels.
+It downloads the runtime's release package and verifies its checksum.
 
-Complete required sign-in, MFA, or administrator consent. Resolve preflight errors before approval.
+![Example selections using Telesign, tenant-detected Global routing, JavaScript, FC1, and a contoso prefix](images/onboarding/cloud-shell-choose-options.png)
 
-For existing encryption credentials, follow
-[certificate selection](../setup/docs/README.md#encryption-certificate-selection).
-**Enter defaults to replacing all registered encryption credentials with one new certificate.**
-Select **Reuse** explicitly to keep a certificate. Coordinate changes across every endpoint
-sharing the application; no cleanup or creation occurs before final deployment approval.
+*Example choices. The prompts depend on your selected tenant and application.*
 
-**Review the deployment plan before typing `Yes` or `Y`.** Check accounts, region, provider URLs,
-runtime, plan, resource names, permissions, certificate key IDs, and vault access.
-The plan includes Microsoft Graph `Application.Read.All` for the Microsoft phone-provider service
-principal. `No`, `N`, or Enter cancels. Responses are case-insensitive.
+> [!IMPORTANT]
+> If the application already has encryption certificates, **Replace is the default**.
+> Select **Reuse** explicitly to keep the current certificate. Replacement affects every endpoint
+> sharing the application. Review [certificate selection](../setup/docs/README.md#encryption-certificate-selection)
+> before proceeding.
 
-For a new application, the plan shows its display name and resource-name patterns containing
-`<app-id-hash>`. After approval, setup creates the registration, uses its real client ID to
-calculate the final names, and checks resource ownership before Azure deployment. It prints the
-new client ID and saves `application-<client-id>.json` in `epp-output` for recovery. If deployment
-then fails, reuse that client ID with `-ApplicationId` and the same prefix; do not create another app.
-The registration record is not a successful deployment summary.
+Review the deployment plan, including the accounts, region, provider URLs, resource names,
+permissions, and certificate action. Enter **Yes** or **Y** to deploy. Enter **No**, **N**, or
+press Enter to cancel.
 
-**Plan review:** run interactively and choose **No** at the final prompt. See
-[plan review](../setup/docs/README.md#reviewing-the-plan-without-deploying).
+If you chose a new application, the plan shows its display name and resource-name patterns.
+After approval, setup prints the new client ID and resolved resource names.
+For an existing deployment, use its original application client ID and resource prefix.
 
-Azure resource deployment and Function publication can each take several minutes. Keep the session
-open; a rotating indicator identifies the operation in progress, without a percentage or estimated
-completion time. Unattended or redirected output uses static status messages instead.
+Keep the session open until setup reports **Deployment completed successfully** and saves the
+deployment summary. Retain the private `epp-output` folder, especially when using an ephemeral
+Cloud Shell session. You need the summary's **endpoint URL** and **application client ID** later.
 
-Wait for **Deployment completed successfully** and the saved summary before Step 4. Setup creates or updates
-the Function App, hosting plan, storage, Key Vault, identities, Log Analytics, Application
-Insights, diagnostics, Easy Auth, and scoped role assignments. Do not precreate these resources.
-**Save the output: the endpoint URL and Application (client) ID are required for policy updates.**
-Keep `epp-output` private. Its [summary](../setup/docs/README.md#read-the-deployment-summary)
-records the selected tenant, subscription, provider route, runtime, plan, resource names, endpoint,
-application, package provenance, and encryption certificate references. No private key is downloaded.
-Cloud Shell sessions are ephemeral, so securely download or otherwise retain the private
-`epp-output` deployment summary and public certificate before closing the session.
+![Illustrative deployment completion summary highlighting the endpoint URL, application client ID, saved JSON, and next steps](images/onboarding/cloud-shell-deployment-complete.png)
 
-![Azure Cloud Shell deployment completion summary showing the CYOT-CONSTO resources and hidden endpoint](images/onboarding/cloud-shell-deployment-complete.svg)
+To retain the handoff information:
 
-*The nonproduction CYOT-CONSTO resource names are shown so readers can recognize the naming
-pattern. The endpoint is hidden, and the full deployment summary remains private.*
+1. Open the saved `deployment-*.json` and verify the tenant, subscription, provider, and resource names.
+2. Record `endpointUrl`, `applicationId`, `encryptionKeyId`, and `certificateExpiresUtc`.
+3. Retain the summary and public `.cer` file in restricted operational storage.
+4. In an ephemeral Cloud Shell session, use its file-download controls to save these files before
+   closing the session.
 
-Setup verifies the private-key reference and **Easy Auth** before opening public access. Keep
-Easy Auth enabled. It also verifies that `SendOtp` is registered before reporting success. If setup
-fails, use the
-[troubleshooting guide](../setup/docs/Troubleshooting.md) rather than deleting resources and starting over.
+To find the created application later, open **Microsoft Entra admin center** > **App registrations**,
+select the application, and open **Overview**. Use its **Application (client) ID**, not the Object ID.
 
-To find the deployed resources, open **Azure portal > Resource groups** and select the group
-listed in your deployment summary.
+![Application Overview identifying the client ID and tenant ID saved by setup](images/onboarding/app-registration-overview.png)
 
-![CYOT-CONSTO regional resource group showing the consto Function App, monitoring, Key Vault, managed identity, FC1 hosting plan, and storage](images/onboarding/resource-group.png)
+Setup creates the Function App, hosting plan, storage, Key Vault, identities, and monitoring
+resources. It verifies the encryption-key reference, Easy Auth, and Function registration.
+Find the resources in the resource group recorded in the summary:
 
-*This FC1 nonproduction deployment shows the actual CYOT-CONSTO resource names. Your list can differ.*
+![Example resource group containing the Function App, hosting plan, storage, Key Vault, identity, and monitoring resources](images/onboarding/resource-group.png)
 
-## 4. Connect your provider and test
+If setup fails after creating an application, reuse the client ID from
+`application-<client-id>.json` and the original resource prefix. Follow
+[safe recovery](../setup/docs/Troubleshooting.md#recover-without-destructive-cleanup)
+instead of creating another app or deleting resources.
 
-Next, complete [provider authentication](ONBOARDING.md#complete-provider-authentication).
-API-key integrations use the
-[setup-created vault and exact secret names](ONBOARDING.md#where-to-enter-api-key-credentials-in-key-vault).
-OAuth uses the provider-administrator handoff, not API-key secrets.
-Keep credentials out of source, screenshots, and shared logs.
+<a id="4-connect-your-provider-and-test"></a>
+## 3. Connect your provider and test
 
-In your Function App, open **Settings > Authentication**. Check that authentication is
-**Enabled**, access is set to **Require authentication**, and unauthenticated requests receive
-**HTTP 401 Unauthorized**. These are checks, not instructions to change the approved caller.
+1. Complete [provider OAuth authorization](ONBOARDING.md#complete-provider-authentication).
+   Setup configures the customer-side federation; your provider authorizes the customer
+   application and account.
+2. In the Function App, open **Settings** > **Authentication**. Confirm that authentication is
+   enabled, access requires authentication, and unauthenticated requests return **HTTP 401**.
+3. Use the authorized Microsoft caller and the test procedure provided for your tenant to run
+   the [endpoint checks](ONBOARDING.md#validate-the-deployed-endpoint).
+4. Confirm caller rejection and successful **evaluation** before running a controlled live test
+   for each intended channel.
+5. Confirm provider acceptance, recipient delivery, and [request telemetry](MONITORING.md)
+   separately.
 
-![CYOT-CONSTO Function Authentication page showing Enabled, Require authentication, and Return HTTP 401 Unauthorized](images/onboarding/authentication.png)
+![Function Authentication page with authentication enabled, required access, and HTTP 401 for unauthenticated requests](images/onboarding/authentication.png)
 
-*The Function and identity-provider labels remain visible. Only the client ID is hidden. The
-**Microsoft Entra ID** identity provider validates the caller; it is not the SMS or voice provider.*
+Keep Easy Auth enabled. An ordinary Azure CLI token is not the authorized Microsoft caller.
+Evaluation checks authentication and decryption without sending a message.
+For live requests, `200` means provider acceptance. Investigate timeouts before retrying because
+the provider might already have accepted the request.
 
-Complete the [approved endpoint checks](ONBOARDING.md#validate-the-deployed-endpoint):
+<a id="5-activate-and-hand-over"></a>
+## 4. Activate and hand over
 
-1. Confirm that missing or unauthorized caller credentials are rejected.
-2. Run an authorized **evaluation** to check authentication and decryption without a provider send.
-3. If the approved pre-activation procedure requires it, run one controlled **live test for each
-   channel you intend to activate** and confirm provider acceptance and recipient delivery separately.
-4. Check that the request and relevant logs appear in Application Insights.
+Have the policy administrator follow the
+[activation guidance](../setup/docs/README.md#activate-the-endpoint) for your tenant.
+Use the endpoint URL and application client ID from the saved deployment summary:
 
-Use Microsoft's approved caller and test procedure for these checks. An ordinary Azure CLI token
-cannot represent that caller. Activate the endpoint after every required check passes. If a live
-send times out, investigate its outcome before trying again because the provider may already have
-accepted it. Retain only safe evidence: resource IDs, UTC times, status, latency, correlation IDs,
-and sanitized outcomes.
+1. Save the current SMS or voice policy and its targeting.
+2. [Configure evaluation in Graph Explorer](../setup/docs/README.md#configure-evaluation-in-graph-explorer)
+   using `telecomProviderSettings`.
+3. Read back the saved policy and verify the endpoint, app ID, evaluation flag, and percentage.
+4. Check evaluation telemetry, then [roll out live traffic](../setup/docs/README.md#evaluation-and-percentage-rollout)
+   in agreed increments with controlled delivery checks.
+5. Restore the previous policy if readback or delivery checks fail.
 
-## 5. Activate and hand over
+SMS and voice can use the same endpoint. Repeat policy configuration and validation for each channel.
 
-Have an **Authentication Policy Administrator** follow the
-[supported Graph Explorer activation procedure](../setup/docs/README.md#step-3---manually-validate-and-activate-policy):
+Before handing over:
 
-1. Verify Graph Explorer shows the deployment summary's tenant, select **beta** and the approved
-   SMS or voice endpoint, then consent only to `Policy.ReadWrite.AuthenticationMethod`.
-2. GET and save the current policy before changing it. Preserve its state, targeting, and unrelated
-   properties; when the approved procedure changes targeting, use its dedicated pilot group.
-3. PATCH only the exact EPP changes and field locations in Microsoft's current approved procedure.
-   Include the documented `@odata.type`; do not construct an EPP payload from this repository.
-4. Expect `204 No Content`, immediately GET the policy again, and compare the approved EPP values
-   and every preserved setting with the saved snapshot.
-5. Test the pilot in evaluation first, then perform a separately authorized controlled live
-   delivery. Restore the saved prior policy if policy readback, evaluation, or delivery fails.
-
-Repeat for each authentication method you intend to enable. SMS and voice can share the same
-Function endpoint URL and application client ID. No additional setup run is needed for the second channel.
-
-Before handing over, confirm:
-
-- [ ] Provider authentication, authorized testing, and recipient delivery are verified.
-- [ ] Policy is backed up, read back after activation, and checked through the pilot, with a
-  [rollback plan](../setup/docs/README.md#rollback-and-decommissioning).
-- [ ] [Monitoring and alert notifications](MONITORING.md) work for your chosen runtime.
-- [ ] Owners are assigned for provider credentials, [certificate renewal](../setup/docs/README.md#encryption-certificate-lifecycle),
+- Save the previous policy and agree on a [rollback procedure](../setup/docs/README.md#rollback-and-decommissioning).
+- Confirm evaluation, controlled live delivery, and policy readback.
+- Create and test [alerts and notifications](MONITORING.md#alerts).
+- Assign owners for provider access, [certificate renewal](../setup/docs/README.md#encryption-certificate-lifecycle),
   support, and costs.
 
-Setup creates telemetry resources, **not alert rules or renewal notifications**.
-Keep the deployment summary and validation evidence in restricted storage.
-Deleting Azure resources does not undo an authentication policy change.
-
-## Find more detail
-
-Use the [task-based documentation index](README.md) for operations, developer references,
-and advanced topics. For a failed step, go directly to [troubleshooting](../setup/docs/Troubleshooting.md).
+Keep the deployment summary, policy snapshots, and safe validation evidence in restricted storage.

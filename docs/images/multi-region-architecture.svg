@@ -1,0 +1,195 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1440" viewBox="0 0 1800 1440" role="img" aria-labelledby="title description">
+  <title id="title">Multi-region external phone provider architecture with Azure Front Door</title>
+  <desc id="description">Microsoft Entra ID calls one Front Door endpoint. Front Door preserves caller authorization and selects an eligible regional origin. Each regional Function uses the same Easy Auth policy and encryption certificate, with its own Key Vault, OAuth identity, storage, and monitoring. Both origins call the same phone provider. Each surviving region must handle the complete peak workload.</desc>
+  <metadata>Microsoft Azure and Entra architecture icons used for documentation under their permitted-use terms: https://learn.microsoft.com/azure/architecture/icons/ and https://learn.microsoft.com/entra/architecture/architecture-icons . Product artwork is embedded unchanged.</metadata>
+  <defs>
+    <marker id="request-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L12 6L0 12Z" fill="#266fc3"/></marker>
+    <marker id="response-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L12 6L0 12Z" fill="#00854a"/></marker>
+    <marker id="credential-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L12 6L0 12Z" fill="#b46b00"/></marker>
+    <marker id="telemetry-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L12 6L0 12Z" fill="#8b929b"/></marker>
+    <symbol id="entra" viewBox="0 0 32 32"><image data-icon="entra" width="32" height="32" href="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyBpZD0idXVpZC1mOGQ0ZDM5Mi03YzEyLTRiZDktYmFmZi02NmZiZjc4MTRiOTEiIGRhdGEtbmFtZT0iTGF5ZXIgMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAxOCAxOCI+CiAgPHBhdGggZD0ibTMuODAyLDE0LjAzMmMuMzg4LjI0MiwxLjAzMy41MTEsMS43MTUuNTExLjYyMSwwLDEuMTk4LS4xOCwxLjY3Ni0uNDg3LDAsMCwuMDAxLDAsLjAwMi0uMDAxbDEuODA1LTEuMTI4djQuMDczYy0uMjg2LDAtLjU3NC0uMDc4LS44MjQtLjIzNGwtNC4zNzQtMi43MzRaIiBmaWxsPSIjMjI1MDg2Ii8+CiAgPHBhdGggZD0ibTcuODUzLDEuNTA3TC4zNTMsOS45NjdjLS41NzkuNjU0LS40MjgsMS42NDIuMzIzLDIuMTExLDAsMCwyLjc3NiwxLjczNSwzLjEyNiwxLjk1NC4zODguMjQyLDEuMDMzLjUxMSwxLjcxNS41MTEuNjIxLDAsMS4xOTgtLjE4LDEuNjc2LS40ODcsMCwwLC4wMDEsMCwuMDAyLS4wMDFsMS44MDUtMS4xMjgtNC4zNjQtMi43MjgsNC4zNjUtNC45MjRWMXMwLDAsMCwwYy0uNDI0LDAtLjg0Ny4xNjktMS4xNDcuNTA3WiIgZmlsbD0iIzZkZiIvPgogIDxwb2x5Z29uIHBvaW50cz0iNC42MzYgMTAuMTk5IDQuNjg4IDEwLjIzMSA5IDEyLjkyNyA5LjAwMSAxMi45MjcgOS4wMDEgMTIuOTI3IDkuMDAxIDUuMjc2IDkgNS4yNzUgNC42MzYgMTAuMTk5IiBmaWxsPSIjY2JmOGZmIi8+CiAgPHBhdGggZD0ibTE3LjMyNCwxMi4wNzhjLjc1MS0uNDY5LjkwMi0xLjQ1Ny4zMjMtMi4xMTFsLTQuOTIxLTUuNTUxYy0uMzk3LS4xODUtLjg0Mi0uMjkxLTEuMzEzLS4yOTEtLjkyNSwwLTEuNzUyLjM5OS0yLjMwMiwxLjAyNmwtLjEwOS4xMjNoMHM0LjM2NCw0LjkyNCw0LjM2NCw0LjkyNGgwczAsMCwwLDBsLTQuMzY1LDIuNzI4djQuMDczYy4yODcsMCwuNTczLS4wNzguODIzLS4yMzRsNy41LTQuNjg4WiIgZmlsbD0iIzA3NDc5MyIvPgogIDxwYXRoIGQ9Im05LjAwMSwxdjQuMjc1cy4xMDktLjEyMy4xMDktLjEyM2MuNTUtLjYyNywxLjM3Ny0xLjAyNiwyLjMwMi0xLjAyNi40NzIsMCwuOTE2LjEwNywxLjMxMy4yOTFsLTIuNTc5LTIuOTA5Yy0uMjk5LS4zMzgtLjcyMy0uNTA3LTEuMTQ2LS41MDdaIiBmaWxsPSIjMDI5NGU0Ii8+CiAgPHBvbHlnb24gcG9pbnRzPSIxMy4zNjUgMTAuMTk5IDEzLjM2NSAxMC4xOTkgMTMuMzY1IDEwLjE5OSA5LjAwMSA1LjI3NiA5LjAwMSAxMi45MjYgMTMuMzY1IDEwLjE5OSIgZmlsbD0iIzk2YmNjMiIvPgo8L3N2Zz4="/></symbol>
+    <symbol id="function" viewBox="0 0 32 32"><image data-icon="function" width="32" height="32" href="data:image/svg+xml;base64,PHN2ZyBpZD0iYTJjODgzMDYtZmEwMy00ZTViLWIxOTItNDAxZjBiNzc4MDhiIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImI0MDNhY2E3LWYzODctNDQzNC05NmI0LWFlMTU3ZWRjODM1ZiIgeDE9Ii0xNzUuOTkzIiB5MT0iLTM0My43MjMiIHgyPSItMTc1Ljk5MyIgeTI9Ii0zNTkuMjMyIiBncmFkaWVudFRyYW5zZm9ybT0idHJhbnNsYXRlKDIxMi41NzMgMzcwLjU0OCkgc2NhbGUoMS4xNTYgMS4wMjkpIiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmVhMTFiIiAvPjxzdG9wIG9mZnNldD0iMC4yODQiIHN0b3AtY29sb3I9IiNmZWE1MWEiIC8+PHN0b3Agb2Zmc2V0PSIwLjU0NyIgc3RvcC1jb2xvcj0iI2ZlYjAxOCIgLz48c3RvcCBvZmZzZXQ9IjAuOCIgc3RvcC1jb2xvcj0iI2ZmYzMxNCIgLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNmZmQ3MGYiIC8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHRpdGxlPkljb24tY29tcHV0ZS0yOTwvdGl0bGU+PGc+PHBhdGggZD0iTTIuMzcsNy40NzVIMy4yYS4yNjcuMjY3LDAsMCwxLC4yNjcuMjY3djYuMTQ4YS41MzMuNTMzLDAsMCwxLS41MzMuNTMzSDIuMWEwLDAsMCwwLDEsMCwwVjcuNzQxYS4yNjcuMjY3LDAsMCwxLC4yNjctLjI2N1oiIHRyYW5zZm9ybT0idHJhbnNsYXRlKDEyLjUwNyAxNi43MDUpIHJvdGF0ZSgxMzQuOTE5KSIgZmlsbD0iIzUwZTZmZiIgLz48cGF0aCBkPSJNMi4zMjUsMy42aC44MzNhLjI2Ny4yNjcsMCwwLDEsLjI2Ny4yNjd2Ni41ODNhMCwwLDAsMCwxLDAsMEgyLjU5MWEuNTMzLjUzMywwLDAsMS0uNTMzLS41MzNWMy44NjVBLjI2Ny4yNjcsMCwwLDEsMi4zMjUsMy42WiIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoNS43NTkgMC4xMTQpIHJvdGF0ZSg0NC45MTkpIiBmaWxsPSIjMTQ5MGRmIiAvPjwvZz48Zz48cGF0aCBkPSJNMTQuNTMsNy40NzVoLjgzM2EuNTMzLjUzMywwLDAsMSwuNTMzLjUzM3Y2LjE0OGEuMjY3LjI2NywwLDAsMS0uMjY3LjI2N0gxNC44YS4yNjcuMjY3LDAsMCwxLS4yNjctLjI2N1Y3LjQ3NWEwLDAsMCwwLDEsMCwwWiIgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMTIuMjIzIC03LjU1NSkgcm90YXRlKDQ1LjA4MSkiIGZpbGw9IiM1MGU2ZmYiIC8+PHBhdGggZD0iTTE1LjEwOCwzLjZoLjgzM2EwLDAsMCwwLDEsMCwwdjYuNTgzYS4yNjcuMjY3LDAsMCwxLS4yNjcuMjY3aC0uODMzYS4yNjcuMjY3LDAsMCwxLS4yNjctLjI2N1Y0LjEzMWEuNTMzLjUzMywwLDAsMSwuNTMzLS41MzNaIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgzMS4wMjIgMS4yMjIpIHJvdGF0ZSgxMzUuMDgxKSIgZmlsbD0iIzE0OTBkZiIgLz48L2c+PHBhdGggZD0iTTguNDU5LDkuOUg0Ljg3YS4xOTMuMTkzLDAsMCwxLS4yLS4xODEuMTY2LjE2NiwwLDAsMSwuMDE4LS4wNzVMOC45OTEsMS4xM2EuMjA2LjIwNiwwLDAsMSwuMTg2LS4xMDZoNC4yNDVhLjE5My4xOTMsMCwwLDEsLjIuMTgxLjE2NS4xNjUsMCwwLDEtLjAzNS4xTDguNTM0LDcuOTY2aDQuOTI4YS4xOTMuMTkzLDAsMCwxLC4yLjE4MS4xNzYuMTc2LDAsMCwxLS4wNTIuMTIyTDUuNDIxLDE2Ljc4OGMtLjA3Ny4wNDYtLjYyNC41LS4zNTYtLjE4OWgwWiIgZmlsbD0idXJsKCNiNDAzYWNhNy1mMzg3LTQ0MzQtOTZiNC1hZTE1N2VkYzgzNWYpIiAvPjwvc3ZnPg=="/></symbol>
+    <symbol id="vault" viewBox="0 0 32 32"><image data-icon="vault" width="32" height="32" href="data:image/svg+xml;base64,PHN2ZyBpZD0iYmM5MzE2OWEtMjRjNC00Njg2LTlmMzctYzdlNGY1M2IzZDM0IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48cmFkaWFsR3JhZGllbnQgaWQ9ImZiMTE0YzkzLTdjMTYtNDU0MC04OTlhLTA3OTYwNDE2MjllNiIgY3g9IjkiIGN5PSI5IiByPSI4LjUiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj48c3RvcCBvZmZzZXQ9IjAuMTgiIHN0b3AtY29sb3I9IiM1ZWEwZWYiIC8+PHN0b3Agb2Zmc2V0PSIwLjU2IiBzdG9wLWNvbG9yPSIjNWM5ZmVlIiAvPjxzdG9wIG9mZnNldD0iMC42OSIgc3RvcC1jb2xvcj0iIzU1OWNlZCIgLz48c3RvcCBvZmZzZXQ9IjAuNzgiIHN0b3AtY29sb3I9IiM0YTk3ZTkiIC8+PHN0b3Agb2Zmc2V0PSIwLjg2IiBzdG9wLWNvbG9yPSIjMzk5MGU0IiAvPjxzdG9wIG9mZnNldD0iMC45MyIgc3RvcC1jb2xvcj0iIzIzODdkZSIgLz48c3RvcCBvZmZzZXQ9IjAuOTkiIHN0b3AtY29sb3I9IiMwODdiZDYiIC8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMDA3OGQ0IiAvPjwvcmFkaWFsR3JhZGllbnQ+PHJhZGlhbEdyYWRpZW50IGlkPSJlYzQ3OGJkMy01YjM4LTRlN2YtYjY2MS0xMWYzNTU1NzhiZmYiIGN4PSIzOC45NSIgY3k9IjE4Mi4wNyIgcj0iOS44OCIgZ3JhZGllbnRUcmFuc2Zvcm09InRyYW5zbGF0ZSgtMjguNzEgLTE2My4yNCkgc2NhbGUoMC45NCAwLjk0KSIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iMC4yNyIgc3RvcC1jb2xvcj0iI2ZmZDcwZiIgLz48c3RvcCBvZmZzZXQ9IjAuNDkiIHN0b3AtY29sb3I9IiNmZmNiMTIiIC8+PHN0b3Agb2Zmc2V0PSIwLjg4IiBzdG9wLWNvbG9yPSIjZmVhYzE5IiAvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI2ZlYTExYiIgLz48L3JhZGlhbEdyYWRpZW50PjwvZGVmcz48dGl0bGU+SWNvbi1zZWN1cml0eS0yNDU8L3RpdGxlPjxwYXRoIGlkPSJhYWNmODMxMS1hMzE3LTQwMGYtYjYxMy03NGJkMDBkYTVjZTMiIGQ9Ik05LC41QTguNSw4LjUsMCwxLDAsMTcuNSw5LDguNTEsOC41MSwwLDAsMCw5LC41Wk05LDE2LjM0QTcuMzQsNy4zNCwwLDEsMSwxNi4zNCw5LDcuMzQsNy4zNCwwLDAsMSw5LDE2LjM0WiIgZmlsbD0idXJsKCNmYjExNGM5My03YzE2LTQ1NDAtODk5YS0wNzk2MDQxNjI5ZTYpIiAvPjxjaXJjbGUgY3g9IjkiIGN5PSI5IiByPSI3LjM0IiBmaWxsPSIjZmZmIiAvPjxnPjxwYXRoIGlkPSJiZDk4M2M0MS1kYjczLTQwZWMtYTRmNC1kYTEyMTNmYzk5MjQiIGQ9Ik0xMy40NCw3LjMzYTEuODQsMS44NCwwLDAsMCwwLTIuNTloMEwxMC4yOSwxLjU4YTEuODMsMS44MywwLDAsMC0yLjU4LDBoMEw0LjU2LDQuNzRhMS44NCwxLjg0LDAsMCwwLDAsMi41OUw3LjE4LDEwYS41MS41MSwwLDAsMSwuMTUuMzZ2NC44OGEuNjMuNjMsMCwwLDAsLjE4LjQ0bDEuMiwxLjJhLjQxLjQxLDAsMCwwLC41OCwwbDEuMTYtMS4xNmgwbC42OC0uNjhhLjI1LjI1LDAsMCwwLDAtLjM0bC0uNDktLjQ5YS4yNy4yNywwLDAsMSwwLS4zN2wuNDktLjQ5YS4yNS4yNSwwLDAsMCwwLS4zNGwtLjQ5LS40OWEuMjcuMjcsMCwwLDEsMC0uMzdsLjQ5LS40OWEuMjUuMjUsMCwwLDAsMC0uMzRsLS42OC0uNjl2LS4yNVpNOSwyLjM1QTEsMSwwLDAsMSw5LDQuNDIsMSwxLDAsMSwxLDksMi4zNVoiIGZpbGw9InVybCgjZWM0NzhiZDMtNWIzOC00ZTdmLWI2NjEtMTFmMzU1NTc4YmZmKSIgLz48cGF0aCBpZD0iYWQyZTdlNDQtOWJmZC00Nzc1LThiZjQtOGVmMjZhNTQ0OTIxIiBkPSJNOC4xOCwxNS4zaDBhLjIzLjIzLDAsMCwwLC4zOC0uMTd2LTRhLjI0LjI0LDAsMCwwLS4xMS0uMmgwYS4yMi4yMiwwLDAsMC0uMzQuMnY0QS4yOC4yOCwwLDAsMCw4LjE4LDE1LjNaIiBmaWxsPSIjZmY5MzAwIiBvcGFjaXR5PSIwLjc1IiAvPjxyZWN0IGlkPSJhOTk2ZmJmZi0zOTM2LTRiMjQtYjQwNy0zNjkzMzZjMTQzYmEiIHg9IjYuNDgiIHk9IjUuNzkiIHdpZHRoPSI1LjE3IiBoZWlnaHQ9IjAuNjEiIHJ4PSIwLjI4IiBmaWxsPSIjZmY5MzAwIiBvcGFjaXR5PSIwLjc1IiAvPjxyZWN0IGlkPSJiYjEyZDMxYy0zMzUyLTRhMTgtODdkZC1hMTY5YTRhODcyMWQiIHg9IjYuNDgiIHk9IjYuNzgiIHdpZHRoPSI1LjE3IiBoZWlnaHQ9IjAuNjEiIHJ4PSIwLjI4IiBmaWxsPSIjZmY5MzAwIiBvcGFjaXR5PSIwLjc1IiAvPjwvZz48L3N2Zz4="/></symbol>
+    <symbol id="identity" viewBox="0 0 32 32"><image data-icon="identity" width="32" height="32" href="data:image/svg+xml;base64,PHN2ZyBpZD0iZjgwN2NkZGUtMThmMi00NTc0LWJhMTQtZjBiMWVlZjk0YTRhIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImJiNjdiMTU0LWFmOGYtNGE1My1hOWNlLWFhMDQ2YjkzOThlOSIgeDE9IjEzLjE4IiB5MT0iMTMuMDEiIHgyPSI4LjYzIiB5Mj0iNC4zOCIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iIzE5ODhkOSIgLz48c3RvcCBvZmZzZXQ9IjAuOSIgc3RvcC1jb2xvcj0iIzU0YWVmMCIgLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iYTQ3ZDcxMzgtMDg0YS00NzFkLThkNjMtNzQ0ZTc1YjllOGEzIiB4MT0iMTEuMjIiIHkxPSIxMC41IiB4Mj0iMTQuMzciIHkyPSIxNS45MyIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iMC4xIiBzdG9wLWNvbG9yPSIjNTRhZWYwIiAvPjxzdG9wIG9mZnNldD0iMC4yOSIgc3RvcC1jb2xvcj0iIzRmYWJlZSIgLz48c3RvcCBvZmZzZXQ9IjAuNTEiIHN0b3AtY29sb3I9IiM0MWEyZTkiIC8+PHN0b3Agb2Zmc2V0PSIwLjc0IiBzdG9wLWNvbG9yPSIjMmE5M2UwIiAvPjxzdG9wIG9mZnNldD0iMC44OCIgc3RvcC1jb2xvcj0iIzE5ODhkOSIgLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48dGl0bGU+SWNvbi1pZGVudGl0eS0yMjc8L3RpdGxlPjxnPjxwb2x5Z29uIHBvaW50cz0iMS4xNSAxMC4yMiA4LjkzIDE1LjI3IDE2Ljg1IDEwLjIxIDE3Ljg1IDExLjM2IDguOTMgMTcuMTEgMC4xNSAxMS4zNyAxLjE1IDEwLjIyIiBmaWxsPSIjNTBlNmZmIiAvPjxwb2x5Z29uIHBvaW50cz0iMS43MyA5LjU4IDguOTMgMSAxNi4yOCA5LjU5IDguOTMgMTQuMjMgMS43MyA5LjU4IiBmaWxsPSIjZmZmIiAvPjxwb2x5Z29uIHBvaW50cz0iOC45MyAxIDguOTMgMTQuMjMgMS43MyA5LjU4IDguOTMgMSIgZmlsbD0iIzUwZTZmZiIgLz48cG9seWdvbiBwb2ludHM9IjguOTMgMSA4LjkzIDE0LjIzIDE2LjI4IDkuNTkgOC45MyAxIiBmaWxsPSJ1cmwoI2JiNjdiMTU0LWFmOGYtNGE1My1hOWNlLWFhMDQ2YjkzOThlOSkiIC8+PHBvbHlnb24gcG9pbnRzPSI4LjkzIDcuODMgMTYuMjggOS41OSA4LjkzIDE0LjIzIDguOTMgNy44MyIgZmlsbD0iIzUzYjFlMCIgLz48cG9seWdvbiBwb2ludHM9IjguOTMgMTQuMjMgMS43MyA5LjU4IDguOTMgNy44MyA4LjkzIDE0LjIzIiBmaWxsPSIjOWNlYmZmIiAvPjxwb2x5Z29uIHBvaW50cz0iOC45MyAxNy4xMSAxNy44NSAxMS4zNiAxNi44NSAxMC4yMSA4LjkzIDE1LjI3IDguOTMgMTcuMTEiIGZpbGw9InVybCgjYTQ3ZDcxMzgtMDg0YS00NzFkLThkNjMtNzQ0ZTc1YjllOGEzKSIgLz48Zz48cGF0aCBpZD0iZTE4OWE2MWYtNjMxYS00MTIyLWJiMmItMDc5ZTg2MDA0ZDk2IiBkPSJNMTYuMzIsMTEuODhhMS4xNiwxLjE2LDAsMCwwLDAtMS42NWgwbC0yLTJhMS4xNiwxLjE2LDAsMCwwLTEuNjQsMGgwbC0yLDJhMS4xOCwxLjE4LDAsMCwwLDAsMS42NWwxLjY3LDEuNjdhLjMyLjMyLDAsMCwxLC4wOS4yM3YzLjFhLjM2LjM2LDAsMCwwLC4xMi4yOGwuNzYuNzZhLjI1LjI1LDAsMCwwLC4zNywwbC43My0uNzNoMGwuNDQtLjQ0YS4xNS4xNSwwLDAsMCwwLS4yMWwtLjMxLS4zMWEuMTYuMTYsMCwwLDEsMC0uMjRsLjMxLS4zMWEuMTYuMTYsMCwwLDAsMC0uMjJsLS4zMS0uMzFhLjE1LjE1LDAsMCwxLDAtLjIzbC4zMS0uMzJhLjE1LjE1LDAsMCwwLDAtLjIxbC0uNDQtLjQ0di0uMTZaTTEzLjUsOC43MWEuNjYuNjYsMCwxLDEtLjY2LjY2LjY2LjY2LDAsMCwxLC42Ni0uNjZaIiBmaWxsPSIjZmZjYTAwIiAvPjxwYXRoIGlkPSJmYjcwMzNlZS00NjUwLTQ4ODYtODBjNy1lZGRmNjI1NjBmODUiIGQ9Ik0xMywxN2gwYS4xNC4xNCwwLDAsMCwuMjQtLjExVjE0LjMzYS4xNi4xNiwwLDAsMC0uMDYtLjEzaDBhLjE0LjE0LDAsMCwwLS4yMi4xM3YyLjUxQS4xNS4xNSwwLDAsMCwxMywxN1oiIGZpbGw9IiNmZjkzMDAiIG9wYWNpdHk9IjAuNzUiIC8+PHJlY3QgaWQ9ImIxNjZiOGMyLWI5ZWUtNGMzZC1iZjdhLTc3YmQ1Y2UwNTcwYiIgeD0iMTEuOSIgeT0iMTAuOSIgd2lkdGg9IjMuMjkiIGhlaWdodD0iMC4zOSIgcng9IjAuMTgiIGZpbGw9IiNmZjkzMDAiIG9wYWNpdHk9IjAuNzUiIC8+PHJlY3QgaWQ9ImJhZjQzN2ZlLTM0ODMtNGEyNS05NGJhLTFlODRhNjRjZDJlYiIgeD0iMTEuOSIgeT0iMTEuNTMiIHdpZHRoPSIzLjI5IiBoZWlnaHQ9IjAuMzkiIHJ4PSIwLjE4IiBmaWxsPSIjZmY5MzAwIiBvcGFjaXR5PSIwLjc1IiAvPjwvZz48L2c+PC9zdmc+"/></symbol>
+    <symbol id="insights" viewBox="0 0 32 32"><image data-icon="insights" width="32" height="32" href="data:image/svg+xml;base64,PHN2ZyBpZD0iYjZmNmQ5OWUtZjMzMC00ODFkLTgzNmYtZWE1OGNjNDIyMTdmIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48cmFkaWFsR3JhZGllbnQgaWQ9ImE3YTFjNDMxLTZjNmQtNGE4Zi05YTY5LThkYTQzN2U1YjBjNSIgY3g9IjkiIGN5PSI3LjM1IiByPSI2LjQyIiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjYjc3YWY0IiAvPjxzdG9wIG9mZnNldD0iMC4yMSIgc3RvcC1jb2xvcj0iI2IzNzhmMiIgLz48c3RvcCBvZmZzZXQ9IjAuNDMiIHN0b3AtY29sb3I9IiNhNjcyZWQiIC8+PHN0b3Agb2Zmc2V0PSIwLjY1IiBzdG9wLWNvbG9yPSIjOTI2N2U0IiAvPjxzdG9wIG9mZnNldD0iMC44OCIgc3RvcC1jb2xvcj0iIzc1NTlkOCIgLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiM2MjRmZDAiIC8+PC9yYWRpYWxHcmFkaWVudD48bGluZWFyR3JhZGllbnQgaWQ9ImVjMGM0ZjBkLTVjOGUtNDg4Mi05NmExLTg5ZDYxODA4ZWI0OSIgeDE9IjkuMDIiIHkxPSIzLjkxIiB4Mj0iOS4wOCIgeTI9IjExLjQ5IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZjJmMmYyIiAvPjxzdG9wIG9mZnNldD0iMC4yMyIgc3RvcC1jb2xvcj0iI2YxZjFmMiIgc3RvcC1vcGFjaXR5PSIwLjk5IiAvPjxzdG9wIG9mZnNldD0iMC4zNyIgc3RvcC1jb2xvcj0iI2VkZWRmMSIgc3RvcC1vcGFjaXR5PSIwLjk1IiAvPjxzdG9wIG9mZnNldD0iMC40OCIgc3RvcC1jb2xvcj0iI2U3ZTVmMCIgc3RvcC1vcGFjaXR5PSIwLjg5IiAvPjxzdG9wIG9mZnNldD0iMC41OCIgc3RvcC1jb2xvcj0iI2RlZGJlZSIgc3RvcC1vcGFjaXR5PSIwLjgxIiAvPjxzdG9wIG9mZnNldD0iMC42NyIgc3RvcC1jb2xvcj0iI2QzY2VlYiIgc3RvcC1vcGFjaXR5PSIwLjciIC8+PHN0b3Agb2Zmc2V0PSIwLjc2IiBzdG9wLWNvbG9yPSIjYzRiZWU4IiBzdG9wLW9wYWNpdHk9IjAuNTciIC8+PHN0b3Agb2Zmc2V0PSIwLjg0IiBzdG9wLWNvbG9yPSIjYjRhYmU1IiBzdG9wLW9wYWNpdHk9IjAuNDEiIC8+PHN0b3Agb2Zmc2V0PSIwLjkyIiBzdG9wLWNvbG9yPSIjYTA5NWUxIiBzdG9wLW9wYWNpdHk9IjAuMjIiIC8+PHN0b3Agb2Zmc2V0PSIwLjk5IiBzdG9wLWNvbG9yPSIjOGI3ZGRjIiBzdG9wLW9wYWNpdHk9IjAuMDIiIC8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjODk3YmRjIiBzdG9wLW9wYWNpdHk9IjAiIC8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHRpdGxlPkljb24tbWFuYWdlLTMxMDwvdGl0bGU+PHBhdGggZD0iTTEwLjIzLDE3LjM5bC44MS0uODdWMTQuMkg3djIuMzJsLjgxLjg3QS4zMi4zMiwwLDAsMCw4LDE3LjVoMkEuMzIuMzIsMCwwLDAsMTAuMjMsMTcuMzlaIiBmaWxsPSIjY2VjZWNlIiAvPjxwYXRoIGQ9Ik05LC41QTUuODksNS44OSwwLDAsMCwzLjA5LDcuMDdjLjI3LDIuNDcsMi42MiwzLjYyLDMuMjksNi43NWEuNDkuNDksMCwwLDAsLjQ3LjM4aDQuM2EuNDkuNDksMCwwLDAsLjQ3LS4zOGMuNjctMy4xMywzLTQuMjgsMy4yOS02Ljc1QTUuODksNS44OSwwLDAsMCw5LC41Wk03LDE0LjIiIGZpbGw9InVybCgjYTdhMWM0MzEtNmM2ZC00YThmLTlhNjktOGRhNDM3ZTViMGM1KSIgLz48cGF0aCBkPSJNMTEuNDYsMy43OWExLjQsMS40LDAsMCwwLTEuMzUsMS40NFY2SDhWNS4yM0ExLjQxLDEuNDEsMCwwLDAsNi41OSwzLjc5LDEuNCwxLjQsMCwwLDAsNS4yNCw1LjIzLDEuNDEsMS40MSwwLDAsMCw2LjU5LDYuNjhoLjY0djZhLjM2LjM2LDAsMCwwLC43Miwwdi02aDIuMTZ2NmEuMzYuMzYsMCwxLDAsLjcyLDB2LTZoLjYzYTEuNCwxLjQsMCwwLDAsMS4zNS0xLjQ1QTEuNCwxLjQsMCwwLDAsMTEuNDYsMy43OVpNNy4yMyw2SDYuNTVhLjc0Ljc0LDAsMCwxLS42OC0uNzcuNzQuNzQsMCwwLDEsLjY4LS43Ny43NC43NCwwLDAsMSwuNjguNzdabTQuMjgsMGgtLjY4VjUuMTlhLjY4LjY4LDAsMSwxLDEuMzUsMEEuNzMuNzMsMCwwLDEsMTEuNTEsNloiIGZpbGw9InVybCgjZWMwYzRmMGQtNWM4ZS00ODgyLTk2YTEtODlkNjE4MDhlYjQ5KSIgLz48cG9seWdvbiBwb2ludHM9IjYuOTYgMTUuOCAxMS4wNCAxNS4wMSAxMS4wNCAxNC41NiA2Ljk2IDE1LjM2IDYuOTYgMTUuOCIgZmlsbD0iIzk5OSIgLz48cG9seWdvbiBwb2ludHM9IjExLjA0IDE2LjExIDExLjA0IDE1LjY3IDYuOTYgMTYuNDggNi45NiAxNi41MiA3LjI3IDE2Ljg2IDExLjA0IDE2LjExIiBmaWxsPSIjOTk5IiAvPjwvc3ZnPg=="/></symbol>
+    <symbol id="frontdoor" viewBox="0 0 32 32"><image data-icon="frontdoor" width="32" height="32" href="data:image/svg+xml;base64,PHN2ZyBpZD0iYjljMjRkZjUtZTBkZC00ODM4LWEzODUtN2MxMWMyZDM0MzA0IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImFhMmVlNjk3LWU4ZDEtNGRhMS1hOGM1LTY0YzhlYmJiNzRjZiIgeDE9IjkiIHkxPSIxMy44MyIgeDI9IjkiIHkyPSIxLjA3IiBncmFkaWVudFVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjMDA3OGQ0IiAvPjxzdG9wIG9mZnNldD0iMC44MiIgc3RvcC1jb2xvcj0iIzVlYTBlZiIgLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48dGl0bGU+SWNvbi1uZXR3b3JraW5nLTczPC90aXRsZT48cGF0aCBkPSJNMTgsOS44M0E0LDQsMCwwLDAsMTQuNDksNiw1LjEsNS4xLDAsMCwwLDkuMjQsMS4wN2E1LjIzLDUuMjMsMCwwLDAtNSwzLjQxQTQuODMsNC44MywwLDAsMCwwLDkuMTJhNC45LDQuOSwwLDAsMCw1LjA3LDQuNzFsLjQ0LDBoOC4yMWEuNzguNzgsMCwwLDAsLjIyLDBBNC4wOSw0LjA5LDAsMCwwLDE4LDkuODNaIiBmaWxsPSJ1cmwoI2FhMmVlNjk3LWU4ZDEtNGRhMS1hOGM1LTY0YzhlYmJiNzRjZikiIC8+PHBhdGggaWQ9ImYwMjc2MTM1LTAwNzktNDg5Ny1hNTE4LTIxZWI2MzQ3MmMxNiIgZD0iTTYuNjMsNi44Mmg1LjA2djdINi42M1oiIGZpbGw9IiNmMmYyZjIiIC8+PHBhdGggaWQ9ImU1Mjg4NzhkLTJlZDctNDM5Mi05NGU2LTk5YzZmYzk3MWJjYiIgZD0iTTEyLjYxLDYuMzdsLTMuNDktMmEuMjUuMjUsMCwwLDAtLjMxLjE1czAsLjA2LDAsLjA4VjE2LjY4YS4yNS4yNSwwLDAsMCwuMjQuMjVoLjA4bDMuNDktMi4wNmEuMjUuMjUsMCwwLDAsLjE3LS4yM3YtOEEuMjYuMjYsMCwwLDAsMTIuNjEsNi4zN1oiIGZpbGw9IiM1MGU2ZmYiIC8+PC9zdmc+"/></symbol>
+    <symbol id="phone" viewBox="0 0 32 32"><image data-icon="phone" width="32" height="32" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgdmlld0JveD0iMCAwIDE4IDE4Ij48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImI4NjFlY2IxLTY5ZDMtNDBmZi1iMzhhLTQ0M2E0OWEzNzdiMSIgeDE9IjkiIHkxPSIyMi44MSIgeDI9IjkiIHkyPSItMi40OTEiIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiMwMDc4ZDQiIC8+PHN0b3Agb2Zmc2V0PSIwLjE2NSIgc3RvcC1jb2xvcj0iIzFjODRkYyIgLz48c3RvcCBvZmZzZXQ9IjAuMzc4IiBzdG9wLWNvbG9yPSIjMzk5MGU0IiAvPjxzdG9wIG9mZnNldD0iMC41OSIgc3RvcC1jb2xvcj0iIzRkOTllYSIgLz48c3RvcCBvZmZzZXQ9IjAuNzk5IiBzdG9wLWNvbG9yPSIjNWE5ZWVlIiAvPjxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzVlYTBlZiIgLz48L2xpbmVhckdyYWRpZW50PjxsaW5lYXJHcmFkaWVudCBpZD0iYjgyOWY4NzctZmI2OC00OWQwLThjYjYtYzEyYTA3YjEwMTg0IiB4MT0iOSIgeTE9IjE1Ljk4MiIgeDI9IjkiIHkyPSIxLjUyMiIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPjxzdG9wIG9mZnNldD0iMCIgc3RvcC1jb2xvcj0iI2QyZWJmZiIgLz48c3RvcCBvZmZzZXQ9IjAuOTk3IiBzdG9wLWNvbG9yPSIjZjBmZmZkIiAvPjwvbGluZWFyR3JhZGllbnQ+PC9kZWZzPjx0aXRsZT5Nc1BvcnRhbEZ4LmJhc2UuaW1hZ2VzLTYyPC90aXRsZT48ZyBpZD0iYWJmOGE0MTctNDA5My00YzYyLTg3MzgtMDQ5M2MxNjRlNWQzIj48Zz48cmVjdCB4PSIzLjYxMiIgd2lkdGg9IjEwLjc3NyIgaGVpZ2h0PSIxOCIgcng9IjAuNDE5IiBmaWxsPSJ1cmwoI2I4NjFlY2IxLTY5ZDMtNDBmZi1iMzhhLTQ0M2E0OWEzNzdiMSkiIC8+PHJlY3QgeD0iNy43NTgiIHk9IjAuNjA0IiB3aWR0aD0iMi40ODMiIGhlaWdodD0iMC4zMzMiIHJ4PSIwLjE1NCIgZmlsbD0iI2YyZjJmMiIgLz48cmVjdCB4PSI0LjYyMyIgeT0iMS41MjIiIHdpZHRoPSI4Ljc1NCIgaGVpZ2h0PSIxNC40NjEiIHJ4PSIwLjIwMSIgb3BhY2l0eT0iMC45IiBmaWxsPSJ1cmwoI2I4MjlmODc3LWZiNjgtNDlkMC04Y2I2LWMxMmEwN2IxMDE4NCkiIC8+PHJlY3QgeD0iOC4zOTgiIHk9IjE2LjU4IiB3aWR0aD0iMS4yMDQiIGhlaWdodD0iMS4wMjgiIHJ4PSIwLjI4NiIgZmlsbD0iI2YyZjJmMiIgLz48cG9seWdvbiBwb2ludHM9IjExLjg4MiA3LjM3OCAxMS44ODIgMTAuNjI0IDkuMDc3IDEyLjI1NSA5LjA3NyA5LjAwNCAxMS44ODIgNy4zNzgiIGZpbGw9IiMwMDViYTEiIC8+PHBvbHlnb24gcG9pbnRzPSIxMS44ODIgNy4zNzggOS4wNzggOS4wMDkgNi4yNzIgNy4zNzggOS4wNzggNS43NDcgMTEuODgyIDcuMzc4IiBmaWxsPSIjNWVhMGVmIiAvPjxwb2x5Z29uIHBvaW50cz0iOS4wNzcgOS4wMDkgOS4wNzcgMTIuMjU1IDYuMjcyIDEwLjYyNCA2LjI3MiA3LjM3OCA5LjA3NyA5LjAwOSIgZmlsbD0iIzAwNzhkNCIgLz48L2c+PC9nPjwvc3ZnPg=="/></symbol>
+    <symbol id="auth" viewBox="0 0 32 32">
+      <path d="M16 2L29 7V17C29 24 22 29 16 31C10 29 3 24 3 17V7Z" fill="#d9effc"/>
+      <path d="M16 2L29 7V17C29 24 22 29 16 31V2Z" fill="#65b7ed"/>
+      <path d="M11 15V11A5 5 0 0 1 21 11V15" fill="none" stroke="#1268aa" stroke-width="2.4"/>
+      <rect x="9" y="14" width="14" height="11" rx="2" fill="#1268aa"/><circle cx="16" cy="19" r="1.5" fill="#fff"/><path d="M16 20V23" stroke="#fff" stroke-width="1.5"/>
+    </symbol>
+    <symbol id="api" viewBox="0 0 32 32"><rect width="32" height="32" rx="5" fill="#202c3b"/><text x="16" y="20" font-family="Consolas, monospace" font-size="12" style="fill: #fff;" text-anchor="middle">API</text></symbol>
+    <symbol id="code" viewBox="0 0 32 32"><rect width="32" height="32" rx="5" fill="#202c3b"/><path d="M12 9H9V14L6 16L9 18V23H12M20 9H23V14L26 16L23 18V23H20" fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="region" viewBox="0 0 32 32"><circle cx="16" cy="16" r="13" fill="#e1f3fc" stroke="#168bd0" stroke-width="2"/><ellipse cx="16" cy="16" rx="6" ry="13" fill="none" stroke="#168bd0" stroke-width="1.5"/><path d="M3 16H29M6 9H26M6 23H26" fill="none" stroke="#168bd0" stroke-width="1.5"/></symbol>
+    <symbol id="ready" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="#e0f3e8"/><path d="M8 16L14 22L25 10" fill="none" stroke="#00854a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <style>
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #202327; }
+      .eyebrow { font-family: Consolas, monospace; font-size: 14px; letter-spacing: 1.5px; fill: #57616e; }
+      .title { font-size: 36px; font-weight: 700; }
+      .subtitle { font-size: 17px; fill: #535d69; }
+      .label { font-family: Consolas, monospace; font-size: 13px; font-weight: 700; letter-spacing: 0.8px; fill: #4c5561; }
+      .name { font-size: 17px; font-weight: 600; }
+      .detail { font-family: Consolas, monospace; font-size: 13px; fill: #626c79; }
+      .legend { font-family: Consolas, monospace; font-size: 13px; fill: #4c5561; }
+      .boundary { fill: #f8f8f6; stroke: #9da9b7; stroke-width: 1; stroke-dasharray: 4 3; }
+      .card { fill: #fff; stroke: #bcc4ce; stroke-width: 1.2; }
+      .request { fill: none; stroke: #266fc3; stroke-width: 2.4; marker-end: url(#request-arrow); }
+      .response { fill: none; stroke: #00854a; stroke-width: 2.2; stroke-dasharray: 7 5; marker-end: url(#response-arrow); }
+      .credential { fill: none; stroke: #b46b00; stroke-width: 2.2; marker-end: url(#credential-arrow); }
+      .telemetry { fill: none; stroke: #8b929b; stroke-width: 2; stroke-dasharray: 2 4; marker-end: url(#telemetry-arrow); }
+      .badge { stroke: #f8f8f6; stroke-width: 4; }
+      .number { fill: #fff; font-family: Consolas, monospace; font-size: 13px; font-weight: 700; text-anchor: middle; }
+      .step { font-size: 16px; font-weight: 600; }
+      .note { font-size: 14.5px; fill: #535d69; }
+    </style>
+  </defs>
+  <rect width="1800" height="1440" fill="#f5f5f2"/>
+  <text x="45" y="45" class="eyebrow">TOPOLOGY 2 / MULTI-REGION ROUTING</text>
+  <text x="45" y="90" class="title">Multi-region with Azure Front Door</text>
+  <text x="45" y="126" class="subtitle">One public URL. Matching caller trust and encryption keys. Independent regional resources.</text>
+  <path d="M1490 48H1527" stroke="#266fc3" stroke-width="2.4"/><text x="1542" y="53" class="legend">Request</text>
+  <path d="M1490 74H1527" stroke="#00854a" stroke-width="2.2" stroke-dasharray="7 4"/><text x="1542" y="79" class="legend">Response</text>
+  <path d="M1490 100H1527" stroke="#b46b00" stroke-width="2.2"/><text x="1542" y="105" class="legend">Key / OAuth access</text>
+  <path d="M1490 126H1527" stroke="#8b929b" stroke-width="2" stroke-dasharray="2 4"/><text x="1542" y="131" class="legend">Telemetry</text>
+
+  <rect x="45" y="432" width="250" height="414" rx="8" class="boundary"/>
+  <use href="#entra" x="65" y="451" width="22" height="22"/><text x="99" y="467" class="label">MICROSOFT ENTRA ID</text>
+  <rect x="65" y="585" width="210" height="124" rx="7" class="card"/>
+  <use href="#entra" x="84" y="630" width="32" height="32"/>
+  <text x="130" y="624" class="name">Microsoft Entra</text>
+  <text x="130" y="652" class="detail">One endpoint URL</text>
+  <text x="130" y="676" class="detail">One public key</text>
+
+  <rect x="335" y="370" width="245" height="476" rx="8" fill="#ebedf0" stroke="#b9c1cc" stroke-width="1.3"/>
+  <use href="#frontdoor" x="352" y="388" width="22" height="22"/><text x="384" y="404" class="label">AZURE FRONT DOOR</text>
+  <rect x="355" y="431" width="205" height="104" rx="7" class="card"/>
+  <use href="#frontdoor" x="373" y="466" width="32" height="32"/>
+  <text x="420" y="469" class="name">Endpoint</text>
+  <text x="420" y="496" class="detail">HTTPS / TLS</text>
+  <rect x="355" y="565" width="205" height="104" rx="7" class="card"/>
+  <use href="#region" x="373" y="601" width="32" height="32"/>
+  <text x="420" y="602" class="name">Origin group</text>
+  <text x="420" y="630" class="detail">Priority, latency</text>
+  <text x="420" y="651" class="detail">and weight</text>
+  <rect x="355" y="699" width="205" height="104" rx="7" class="card"/>
+  <use href="#ready" x="373" y="733" width="32" height="32"/>
+  <text x="420" y="734" class="name">Readiness</text>
+  <text x="420" y="762" class="detail">HEAD probe</text>
+  <text x="420" y="784" class="detail">No OTP send</text>
+  <path d="M275 633H315V476H355" class="request"/><circle cx="315" cy="574" r="13" fill="#266fc3" class="badge"/><text x="315" y="579" class="number">1</text>
+  <path d="M355 508H322V681H275" class="response"/><circle cx="315" cy="681" r="13" fill="#00854a" class="badge"/><text x="315" y="686" class="number">8</text>
+
+  <rect x="640" y="180" width="810" height="420" rx="8" class="boundary"/>
+  <use href="#region" x="660" y="196" width="22" height="22"/><text x="694" y="212" class="label">REGION A</text>
+  <rect x="790" y="194" width="68" height="25" rx="3" fill="#00854a"/><text x="824" y="212" class="number">ACTIVE</text>
+  <rect x="658" y="235" width="774" height="175" rx="9" fill="#ebedf0" stroke="#b9c1cc" stroke-width="1.3"/>
+  <use href="#function" x="677" y="249" width="22" height="22"/><text x="708" y="265" font-size="14" font-weight="600">Function App</text>
+  <text x="809" y="265" class="detail">Front Door traffic only</text>
+  <rect x="1226" y="246" width="190" height="27" rx="4" class="card"/>
+  <use href="#identity" x="1236" y="251" width="17" height="17"/><text x="1262" y="265" font-family="Consolas, monospace" font-size="12">regional identities</text>
+  <rect x="678" y="287" width="189" height="101" rx="7" class="card"/>
+  <use href="#auth" x="695" y="325" width="30" height="30"/><text x="739" y="322" class="name">Easy Auth</text>
+  <text x="739" y="349" class="detail">Same app and</text><text x="739" y="371" class="detail">caller policy</text>
+  <rect x="974" y="287" width="435" height="101" rx="7" class="card"/>
+  <line x1="1200" y1="287" x2="1200" y2="388" stroke="#bcc4ce" stroke-dasharray="4 3"/>
+  <use href="#function" x="989" y="325" width="30" height="30"/><text x="1031" y="322" class="name">SendOtp API</text>
+  <text x="1031" y="349" class="detail">Validate / decrypt</text><text x="1031" y="371" class="detail">Evaluate or send</text>
+  <use href="#code" x="1214" y="325" width="29" height="29"/><text x="1255" y="322" class="name">Provider adapter</text>
+  <text x="1255" y="349" class="detail">OAuth delivery</text><text x="1255" y="371" class="detail">Same provider</text>
+  <path d="M867 336H974" class="request"/><circle cx="921" cy="336" r="13" fill="#266fc3" class="badge"/><text x="921" y="341" class="number">3</text>
+  <path d="M560 476H604V336H678" class="request"/><circle cx="604" cy="336" r="13" fill="#266fc3" class="badge"/><text x="604" y="341" class="number">2</text>
+  <path d="M678 375H622V508H560" class="response"/>
+  <rect x="678" y="455" width="194" height="104" rx="7" class="card"/>
+  <use href="#insights" x="693" y="490" width="28" height="28"/><text x="734" y="490" class="name">App Insights</text>
+  <text x="734" y="517" class="detail">Regional logs</text><text x="734" y="539" class="detail">and requests</text>
+  <rect x="943" y="455" width="202" height="104" rx="7" class="card"/>
+  <use href="#vault" x="958" y="490" width="28" height="28"/><text x="999" y="490" class="name">Key Vault</text>
+  <text x="999" y="517" class="detail">Same certificate</text><text x="999" y="539" class="detail">Local reference</text>
+  <rect x="1210" y="455" width="199" height="104" rx="7" class="card"/>
+  <use href="#identity" x="1225" y="490" width="28" height="28"/><text x="1266" y="490" class="name">OAuth identity</text>
+  <text x="1266" y="517" class="detail">Local identity</text><text x="1266" y="539" class="detail">Provider scope</text>
+  <path d="M1044 455V388" class="credential"/><circle cx="1044" cy="423" r="12" fill="#b46b00" class="badge"/><text x="1044" y="428" class="number">4</text>
+  <path d="M1310 455V388" class="credential"/><circle cx="1310" cy="423" r="12" fill="#b46b00" class="badge"/><text x="1310" y="428" class="number">5</text>
+  <path d="M995 388H896V507H872" class="telemetry"/>
+  <text x="678" y="582" class="detail">Region-local host and package storage / independent telemetry</text>
+
+  <rect x="640" y="640" width="810" height="420" rx="8" class="boundary"/>
+  <use href="#region" x="660" y="656" width="22" height="22"/><text x="694" y="672" class="label">REGION B</text>
+  <rect x="790" y="654" width="68" height="25" rx="3" fill="#00854a"/><text x="824" y="672" class="number">ACTIVE</text>
+  <rect x="658" y="695" width="774" height="175" rx="9" fill="#ebedf0" stroke="#b9c1cc" stroke-width="1.3"/>
+  <use href="#function" x="677" y="709" width="22" height="22"/><text x="708" y="725" font-size="14" font-weight="600">Function App</text>
+  <text x="809" y="725" class="detail">Front Door traffic only</text>
+  <rect x="1226" y="706" width="190" height="27" rx="4" class="card"/>
+  <use href="#identity" x="1236" y="711" width="17" height="17"/><text x="1262" y="725" font-family="Consolas, monospace" font-size="12">regional identities</text>
+  <rect x="678" y="747" width="189" height="101" rx="7" class="card"/>
+  <use href="#auth" x="695" y="785" width="30" height="30"/><text x="739" y="782" class="name">Easy Auth</text>
+  <text x="739" y="809" class="detail">Same app and</text><text x="739" y="831" class="detail">caller policy</text>
+  <rect x="974" y="747" width="435" height="101" rx="7" class="card"/>
+  <line x1="1200" y1="747" x2="1200" y2="848" stroke="#bcc4ce" stroke-dasharray="4 3"/>
+  <use href="#function" x="989" y="785" width="30" height="30"/><text x="1031" y="782" class="name">SendOtp API</text>
+  <text x="1031" y="809" class="detail">Validate / decrypt</text><text x="1031" y="831" class="detail">Evaluate or send</text>
+  <use href="#code" x="1214" y="785" width="29" height="29"/><text x="1255" y="782" class="name">Provider adapter</text>
+  <text x="1255" y="809" class="detail">OAuth delivery</text><text x="1255" y="831" class="detail">Same provider</text>
+  <path d="M867 796H974" class="request"/><circle cx="921" cy="796" r="13" fill="#266fc3" class="badge"/><text x="921" y="801" class="number">3</text>
+  <path d="M560 476H604V796H678" class="request"/><circle cx="604" cy="796" r="13" fill="#266fc3" class="badge"/><text x="604" y="801" class="number">2</text>
+  <path d="M678 835H622V508H560" class="response"/>
+  <rect x="678" y="915" width="194" height="104" rx="7" class="card"/>
+  <use href="#insights" x="693" y="950" width="28" height="28"/><text x="734" y="950" class="name">App Insights</text>
+  <text x="734" y="977" class="detail">Regional logs</text><text x="734" y="999" class="detail">and requests</text>
+  <rect x="943" y="915" width="202" height="104" rx="7" class="card"/>
+  <use href="#vault" x="958" y="950" width="28" height="28"/><text x="999" y="950" class="name">Key Vault</text>
+  <text x="999" y="977" class="detail">Same certificate</text><text x="999" y="999" class="detail">Local reference</text>
+  <rect x="1210" y="915" width="199" height="104" rx="7" class="card"/>
+  <use href="#identity" x="1225" y="950" width="28" height="28"/><text x="1266" y="950" class="name">OAuth identity</text>
+  <text x="1266" y="977" class="detail">Local identity</text><text x="1266" y="999" class="detail">Provider scope</text>
+  <path d="M1044 915V848" class="credential"/><circle cx="1044" cy="883" r="12" fill="#b46b00" class="badge"/><text x="1044" y="888" class="number">4</text>
+  <path d="M1310 915V848" class="credential"/><circle cx="1310" cy="883" r="12" fill="#b46b00" class="badge"/><text x="1310" y="888" class="number">5</text>
+  <path d="M995 848H896V967H872" class="telemetry"/>
+  <text x="678" y="1042" class="detail">Region-local host and package storage / independent telemetry</text>
+
+  <rect x="1505" y="432" width="250" height="414" rx="8" class="boundary"/>
+  <text x="1525" y="467" class="label">EXTERNAL PROVIDER</text>
+  <rect x="1527" y="491" width="206" height="124" rx="7" class="card"/>
+  <use href="#api" x="1545" y="536" width="30" height="30"/><text x="1589" y="531" class="name">SMS / voice API</text>
+  <text x="1589" y="559" class="detail">Same provider</text><text x="1589" y="583" class="detail">OAuth access</text>
+  <rect x="1527" y="710" width="206" height="114" rx="7" class="card"/>
+  <use href="#phone" x="1545" y="751" width="30" height="30"/><text x="1589" y="751" class="name">Recipient phone</text>
+  <text x="1589" y="779" class="detail">Confirm delivery</text>
+  <path d="M1409 328H1474V533H1527" class="request"/><circle cx="1474" cy="490" r="13" fill="#266fc3" class="badge"/><text x="1474" y="495" class="number">6</text>
+  <path d="M1409 788H1488V576H1527" class="request"/><circle cx="1488" cy="663" r="13" fill="#266fc3" class="badge"/><text x="1488" y="668" class="number">6</text>
+  <path d="M1630 615V710" class="request"/><circle cx="1630" cy="663" r="13" fill="#266fc3" class="badge"/><text x="1630" y="668" class="number">7</text>
+
+  <line x1="45" y1="1101" x2="1755" y2="1101" stroke="#c6ccd4"/>
+  <text x="45" y="1140" class="step"><tspan fill="#266fc3">01</tspan> Request</text>
+  <text x="45" y="1170" class="note"><tspan x="45">Entra calls the shared URL</tspan><tspan x="45" dy="22">with its caller token</tspan><tspan x="45" dy="22">and encrypted payload.</tspan></text>
+  <text x="260" y="1140" class="step"><tspan fill="#266fc3">02</tspan> Route</text>
+  <text x="260" y="1170" class="note"><tspan x="260">Front Door selects an</tspan><tspan x="260" dy="22">eligible origin and preserves</tspan><tspan x="260" dy="22">the Authorization header.</tspan></text>
+  <text x="475" y="1140" class="step"><tspan fill="#266fc3">03</tspan> Authenticate</text>
+  <text x="475" y="1170" class="note"><tspan x="475">Every origin checks the</tspan><tspan x="475" dy="22">same issuer, audience,</tspan><tspan x="475" dy="22">and approved caller.</tspan></text>
+  <text x="690" y="1140" class="step"><tspan fill="#b46b00">04</tspan> Decrypt</text>
+  <text x="690" y="1170" class="note"><tspan x="690">The regional vault holds</tspan><tspan x="690" dy="22">the matching encryption</tspan><tspan x="690" dy="22">certificate and private key.</tspan></text>
+  <text x="905" y="1140" class="step"><tspan fill="#b46b00">05</tspan> Authorize</text>
+  <text x="905" y="1170" class="note"><tspan x="905">Each regional identity</tspan><tspan x="905" dy="22">uses OAuth federation</tspan><tspan x="905" dy="22">for the provider account.</tspan></text>
+  <text x="1120" y="1140" class="step"><tspan fill="#266fc3">06</tspan> Send</text>
+  <text x="1120" y="1170" class="note"><tspan x="1120">Either Function can call</tspan><tspan x="1120" dy="22">the configured SMS</tspan><tspan x="1120" dy="22">or voice endpoint.</tspan></text>
+  <text x="1335" y="1140" class="step"><tspan fill="#266fc3">07</tspan> Deliver</text>
+  <text x="1335" y="1170" class="note"><tspan x="1335">Provider acceptance</tspan><tspan x="1335" dy="22">and handset receipt</tspan><tspan x="1335" dy="22">are separate checks.</tspan></text>
+  <text x="1550" y="1140" class="step"><tspan fill="#00854a">08</tspan> Respond</text>
+  <text x="1550" y="1170" class="note"><tspan x="1550">A successful response</tspan><tspan x="1550" dy="22">returns through Front Door</tspan><tspan x="1550" dy="22">to Microsoft Entra ID.</tspan></text>
+
+  <text x="45" y="1257" class="label">DESIGN NOTES</text>
+  <rect x="45" y="1277" width="405" height="120" rx="7" class="card"/>
+  <text x="65" y="1308" class="name">One encryption certificate</text>
+  <text x="65" y="1337" class="note"><tspan x="65">Use matching RSA key material in both vaults.</tspan><tspan x="65" dy="22">Coordinate renewal and versioned references</tspan><tspan x="65" dy="22">across every serving origin.</tspan></text>
+  <rect x="480" y="1277" width="405" height="120" rx="7" class="card"/>
+  <text x="500" y="1308" class="name">Keep origins protected</text>
+  <text x="500" y="1337" class="note"><tspan x="500">Allow the Front Door service tag and profile ID.</tspan><tspan x="500" dy="22">Keep Easy Auth on SendOtp; exempt only</tspan><tspan x="500" dy="22">the dedicated readiness path.</tspan></text>
+  <rect x="915" y="1277" width="405" height="120" rx="7" class="card"/>
+  <text x="935" y="1308" class="name">Size for the surviving region</text>
+  <text x="935" y="1337" class="note"><tspan x="935">Each region handles the full peak workload.</tspan><tspan x="935" dy="22">Test recovery in both directions and record</tspan><tspan x="935" dy="22">transition failures and latency.</tspan></text>
+  <rect x="1350" y="1277" width="405" height="120" rx="7" class="card"/>
+  <text x="1370" y="1308" class="name">Independent regional dependencies</text>
+  <text x="1370" y="1337" class="note"><tspan x="1370">Use local vault, storage, identities, and telemetry.</tspan><tspan x="1370" dy="22">Prove that the survivor can start without</tspan><tspan x="1370" dy="22">the unavailable region.</tspan></text>
+</svg>

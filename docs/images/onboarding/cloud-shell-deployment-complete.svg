@@ -1,26 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="430" viewBox="0 0 900 430" role="img" aria-labelledby="title desc">
-  <title id="title">Completed CYOT-CONSTO nonproduction deployment</title>
-  <desc id="desc">Azure Cloud Shell lists the created FC1 resources. Resource names remain visible, while the Function endpoint is hidden.</desc>
-  <rect width="900" height="430" fill="#062f63"/>
-  <g font-family="Consolas, monospace" font-size="14" fill="#f1f6fb">
-    <text x="8" y="25" fill="#62ec71">Deployment completed</text>
-    <text x="8" y="55" fill="#36d7e9">Azure resources created or updated</text>
-    <text x="8" y="88">Resource</text><text x="238" y="88">Name</text>
-    <text x="8" y="108">--------</text><text x="238" y="108">----</text>
-    <text x="8" y="130">Resource group</text><text x="238" y="130">consto-epp-rg-5a7680d1</text>
-    <text x="8" y="151">Function App</text><text x="238" y="151">consto-epp-func-5a7680d1</text>
-    <text x="8" y="172">Hosting plan</text><text x="238" y="172">consto-epp-plan-5a7680d1</text>
-    <text x="8" y="193">Storage account</text><text x="238" y="193">constoeppsa5a7680d1</text>
-    <text x="8" y="214">Blob container</text><text x="238" y="214">packages</text>
-    <text x="8" y="235">Key Vault</text><text x="238" y="235">consto-epp-kv-5a7680d1</text>
-    <text x="8" y="256">Function App identity</text><text x="238" y="256">System-assigned</text>
-    <text x="8" y="277">Outbound identity</text><text x="238" y="277">consto-epp-outbound-5a7680d1</text>
-    <text x="8" y="298">Log Analytics</text><text x="238" y="298">consto-epp-logs-5a7680d1</text>
-    <text x="8" y="319">Application Insights</text><text x="238" y="319">consto-epp-insights-5a7680d1</text>
-    <text x="8" y="340">Diagnostic settings</text><text x="238" y="340">Configured</text>
-    <text x="8" y="370">Application: <tspan fill="#62ec71">CYOT-CONSTO</tspan></text>
-    <text x="8" y="394">Function endpoint:</text><rect x="172" y="378" width="155" height="21" rx="2" fill="#111827"/><text x="188" y="394">endpoint hidden</text>
-    <text x="365" y="394">Service plan: FC1</text>
-    <text x="8" y="418" fill="#fff100">Certificate renewal is manual. Retain the private deployment summary securely.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="570" viewBox="0 0 1200 570" role="img" aria-labelledby="title description">
+  <title id="title">Deployment completion and handoff example</title>
+  <desc id="description">The illustrated completion summary identifies the created resources and the endpoint, client ID, and deployment summary to retain. Provider authorization, testing, policy activation, and certificate renewal follow deployment.</desc>
+  <rect width="1200" height="570" rx="12" fill="#062f63"/>
+  <rect width="1200" height="54" rx="12" fill="#e7f2ff"/>
+  <text x="28" y="35" font-family="Segoe UI, Arial, sans-serif" font-size="21" fill="#172b4d" font-weight="600">Completion example - placeholders replace private deployment values</text>
+  <g font-family="Consolas, monospace" font-size="18" fill="#f1f6fb">
+    <text x="28" y="98" fill="#a8f0ba">Deployment completed successfully.</text>
+    <text x="28" y="138" fill="#8fe0ef">Azure resources created or updated</text>
+    <text x="28" y="176">Resource group</text><text x="370" y="176">contoso-epp-rg-&lt;suffix&gt;</text>
+    <text x="28" y="208">Function App / hosting</text><text x="370" y="208">contoso-epp-func-&lt;suffix&gt; / FC1</text>
+    <text x="28" y="240">Storage / Key Vault</text><text x="370" y="240">Regional host storage and encryption certificate</text>
+    <text x="28" y="272">Identities / monitoring</text><text x="370" y="272">System identity, outbound identity, Insights, workspace</text>
+    <text x="28" y="320" fill="#ffe38b">Save these values for testing and policy configuration:</text>
+    <text x="28" y="355">Function endpoint:</text><text x="280" y="355">https://&lt;function-host&gt;/api/SendOtp</text>
+    <text x="28" y="388">Application client ID:</text><text x="280" y="388">&lt;application-client-id&gt;</text>
+    <text x="28" y="421">Deployment details:</text><text x="280" y="421">epp-output\deployment-&lt;timestamp&gt;-&lt;id&gt;.json</text>
+    <text x="28" y="474" fill="#8fe0ef">Next: authorize the provider, validate both channels, then configure policy.</text>
+    <text x="28" y="513">Keep the summary and public certificate. Track certificate renewal.</text>
+    <text x="28" y="545" fill="#ffe38b">Preserve epp-output before ending an ephemeral Cloud Shell session.</text>
   </g>
 </svg>

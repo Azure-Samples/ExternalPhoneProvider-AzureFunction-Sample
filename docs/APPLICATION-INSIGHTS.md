@@ -1,69 +1,44 @@
 # Application Insights
 
-<a id="application-insights-for-the-external-phone-provider"></a>
+[Documentation](README.md) | [Monitoring queries](MONITORING.md) | [Log fields](LOGGING.md)
 
-[Documentation](README.md) | [Monitoring](MONITORING.md) | [Log fields](LOGGING.md)
+Use this guide to understand collection and diagnose missing telemetry.
+Guided setup connects the Function App to Application Insights and a Log Analytics workspace.
 
-Start here when telemetry is missing or incomplete. For everyday queries and alerts, use
-[monitoring](MONITORING.md).
-
-| Task | Go to |
-| --- | --- |
-| Understand where records come from | [Collection](#collection) |
-| Choose the correct table | [Signals and tables](#signals-and-tables) |
-| Check one deployment | [Single region](#single-region) |
-| Check several regions | [Multiple regions](#multiple-regions) |
-| Diagnose missing data | [Coverage checks](#coverage-checks) |
-| Review privacy and sampling | [Limits](#limits) |
-
-Function telemetry covers execution, timing, and logs. Microsoft Entra ID sign-ins and provider
-delivery evidence are separate.
-
-<a id="how-telemetry-reaches-application-insights"></a>
 ## Collection
 
-The **Functions host** records invocation telemetry. The **language worker** runs the endpoint and
-writes application logs. A worker exporter needs its own initialization, authentication, filters,
-and sampling.
+The **Functions host** records invocation telemetry. The **language worker** executes the
+handler and writes application logs. Check both layers when investigating missing records.
 
-Application Insights stores data in its linked Log Analytics workspace. Correlation can connect
-requests, dependencies, exceptions, and traces when the active pipeline exports them.
-
-### Repository defaults
-
-| Runtime | Checked-in configuration | Verify after deployment |
+| Runtime | Checked-in configuration | Check after deployment |
 | --- | --- | --- |
-| [.NET](../dotnet/host.json) | Host uses `telemetryMode: OpenTelemetry`. The project references Functions OpenTelemetry and Azure Monitor packages. | `Program.cs` does not register a separate worker exporter. Confirm which worker logs, dependencies, and exceptions are present. |
-| [JavaScript](../javascript/host.json) | Standard host Application Insights settings. Requests are excluded from sampling. | There is no direct Application Insights or OpenTelemetry exporter in the package manifest. Confirm outbound dependency coverage. |
-| [Python](../python/host.json) | Standard host Application Insights settings. Requests are excluded from sampling. | There is no Azure Monitor or OpenTelemetry exporter in requirements. Confirm structured properties and dependencies. |
+| [JavaScript](../javascript/host.json) | Host Application Insights collection; requests excluded from sampling | JSON service events in traces and the available dependency coverage |
+| [C#](../dotnet/host.json) | Host OpenTelemetry mode; application events use `ILogger` | Worker-log collection, scope fields, dependencies, and exceptions |
+| [Python](../python/host.json) | Host Application Insights collection; requests excluded from sampling | Application traces and which structured logging properties are preserved |
 
-These are source defaults, not guarantees. Runtime versions, packages, settings, filters, and
-sampling can change the collected data.
+Collection depends on runtime configuration, exporters, filters, and sampling.
+Verify the [deployed log format](MONITORING.md#runtime-log-formats) before creating event-based alerts.
 
-Application events are logs, not guaranteed `customEvents`. Verify the
-[runtime format](MONITORING.md#runtime-log-formats) before saving queries.
-
-For additional worker instrumentation, follow the
+For instrumentation changes, follow the
 [Azure Functions OpenTelemetry guidance](https://learn.microsoft.com/azure/azure-functions/opentelemetry-howto)
-for the selected language. Check correlation and duplicate records after any change.
+for the selected runtime.
 
 <a id="signals-tables-and-metrics-are-different-things"></a>
 ## Signals and tables
 
-| Signal | Workspace table | Notes |
-| --- | --- | --- |
-| HTTP requests | `AppRequests` | Includes duration, result code, success, role, and operation. Easy Auth can reject before invocation. HTTP success does not prove delivery. |
-| Application logs | `AppTraces` | Includes messages, severity, and exported properties. Filters and sampling can remove records. |
-| Outbound calls | `AppDependencies` | Includes only instrumented dependencies. Coverage differs by runtime and library. |
-| Exceptions | `AppExceptions` | Includes captured and exported exceptions. Handled failures may appear only as sanitized logs or HTTP responses. |
-| Custom metrics | `AppMetrics` | Requires emitted measurements and a working export path. |
-| Custom events | `AppEvents` | Requires explicit event telemetry. A named log does not automatically become an event. |
-| Availability results | `AppAvailabilityResults` | Requires an availability test or custom telemetry. Guided setup does not create tests. |
+Run this repository's queries in the linked **Log Analytics workspace**, where Application
+Insights uses the following table names:
 
-Application Insights metrics, workspace logs, Azure resource metrics, resource logs, Activity Log,
-and Resource Health are different sources. A chart and a log query can use different sampling,
-dimensions, and retention. Check the resource's supported metrics and diagnostic categories before
-building an alert.
+| Signal | Table | Interpretation |
+| --- | --- | --- |
+| HTTP requests | `AppRequests` | Invocation duration, result code, success, role, and operation |
+| Application logs | `AppTraces` | Messages, severity, and exported properties |
+| Instrumented outbound calls | `AppDependencies` | Dependency coverage depends on the active runtime pipeline |
+| Captured exceptions | `AppExceptions` | Handled failures can instead appear as sanitized application logs |
+
+Easy Auth can reject a request before invocation. HTTP success and provider acceptance are
+separate from recipient delivery. Microsoft Entra ID sign-in logs are another
+[data source](SIGN-IN-MONITORING.md).
 
 See the [Application Insights data model](https://learn.microsoft.com/azure/azure-monitor/app/data-model-complete)
 and [Functions monitoring reference](https://learn.microsoft.com/azure/azure-functions/monitor-functions-reference).
@@ -71,73 +46,41 @@ and [Functions monitoring reference](https://learn.microsoft.com/azure/azure-fun
 <a id="single-region-configuration"></a>
 ## Single region
 
-Guided setup connects one Function App to one Application Insights resource backed by a Log
-Analytics workspace.
+1. On the Function App, confirm `APPLICATIONINSIGHTS_CONNECTION_STRING` selects the intended
+   Application Insights resource.
+2. On Application Insights, confirm the linked workspace.
+3. Check the Function identity's ingestion access.
+4. Review the host and worker log levels, exporters, and sampling.
+5. Run an authorized evaluation, allow for ingestion delay, and query `AppRequests` and `AppTraces`.
+6. Validate the provider path separately with a controlled live request.
 
-Check the following:
-
-1. **Destination:** On the Function App, confirm `APPLICATIONINSIGHTS_CONNECTION_STRING` points
-   to the intended resource. Do not copy it into issues or screenshots.
-2. **Workspace:** On Application Insights, confirm the linked workspace.
-3. **Ingestion authentication:** Confirm authenticated ingestion and the Function identity's
-   scoped publisher role.
-4. **Runtime settings:** Review the selected runtime's host and worker configuration, log levels,
-   and sampling.
-5. **Authorized request:** Run a non-delivering evaluation through the supported test process,
-   allow for ingestion delay, then check `AppRequests` and `AppTraces`.
-6. **Live path:** Validate provider acceptance and recipient delivery separately through an
-   approved controlled test.
-
-A `401` or `403` can be rejected before the Function runs. Evaluation does not acquire provider
-credentials or contact the provider. There is no background credential refresher.
-
-<a id="identity-and-ingestion"></a>
 ### Ingestion identity
 
-The template configures:
+The setup template configures:
 
-- `APPLICATIONINSIGHTS_AUTHENTICATION_STRING=Authorization=AAD`
-- the Function App's system-assigned managed identity
-- **Monitoring Metrics Publisher** on the Application Insights resource
-- `DisableLocalAuth: true`
+- `APPLICATIONINSIGHTS_AUTHENTICATION_STRING=Authorization=AAD`.
+- The Function's system-assigned managed identity.
+- **Monitoring Metrics Publisher** on the Application Insights resource.
+- `DisableLocalAuth: true`.
 
-The connection string selects the destination. The managed identity authenticates ingestion.
+The connection string selects the destination; managed identity authenticates ingestion.
 The outbound provider identity is separate.
 
-If you intentionally use a user-assigned ingestion identity, set
-`ClientId=<identity-client-id>;Authorization=AAD`, attach that identity to the app, and grant it
-access to the destination. Do not use the provider application ID.
-
-Missing data can result from a wrong destination, missing role assignment, identity mismatch,
-role propagation, an inactive exporter, filters, sampling, DNS, or network access. Query access is
-separate from ingestion access.
+For missing data, check the destination, role assignment and propagation, exporter, filters,
+sampling, DNS, and network access. Workspace query access is separate from ingestion access.
 
 See [Functions collection configuration](https://learn.microsoft.com/azure/azure-functions/configure-monitoring)
 and [Microsoft Entra-authenticated ingestion](https://learn.microsoft.com/azure/azure-monitor/app/azure-ad-authentication).
 
-<a id="multi-region-configuration"></a>
-## Multiple regions
+## Multiple deployments
 
-Each region has its own Function App and identity. Validate telemetry for every origin.
-Application Insights does not route traffic or implement regional recovery.
+Record each Function App, Application Insights component, workspace, runtime, and owner.
+Validate collection independently for every deployment.
+Use explicit resource and role filters in [cross-workspace queries](MONITORING.md#multiple-deployments).
 
-| Layout | Use |
-| --- | --- |
-| Application Insights and workspace per region | Strong regional separation. Queries and access must include each workspace. |
-| Application Insights per region with a shared workspace | Separate components with one query destination. Retention, access, and ingestion share the workspace boundary. |
-| One shared Application Insights component | Requires distinct stable role names and ingestion access for every identity. Shared quotas and ingestion become common dependencies. |
-
-Keep an inventory of Function App, region, Application Insights component, workspace, role name,
-runtime, and owner. Workspace location and client geography do not prove execution region.
-
-Use explicit sources and regional labels in
-[multi-region queries](MONITORING.md#multiple-regions). Monitor Front Door edge and origin signals
-separately from Function telemetry.
-
-<a id="read-only-queries-to-establish-what-is-present"></a>
 ## Coverage checks
 
-Run these in the linked Log Analytics workspace.
+Run these in the linked workspace after an authorized request.
 
 ### Requests
 
@@ -145,7 +88,7 @@ Run these in the linked Log Analytics workspace.
 AppRequests
 | where TimeGenerated > ago(1h)
 | summarize StoredRows = count(),
-    RepresentedRequests = sum(ItemCount),
+    RepresentedRequests = sum(tolong(coalesce(ItemCount, 1))),
     Latest = max(TimeGenerated)
     by _ResourceId, AppRoleName, Name, ResultCode, Success
 | order by Latest desc
@@ -171,24 +114,14 @@ AppTraces
 | order by Latest desc
 ```
 
-An absent table, query error, or empty result is not a healthy zero. Check scope, time range,
-traffic, access, filters, sampling, and ingestion. `ItemCount` is a sampling weight when supplied.
-It does not recover discarded records.
+An empty result is not proof of health. Check scope, time range, expected traffic, access,
+filters, and ingestion. `ItemCount` represents the sampling weight when supplied.
 
-<a id="sampling-privacy-and-collection-limits"></a>
-## Limits
+## Privacy and retention
 
-- **Sampling and filters:** JavaScript and Python exclude host requests from sampling, not every
-  signal. .NET OpenTelemetry mode does not use the same classic settings.
-- **Delivery:** Host success, HTTP success, provider acceptance, and recipient delivery are
-  different outcomes.
-- **Completeness:** Buffering, cold starts, process exits, network failures, throttling, caps,
-  retention, and exporter configuration affect stored telemetry.
-- **Privacy:** Do not collect phone numbers, OTPs, request bodies, encrypted payloads, nonces,
-  tokens, credentials, private keys, or raw provider responses. Review auto-captured URLs,
-  query strings, dependency fields, and exception text.
-- **Access and cost:** Restrict query and export access. Set retention and daily caps deliberately.
-  A cap can create a monitoring blind spot.
+Keep phone numbers, OTPs, bodies, encrypted payloads, nonces, tokens, credentials, private keys,
+and raw provider responses out of telemetry. Review automatically captured URLs and exception text.
 
-Next: use the [monitoring tasks and queries](MONITORING.md) or the
-[endpoint troubleshooting guide](../setup/docs/Troubleshooting.md#after-deployment-triage).
+Restrict query and export access. Set retention and daily caps deliberately; reaching a cap can
+create a monitoring gap. Use the [monitoring guide](MONITORING.md#collection-and-data-quality)
+for ongoing collection checks.

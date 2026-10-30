@@ -1,4 +1,6 @@
-# Estimate telecom-provider and Azure hosting costs
+# Estimate provider and Azure hosting costs
+
+[Documentation](README.md) | [Deployment guide](GETTING-STARTED.md) | [Hosting plans](../setup/docs/README.md#service-plan-selection)
 
 Estimate SMS and voice traffic before onboarding a provider. The report groups recent
 authentication steps by calling code. Apply provider rates to estimate a telecom budget.
@@ -13,7 +15,7 @@ The guide separates the estimate into two parts:
 ## 1. Estimate telecom-provider costs
 
 > [!IMPORTANT]
-> This is not a billing report. Confirm retries, secondary-provider attempts, message segments,
+> This is not a billing report. Confirm retries, message segments,
 > destinations, taxes, fees, and pricing with the provider.
 
 | Step | Task |
@@ -43,15 +45,17 @@ Authentication Administrators receive masked phone numbers. Unresolved calling c
 Access also depends on Microsoft Entra ID licensing, roles, and retention. The script exports
 aggregated calling codes, methods, and counts, not full phone numbers. Protect the output.
 
-Create `C:\temp` before running the script, or change the `Export-Csv` path to an
-approved folder.
+Run the script from a private working folder. It saves the CSV in that folder.
 
 ### Generate the activity report
 
 The script installs the required modules, finds SMS and voice authentication steps, matches masked
-details to registered phone methods, and groups the result. Set `$start` and `$end` first.
+details to registered phone methods, and groups the result. The default window is the last
+seven days; adjust it within your available sign-in retention.
 
 ```powershell
+$ErrorActionPreference = 'Stop'
+
 # 1. Install required modules if they are missing
 "Microsoft.Graph.Beta.Reports", "Microsoft.Graph.Identity.SignIns" |
     Where-Object { -not (Get-Module -ListAvailable $_) } |
@@ -64,9 +68,10 @@ Connect-MgGraph `
     -Scopes "AuditLog.Read.All", "UserAuthenticationMethod.Read.All" |
     Out-Null
 
-# 3. Define Start and End Time Range (ISO 8601 UTC)
-$start = "2026-10-01T00:00:00Z"
-$end   = "2026-10-30T23:59:59Z"
+# 3. Choose the reporting window in UTC
+$endUtc = [DateTime]::UtcNow
+$start = $endUtc.AddDays(-7).ToString("yyyy-MM-ddTHH:mm:ssZ")
+$end = $endUtc.ToString("yyyy-MM-ddTHH:mm:ssZ")
 
 # 4. Cache registered phone methods and resolve masked sign-in details
 $phoneMethodsByUser = @{}
@@ -161,7 +166,7 @@ $report = $activity |
 
 # 6. Display and export the aggregated report
 $report | Format-Table -AutoSize
-$report | Export-Csv -Path "C:\temp\SMS_Voice_SignIns_By_Calling_Code.csv" -NoTypeInformation
+$report | Export-Csv -LiteralPath .\SMS_Voice_SignIns_By_Calling_Code.csv -NoTypeInformation -NoClobber
 ```
 
 The script accepts `SMS`, `Text message`, and `Voice`, then normalizes text messages to `SMS`.
@@ -202,7 +207,7 @@ Estimated SMS/voice requests = 10,000
 
 Apply the provider's destination-specific rates to those estimated requests. Use separate
 rows when rates differ by destination, sender type, route, or message category. Include a
-contingency for growth, retries, approved secondary-provider behavior, and seasonal peaks.
+contingency for growth, retries, and seasonal peaks.
 
 <a id="confirm-the-final-estimate-with-your-provider"></a>
 ### Confirm provider rates
@@ -228,65 +233,47 @@ the result. Use the [Azure Pricing Calculator](https://azure.microsoft.com/prici
 to confirm current prices for your deployment region and agreement. Prices, free grants,
 and service capabilities can change, so do not use an old estimate as an approved budget.
 
-### Get a quick planning estimate
+### Choose the deployed hosting plan
 
-If you need a rough estimate rather than a detailed calculation, select the deployment
-profile that meets your availability requirements and use the closest monthly request
-volume in the following table.
+Guided setup offers two plans:
 
-| Deployment profile | 50,000 requests/month | 1 million requests/month | 10 million requests/month |
-| --- | ---: | ---: | ---: |
-| Flex Consumption on demand | Less than $1 | About $21 | About $303 |
-| Flex Consumption with one Always Ready instance | About $22 | About $43 | About $326 |
-| Zone-redundant Flex Consumption | About $43 | About $64 | About $347 |
-| Premium EP1 | About $158 | About $163 | About $290 |
-| Zone-redundant Premium EP1 | About $473 | About $478 | About $606 |
-| Two-region, zone-redundant Flex Consumption | About $86 | About $105 | About $380 |
+| Plan | Cost considerations |
+| --- | --- |
+| Flex Consumption (`FC1`) | On-demand compute with 2048 MB per instance and zero always-ready instances. Apply the eligible free usage grant, then estimate executions and GB-seconds. |
+| Premium (`EP1`) | One warm instance with a configured maximum of three elastic workers. Include the baseline charge even when the endpoint is idle. |
 
-These illustrative monthly estimates use East US retail assumptions in USD, 2 GB of
-Function memory, a 0.5-second average execution, 5 KB of operational logging per request,
-and a 5% retry allowance. They assume applicable free grants are available and exclude
-telecom-provider charges, taxes, support plans, and customer-specific discounts. Actual
-costs can vary by region, agreement, traffic pattern, telemetry retention, and service
-pricing.
+Use the [setup configuration](../setup/docs/README.md#service-plan-selection) and current
+regional prices. Measure execution duration and telemetry volume during your pilot.
 
-Use the table for early planning only. For an approved budget, enter your expected volume
-and required deployment profile in the Azure Pricing Calculator. If your volume falls
-between columns, use the next higher column for a conservative estimate; do not scale the
-table values linearly because some profiles include fixed baseline capacity.
-
-### Build a detailed estimate
-
-Include these resources:
+### Include supporting resources
 
 | Azure resource | Use in the provider integration | Primary cost drivers |
 | --- | --- | --- |
-| Azure Functions hosting | Runs the routing function that validates the request, applies your policies, calls the provider, and returns the result. | Hosting plan, authentication volume, execution duration, memory, Always Ready instances, Premium instances, and deployment regions. |
+| Azure Functions hosting | Validates and decrypts requests, calls the configured provider, and returns the result. | Selected plan, request volume, execution duration, memory, and instance count. |
 | Function App | Hosts the application and its HTTPS endpoint. | There is no separate base charge; compute is charged through the selected Functions hosting plan. |
 | Application Insights and Log Analytics | Provides operational monitoring, request diagnostics, provider latency, failure data, and troubleshooting telemetry. | Telemetry volume and retention. |
-| Storage account | Stores Function host information and the deployment package. | Stored capacity, transactions, and LRS versus ZRS replication. Zone-redundant deployments require ZRS storage. |
-| Key Vault | Protects provider credentials, secrets, and the encryption certificate. | Secret and certificate operations. Current packages read API-key secrets on each live request; OAuth token caching is owned by the Azure Identity SDK. |
+| Storage account | Stores Function host information and the deployment package. Setup uses Standard LRS storage. | Stored capacity and transactions. |
+| Key Vault | Holds the encryption certificate and its private-key backing secret. | Certificate and secret operations. |
 | Outbound bandwidth | Carries API requests and responses between Azure Functions and the provider. | Outbound data after the applicable Azure allowance. This is usually small for provider API payloads. |
-| Traffic Manager or equivalent global routing | Routes traffic in an optional multi-region disaster-recovery deployment. | DNS queries or requests, depending on the selected routing service. |
 
 Collect these inputs before creating your estimate:
 
 - Monthly SMS and voice authentication requests, including authentication, enrollment,
   recovery, and test traffic.
 - Average Function execution duration, including provider API latency.
-- Expected retry and regional-recovery allowance.
+- Expected retry and traffic-growth allowance.
 - Function memory allocation and operational logging generated per request.
-- Required region, availability-zone resilience, and regional disaster recovery.
+- Deployment region and selected hosting plan.
 - Your Azure pricing, discounts, free grants, taxes, and currency.
 
 Use adjusted request volume consistently across the estimate:
 
 ```text
-Adjusted monthly requests = monthly authentication requests x retry/recovery multiplier
+Adjusted monthly requests = monthly authentication requests x planning multiplier
 Execution GB-seconds      = adjusted monthly requests x execution seconds x memory in GB
 Monitoring data in GB     = adjusted monthly requests x logging KB per request / 1,048,576
 Estimated Azure total     = Functions + monitoring + storage + Key Vault
-                            + outbound bandwidth + optional global routing
+                            + outbound bandwidth
 ```
 
 Apply the current service rates and free grants from the Azure Pricing Calculator rather
@@ -294,23 +281,6 @@ than embedding fixed rates in the estimate. Employee count is not a suitable sub
 for request volume. Peak traffic determines required capacity, while monthly request
 volume, execution duration, and telemetry volume drive much of the consumption cost.
 
-Compare the deployment profiles that meet your latency and resiliency requirements:
-
-| Deployment profile | When to consider it |
-| --- | --- |
-| Flex Consumption on demand | Pilot, evaluation, intermittent use, or production only after cold-start latency is validated. |
-| Flex Consumption with Always Ready | Standard production when low authentication latency is required. |
-| Zone-redundant Flex Consumption | Production authentication that must continue through an availability-zone failure. Budget for the minimum required Always Ready instances and ZRS storage. |
-| Premium | Continuously allocated capacity or Premium-specific capabilities. Validate the required instance count. |
-| Zone-redundant Premium | Mission-critical Premium deployment. Confirm the minimum instance count enforced by the selected deployment method. |
-| Two-region deployment | Recovery from a complete Azure-region outage. Include a second deployment, global routing, replicated configuration, and recovery testing. |
-
-Select a profile from latency and resiliency requirements, not organization size alone.
-The total authentication response budget includes Function startup, integration
-processing, provider latency, retries, and response handling. Always Ready reduces only
-the Function cold-start portion. Zone redundancy protects against a datacenter-zone
-failure within one region; it does not provide regional disaster recovery.
-
-For a multi-region design, also account for globally unique idempotency, provider-aware
-regional recovery, shared fraud and spend limits, and an emergency stop. Autoscaling Azure compute
-must not create unlimited telecom spend.
+Validate cold-start and live-request latency for the chosen plan. Review the estimate after the
+pilot, including Azure usage, provider invoices, and telemetry retention.
+Set budget alerts and assign a cost owner; budget notifications do not stop spending.

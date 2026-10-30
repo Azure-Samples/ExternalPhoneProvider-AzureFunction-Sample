@@ -29,14 +29,14 @@
     Prompts with FC1 as the interactive default when omitted; required for unattended setup.
 .PARAMETER Language
     JavaScript by default, without a prompt. Use csharp or python to select another language.
-    The legacy dotnet value remains supported for C#.
+    The value dotnet is also accepted for C#.
 .PARAMETER EndpointRegion
     Optional eu/global provider route assertion. Setup detects the tenant replication scope
     and rejects a conflicting value. Omit to use the detected route.
 .PARAMETER ResourcePrefix
     Interactive resource-name prefix, defaulting to epp on Enter. Required for unattended setup.
 .PARAMETER InstallPrerequisites
-    Install the Azure CLI Bicep component after explicit opt-in. The Graph SDK is not required.
+    Install the Azure CLI Bicep component after explicit opt-in.
 .PARAMETER ForceAuthentication
     Require fresh tenant-specific Azure CLI device-code sign-in. Graph reuses that CLI session.
 .PARAMETER PassThru
@@ -56,7 +56,7 @@
 .EXAMPLE
     .\Setup-Epp.ps1
 .EXAMPLE
-    .\Setup-Epp.ps1 -TenantId <tenant-id> -SubscriptionId <subscription-id> -ApplicationId <client-id>
+    .\Setup-Epp.ps1 -TenantId '<tenant-id>' -SubscriptionId '<subscription-id>' -ApplicationId '<client-id>'
 #>
 [CmdletBinding()]
 param(
