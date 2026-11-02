@@ -1,344 +1,183 @@
-# Secondary-provider design
+# Configure multiple phone providers
 
-<a id="add-conservative-primary-to-secondary-provider-attempts"></a>
+[Documentation](README.md) | [Provider adapters](BRING-YOUR-OWN-PROVIDER.md) | [HTTP contract](CONTRACT.md)
 
-[Documentation](README.md) | [Normal deployment](GETTING-STARTED.md) | [Provider interface](../TECHNICAL.md#provider-result-mapping)
+Configure a primary and secondary provider for each delivery channel. Send through the primary
+first, and use the secondary only when the primary is known not to have accepted the request.
 
-The sample does not implement automatic secondary-provider attempts. This advanced design shows
-how a customer-owned implementation can add one controlled primary-to-secondary attempt around
-`/api/SendOtp`.
+Complete [provider authorization and endpoint validation](ONBOARDING.md#complete-provider-authentication)
+for each account before enabling the combined flow.
 
-Use the secondary **only after proof that the primary did not accept the request**. Timeouts,
-lost responses, and generic errors are uncertain and must not trigger an automatic resend.
+## Delivery flow
 
-| Step | Task |
+![Decision flow from evaluation or primary delivery to success, stop, or one policy-approved secondary attempt, coordinated by durable operation state](images/multi-provider-flow.png)
+
+[Open the full-size diagram](images/multi-provider-flow.svg).
+The secondary is considered only after a verified nonacceptance or an eligible failure before
+dispatch. A timeout or lost response follows the stop path.
+
+## 1. Define the routing policy
+
+Record the primary account, secondary account, supported channels, destination coverage, and
+conditions that allow a secondary attempt. Keep the policy in trusted deployment configuration.
+
+Use these decision rules:
+
+| Primary outcome | Action |
 | --- | --- |
-| 1 | [Set provider order and policy](#1-provider-order) |
-| 2 | [Configure both accounts](#2-configure-and-prevalidate-both-accounts) |
-| 3 | [Isolate credentials](#3-credential-isolation) |
-| 4 | [Add durable operation state](#4-operation-state) |
-| 5 | [Implement the guarded secondary attempt](#5-secondary-provider-flow) |
-| 6 | [Apply one deadline](#6-use-one-end-to-end-deadline) |
-| 7 | [Test and deploy](#7-validation-and-deployment) |
+| Accepted, queued, or pending | Return the accepted result. Stop sending. |
+| Explicit fraud or policy block | Return the blocked result. Do not bypass the block through another provider. |
+| Invalid caller, recipient, or request | Return the appropriate error. |
+| Timeout, lost response, network error after dispatch, or unknown response | Treat the outcome as uncertain. Investigate before sending again. |
+| Primary-only credential failure before dispatch | Consider the secondary only if your policy allows it and the request has enough time remaining. |
+| Provider-documented proof that the primary did not accept the request | Consider the secondary only under the reviewed policy. |
+| Generic HTTP error or `Fail` result | Require more specific evidence of nonacceptance before considering the secondary. |
 
-<a id="1-set-a-fixed-provider-order-and-a-deny-by-default-policy"></a>
-## 1. Provider order
+Allow at most one secondary attempt. Keep caller authentication and provider risk decisions
+effective throughout the flow.
 
-Keep [SendOtp.js](../javascript/src/functions/SendOtp.js) and define the order at startup:
+## 2. Configure and authorize both accounts
 
-```javascript
-const providerOrder = Object.freeze({
-    channel: 'sms',
-    primary: 'primary-account',
-    secondary: 'secondary-account',
-});
-```
+Create an independent configuration for each provider account:
 
-Reject unsupported channels and request-supplied provider configuration. Do not use round-robin,
-fan-out, recursive provider switching, or primary retries. Attempt the secondary at most once.
-
-Keep **routing order** separate from **secondary-attempt eligibility**. Use this policy:
-
-| Primary result | Action |
+| Value | Use |
 | --- | --- |
-| Accepted, successful, or `PENDING` | Stop. Do not contact the secondary. Acceptance is not handset delivery. |
-| Block/fraud denial, bad recipient or payload, invalid inbound authentication | Stop. Never use another provider to bypass the denial or validation. |
-| Unknown status, malformed/lost response, timeout, connection/read error, or cancellation after dispatch | Record a terminal or uncertain outcome. Do not automatically contact the secondary. |
-| Generic 4xx/5xx, `Fail`, or `provider_rejected` | Do not try the secondary based on that classification alone. |
-| Primary-only credential acquisition fails before transport is entered | Eligible only if this pre-dispatch fact is recorded, the account policy explicitly permits it, the durable operation guard allows the transition, and the request budget is sufficient. |
-| Provider-specific, documented proof that the primary did not accept the operation | Eligible only through a reviewed nonacceptance classifier, explicit account policy, the durable guard and sufficient budget. |
+| Account identifier | Stable internal name for routing and safe diagnostic correlation |
+| Provider adapter | A registered adapter such as `infobip`, `soprano`, or `telesign` |
+| Channel endpoints | Complete HTTPS SMS and voice URLs for that account |
+| OAuth token tenant and scope | Provider-approved token issuer and API resource |
+| Customer application client ID | Application authorized by the provider |
+| Outbound managed identity | Identity authorized to obtain the client assertion |
 
-Enable a secondary attempt only after the provider confirms a safe nonacceptance signal. Caller
-authentication and provider controls still apply.
+Use the existing [provider profiles](../setup/providers/catalog.json) and
+[runtime settings](../TECHNICAL.md#configure-environment-variables) to map these values.
+All bundled providers use OAuth through managed identity federation.
 
-## 2. Configure and prevalidate both accounts
+1. Confirm sender configuration, destinations, channels, account limits, and pricing with each provider.
+2. Complete federation and provider-side authorization for each account.
+3. Load and validate both configurations at startup, including endpoint URLs and required OAuth values.
+4. Keep each configuration immutable and pass it to the matching adapter and credential service.
 
-[config.js](../javascript/src/functions/config.js) accepts `readConfig(settings)`, so each
-account can use its own immutable settings without changing `process.env` per request.
-The following customer-owned format is not loaded by the sample. Replace each
-`<supported-adapter-name>` with a registered adapter.
+Keep process-wide environment settings fixed while requests are running. Request fields must
+not supply provider URLs, credentials, or account configuration.
 
-```json
-[
-  {
-    "id": "primary-account",
-    "settings": {
-      "EPP_PROVIDER_NAME": "<supported-adapter-name>",
-      "EPP_PROVIDER_AUTH_MODE": "apiKey",
-      "EPP_PROVIDER_SMS_ENDPOINT": "<approved-primary-sms-endpoint-or-base-url>",
-      "KEY_VAULT_URL": "https://<primary-vault>.vault.azure.net",
-      "AZURE_CLIENT_ID": "<primary-vault-reader-client-id>"
-    }
-  },
-  {
-    "id": "secondary-account",
-    "settings": {
-      "EPP_PROVIDER_NAME": "<supported-adapter-name>",
-      "EPP_PROVIDER_AUTH_MODE": "apiKey",
-      "EPP_PROVIDER_SMS_ENDPOINT": "<approved-secondary-sms-endpoint-or-base-url>",
-      "KEY_VAULT_URL": "https://<secondary-vault>.vault.azure.net",
-      "AZURE_CLIENT_ID": "<secondary-vault-reader-client-id>"
-    }
-  }
-]
-```
+Map the configuration separately for each account:
 
-This SMS policy requires `EPP_PROVIDER_SMS_ENDPOINT` for each account. Voice uses
-`EPP_PROVIDER_VOICE_ENDPOINT`. Each channel requires its own setting; the handler does not use
-the other channel's setting when one is missing.
+| Account value | Runtime setting |
+| --- | --- |
+| Adapter ID | `EPP_PROVIDER_NAME` |
+| OAuth | `EPP_PROVIDER_AUTH_MODE=oauth` |
+| SMS and voice URLs | `EPP_PROVIDER_SMS_ENDPOINT`, `EPP_PROVIDER_VOICE_ENDPOINT` |
+| Token tenant and resource | `EPP_PROVIDER_TENANT_ID`, `EPP_PROVIDER_SCOPE` |
+| Authorized application | `EPP_OUTBOUND_CLIENT_ID` |
+| Outbound identity | `EPP_OUTBOUND_MI_CLIENT_ID` |
 
-At startup, validate both account configurations before enabling the endpoint. Check for unique
-IDs, the required channel endpoint, matching authentication mode, approved URLs, credential
-references, and a valid deadline policy.
+Pass these account-specific settings to `readConfig(settings)` in JavaScript,
+`AppConfig.Read(IEnv)` in C#, or `read_config(env)` in Python. Use a distinct credential context
+for each account even when both use the same provider adapter.
 
-For each selected [adapter](../javascript/src/functions/providers), inspect `credentialSpec`
-for the required secret names and any account identifier, and `createRequest` for endpoint and
-sender requirements. Some adapters accept a complete operation URL. Others append an operation
-path to a **base URL**. Use the approved HTTPS form expected by that adapter. For base URLs,
-reject an already-appended operation suffix, query or fragment, and reject or normalize a trailing
-slash before freezing settings so the operation path appears exactly once.
-Set an account and destination-approved sender where required. An adapter's default sender is not
-proof of approval. These requirements apply equally to primary and secondary roles.
+## 3. Isolate credentials by account
 
-Store no credential values in the configuration. Attach each referenced user-assigned managed
-identity to the Function App. Grant the vault-reading identity scoped secret-read access, such
-as Key Vault Secrets User under RBAC or the approved access-policy equivalent. If using
-the system-assigned identity, grant that identity instead. Client-ID settings do not attach
-identities or grant access. Complete provider account, recipient, sender, and consent prerequisites.
-see [provider onboarding](ONBOARDING.md#complete-provider-authentication).
+Give each account its own long-lived credential context. Reuse SDK clients within that context
+and let Azure Identity manage token caching and renewal.
 
-<a id="3-give-each-context-its-own-credential-service-and-lifecycle"></a>
-## 3. Credential isolation
+| Runtime | Integration points |
+| --- | --- |
+| JavaScript | Use a separate `CredentialTokenService` from [credentials.js](../javascript/src/functions/credentials.js) for each account; connect the contexts to [SendOtp.js](../javascript/src/functions/SendOtp.js). |
+| C# | Give each account its own provider and OAuth credential context; register them in [Program.cs](../dotnet/Program.cs) and select the context in [SendOtp.cs](../dotnet/Functions/SendOtp.cs). |
+| Python | Use a separate credential service from [credentials.py](../python/src/credentials.py) for each account and select the context in [function_app.py](../python/function_app.py). |
 
-Open [credentials.js](../javascript/src/functions/credentials.js). Its singleton retains SDK clients
-initialized for the selected account. Passing another account does not replace those clients.
-Create a long-lived service for each account instead, with an immutable configuration:
+Attach the required managed identities to the Function App and authorize each identity for its
+intended application and provider. Keep tokens tied to their account, tenant, and scope.
+Close all credential contexts during shutdown and rebuild them after configuration changes.
 
-```javascript
-// Consolidate with existing imports in your customized SendOtp.js; do not duplicate consts.
-const { readConfig } = require('./config');
-const { selectProvider } = require('./providers');
-const { CredentialTokenService } = require('./credentials');
+## 4. Track attempts durably
 
-// CUSTOMER_* helpers are your implementation, not repository APIs.
-const entries = CUSTOMER_LOAD_AND_VALIDATE_ACCOUNTS_AND_POLICY();
-const contexts = new Map();
-for (const entry of entries) {
-    const settings = Object.freeze({ ...entry.settings });
-    const config = Object.freeze(readConfig(settings));
-    const provider = selectProvider(config.providerName);
-    contexts.set(entry.id, Object.freeze({
-        config, provider, credentials: new CredentialTokenService(),
-    }));
-}
-```
+Agree on a stable operation identifier with the caller and bind it to the authenticated request
+and routing policy. Correlation IDs and Function invocation IDs serve tracing purposes; verify
+their lifecycle before using an identifier for duplicate protection.
 
-The loader must finish all checks in step 2 before this loop runs. Do not share SDK credential
-instances between accounts, even if they use the same adapter. Keep token usability checks,
-acquisition bounds, and sanitized failure reporting. Logical isolation within a worker is not a
-tenant security boundary.
+Use a shared durable store to:
 
-Credentials are acquired lazily. In `SendOtp.js`, replace the singleton's termination hook with
-cleanup for every account, retaining only one registration:
+1. Atomically claim the operation before sending.
+2. Record dispatch intent before entering the primary provider's HTTP transport.
+3. Record the outcome as accepted, blocked, failed before dispatch, verified nonacceptance, or uncertain.
+4. Reserve a secondary attempt atomically only when the routing policy permits it.
+5. Record the secondary dispatch intent and final outcome.
 
-```javascript
-app.hook.appTerminate(() => {
-    for (const { credentials } of contexts.values()) credentials.close();
-});
-```
+Concurrent requests and worker restarts must respect the same state. Reuse the recorded outcome
+for repeat requests rather than sending another message. Keep unresolved dispatches blocked from
+automatic resend, including after a timeout or expired worker lease.
 
-Remove the singleton import only after replacing its request/lifecycle uses. Each live attempt
-reads the required API-key secrets or calls the account's reusable SDK token credential. SDK token
-caching remains enabled; there are no custom caches, warmup, pollers, or failure cooldowns.
-See [credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
-An evaluation request must not start credential acquisition.
-Rebuild contexts on controlled restart when configuration changes. Never repurpose a live service
-for another account.
+Record intent and outcomes using conditional writes against the expected operation state/version.
+Recheck ownership before dispatch so a stale worker cannot send after another worker has taken
+over. After an uncertain attempt, preserve its state for reconciliation rather than treating an
+expired lease as permission to resend.
 
-<a id="4-add-durable-operation-state-before-enabling-secondary-attempts"></a>
-## 4. Operation state
+If the store is unavailable, stop before a new send. Retain only the operation identifier,
+safe account references, attempt state, and timestamps; exclude OTPs, phone data, credentials,
+and request bodies. Coordinate retention with the caller's retry window.
 
-Add a **durable attempt store and idempotency contract** before allowing a second submission.
-Agree on a stable, authorized operation key with the caller and test owner. Generated invocation
-IDs, correlation GUIDs, and nonces serve other purposes. Bind the operation key to the authorized
-caller, request, and fixed policy so another request cannot reuse it for a different delivery.
+## 5. Add the provider orchestration
 
-Use transactional/conditional writes in a durable shared store, not an in-memory map or lock.
-Atomically claim an operation across concurrent invocations and worker restarts. Persist intent
-**before** entering each provider transport call. For example, your state machine can use:
+Keep the shared request flow in this order:
 
-```text
-NEW -> CLAIMED -> PRIMARY_INTENT -> ACCEPTED | TERMINAL | UNCERTAIN
-                |                         -> VERIFIED_NONACCEPTANCE
-                -> PRIMARY_PRE_DISPATCH_FAILURE
+1. Validate the caller through Easy Auth.
+2. Validate the envelope, decrypt the delivery context, and check required fields.
+3. For evaluation, return the nonce before acquiring provider credentials or claiming a send operation.
+4. For live delivery, claim the operation and select the primary account from the configured policy.
+5. Acquire that account's credentials, build its request, and send once.
+6. Record the outcome and apply the decision rules from Step 1.
+7. If eligible, reserve the secondary attempt, verify the remaining time, and send once through
+   the secondary account.
+8. Record the final outcome and return the shared [HTTP response](CONTRACT.md#success-response).
 
-PRIMARY_PRE_DISPATCH_FAILURE or VERIFIED_NONACCEPTANCE
-  -> SECONDARY_RESERVED (atomic, policy-approved, once)
-  -> SECONDARY_INTENT -> ACCEPTED | TERMINAL | UNCERTAIN
-```
+Only recognized provider acceptance can return a live success response with the nonce.
+Preserve blocked and failed outcomes when a secondary attempt is not allowed.
+Keep the original inbound issuer, audience, caller allowlist, and encryption configuration.
 
-All transitions require the expected state/version and valid ownership. A duplicate invocation
-must not send. Handle its response using the agreed operation contract. Never reset an intent
-or uncertain dispatched attempt after a timeout, lease expiry or restart. An abandoned intent
-may mean a message was sent even if no result was saved. Fail closed when the store is unavailable.
-Do not let stale owners send after a claim is revoked or let a new owner reclaim a reserved attempt.
+Use explicit provider-specific nonacceptance rules rather than sending to the secondary from a
+generic exception handler. A lost response can follow an accepted message.
 
-Record operation state, safe provider context ID and per-attempt classifications separately from
-request logs. Do not store/log bodies, OTPs or credentials as attempt evidence. Retention and key
-reuse rules must cover the caller's replay window. A store guard cannot atomically commit an
-external provider send: it is **not provider-side idempotency or true exactly-once delivery**.
-Retries or separate delivery paths outside this endpoint can still produce duplicates. Confirm
-caller behavior with the owner rather than promising the local guard prevents it.
+## 6. Apply one request deadline
 
-<a id="5-secondary-provider-flow"></a>
-## 5. Secondary-provider flow
+Set an end-to-end budget that includes validation, state-store access, credential acquisition,
+provider calls, and response preparation.
 
-In [SendOtp.js](../javascript/src/functions/SendOtp.js), preserve authentication at the platform
-boundary, [envelope validation](../javascript/src/functions/entraPayload.js),
-[decryption](../javascript/src/functions/jwe.js), completeness checks and the existing evaluation
-early return. Keep inbound `config.decryptionKeyPem` and `config.expectedKeyId` unchanged.
-Only live validated requests proceed to the operation claim and provider attempts.
+Check the remaining time before each attempt and reserve time to return the response.
+Keep the shared credential-acquisition and HTTP timeout limits within that budget.
+Propagate cancellation through the operation; after an uncertain dispatch, record uncertainty
+instead of starting another send.
 
-Replace the flow from `const provider = selectProvider(config.providerName)` through the
-single-provider result handling with your guarded orchestration. Extract the existing credential,
-request-build, transport and response blocks into an attempt helper that takes one context and
-returns a structured category. Use `providerConfig` for outbound settings and that context's
-`credentials.getCredentials(provider.credentialSpec, providerConfig)`. Keep
-[OtpDelivery](../javascript/src/functions/delivery.js) construction and content handling intact.
+Agree on retry behavior with the caller and providers. The endpoint's response describes its own
+attempts; Microsoft Entra ID routing and fallback remain governed by the tenant's authentication
+configuration.
 
-The existing credential catch immediately returns 502, and transport/result failures immediately
-return errors. The attempt helper reports the stage to the main flow instead of hiding
-it in a catch that calls the secondary. Preserve their final HTTP classifications when the
-secondary attempt is not allowed. This is **policy pseudocode**, not executable glue or a complete handler:
+## 7. Test and deploy
 
-```javascript
-// Runs after existing validation/decryption/evaluation handling.
-const operation = await CUSTOMER_ATOMIC_CLAIM_AUTHORIZED_OPERATION();
-if (!operation.owned) return CUSTOMER_DUPLICATE_RESPONSE_WITHOUT_SENDING();
+Extend the selected runtime's offline tests with these cases:
 
-const primary = await CUSTOMER_ATTEMPT_ONCE(
-    operation, contexts.get(providerOrder.primary), aggregateDeadline);
-if (primary.category === 'accepted') return CUSTOMER_EXISTING_SUCCESS_RESPONSE();
-if (!['primary_pre_dispatch_failure', 'verified_nonacceptance']
-    .includes(primary.category)) return CUSTOMER_TERMINAL_OR_UNCERTAIN_RESPONSE(primary);
+| Scenario | Expected result |
+| --- | --- |
+| Evaluation or invalid request | No provider send |
+| Primary acceptance | One primary send and no secondary send |
+| Primary risk block | Blocked response and no secondary send |
+| Eligible failure before primary dispatch | At most one secondary send, subject to policy and deadline |
+| Verified primary nonacceptance | At most one secondary send after the durable reservation |
+| Timeout, lost response, or unknown outcome | No automatic secondary send |
+| Concurrent duplicates or worker restart | Existing operation state prevents another dispatch |
+| State-store failure or insufficient time | No new send |
+| Secondary failure | Final failure; no further provider attempt |
 
-const approval = CUSTOMER_CHECK_ACCOUNT_POLICY_AND_EVIDENCE(primary);
-if (!approval.allowed || !CUSTOMER_HAS_SECONDARY_BUDGET(aggregateDeadline))
-    return CUSTOMER_TERMINAL_OR_UNCERTAIN_RESPONSE(primary);
-if (!await CUSTOMER_ATOMIC_RESERVE_SECONDARY(operation, approval))
-    return CUSTOMER_DUPLICATE_RESPONSE_WITHOUT_SENDING();
+Use fake credentials, responses, clocks, and store failures for offline tests.
+Then build the [runtime package](../TECHNICAL.md#build-zips-locally), deploy to a test environment,
+and verify OAuth authorization and controlled delivery through each account.
 
-const secondary = await CUSTOMER_ATTEMPT_ONCE(
-    operation, contexts.get(providerOrder.secondary), aggregateDeadline);
-return CUSTOMER_FINAL_RESPONSE_WITHOUT_ANOTHER_ATTEMPT(secondary);
-```
+Before activation, test telemetry and rollback. Record one final request outcome plus safe
+per-attempt account, stage, status, and timing fields. Keep provider acceptance separate from
+recipient delivery and [exclude sensitive data](LOGGING.md).
 
-Every `CUSTOMER_*` helper, result category, classifier, store and deadline here is new customer
-code. `CUSTOMER_ATTEMPT_ONCE` must reserve/persist transport intent and recheck ownership and
-remaining budget immediately before sending. Only the primary's approved pre-dispatch or proven
-nonacceptance outcome can reserve a secondary. Secondary failure is final.
-Persist each outcome, including policy/budget denial, before the final response. If saving a
-result fails after intent, leave that attempt non-reclaimable. Do not send through the secondary.
-
-**Do not use `result.httpStatus >= 400` or `catch -> sendSecondary`.**
-[providerResult.js](../javascript/src/functions/providerResult.js) exposes `Continue`, `Fail`
-and `Block`, not proof that a secondary attempt is safe. Preserve Block as terminal and recognized
-accepted/`PENDING` as accepted. A customer classifier must require provider-specific,
-documented nonacceptance for this exact attempt and account policy approval. It must not
-reinterpret generic `Fail` or a broad status range as proof.
-
-[providerTransport.js](../javascript/src/functions/providerTransport.js) collapses fetch and
-response-body failures into `provider_timeout`/`provider_network_error`. Those errors do **not**
-expose whether the request was transmitted. Treat them as uncertain after intent, including
-connection errors. Do not guess they happened before send. Treat a primary credential failure
-as pre-dispatch only when the flow and operation state prove transport was never entered.
-The failure must also be isolated to the primary, and account policy must still allow the secondary.
-
-Keep endpoint allowlists, HTTPS checks, manual redirects and per-provider response mapping.
-Never forward inbound authorization. Preserve the endpoint success nonce/correlation response
-only for evaluation or an accepted delivery result. Terminal and uncertain outcomes get no success
-nonce. Continue using [safe logging](../javascript/src/functions/logging.js), with an explicit
-per-attempt provider ID/classification and one final request outcome.
-
-<a id="6-enforce-one-aggregate-deadline"></a>
-## 6. Use one end-to-end deadline
-
-Define one end-to-end time budget with the service and caller owners. Include validation,
-durable-store waits, both providers' credential and transport work, and the final response.
-A duplicate invocation continues to use the original operation budget.
-
-The current credential service has its own acquisition bound and the transport its own timeout.
-`parseProviderTimeout` normalizes a single provider timeout, **not** an aggregate deadline.
-Add explicit remaining-budget checks and cancellation propagation in your customer integration.
-Do not use `Promise.race` to return while a send continues in the background. If ownership,
-deadline or cancellation changes after dispatch, record uncertainty and do not try the secondary.
-Reserve enough time for the complete secondary attempt and final response, and check the remaining
-time again before sending. Skip the secondary when the remaining time cannot cover that work,
-even when the primary result would otherwise allow it.
-
-<a id="7-validate-offline-then-deploy-only-after-separate-approval"></a>
-## 7. Validation and deployment
-
-Before editing, run the existing JavaScript tests from the repository root. Restore missing
-dependencies from the existing lockfile only when needed:
-
-```powershell
-# Only if dependencies are missing.
-npm ci --prefix .\javascript --ignore-scripts --no-audit --no-fund
-node --test .\javascript\test\provider-flow.test.js `
-    .\javascript\test\credentials.test.js `
-    .\javascript\test\sendotp.test.js
-```
-
-After customization, adapt the original singleton/lifecycle fixtures and extend the
-[adapter](../javascript/test/provider-flow.test.js),
-[credential](../javascript/test/credentials.test.js) and
-[handler](../javascript/test/sendotp.test.js) tests. Use fake credentials, transport, clocks, and
-store faults. Block external network. Verify:
-
-- Primary acceptance means zero secondary calls. Approved credential-before-transport failure
-  or explicitly modeled nonacceptance allows at most one secondary, only with guard and budget.
-- Blocks, invalid input, generic provider errors, unknown/malformed responses and all uncertain
-  dispatches mean zero secondary calls. Secondary failure never restarts the sequence.
-- Concurrent/retried logical operations and process restarts cannot reclaim intent/reservations.
-  Store failure, deadline exhaustion and cancellation fail closed.
-- Evaluation returns before claiming an operation or calling a provider. Incomplete requests and
-  decryption failures remain errors. Credentials, endpoints, and wire responses stay isolated between accounts.
-
-Fake classifiers and stores cannot prove provider nonacceptance or distributed durability.
-Routing and isolation tests alone do **not validate secondary-provider behavior**. No production
-classifier is supplied. Keep response-based secondary attempts disabled until reviewed.
-
-Deploy one app/package at `/api/SendOtp` for code-owned policy, orchestrator, classifier, or store changes.
-Validate startup configuration on controlled restart. Verify request-time acquisition after rotation and update
-pinned references explicitly. Unchanged approved tests or Markdown edits need no redeployment.
-
-Preserve inbound authentication and origin/network restrictions, including any Front Door
-forwarding. Regional recovery is separate from secondary-provider attempts. Before live use,
-review account permissions/consent, sender/recipient entitlement, durable-store guarantees, and
-caller retry behavior. Rotate any exposed credentials before testing. Any Microsoft Entra ID
-sign-in or provider test needs separate authorization, an approved recipient, explicit attempt
-limits, and stop conditions for uncertainty. HTTP 200/`PENDING` is not handset receipt. Nothing
-here authorizes a send or proves Microsoft Entra ID integration, capacity, regional resilience,
-or live delivery.
-
-## .NET and Python integration pointers
-
-**.NET:** Start with [SendOtp.cs](../dotnet/Functions/SendOtp.cs),
-[AppConfig.Read(IEnv)](../dotnet/Src/AppConfig.cs) and
-[PhoneProviderBase](../dotnet/Src/PhoneProviderBase.cs).
-[CredentialTokenService](../dotnet/Src/CredentialTokenService.cs) bounds each request's acquisition, while
-the [OAuth adapter implementation](../dotnet/Src/Providers) retains SDK credential instances and
-[SecretResolver](../dotnet/Src/SecretResolver.cs) retains its vault client. Isolate the full
-account object graph and update [Program.cs](../dotnet/Program.cs) provider registrations.
-Review cancellation, concurrent acquisition and failure classification rather than assuming
-the JavaScript behavior transfers unchanged.
-
-**Python:** Start with [function_app.py](../python/function_app.py),
-[read_config(env)](../python/src/config.py) and [PhoneProviderBase](../python/src/provider.py).
-Pass explicit account contexts instead of rereading process settings. Use a separate
-[CredentialTokenService](../python/src/credentials.py) and
-[SecretResolver(env)](../python/src/secrets.py) per account. Close each credential service at shutdown.
-Both runtimes still need customer-owned durable operation state, deadline enforcement, and a
-reviewed secondary-attempt classification. These pointers are not evidence that provider
-switching is implemented or validated in either runtime.
+Retain the prior package and configuration for rollback. Reconcile unresolved send attempts
+before resuming traffic. If combining this design with [multi-region resiliency](MULTI-REGION-RESILIENCY.md),
+use shared operation state across regions and test provider switching and regional recovery
+separately.

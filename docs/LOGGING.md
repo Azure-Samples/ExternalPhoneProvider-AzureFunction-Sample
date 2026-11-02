@@ -23,8 +23,9 @@ responses.** Keep body tracing off.
 | Python | Standard `logging`. `otp_log.py` defines fixed event IDs, names, levels, and fields. An immutable `LoggerAdapter` supplies Function and Microsoft trace identifiers. |
 | .NET | Standard `ILogger`. `OtpLog` defines source-generated IDs/names. `ILogger.BeginScope` supplies `FunctionName`, `FunctionRequestId`, `FunctionInvocationId`, `MsClientRequestId`, `MsCorrelationId`, and `MsCorrelationIdSource`. |
 
-Each invocation ends with `request_completed`. Exporters control formatting and property
-preservation. Field names differ by runtime, so verify the
+Requests that reach the handler emit `request_completed` on completion.
+Easy Auth and C# input-binding errors can occur before the handler.
+Exporters control formatting and property preservation. Field names differ by runtime, so verify the
 [deployed schema](MONITORING.md#runtime-specific-log-discovery).
 
 ## Event sequence
@@ -33,15 +34,15 @@ A successful live request emits these events in order:
 
 | Service event | Safe information recorded |
 | --- | --- |
-| `request_received` | Function invocation and available raw Microsoft trace IDs under their `x-ms-*` names. Excludes the raw body and arbitrary headers. |
+| `request_received` | Function invocation and allowlisted Microsoft trace IDs. Excludes the raw body and arbitrary headers. |
 | `envelope_validated` / `payload_validated` | Allowlisted body metadata: validated payload type, normalized `channel`, `evaluation` and optional `ttlSeconds`. |
 | `delivery_context_decrypted` | Decryption completed. Excludes plaintext fields, JWE, and key ID. |
 | `provider_selected` | Registered provider and its authentication mode. |
-| `provider_credential_resolution_started` | OAuth client-assertion or Key Vault credential source, with explicitly named raw OAuth application/identity/tenant IDs. |
+| `provider_credential_resolution_started` | OAuth credential source and allowlisted application, managed-identity, and token-tenant IDs. |
 | `provider_credential_resolved` | Credential resolution and usability checks completed, with elapsed time. Excludes secrets, tokens, assertions, and claims. |
 | `provider_request_build_started` | The provider is preparing the outbound request. |
 | `provider_request_built` | Allowlisted HTTP method, final endpoint scheme/host/port/API path, HTTPS, and disabled redirects. Excludes the query string, authorization headers, and body. |
-| `provider_request_started` | The outbound send is beginning, with method, sanitized endpoint and timeout. |
+| `provider_request_started` | The outbound send is beginning, with its HTTP timeout. Method and endpoint are recorded by `provider_request_built`. |
 | `provider_response_received` | Actual upstream HTTP status. Emitted before response-body reading completes. |
 | `provider_response_processed` | Mapped provider status/outcome, fixed failure classification and duration. Raw provider descriptions and bodies are excluded. |
 | `response_prepared` | Response status and booleans indicating nonce/correlation inclusion, not their values or the response body. |
@@ -58,12 +59,11 @@ Failures emit `request_failed` with stage, reason, and HTTP status (`FailureStag
 that classification, upstream HTTP status, and normalized status, never descriptions/bodies.
 Explicit risk/policy blocks use outcome `Block`, reason `provider_blocked`, and endpoint HTTP `422`.
 Provider HTTP `401`/`403` remains visible as upstream status but returns endpoint `400`, not an
-inbound SAS authentication error or server outage. Existing SAS logs completed `400`/`422`
-responses as endpoint client errors; it does not interpret `provider_blocked` as a separate outcome.
+inbound caller authentication error.
 Credential acquisition failures use `request_failed` with stage `provider_credentials`, reason
 `credential_unavailable`, and HTTP `502`. A preceding `provider_credential_resolution_failed`
-event supplies the [internal diagnostic](#credential-diagnostics). There are no background credential-refresh events.
-Unexpected failures use `unexpected_error`. No event adds credential reads, acquisition, or send retries.
+event supplies the [credential diagnostic](#credential-diagnostics).
+Unexpected failures use `unexpected_error`.
 
 `response_prepared` runs before successful and failed returns. It does not prove caller receipt.
 
@@ -79,7 +79,7 @@ The request-correlated `provider_credential_resolution_failed` event logs only `
 (`AadstsCode` in .NET), extracted from the SDK error message. It contains `AADSTS` followed by
 ASCII digits, or null when no such identifier is present. Codes are not restricted to the
 examples below. Raw error text, responses and credentials are never logged. Python/.NET use event ID
-**1103** at Error level. Public HTTP responses and credential acquisition behavior are unchanged.
+**1103** at Error level.
 
 | Code | Meaning and next check |
 |---|---|
@@ -95,11 +95,17 @@ does not establish that authentication succeeded or that the failure was unrelat
 Build metadata from validated allowlisted fields. Exclude unknown, tenant, locale, risk, and
 decrypted values.
 
-`providerCredentialSource` is `managed_identity_client_assertion` for app tokens and `key_vault`
-for API keys. OAuth resolution can reuse the SDK's token cache and does not imply a fresh token
-exchange. API-key resolution reads Key Vault secret values for each live request.
-`providerCredentialElapsedMs` includes resolution and usability checks, not a separate deadline.
-SDK diagnostics remain suppressed.
+For the bundled OAuth providers, the credential source is `managed_identity_client_assertion`.
+Resolution can reuse the SDK's token cache rather than requiring a fresh exchange.
+The credential duration includes resolution and usability checks.
+
+| Runtime | Credential source field | Credential duration field |
+| --- | --- | --- |
+| JavaScript | `providerCredentialSource` | `providerCredentialElapsedMs` |
+| Python | `credentialSource` | `elapsedMs` |
+| C# | `CredentialSource` | `ElapsedMs` |
+
+These fields appear on the corresponding credential events. SDK diagnostics remain suppressed.
 
 `providerEndpoint` records the final scheme, host, port, and path. It removes user information,
 query strings, and fragments, but not path segments. Keep secrets and personal data out of URL

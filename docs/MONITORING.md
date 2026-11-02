@@ -13,7 +13,7 @@ review failures and latency, and create alerts.
 | Review requests, failures, and latency | [Function requests](#function-requests) |
 | Review evaluation and provider outcomes | [Application events](#application-events) |
 | Find Python or .NET log fields | [Runtime log formats](#runtime-log-formats) |
-| Monitor several regions | [Multiple regions](#multiple-regions) |
+| Monitor several deployments | [Multiple deployments](#multiple-deployments) |
 | Create notifications | [Alerts](#alerts) |
 | Diagnose missing data | [Collection and data quality](#collection-and-data-quality) |
 | Monitor Microsoft Entra ID sign-ins | [Sign-in monitoring](SIGN-IN-MONITORING.md) |
@@ -29,18 +29,17 @@ out of queries, alerts, exports, and screenshots.
 1. Open the Function App from the deployment summary.
 2. Select **Monitoring > Application Insights**, then open the linked resource.
 
-    ![CYOT-CONSTO Function App Monitoring menu with the consto Application Insights resource link](images/onboarding/monitoring-link.png)
+    ![Function App Monitoring menu with the linked Application Insights resource](images/onboarding/monitoring-link.png)
 
 3. On the Application Insights **Overview**, open **Logs workspace**.
 4. In the workspace, select **Logs** and use **KQL mode**.
 
-    ![CYOT-CONSTO Application Insights Overview showing the consto resource group and Logs workspace while identifiers and connection details remain hidden](images/onboarding/monitoring-workspace.png)
+    ![Application Insights Overview with the linked Logs workspace highlighted](images/onboarding/monitoring-workspace.png)
 
-    *Nonproduction resource names and the subscription display name remain visible. Subscription and
-    application IDs, the instrumentation key, and the connection string remain hidden.*
+    *Screenshots show a test deployment. Identifiers and connection details are hidden.*
 
 Record the Function App, Application Insights resource, workspace, runtime, region, deployment
-version, owner, and expected traffic or test schedule. For several regions, keep one row per origin.
+version, owner, and expected traffic or test schedule.
 
 Connection strings and resource identifiers are private operational data. Grant read access only
 to the required workspace. Application telemetry uses `AppRequests`, `AppTraces`, and related
@@ -59,8 +58,8 @@ AppRequests
 | order by LastSeen desc
 ```
 
-Use the observed `AppRoleName`, `_ResourceId`, and request `Name` in later queries. Do not assume
-that every deployment records the operation as `SendOtp`.
+Replace the resource, role, and request-name placeholders in later queries with the observed
+`_ResourceId`, `AppRoleName`, and `Name`.
 
 <a id="run-a-first-query-and-read-the-results"></a>
 ### First check
@@ -68,12 +67,12 @@ that every deployment records the operation as `SendOtp`.
 ```kusto
 AppRequests
 | where TimeGenerated >= ago(48h)
-| where AppRoleName == "<function-role-name>" and Name == "SendOtp"
+| where AppRoleName == "<function-role-name>" and Name == "<request-name>"
 | summarize StoredRows = count() by ResultCode, Success
 | order by ResultCode asc
 ```
 
-![CYOT-CONSTO workspace Logs in KQL mode with a query scoped to the consto Function App and one aggregate result row](images/onboarding/logs-query-results.png)
+![Workspace Logs showing a scoped request query and an aggregate result](images/onboarding/logs-query-results.png)
 
 `StoredRows` counts stored telemetry, not delivered messages. Sampling can change the count.
 Evaluation and live calls can both return `200`. No rows means no matching data in this scope and
@@ -88,7 +87,7 @@ time range, not proof that the endpoint is healthy.
 AppRequests
 | where TimeGenerated >= ago(1h)
 | where _ResourceId =~ "<application-insights-resource-id>"
-| where AppRoleName == "<function-role-name>" and Name == "SendOtp"
+| where AppRoleName == "<function-role-name>" and Name == "<request-name>"
 | extend Weight = tolong(coalesce(ItemCount, 1))
 | summarize Requests = sum(Weight),
     Failed = sumif(Weight, Success == false),
@@ -110,7 +109,7 @@ outcome, not confirmation that a recipient received an SMS or call.
 AppRequests
 | where TimeGenerated >= ago(1h)
 | where _ResourceId =~ "<application-insights-resource-id>"
-| where AppRoleName == "<function-role-name>" and Name == "SendOtp"
+| where AppRoleName == "<function-role-name>" and Name == "<request-name>"
 | where Success == false
 | summarize Failed = sum(tolong(coalesce(ItemCount, 1)))
     by ResultCode, bin(TimeGenerated, 5m)
@@ -169,9 +168,8 @@ AppTraces
 ```
 
 Credential acquisition failures have `failureStage=provider_credentials` and
-`failureReason=credential_unavailable` on the failing request. There is no background refresher
-or idle credential-health signal. A successful evaluation does not prove provider credentials work;
-validate that path separately through an approved live test.
+`failureReason=credential_unavailable` on the failing request.
+Validate provider authorization separately through a controlled live test.
 
 The preceding `provider_credential_resolution_failed` event includes a safe `aadstsCode`
 (`AadstsCode` in .NET). See [credential diagnostics](LOGGING.md#credential-diagnostics).
@@ -202,10 +200,9 @@ Exporter configuration can rename or remove structured properties. Validate one 
 nonproduction invocation before creating an alert. See the [log field reference](LOGGING.md) for
 event order, identifiers, and safe fields.
 
-<a id="3-multiple-regions-and-cross-workspace-queries"></a>
-## Multiple regions
+## Multiple deployments
 
-If regions share a workspace, query `AppRequests` once and group by `_ResourceId` and
+If deployments share a workspace, query `AppRequests` once and group by `_ResourceId` and
 `AppRoleName`. For separate workspaces, use explicit references and label each branch:
 
 ```kusto
@@ -213,12 +210,12 @@ union
     (workspace("<workspace-a-id>").AppRequests
      | where TimeGenerated >= ago(1h)
      | where _ResourceId =~ "<insights-a-resource-id>"
-         and AppRoleName == "<role-a>" and Name == "SendOtp"
+         and AppRoleName == "<role-a>" and Name == "<request-name-a>"
      | extend Region = "region-a"),
     (workspace("<workspace-b-id>").AppRequests
      | where TimeGenerated >= ago(1h)
      | where _ResourceId =~ "<insights-b-resource-id>"
-         and AppRoleName == "<role-b>" and Name == "SendOtp"
+         and AppRoleName == "<role-b>" and Name == "<request-name-b>"
      | extend Region = "region-b")
 | extend Weight = tolong(coalesce(ItemCount, 1))
 | summarize Requests = sum(Weight),
@@ -236,7 +233,8 @@ visible. A healthy region must not hide another region's missing data or failure
 
 ### Missing telemetry
 
-Use an explicit expected inventory when each listed origin should receive requests:
+Use an explicit expected inventory when each listed deployment should receive requests.
+This example filters both workspaces to the same observed request name:
 
 ```kusto
 let Expected = datatable(Region:string, Component:string, Role:string)
@@ -249,7 +247,7 @@ let Observed =
     union workspace("<workspace-a-id>").AppRequests,
           workspace("<workspace-b-id>").AppRequests
     | where TimeGenerated between (ago(20m) .. ago(5m))
-    | where Name == "SendOtp"
+    | where Name == "<request-name>"
     | summarize StoredRows = count(), LastSeen = max(TimeGenerated)
         by Component = tolower(_ResourceId), Role = AppRoleName;
 Expected
@@ -260,12 +258,12 @@ Expected
 ```
 
 For an alert, append `| where MissingTelemetry` and trigger when table rows are greater than zero.
-Use this only when traffic or an authorized scheduled test is expected. Idle or standby origins can
+Use this only when traffic or an authorized scheduled test is expected. Idle deployments can
 legitimately have no request rows.
 
 ## Alerts
 
-1. In **Azure Monitor > Alerts > Action groups**, create the notification route and test it.
+1. In **Azure Monitor > Alerts > Action groups**, [create and test the notification route][action-groups].
 2. Create one rule per clear operational condition.
 3. Preview the query over healthy, failing, and empty periods.
 4. Test firing, notification, and resolution in nonproduction.
@@ -279,7 +277,7 @@ legitimately have no request rows.
 | Missing regional telemetry | Expected-inventory query filtered to `MissingTelemetry`. |
 | Certificate or credential renewal | Independent inventory reminder and the approved renewal runbook. |
 
-Use **Custom log search** for KQL rules and verify the rule identity can read every workspace.
+Use [Custom log search][log-alerts] for KQL rules and verify the rule identity can read every workspace.
 Use Function metrics only after confirming that the signal exists on the deployed FC1 or EP1 plan.
 Tune all sample thresholds to measured traffic and costs.
 
@@ -291,17 +289,17 @@ and cost. Follow the [certificate lifecycle runbook](../setup/docs/README.md#enc
 A new Key Vault certificate version does not update the Function's pinned reference or the
 Microsoft Entra ID registration automatically.
 
-Guided setup does not create action groups, alerts, Workbooks, availability tests, or certificate
-contacts. Cost budgets notify but do not stop spending.
+Create alert rules, notification routes, and certificate contacts after deployment.
+Cost budgets notify but do not stop spending.
 
 ## Workbook
 
 <a id="6-build-a-shared-operations-workbook"></a>
 
-Create a Workbook only after the queries are verified. Include:
+To create an [operations Workbook][workbooks], use verified queries for:
 
 - request volume, failure percentage, and p95/p99 latency
-- expected origins and last-seen status
+- expected deployments and last-seen status
 - validated runtime completion and credential events
 - current alerts, deployment version, and owners
 
@@ -320,20 +318,6 @@ or delivery. Live checks need separate approval, controlled recipients, and cost
 
 FC1 can scale to zero. Idle periods can have no request logs, and the first authorized
 request can include cold-start latency. Frequent probes can change both cost and observed latency.
-
-<a id="8-optional-azure-front-door-layer"></a>
-<a id="8-regional-edge-monitoring-with-azure-front-door"></a>
-## Front Door
-
-For the [multi-region design](FRONTDOOR.md), monitor Front Door separately from the Functions:
-
-- health-probe status and origin health percentage
-- origin latency and edge response status
-- WAF or access-log rejections
-- each regional Function, dependency, and telemetry source
-
-Origin health does not prove caller authentication, provider access, or delivery. Keep origin
-access restrictions and Easy Auth enabled while investigating routing.
 
 <a id="9-sampling-ingestion-gaps-privacy-and-validation"></a>
 ## Collection and data quality

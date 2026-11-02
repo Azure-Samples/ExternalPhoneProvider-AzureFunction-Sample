@@ -1,38 +1,45 @@
 # Python implementation
 
-<a id="external-phone-provider-function-python-v2-model"></a>
+[Documentation](../docs/README.md) | [HTTP contract](../docs/CONTRACT.md) | [Settings](#environment-configuration)
 
-[Documentation](../docs/README.md) | [Settings](#environment-configuration) | [Request behavior](#request-behavior) | [Source](#source)
+**Python 3.11**, Azure Functions v4, Python v2 programming model.
+Guided deployment uses one provider per Function App.
 
-Implements the shared [contract](../docs/CONTRACT.md) with one provider per deployment.
-Target: Python 3.11, Azure Functions v4, Python v2 programming model.
+## Deploy the sample
 
-## Setup and deployment
+Follow the [deployment guide](../docs/GETTING-STARTED.md) with `-Language python`, then complete
+[provider authorization and endpoint validation](../docs/ONBOARDING.md#complete-provider-authentication).
 
-**Sample deployment:** follow the [five-step guide](../docs/GETTING-STARTED.md), then complete
-[provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
+## Develop locally
 
-**Custom package development:** follow these steps from `python/`:
+Use Python 3.11 in a virtual environment. From the `python` directory, create and activate
+the environment. For PowerShell on Windows:
 
-1. Create the [local settings below](#environment-configuration). Select a fixed provider ID from
-   [providers/](src/providers/), configure it, and complete
-   [provider authentication](../docs/ONBOARDING.md#complete-provider-authentication).
-2. Use a virtual environment, install [requirements.txt](requirements.txt) and pytest, and run
-   [tests/](tests/). Start Core Tools here, **on loopback only, without tunnels**. It has no Easy Auth.
-3. For manual deployment, publish to a compatible Linux Python Function with dependencies or
-   remote build. Inspect the package for private settings, complete the
-   [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist), and run
-   [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint) to verify
-   platform authentication.
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt pytest
+python -m pytest tests
+```
 
-**Regional continuity:** use the [Front Door guide](../docs/FRONTDOOR.md) and include
-Python-specific package, startup, dependency, and telemetry checks.
+On other platforms, use the corresponding
+[virtual-environment activation command](https://docs.python.org/3.11/library/venv.html#how-venvs-work).
+The tests use local fixtures and mocked dependencies.
+
+For local Function execution, install
+[Azure Functions Core Tools v4](https://learn.microsoft.com/azure/azure-functions/functions-run-local)
+and Azurite, then create the settings below.
+Keep the local host accessible only from your machine; Easy Auth runs in Azure.
+
+Build Azure packages on **Linux x64 with Python 3.11** using the
+[Python packaging script](../TECHNICAL.md#build-zips-locally).
+Configure [Easy Auth](../docs/ONBOARDING.md#manual-deployment-trust-checklist) and repeat the
+deployed checks after publication.
 
 ## Environment configuration
 
-Run Core Tools from `python/`. Create an untracked `local.settings.json` beside
-[host.json](host.json), starting from the [shared sample](../docs/local.settings.sample.json).
-For local evaluation, start Azurite and replace the test-key placeholder in this minimal setup:
+Create an untracked `local.settings.json` beside [host.json](host.json).
+For local evaluation, start Azurite and replace the test-key placeholder:
 
 ```json
 {
@@ -45,61 +52,41 @@ For local evaluation, start Azurite and replace the test-key placeholder in this
 }
 ```
 
-For live delivery, use the [shared settings table](../TECHNICAL.md#configure-environment-variables)
-for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter-specific options.
-Keep `Values` as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"1500"`.
-Replace the placeholders. API-key adapters store credentials in Key Vault. Each selected channel
-requires a valid endpoint; a missing or invalid endpoint never uses the other channel.
+Core Tools loads `Values` into `os.environ`. Direct Python processes and pytest do not load this
+file. Restart the host after changing settings.
 
-Core Tools loads `Values` into `os.environ`. Direct Python and pytest do not. Restart after edits.
-Use a local test PEM because Core Tools cannot resolve Key Vault references locally. Keep Azurite
-settings local.
-
-In Azure, configure the same app settings and use a Key Vault reference for the private PEM.
-Provider secrets use managed identity, not a developer CLI login. Keep local evaluation on loopback.
+For Azure deployment, use the [shared settings reference](../TECHNICAL.md#configure-environment-variables)
+and [sample settings](../docs/local.settings.sample.json).
+The bundled providers use OAuth through managed identity federation. Each channel has its own
+configured HTTPS endpoint. The decryption key uses a versioned Key Vault reference in Azure;
+local evaluation uses a local test key.
 
 ## Request behavior
 
-`POST /api/SendOtp` follows the [shared request/response contract](../docs/CONTRACT.md#1-http-api).
-Easy Auth authenticates the caller. The handler then validates and decrypts the payload. It never
-forwards or returns the incoming `Authorization` header.
+`POST /api/SendOtp` follows the [HTTP contract](../docs/CONTRACT.md#http-request).
+Easy Auth validates the caller in Azure. The handler validates the envelope and decrypts the JWE.
 
-Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) to validate
-authentication and decryption without a provider send. Live success confirms acceptance,
-**not handset receipt**. Check a timeout before retrying.
+**Evaluation** returns the nonce before provider work. **Live** requests obtain an OAuth token
+and send through the selected adapter. A live success confirms provider acceptance; verify
+recipient delivery separately and investigate timeouts before retrying.
 
-For built-in message and voice mapping, see
-[Infobip, Soprano, and Telesign](../TECHNICAL.md#built-in-providers).
+See [built-in provider behavior](../TECHNICAL.md#built-in-providers) and
+[credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
 
 ## Source
 
-To add Twilio, follow the [Twilio integration guide](../docs/BRING-YOUR-OWN-PROVIDER.md).
-Keep caller authentication and public responses in the shared handler.
-
-For diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and
-[runtime-specific log discovery](../docs/MONITORING.md#runtime-specific-log-discovery).
-Verify which Python logging properties the host/export pipeline preserves.
-
-Each live request reads API-key secrets from Key Vault or calls the reusable Azure Identity
-credential's token API. Only the SDK caches tokens and renews them as needed; there is no custom
-credential cache, startup warmup, polling, or retry cooldown. Evaluation does no provider credential
-work. Request-scoped daemon threads bound the caller's acquisition wait to 5 seconds without
-blocking process shutdown. Timed-out results are discarded; SDK network timeouts bound the
-underlying calls. See [credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
-
 | Source | Purpose |
 | --- | --- |
-| [function_app.py](function_app.py) | Typed request orchestration and direct provider selection |
-| [src/config.py](src/config.py) | Shared deployment settings |
-| [src/models.py](src/models.py) | Typed Microsoft Entra ID payload, delivery context, provider request and result dataclasses |
-| [src/jwe.py](src/jwe.py) | Pinned JWE decryption and typed delivery-context conversion |
-| [src/provider.py](src/provider.py) | Shared HTTPS transport, timeout handling and endpoint status mapping |
-| [src/credentials.py](src/credentials.py) | Bounded request-time acquisition and reusable SDK clients |
-| [src/otp_log.py](src/otp_log.py) | Fixed standard-logging event definitions and immutable request context |
-| [src/providers/](src/providers/) | Provider-owned credentials, requests and response mapping |
-| [src/secrets.py](src/secrets.py) | Reusable Key Vault client; secret values are read on every live request |
+| [function_app.py](function_app.py) | Request handling and provider selection |
+| [config.py](src/config.py) | Deployment settings |
+| [models.py](src/models.py) | Envelope, delivery context, request, and result models |
+| [jwe.py](src/jwe.py) | JWE decryption |
+| [provider.py](src/provider.py) | HTTPS transport, timeout, and endpoint status mapping |
+| [credentials.py](src/credentials.py) | Bounded credential acquisition and reusable SDK clients |
+| [otp_log.py](src/otp_log.py) | Privacy-safe logging and request context |
+| [providers](src/providers/) | Provider request and response mapping |
+| [tests](tests/) | Offline tests |
 
-Add a provider by subclassing `PhoneProviderBase`, declaring its credential specification, and
-implementing `build_request` and `map_response`. Return `ProviderResult` with the coarse endpoint
-outcome and a fixed safe failure classification. Raw provider JSON remains local to the provider.
-See [production readiness](../TECHNICAL.md#production-readiness) when planning a live service.
+To extend the sample, follow [Add a provider](../docs/BRING-YOUR-OWN-PROVIDER.md).
+For diagnostics, verify the [runtime log format](../docs/MONITORING.md#runtime-log-formats)
+preserved by your deployed logging pipeline.
