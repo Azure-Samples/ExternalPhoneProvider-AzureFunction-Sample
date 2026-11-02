@@ -1,39 +1,36 @@
 # JavaScript implementation
 
-<a id="external-phone-provider-function-javascript"></a>
+[Documentation](../docs/README.md) | [HTTP contract](../docs/CONTRACT.md) | [Settings](#environment-configuration)
 
-[Documentation](../docs/README.md) | [Settings](#environment-configuration) | [Request behavior](#request-behavior) | [Source](#source)
+Node.js implementation for Azure Functions v4. Guided deployment uses **Node.js 22** and one
+provider per Function App.
 
-A Node.js Azure Function implementing the shared [HTTP contract](../docs/CONTRACT.md) with one
-provider per deployment.
+## Deploy the sample
 
-<a id="setup"></a>
-## Setup and deployment
+Follow the [deployment guide](../docs/GETTING-STARTED.md), then complete
+[provider authorization and endpoint validation](../docs/ONBOARDING.md#complete-provider-authentication).
 
-**Sample deployment:** follow the [five-step guide](../docs/GETTING-STARTED.md), then complete
-[provider authentication and validation](../docs/ONBOARDING.md#complete-provider-authentication).
+## Develop locally
 
-**Custom package development:** follow these steps from `javascript/`:
+Use Node.js 22 and npm. From the `javascript` directory:
 
-1. Create the [local settings below](#environment-configuration). Select a fixed provider ID from
-   [providers/](src/functions/providers/), configure it, and complete
-   [provider authentication](../docs/ONBOARDING.md#complete-provider-authentication).
-2. Install [package.json](package.json) dependencies, run its offline test script, and start Core Tools
-   from this folder. **Bind only to loopback, without tunnels:** Core Tools has no Easy Auth.
-3. For manual deployment, [package](../TECHNICAL.md#build-zips-locally) this app, inspect it for
-   secrets, and complete the [Easy Auth trust checklist](../docs/ONBOARDING.md#manual-deployment-trust-checklist).
-   Keep Easy Auth enabled for SendOtp, then run
-   [authorized deployed checks](../docs/ONBOARDING.md#validate-the-deployed-endpoint) to verify
-   platform authentication.
+```powershell
+npm ci
+npm test
+```
 
-**Regional continuity:** use the [Front Door guide](../docs/FRONTDOOR.md).
+These tests use local fixtures and mocked dependencies. For local Function execution, install
+[Azure Functions Core Tools v4](https://learn.microsoft.com/azure/azure-functions/functions-run-local)
+and Azurite, then create the local settings below.
+Keep the local host accessible only from your machine; Easy Auth runs in Azure.
+
+For deployment, [build the JavaScript package](../TECHNICAL.md#build-zips-locally), configure
+[Easy Auth](../docs/ONBOARDING.md#manual-deployment-trust-checklist), and repeat the deployed checks.
 
 ## Environment configuration
 
-Run Core Tools from `javascript/`. Create an untracked `local.settings.json` **beside
-[host.json](host.json), not inside `src/`**. Start from the
-[shared sample](../docs/local.settings.sample.json). For local evaluation, start Azurite and replace
-the test-key placeholder in this minimal setup:
+Create an untracked `local.settings.json` beside [host.json](host.json).
+For local evaluation, start Azurite and replace the test-key placeholder:
 
 ```json
 {
@@ -46,64 +43,42 @@ the test-key placeholder in this minimal setup:
 }
 ```
 
-For live delivery, use the [shared settings table](../TECHNICAL.md#configure-environment-variables)
-for `EPP_PROVIDER_NAME`, both channel endpoints, authentication, and adapter-specific options.
-Keep `Values` as strings, including `EPP_PROVIDER_TIMEOUT_MS`, for example `"1500"`.
-Replace the placeholders. API-key adapters store credentials in Key Vault. Each selected channel
-requires a valid endpoint; a missing or invalid endpoint never uses the other channel.
+Core Tools loads `Values` into environment variables. Direct Node processes and offline tests
+do not load this file. Restart the host after changing settings.
 
-Core Tools copies `Values` into the process environment. Direct Node processes and offline tests
-do not load the file. Restart after edits. Use a local test PEM because Core Tools cannot resolve
-Key Vault references locally. Keep Azurite settings local.
-
-In Azure, configure the same app settings and use a Key Vault reference for the private PEM.
-Provider secrets use managed identity, not a developer CLI login. Keep local evaluation on loopback.
+For Azure deployment, use the [shared settings reference](../TECHNICAL.md#configure-environment-variables)
+and [sample settings](../docs/local.settings.sample.json).
+The bundled providers use OAuth through managed identity federation. Each channel has its own
+configured HTTPS endpoint. The decryption key uses a versioned Key Vault reference in Azure;
+local evaluation uses a local test key.
 
 ## Request behavior
 
-`POST /api/SendOtp` follows the [shared request/response contract](../docs/CONTRACT.md#1-http-api).
-Easy Auth authenticates the caller. The handler then validates and decrypts the payload. It never
-forwards or returns the incoming `Authorization` header.
+`POST /api/SendOtp` follows the [HTTP contract](../docs/CONTRACT.md#http-request).
+Easy Auth validates the caller in Azure. The handler validates the envelope and decrypts the JWE.
 
-Use [`mode: 2` or `"evaluation"`](../docs/CONTRACT.md#evaluation-no-provider-send) to validate
-authentication and decryption without a provider send. Live success confirms acceptance,
-**not handset receipt**. Check a timeout before retrying.
+**Evaluation** returns the nonce before provider work. **Live** requests obtain an OAuth token
+and send through the selected adapter. A live success confirms provider acceptance; verify
+recipient delivery separately and investigate timeouts before retrying.
 
-For built-in message and voice mapping, see
-[Infobip, Soprano, and Telesign](../TECHNICAL.md#built-in-providers).
-
-<a id="source-and-extension-points"></a>
-## Source
-
-To add Twilio, follow the [Twilio integration guide](../docs/BRING-YOUR-OWN-PROVIDER.md).
-Keep caller authentication and public responses in the shared handler.
-
-For diagnostics, use [Application Insights](../docs/APPLICATION-INSIGHTS.md) and the
-[JavaScript event queries](../docs/MONITORING.md#4-javascript-service-event-queries).
-
-Each live request reads API-key secrets from Key Vault or calls the reusable Azure Identity
-credential's token API. Only the SDK caches tokens and renews them as needed; there is no custom
-credential cache, startup warmup, polling, or retry cooldown. Evaluation does no provider credential
-work. Acquisition is bounded to 5 seconds, and shutdown aborts pending requests. See
+See [built-in provider behavior](../TECHNICAL.md#built-in-providers) and
 [credential acquisition](../TECHNICAL.md#provider-settings-and-credential-acquisition).
+
+## Source
 
 | Source | Purpose |
 | --- | --- |
-| [src/functions/SendOtp.js](src/functions/SendOtp.js) | Explicit HTTP orchestration and shutdown cancellation |
-| [src/functions/config.js](src/functions/config.js) | Shared deployment settings |
-| [src/functions/entraPayload.js](src/functions/entraPayload.js) | Validated Microsoft Entra ID envelope and exact contract reasons |
-| [src/functions/delivery.js](src/functions/delivery.js) | Validated decrypted context and immutable provider-neutral delivery |
-| [src/functions/jwe.js](src/functions/jwe.js) | Flat JWE validation/decryption with pinned algorithms and PEM key cache |
-| [src/functions/providerTransport.js](src/functions/providerTransport.js) | HTTPS validation, bounded fetch, body read, JSON parse and manual redirects |
-| [src/functions/providerResult.js](src/functions/providerResult.js) | Provider result and endpoint outcome model |
-| [src/functions/logging.js](src/functions/logging.js) | Immutable request context and fixed privacy-safe structured events |
-| [src/functions/credentials.js](src/functions/credentials.js) | Bounded request-time acquisition and reusable SDK clients |
-| [src/functions/providers/](src/functions/providers/) | Fixed lookup and provider-owned credential/request/response rules |
-| [test/](test/) | Representative offline checks |
+| [SendOtp.js](src/functions/SendOtp.js) | HTTP orchestration and shutdown cancellation |
+| [config.js](src/functions/config.js) | Deployment settings |
+| [entraPayload.js](src/functions/entraPayload.js) | Envelope parsing and validation |
+| [delivery.js](src/functions/delivery.js) | Decrypted context and provider-neutral delivery |
+| [jwe.js](src/functions/jwe.js) | JWE validation and decryption |
+| [providerTransport.js](src/functions/providerTransport.js) | HTTPS validation, timeout, transport, and response parsing |
+| [providerResult.js](src/functions/providerResult.js) | Provider outcomes and endpoint status mapping |
+| [credentials.js](src/functions/credentials.js) | Bounded credential acquisition and reusable SDK clients |
+| [logging.js](src/functions/logging.js) | Privacy-safe structured events |
+| [providers](src/functions/providers/) | Provider-specific request and response rules |
+| [test](test/) | Offline tests |
 
-To add a provider, implement its fixed `name`, `authenticationMode`, `credentialSpec`,
-`createRequest`, and `interpretResponse` in the provider folder. Then add it to the switch in
-[providers/index.js](src/functions/providers/index.js). `interpretResponse` returns a
-`ProviderResult` containing the provider-owned outcome, endpoint HTTP status and one safe fixed
-failure classification. Raw API JSON stays inside the provider. See
-[production readiness](../TECHNICAL.md#production-readiness) when planning a live service.
+To extend the sample, follow [Add a provider](../docs/BRING-YOUR-OWN-PROVIDER.md).
+For diagnostics, use the [JavaScript event queries](../docs/MONITORING.md#application-events).

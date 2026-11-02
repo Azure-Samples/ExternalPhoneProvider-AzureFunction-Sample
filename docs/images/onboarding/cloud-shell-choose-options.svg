@@ -1,16 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="250" viewBox="0 0 1100 250" role="img" aria-labelledby="title desc">
-  <title id="title">CYOT-CONSTO setup choices in Azure Cloud Shell</title>
-  <desc id="desc">The setup selects Telesign Global routing, Node.js, Flex Consumption FC1, and the consto resource prefix.</desc>
-  <rect width="1100" height="250" fill="#062f63"/>
-  <g font-family="Consolas, monospace" font-size="14" fill="#f1f6fb">
-    <text x="6" y="22" fill="#36d7e9">Provider selection</text>
-    <text x="6" y="43">Provider: <tspan fill="#62ec71">Telesign</tspan>    Tenant scope: <tspan fill="#62ec71">Global</tspan></text>
-    <text x="6" y="72" fill="#36d7e9">Choose your platform:</text>
-    <text x="18" y="92">[1] Node.js</text><text x="18" y="111">[2] .NET</text><text x="18" y="130">[3] Python</text>
-    <text x="6" y="149">Platform number or name: <tspan fill="#fff100">1</tspan></text>
-    <text x="6" y="178" fill="#36d7e9">Service plan selection</text>
-    <text x="6" y="198">Flex Consumption has a free usage grant, not a zero-cost guarantee. Additional usage, Key Vault, storage, and telemetry can incur charges.</text>
-    <text x="6" y="222">Service plan number or name: <tspan fill="#fff100">1</tspan>    Resource prefix: <tspan fill="#62ec71">consto</tspan>    Application: <tspan fill="#62ec71">CYOT-CONSTO</tspan></text>
-    <text x="6" y="243" fill="#b7d3ed">Selected: Node.js • Flex Consumption FC1</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title description">
+  <title id="title">Example guided setup choices</title>
+  <desc id="description">An illustrative selection summary uses a dedicated application, Telesign, tenant-detected Global routing, JavaScript, Flex Consumption FC1, and the contoso resource prefix. Final deployment requires explicit approval.</desc>
+  <rect width="1200" height="420" rx="12" fill="#062f63"/>
+  <rect width="1200" height="54" rx="12" fill="#e7f2ff"/>
+  <text x="28" y="35" font-family="Segoe UI, Arial, sans-serif" font-size="21" fill="#172b4d" font-weight="600">Example choices - review the values for your own environment</text>
+  <g font-family="Consolas, monospace" font-size="20" fill="#f1f6fb">
+    <text x="30" y="102">Application</text><text x="360" y="102" fill="#a8f0ba">EPP Application</text>
+    <text x="30" y="145">Provider</text><text x="360" y="145" fill="#a8f0ba">Telesign</text>
+    <text x="30" y="188">Provider route</text><text x="360" y="188" fill="#a8f0ba">Global (detected from the tenant)</text>
+    <text x="30" y="231">Runtime</text><text x="360" y="231" fill="#a8f0ba">JavaScript (default)</text>
+    <text x="30" y="274">Hosting plan</text><text x="360" y="274" fill="#a8f0ba">Flex Consumption FC1</text>
+    <text x="30" y="317">Resource prefix</text><text x="360" y="317" fill="#a8f0ba">contoso</text>
+    <text x="30" y="376" fill="#ffe38b">Final approval: Yes or Y deploys. No, N, or Enter cancels.</text>
   </g>
 </svg>
