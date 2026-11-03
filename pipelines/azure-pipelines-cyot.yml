@@ -1,0 +1,347 @@
+trigger:
+  batch: true
+  branches:
+    include:
+    - main
+
+pr:
+  branches:
+    include:
+    - main
+
+parameters:
+- name: deployDevelopment
+  displayName: Deploy the three CYOT development endpoints
+  type: boolean
+  default: false
+- name: targets
+  displayName: Reviewed existing Linux Function Apps
+  type: object
+  default:
+  - language: javascript
+    appName: REQUIRED
+    applicationId: REQUIRED
+    audience: REQUIRED
+    location: REQUIRED
+    servicePlan: FC1
+  - language: dotnet
+    appName: REQUIRED
+    applicationId: REQUIRED
+    audience: REQUIRED
+    location: REQUIRED
+    servicePlan: FC1
+  - language: python
+    appName: REQUIRED
+    applicationId: REQUIRED
+    audience: REQUIRED
+    location: REQUIRED
+    servicePlan: FC1
+
+stages:
+- stage: ValidateAndPackage
+  displayName: Validate and package
+  jobs:
+  - job: SetupWindows
+    displayName: Setup tests on Windows
+    pool:
+      vmImage: windows-latest
+    steps:
+    - checkout: self
+      clean: true
+    - pwsh: |
+        $ErrorActionPreference = 'Stop'
+        Get-ChildItem ./setup/tests -Filter '*.Tests.ps1' | Where-Object Name -ne 'ServicePlans.Tests.ps1' | Sort-Object Name | ForEach-Object {
+          Write-Host "Running $($_.Name)"
+          & $_.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        }
+      displayName: Run setup tests
+
+  - job: BuildLinux
+    displayName: Test and build all runtime packages
+    pool:
+      vmImage: ubuntu-latest
+    workspace:
+      clean: all
+    steps:
+    - checkout: self
+      clean: true
+    - task: UseNode@1
+      inputs:
+        version: 20.x
+    - script: |
+        npm ci --ignore-scripts --no-audit --no-fund
+        npm test
+      workingDirectory: javascript
+      displayName: Test JavaScript on Node.js 20
+    - task: UseNode@1
+      inputs:
+        version: 22.x
+    - task: UseDotNet@2
+      inputs:
+        packageType: sdk
+        version: 10.0.x
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.11'
+        architecture: x64
+    - pwsh: |
+        $ErrorActionPreference = 'Stop'
+        Get-ChildItem ./setup/tests -Filter '*.Tests.ps1' | Where-Object Name -ne 'ServicePlans.Tests.ps1' | Sort-Object Name | ForEach-Object {
+          Write-Host "Running $($_.Name)"
+          & $_.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        }
+      displayName: Run setup tests on Linux
+    - pwsh: |
+        $ErrorActionPreference = 'Stop'
+        az bicep install
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        az bicep build --file ./setup/infra/main.bicep --outfile "$(Agent.TempDirectory)/cyot-main.json"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        ./setup/tests/ServicePlans.Tests.ps1 -TemplatePath "$(Agent.TempDirectory)/cyot-main.json"
+      displayName: Compile and test Bicep
+    - script: |
+        npm ci --ignore-scripts --no-audit --no-fund
+        npm test
+      workingDirectory: javascript
+      displayName: Test JavaScript on Node.js 22
+    - script: dotnet test tests/Epp.Otp.Tests.csproj --configuration Release --logger trx --results-directory "$(Agent.TempDirectory)/dotnet-tests"
+      workingDirectory: dotnet
+      displayName: Test .NET
+    - script: |
+        python -m pip install -r requirements.txt pytest
+        python -m pytest tests --junitxml="$(Agent.TempDirectory)/python-tests.xml"
+      workingDirectory: python
+      displayName: Test Python
+    - pwsh: |
+        $ErrorActionPreference = 'Stop'
+        ./package-javascript.ps1
+        ./package-dotnet.ps1
+        ./package-python.ps1
+
+        $required = @{
+          javascript = @('host.json', 'src/functions/SendOtp.js', 'node_modules/@azure/functions/package.json')
+          dotnet = @('host.json', 'dotnet.dll', 'functions.metadata', 'worker.config.json')
+          python = @('host.json', 'function_app.py', 'requirements.txt', 'src/jwe.py', 'src/provider.py', '.python_packages/lib/site-packages/azure/functions/__init__.py')
+        }
+        $module = Import-Module ./setup/support/Epp.Setup.psm1 -Force -PassThru
+        $manifest = [ordered]@{
+          sourceCommit = '$(Build.SourceVersion)'
+          pipelineRun = '$(Build.BuildId)'
+          packages = [ordered]@{}
+        }
+        foreach ($language in @('javascript', 'dotnet', 'python')) {
+          $zip = Join-Path 'artifacts' "$language/released-package.zip"
+          if (-not (Test-Path -LiteralPath $zip)) { throw "Missing package for $language." }
+          & $module { param($Path, $Language); Assert-EppArchive -Path $Path -Language $Language -Kind ready } (Resolve-Path $zip).Path $language
+          $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path $zip))
+          try {
+            $entries = @($archive.Entries.FullName)
+            foreach ($entry in $required[$language]) {
+              if ($entry -notin $entries) { throw "Missing $entry in the $language package." }
+            }
+            $privateEntries = @($entries | Where-Object { $_ -cne '.python_packages/lib/site-packages/certifi/cacert.pem' })
+            if ($privateEntries -match '(^|/)(local\.settings[^/]*|\.env[^/]*|\.git|\.venv|__pycache__)(/|$)|\.(pem|pfx|p12|key|publishsettings|pubxml)$') {
+              throw "Private files found in the $language package."
+            }
+          } finally { $archive.Dispose() }
+          $manifest.packages[$language] = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        $manifest | ConvertTo-Json -Depth 4 | Set-Content ./artifacts/release-manifest.json -Encoding utf8
+      displayName: Build packages and release manifest
+    - pwsh: |
+        $ErrorActionPreference = 'Stop'
+        $temporary = Join-Path '$(Agent.TempDirectory)' ('cyot-python-package-' + [guid]::NewGuid().ToString('N'))
+        try {
+          [IO.Compression.ZipFile]::ExtractToDirectory((Resolve-Path './artifacts/python/released-package.zip'), $temporary)
+          $env:PYTHONPATH = Join-Path $temporary '.python_packages/lib/site-packages'
+          Push-Location $temporary
+          try {
+            python -S -c "import azure.functions, azure.identity, azure.keyvault.secrets, requests, jwcrypto.jwe, function_app"
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Python dependencies or application could not be imported.' }
+          } finally { Pop-Location }
+        } finally {
+          if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Recurse -Force }
+        }
+      displayName: Verify packaged Python imports
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: VSTest
+        testResultsFiles: $(Agent.TempDirectory)/dotnet-tests/*.trx
+        failTaskOnFailedTests: true
+        failTaskOnMissingResultsFile: true
+        testRunTitle: CYOT .NET tests
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: JUnit
+        testResultsFiles: $(Agent.TempDirectory)/python-tests.xml
+        failTaskOnFailedTests: true
+        failTaskOnMissingResultsFile: true
+        testRunTitle: CYOT Python tests
+    - task: PublishPipelineArtifact@1
+      inputs:
+        targetPath: $(Build.SourcesDirectory)/artifacts
+        artifactName: cyot-packages
+      displayName: Publish immutable CYOT packages
+
+- ${{ if eq(parameters.deployDevelopment, true) }}:
+  - stage: DeployDevelopment
+    displayName: Deploy and verify development
+    dependsOn: ValidateAndPackage
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq(variables['Build.Reason'], 'Manual'))
+    lockBehavior: sequential
+    variables:
+    - group: ExternalPhoneProvider-e2e-config
+    jobs:
+    - deployment: DeployCYOT
+      displayName: Deploy CYOT endpoints
+      environment: cyote2e-test
+      pool:
+        vmImage: ubuntu-latest
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: none
+            - download: current
+              artifact: cyot-packages
+            - task: AzureCLI@2
+              displayName: Verify Azure target and packages
+              inputs:
+                azureSubscription: cyote2e-deployment
+                scriptType: pscore
+                scriptLocation: inlineScript
+                inlineScript: |
+                  $ErrorActionPreference = 'Stop'
+                  $account = az account show --output json | ConvertFrom-Json
+                  if ($LASTEXITCODE -ne 0) { throw 'Unable to read the Azure service connection context.' }
+                  $tenantId = [guid]::Empty
+                  $subscriptionId = [guid]::Empty
+                  $callerId = [guid]::Empty
+                  if (-not [guid]::TryParse($env:EXPECTED_TENANT, [ref]$tenantId) -or
+                      -not [guid]::TryParse($env:EXPECTED_SUBSCRIPTION, [ref]$subscriptionId) -or
+                      -not [guid]::TryParse($env:CALLER_CLIENT_ID, [ref]$callerId) -or
+                      $tenantId -eq [guid]::Empty -or $subscriptionId -eq [guid]::Empty -or $callerId -eq [guid]::Empty) {
+                    throw 'The configured tenant, subscription, and caller IDs must be nonzero GUIDs.'
+                  }
+                  if ($account.tenantId -cne $tenantId.ToString() -or $account.id -cne $subscriptionId.ToString()) {
+                    throw 'The service connection targets the wrong tenant or subscription.'
+                  }
+                  if ($env:TARGET_GROUP -cnotmatch '^[A-Za-z0-9._()-]{1,90}$' -or $env:TARGET_GROUP -eq 'REQUIRED') {
+                    throw 'Set resourceGroup in the protected variable group.'
+                  }
+                  az group show --name $env:TARGET_GROUP --only-show-errors --output none
+                  if ($LASTEXITCODE -ne 0) { throw 'The configured resource group does not exist or is not accessible.' }
+
+                  $artifact = '$(Pipeline.Workspace)/cyot-packages'
+                  $manifest = Get-Content (Join-Path $artifact 'release-manifest.json') -Raw | ConvertFrom-Json
+                  if ($manifest.sourceCommit -cne '$(Build.SourceVersion)' -or $manifest.pipelineRun -cne '$(Build.BuildId)') {
+                    throw 'The package manifest does not match this pipeline run.'
+                  }
+                  $targets = @($env:TARGETS_JSON | ConvertFrom-Json)
+                  $appNames = @($targets.appName)
+                  $languages = @($targets.language | Sort-Object)
+                  if ($targets.Count -ne 3 -or ($languages -join ',') -cne 'dotnet,javascript,python' -or
+                      $appNames -contains 'REQUIRED' -or @($appNames | Sort-Object -Unique).Count -ne 3) {
+                    throw 'Queue the pipeline with exactly one distinct app for each supported language.'
+                  }
+                  foreach ($language in @('javascript', 'dotnet', 'python')) {
+                    $zip = Join-Path $artifact "$language/released-package.zip"
+                    $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+                    if ($manifest.packages.$language -cne $actual) { throw "Package digest mismatch for $language." }
+                  }
+                  foreach ($target in $targets) {
+                    $applicationId = [guid]::Empty
+                    if ($target.appName -cnotmatch '^[A-Za-z0-9][A-Za-z0-9-]{1,58}[A-Za-z0-9]$' -or
+                        -not [guid]::TryParse([string]$target.applicationId, [ref]$applicationId) -or
+                        $applicationId -eq [guid]::Empty -or $target.audience -eq 'REQUIRED' -or
+                        $target.location -cnotmatch '^[a-z0-9]+$' -or $target.location -eq 'REQUIRED' -or
+                        $target.servicePlan -notin @('FC1', 'EP1')) {
+                      throw 'Every target requires a valid app name, application ID, audience, region, and FC1 or EP1 plan.'
+                    }
+                    $appUrl = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$($env:TARGET_GROUP)/providers/Microsoft.Web/sites/$($target.appName)?api-version=2024-04-01"
+                    $app = az rest --method get --url $appUrl --output json | ConvertFrom-Json
+                    if ($LASTEXITCODE -ne 0 -or -not $app.properties.httpsOnly -or $app.kind -notmatch 'functionapp' -or $app.kind -notmatch 'linux') {
+                      throw 'A target is missing, is not a Linux Function App, or does not require HTTPS.'
+                    }
+                    if ($app.tags.managedBy -cne 'EPP-Setup' -or $app.tags.eppLanguage -cne $target.language -or
+                        $app.tags.eppApplicationId -cne $applicationId.ToString() -or $app.tags.eppServicePlan -cne $target.servicePlan) {
+                      throw 'A target does not match the reviewed setup inventory.'
+                    }
+                    if ($app.location.Replace(' ', '').ToLowerInvariant() -cne $target.location) {
+                      throw 'A target region does not match the reviewed value.'
+                    }
+                    $plan = az resource show --ids $app.properties.serverFarmId --api-version 2024-04-01 --output json | ConvertFrom-Json
+                    if ($LASTEXITCODE -ne 0 -or $plan.sku.name -cne $target.servicePlan) {
+                      throw 'A target hosting-plan SKU does not match its reviewed value.'
+                    }
+                    $web = az rest --method get --url "$($app.id)/config/web?api-version=2024-04-01" --output json | ConvertFrom-Json
+                    $runtime = @{ javascript = 'node'; dotnet = 'dotnet-isolated'; python = 'python' }[$target.language]
+                    $runtimeVersion = @{ javascript = '22'; dotnet = '10.0'; python = '3.11' }[$target.language]
+                    $runtimeStack = @{ javascript = 'NODE|22'; dotnet = 'DOTNET-ISOLATED|10.0'; python = 'PYTHON|3.11' }[$target.language]
+                    if ($target.servicePlan -eq 'FC1') {
+                        if ($app.properties.functionAppConfig.runtime.name -cne $runtime -or
+                          $app.properties.functionAppConfig.runtime.version -cne $runtimeVersion) {
+                        throw 'An FC1 target runtime does not match its package language.'
+                      }
+                    } elseif ($web.properties.linuxFxVersion -cne $runtimeStack) {
+                      throw 'An EP1 target runtime does not match its package language.'
+                    }
+                    $auth = az rest --method get --url "$($app.id)/config/authsettingsV2?api-version=2024-04-01" --output json | ConvertFrom-Json
+                    $aad = $auth.properties.identityProviders.azureActiveDirectory
+                    $expectedIssuers = @(
+                      "https://login.microsoftonline.com/$($env:EXPECTED_TENANT)/v2.0"
+                      "https://sts.windows.net/$($env:EXPECTED_TENANT)/"
+                    )
+                    $allowedCallers = @($aad.validation.defaultAuthorizationPolicy.allowedApplications)
+                    $allowedAudiences = @($aad.validation.allowedAudiences)
+                    if (-not $auth.properties.platform.enabled -or -not $auth.properties.globalValidation.requireAuthentication -or
+                        $auth.properties.globalValidation.unauthenticatedClientAction -ne 'Return401' -or
+                        @($auth.properties.globalValidation.excludedPaths).Where({ $_ }).Count -ne 0 -or
+                        -not $auth.properties.httpSettings.requireHttps -or -not $aad.enabled -or
+                        $aad.registration.clientId -cne $applicationId.ToString() -or
+                        $aad.registration.openIdIssuer.TrimEnd('/') -notin @($expectedIssuers.ForEach({ $_.TrimEnd('/') })) -or
+                        $allowedAudiences.Count -ne 1 -or $allowedAudiences[0] -cne $target.audience -or
+                        $allowedCallers.Count -ne 1 -or $allowedCallers[0] -cne $callerId.ToString()) {
+                      throw 'A target does not have the expected Easy Auth caller policy.'
+                    }
+                  }
+                  Write-Host 'Azure target, package digests, and Easy Auth passed preflight.'
+              env:
+                TARGETS_JSON: ${{ convertToJson(parameters.targets) }}
+                EXPECTED_TENANT: $(CyotTenantId)
+                EXPECTED_SUBSCRIPTION: $(CyotSubscriptionId)
+                CALLER_CLIENT_ID: $(CyotCallerClientId)
+                TARGET_GROUP: $(resourceGroup)
+            - ${{ each target in parameters.targets }}:
+              - task: AzureFunctionApp@2
+                displayName: Deploy ${{ target.language }} CYOT package
+                inputs:
+                  connectedServiceNameARM: cyote2e-deployment
+                  appType: functionAppLinux
+                  isFlexConsumption: ${{ eq(target.servicePlan, 'FC1') }}
+                  appName: ${{ target.appName }}
+                  package: $(Pipeline.Workspace)/cyot-packages/${{ target.language }}/released-package.zip
+            - task: AzureCLI@2
+              displayName: Verify deployed endpoints reject anonymous requests
+              inputs:
+                azureSubscription: cyote2e-deployment
+                scriptType: pscore
+                scriptLocation: inlineScript
+                inlineScript: |
+                  $ErrorActionPreference = 'Stop'
+                  $targets = @($env:TARGETS_JSON | ConvertFrom-Json)
+                  foreach ($appName in @($targets.appName)) {
+                    $hostName = az functionapp show --resource-group $env:TARGET_GROUP --name $appName --query defaultHostName --output tsv
+                    if ($LASTEXITCODE -ne 0 -or -not $hostName) { throw 'Unable to read a deployed Function hostname.' }
+                    $response = Invoke-WebRequest -Uri "https://$hostName/api/SendOtp" -Method Post -ContentType 'application/json' `
+                      -Body '{}' -SkipHttpErrorCheck -MaximumRedirection 0 -TimeoutSec 30
+                    if ($response.StatusCode -ne 401) { throw 'A CYOT endpoint did not reject an anonymous request with HTTP 401.' }
+                  }
+                  Write-Host 'All CYOT endpoints require authentication. SAS Synthetics owns encrypted evaluation monitoring.'
+              env:
+                TARGETS_JSON: ${{ convertToJson(parameters.targets) }}
+                TARGET_GROUP: $(resourceGroup)
