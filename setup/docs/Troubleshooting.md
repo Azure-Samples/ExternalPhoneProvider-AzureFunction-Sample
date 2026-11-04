@@ -167,10 +167,17 @@ Select **Reuse** explicitly to keep it. See [certificate selection](README.md#en
 | Certificate metadata cannot be read | Verify the vault, version, operator access, and `-KeyVaultSubscriptionId` for another subscription. |
 | Function cannot resolve the private-key reference | Check its system-assigned identity, secret-read permission, and network path to the vault. |
 | Credentials changed after plan review | Stop competing changes and rerun selection and approval against the current registration. |
+| ARM reports circular dependency on `config/appsettings` | Use current templates: parent deployments read and merge settings; a separate inner-scope module writes the secure settings snapshot. |
+| Certificate policy or attributes appear as `System.Collections.Hashtable` | Use the matching hosted script and certificate template; explicit JSON output transport preserves nested metadata. |
 
 Setup preserves signing credentials and Key Vault objects. After a successful registration,
 reuse the exact new certificate for recovery. A newly issued vault version requires a coordinated
 registration and Function-reference update.
+
+For certificate creation, inspect the ARM deployment script and its dedicated setup identity's
+vault roles. Do not grant the local operator secret-value access to diagnose metadata transport.
+For reuse, distinguish the user's preflight metadata access from the hosted identity's source-vault
+metadata grants and the Function's secret-read permission.
 
 ## Package download or startup fails
 
@@ -183,6 +190,13 @@ The tag suffix must match `javascript`, `dotnet`, or `python`. Use `released-pac
 
 Keep checksum verification enabled. Align the launcher and
 [source/package versions](README.md#source-versioning).
+
+Function publication is inside stage 2's primary subscription deployment. Follow its nested
+`epp-function-code` deployment to `onedeploy` (FC1) or `ZipDeploy` (EP1), and check the package URL's availability from Azure.
+Public ingress remains disabled until stage 3 completes Graph trust and Easy Auth verification.
+Do not open ingress early or substitute a local upload after a publication failure.
+If final configuration reports that ingress could not be disabled, inspect and close the Function's
+public ingress before retrying.
 
 ### C# package fails to load
 
@@ -203,7 +217,8 @@ registration errors. Upload success alone is not startup success.
 
 FC1 uses One Deploy; EP1 uses managed-identity run-from-package from private Blob storage.
 Setup keeps SCM basic authentication disabled and verifies Function registration before reporting
-success. Persistent publication failure closes public ingress; resolve the failure before reopening it.
+success. Publication failures leave ingress closed. Failures after stage 3 enables ingress attempt
+to disable it again; resolve the failure before reopening it.
 
 ## Setup revision recovery
 

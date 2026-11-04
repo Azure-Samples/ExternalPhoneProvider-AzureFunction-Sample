@@ -2,7 +2,7 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $setupDirectory = Split-Path -Parent $PSScriptRoot
-$module = Import-Module (Join-Path $setupDirectory 'support' 'Epp.Setup.psm1') -Force -PassThru
+$module = Import-Module (Join-Path $setupDirectory 'support' 'core' 'Epp.Setup.psm1') -Force -PassThru
 $directory = Join-Path ([IO.Path]::GetTempPath()) "epp-provider-tests-$([Guid]::NewGuid().ToString('N'))"
 try {
     $assets = Join-Path $directory 'assets'

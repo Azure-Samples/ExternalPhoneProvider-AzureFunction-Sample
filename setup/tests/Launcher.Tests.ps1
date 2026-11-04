@@ -9,8 +9,16 @@ $state = @{
     Requests = [Collections.Generic.List[string]]::new()
 }
 $requiredAssets = @(
-    'support/Epp.Setup.psm1', 'support/Epp.Packages.ps1', 'support/Epp.Graph.ps1'
+    'support/core/Epp.Setup.psm1', 'support/core/Epp.Input.ps1'
+    'support/core/Epp.Azure.ps1', 'support/core/Epp.Graph.ps1'
+    'Epp.Application.ps1', 'Epp.Arm.ps1', 'Epp.PostArm.ps1'
+    'support/planning/Epp.Selection.ps1', 'support/planning/Epp.Providers.ps1'
+    'support/planning/Epp.Preflight.ps1', 'support/planning/Epp.Presentation.ps1'
+    'support/deployment/Epp.Packages.ps1', 'support/deployment/Epp.Certificates.ps1'
+    'support/deployment/Epp.Deployment.ps1'
     'providers/catalog.json', 'packages/catalog.json', 'infra/main.bicep', 'infra/resources.bicep'
+    'infra/certificate-access.bicep', 'infra/certificate.bicep', 'infra/Invoke-Certificate.ps1'
+    'infra/encryption-settings.bicep', 'infra/app-settings.bicep', 'infra/ingress.bicep', 'infra/publish.bicep'
     'providers/telesign.json', 'providers/soprano.json', 'providers/infobip.json'
 )
 
@@ -46,9 +54,11 @@ function Invoke-WebRequest {
     $relative = $Uri.Substring($prefix.Length)
     Assert ($requiredAssets -ccontains $relative) "Unexpected asset request: $relative"
     $state.Requests.Add($relative)
-    if ($relative -ceq 'support/Epp.Setup.psm1') {
-        $state.AssetDirectory = Split-Path -Parent (Split-Path -Parent $OutFile)
+    if ($relative -ceq 'support/core/Epp.Setup.psm1') {
+        $state.AssetDirectory = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $OutFile) '..' '..'))
     }
+    Assert (Test-Path -LiteralPath (Split-Path -Parent $OutFile) -PathType Container) 'Create nested asset directories before downloading.'
+    Assert ($OutFile -ceq (Join-Path $state.AssetDirectory $relative)) 'Preserve the pinned asset directory hierarchy.'
     if ($relative -ceq $state.FailDownload) { throw 'offline-download-failure' }
     if ($relative -ceq $state.EmptyDownload) {
         [IO.File]::WriteAllText($OutFile, '')
@@ -63,10 +73,20 @@ function Invoke-WebRequest {
 function Import-Module {
     param($Name, [switch] $PassThru, [switch] $Force)
     $state.Imports++
-    Assert ($Name -ceq (Join-Path $state.AssetDirectory 'support/Epp.Setup.psm1')) 'Import only the downloaded setup helper.'
+    Assert ($Name -ceq (Join-Path $state.AssetDirectory 'support' 'core' 'Epp.Setup.psm1')) 'Import only the downloaded nested setup helper.'
     foreach ($asset in $requiredAssets) {
         Assert (Test-Path -LiteralPath (Join-Path $state.AssetDirectory $asset)) "Missing launcher asset: $asset"
     }
+    $probe = Microsoft.PowerShell.Core\Import-Module -Name $Name -Force -PassThru -Scope Local
+    try {
+        Assert (($probe.ExportedFunctions.Keys -join ',') -ceq 'Invoke-EppSetup') 'The downloaded composition must export only the customer entry point.'
+        & $probe {
+            foreach ($name in @('Initialize-EppApplication', 'Invoke-EppArmDeployment', 'Complete-EppConfiguration', 'Get-EppDeploymentParameters')) {
+                if (-not (Get-Command $name -ErrorAction Stop)) { throw "Missing downloaded implementation: $name" }
+            }
+        }
+    }
+    finally { Microsoft.PowerShell.Core\Remove-Module -ModuleInfo $probe -Force }
     return [pscustomobject]@{ Name = 'OfflineSetupProbe' }
 }
 function Remove-Module {
@@ -97,6 +117,11 @@ $parameters = @{
     ApplicationId = '33333333-3333-3333-3333-333333333333'
 }
 try {
+    $manifest = Import-PowerShellDataFile -LiteralPath (Join-Path $setupDirectory 'EPP-Setup.psd1')
+    $manifestAssets = @($manifest.Support) + @($manifest.Infrastructure) + @($manifest.ProviderCatalog, $manifest.PackageCatalog)
+    $staticAssets = @($requiredAssets | Where-Object { $_ -notlike 'providers/*' -or $_ -ceq 'providers/catalog.json' })
+    Assert ($manifest.EntryPoint -ceq 'Setup-Epp.ps1') 'Keep the launcher as the package entry point.'
+    Assert ((($manifestAssets | Sort-Object) -join ',') -ceq (($staticAssets | Sort-Object) -join ',')) 'Package metadata must describe every pinned stage, helper, infrastructure file, and catalog at its actual path.'
     foreach ($repository in @('Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample', 'unit/epp-fork')) {
         $state.Repository = $repository
         Reset-TestState
@@ -128,10 +153,22 @@ try {
         Assert ($state.Imports -eq 0) 'Reject invalid catalog filenames before importing executable helpers.'
         Assert-Cleanup
     }
+    foreach ($asset in ($requiredAssets | Where-Object { $_ -match '\.ps(?:1|m1)$' })) {
+        foreach ($failure in @('missing', 'empty')) {
+            Reset-TestState
+            if ($failure -eq 'missing') { $state.FailDownload = $asset; $pattern = 'offline-download-failure' }
+            else { $state.EmptyDownload = $asset; $pattern = 'empty file' }
+            Assert-Throws {
+                & $launcher @parameters -SourceRepository $state.Repository -SourceRef $state.Revision
+            } $pattern
+            Assert ($state.Imports -eq 0) 'A missing or empty stage/helper must stop before importing the composition root.'
+            Assert-Cleanup
+        }
+    }
     foreach ($failure in @('download', 'empty', 'setup')) {
         Reset-TestState
         switch ($failure) {
-            download { $state.FailDownload = 'support/Epp.Graph.ps1'; $pattern = 'offline-download-failure' }
+            download { $state.FailDownload = 'support/core/Epp.Graph.ps1'; $pattern = 'offline-download-failure' }
             empty { $state.EmptyDownload = 'providers/soprano.json'; $pattern = 'empty file' }
             setup { $state.SetupError = 'offline-setup-failure'; $pattern = 'offline-setup-failure' }
         }

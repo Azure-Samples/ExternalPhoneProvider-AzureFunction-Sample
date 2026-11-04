@@ -77,7 +77,7 @@ jobs:
             dotnet = @('host.json', 'dotnet.dll', 'functions.metadata', 'worker.config.json')
             python = @('host.json', 'function_app.py', 'requirements.txt', 'src/jwe.py', 'src/provider.py', '.python_packages/lib/site-packages/azure/functions/__init__.py')
           }
-          $module = Import-Module ./setup/support/Epp.Setup.psm1 -Force -PassThru
+          $module = Import-Module (Join-Path $env:GITHUB_WORKSPACE 'setup' 'support' 'core' 'Epp.Setup.psm1') -Force -PassThru
           foreach ($language in ($required.Keys | Sort-Object)) {
             $name = 'released-package.zip'
             $directory = Join-Path 'artifacts' $language

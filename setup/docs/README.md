@@ -60,9 +60,30 @@ Microsoft Graph calls use the Azure CLI user session. Setup uses the Microsoft G
 [allowed-tenants configuration](https://learn.microsoft.com/graph/api/resources/allowedtenantsaudience?view=graph-rest-beta);
 confirm that your tenant permits this configuration.
 
-Certificate reuse also requires operator access to the source vault's ARM resource, certificate,
-and secret-version metadata. For another vault, the operator must be able to grant the Function
-secret-read access. See [certificate selection](#encryption-certificate-selection).
+The Azure CLI user executes Microsoft Graph operations; the ARM setup identity does not:
+
+| Graph operation | Executor access |
+| --- | --- |
+| Select/create the endpoint app; configure its audience, allowlist, roles, certificate, URI, and federation | Effective Graph application-management permissions and authority over the selected registration |
+| Create/read enterprise applications and assign `Epp.Invoke` | Effective Graph service-principal and app-role-assignment permissions |
+| Grant the Microsoft phone-provider principal Graph `Application.Read.All` | Effective Graph app-role-assignment permissions and normally an active **Privileged Role Administrator** role |
+
+`Application.Read.All` is granted to the Microsoft phone-provider service principal, not the
+Function or ARM setup identity. It permits app-only reading of every application and enterprise
+application in the tenant. Azure subscription roles do not authorize these Graph operations.
+
+ARM creates a dedicated setup managed identity with **Key Vault Certificates Officer** and
+**Key Vault Reader** on the deployment vault. Its hosted script retrieves public certificates
+and secret-version metadata, never secret values. The Function's system-assigned identity gets
+secret-read access; its outbound identity remains separate. Setup does not grant the local user
+certificate-officer or secret-value permissions.
+
+Certificate reuse requires the user's preflight access to the source vault's ARM resource,
+public certificate, and secret-version metadata. For another vault, ARM grants the setup identity
+metadata-read access and the Function secret-read access; the user must be authorized to deploy
+those grants in that vault's subscription and resource group. Existing legacy policy permissions
+are preserved. Provider-credential administration requires separate secret-write permission.
+See [certificate selection](#encryption-certificate-selection).
 
 ## Service plan selection
 
@@ -115,8 +136,9 @@ certificate changes, and required Azure resource-provider registrations. For a n
 it shows name patterns containing `<app-id-hash>`; setup calculates the final names after
 creating the app.
 
-Setup keeps public ingress closed while preparing the resources and encryption key. It checks
-Easy Auth before opening ingress and verifies Function registration after publication.
+Setup keeps public ingress closed while ARM prepares resources, the encryption key, and Function
+code. It completes and reads back Graph trust, rechecks the exact secret reference and Easy Auth,
+then opens ingress through ARM and verifies Function registration.
 Wait for **Deployment completed successfully** and the saved summary.
 
 If a new application is created but deployment fails later, use the client ID saved in
@@ -156,23 +178,57 @@ reconfigure the existing deployment rather than create another endpoint.
 
 ### After approving the plan
 
-Use these milestones to follow the deployment:
+`Invoke-EppSetup` performs read-only selection/preflight and obtains final approval before
+`Invoke-EppDeployment` calls these three entry points sequentially:
 
-| Stage | What setup does | What to retain or check |
+| Stage | Single file / entry point | Responsibility and output |
 | --- | --- | --- |
-| Application | Creates the selected new registration, if requested, and resolves resource names | Keep the printed client ID and `application-<client-id>.json` for recovery. |
-| Resource providers | Registers missing required Azure namespaces | Resolve permission or regional-availability failures before retrying. |
-| Infrastructure | Creates or updates the regional resources with public Function ingress closed | Inspect the named subscription deployment and resource group if this stage fails. |
-| Encryption | Creates or reuses the approved certificate and verifies its versioned secret reference | Check the certificate ID, key ID, and expiration in the summary. |
-| Application trust | Applies and reads back the application, role, certificate, and federation configuration | Confirm the reviewed permission and certificate changes. |
-| Publication | Verifies Easy Auth, opens ingress, publishes the package, and verifies Function registration | Wait for startup verification, not just package upload. |
-| Handoff | Saves `deployment-*.json` and prints next steps | Retain the summary and public certificate, then complete provider authorization and validation. |
+| 1. Create or select 3P app | [`setup/Epp.Application.ps1`](../Epp.Application.ps1) / `Initialize-EppApplication` | Create the approved app if needed; establish initial provider access and roles; return finalized resource names and Graph identity state. |
+| 2. ARM deployment | [`setup/Epp.Arm.ps1`](../Epp.Arm.ps1) / `Invoke-EppArmDeployment` | Deploy infrastructure, identities/grants, settings, hosted certificate operations, and Function code with ingress closed; return resource outputs, public certificate metadata, and verified package hash. |
+| 3. Post-ARM configuration | [`setup/Epp.PostArm.ps1`](../Epp.PostArm.ps1) / `Complete-EppConfiguration` | Recheck the secret reference; configure/read back Graph certificate, URI, and federation; verify Easy Auth, enable ingress through ARM, verify registration, and save the handoff. |
 
-FC1 publishes through **One Deploy**. EP1 uploads the verified package to private Blob storage
-and uses managed-identity run-from-package, followed by restart and trigger synchronization.
+Stage 2 submits the compiled `main.bicep` **once** at subscription scope. ARM's dependency graph
+orders infrastructure/identities/grants, hosted certificate operations, isolated settings updates,
+and native Function code publication. FC1 uses `Microsoft.Web/sites/extensions/onedeploy`;
+EP1 uses `Microsoft.Web/sites/extensions/ZipDeploy` with `WEBSITE_RUN_FROM_PACKAGE=1`.
+Both receive the selected release's `released-package.zip` URL.
+Stage 3's final ARM invocation changes ingress only, not Function code.
+
+The short `Epp.Arm.ps1` entry point calls the deployment helpers for parameter validation/marshaling,
+one primary submission, and output validation. Azure CLI polls deployment completion; this is one
+deployment submission, not literally one HTTP request. Required resource-provider registrations,
+source-vault snapshot reads, and post-deployment checks remain explicit local operations.
+The exact secret reference, public certificate, Easy Auth, closed ingress, and Function registration
+are validated before entering stage 3; its Graph mutation rechecks the secret reference.
+If required provider registration has not propagated, the bounded registration retry can resubmit
+the same named deployment.
+
+### Setup file organization
+
+`setup/` contains four script entry files: the public launcher `Setup-Epp.ps1` and the three stage
+files above. Run the launcher, not the stage files individually. The internal composition module
+[`support/core/Epp.Setup.psm1`](../support/core/Epp.Setup.psm1) initializes shared state and loads
+the helpers and stages in dependency order into one private module scope.
+Only `Invoke-EppSetup` is exported.
+
+| Internal folder under `setup/support` | Files and responsibility |
+| --- | --- |
+| `core/` | `Epp.Setup.psm1`, `Epp.Input.ps1`, `Epp.Azure.ps1`, `Epp.Graph.ps1`: composition/orchestration, shared input validation, Azure CLI/account identity, and Graph transport. |
+| `planning/` | `Epp.Selection.ps1`, `Epp.Providers.ps1`, `Epp.Preflight.ps1`, `Epp.Presentation.ps1`: app/region/plan selection, provider profiles, tool/resource checks, provider registration, and approval/handoff displays. |
+| `deployment/` | `Epp.Packages.ps1`, `Epp.Certificates.ps1`, `Epp.Deployment.ps1`: release/checksum/archive checks, certificate planning/validation, native ARM request/output handling, and final ingress operations. |
+
 Publication and resource deployment can each take several minutes; keep the session open.
-If publication fails, setup attempts to close ingress again. Inspect any reported failure to
-close it before proceeding.
+A failed stage stops subsequent stages. Publication never opens ingress or falls back to a
+local upload. Every reported failure after ingress may have opened triggers an ARM close attempt,
+including failed final verification or handoff. Inspect any reported close failure immediately.
+
+Normal deployment submits `main` once in stage 2, then the ingress template once after stage 3
+verifies Graph trust and Easy Auth. A failure after that enable may have taken effect submits
+the ingress template again to disable it; resources and Graph changes are not otherwise rolled back.
+
+Offline checks cover this ordering, but native publication with ingress disabled still requires
+end-to-end validation on both Azure hosting plans. A deployment-service networking failure stops
+setup with ingress closed; it does not authorize an early-open workaround.
 
 An application-creation record is a recovery aid. Use the completed deployment summary to
 identify the endpoint ready for validation.
@@ -270,6 +326,9 @@ It downloads only the public certificate and pins the Function to the versioned 
 Replacement stages a new certificate before updating the registration. Setup verifies that the
 Function can resolve the secret reference, then registers one matching encryption credential.
 New certificates are exportable RSA-2048 with subject **`CN=ExternalPhoneProvider`**.
+The ARM-hosted operation uses a 12-month validity, key reuse, and email-only lifetime notification;
+renewal remains manual. Nested policy and version metadata travel as explicit JSON script outputs
+and are decoded by ARM before local compatibility validation.
 
 Coordinate a maintenance window: cached or in-flight requests can still use the previous key.
 Complete an authorized evaluation before returning the endpoint to service.
@@ -348,6 +407,9 @@ Packages come from stable [GitHub releases](https://github.com/Azure-Samples/Ext
 
 Each release contains `released-package.zip` and `SHA256SUMS.txt`. Setup verifies the ZIP
 against the checksum from the same release.
+ARM subsequently fetches that URL again. Its package deployment does **not** enforce the locally
+verified SHA-256, so use trusted immutable releases and do not replace assets between approval and
+deployment. The setup source and runtime package must use compatible runtime versions.
 
 For a repeatable deployment, pin a reviewed full commit SHA with `-SourceRef` and an exact
 matching language tag with `-PackageReleaseTag`. Use the values recorded in the deployment summary.
@@ -530,9 +592,12 @@ federated credentials, app-role grants, provider subscriptions, and alert rules 
 From the repository root, compile Bicep and run the setup suites:
 
 ```powershell
-$templatePath = Join-Path ([IO.Path]::GetTempPath()) "epp-main-$([Guid]::NewGuid().ToString('N')).json"
-az bicep build --file .\setup\infra\main.bicep --outfile $templatePath
-if ($LASTEXITCODE -ne 0) { throw 'Bicep compilation failed.' }
+$templates = @{}
+foreach ($name in @('main', 'publish', 'ingress')) {
+    $templates[$name] = Join-Path ([IO.Path]::GetTempPath()) "epp-$name-$([Guid]::NewGuid().ToString('N')).json"
+    az bicep build --file (Join-Path '.\setup\infra' "$name.bicep") --outfile $templates[$name]
+    if ($LASTEXITCODE -ne 0) { throw "$name Bicep compilation failed." }
+}
 
 $tests = @(
     'Launcher.Tests.ps1',
@@ -541,9 +606,11 @@ $tests = @(
     'ProviderConfiguration.Tests.ps1',
     'Selections.Tests.ps1',
     'Applications.Tests.ps1',
+    'Stages.Tests.ps1',
     'Progress.Tests.ps1',
     'Packages.Tests.ps1',
     'Certificates.Tests.ps1',
+    'CertificateOperations.Tests.ps1',
     'Providers.Tests.ps1'
 )
 foreach ($test in $tests) {
@@ -551,10 +618,11 @@ foreach ($test in $tests) {
     if ($LASTEXITCODE -ne 0) { throw "$test failed." }
 }
 
-pwsh -NoProfile -File .\setup\tests\ServicePlans.Tests.ps1 -TemplatePath $templatePath
+pwsh -NoProfile -File .\setup\tests\ServicePlans.Tests.ps1 `
+    -TemplatePath $templates.main -PublishTemplatePath $templates.publish -IngressTemplatePath $templates.ingress
 if ($LASTEXITCODE -ne 0) { throw 'ServicePlans.Tests.ps1 failed.' }
-Remove-Item -LiteralPath $templatePath
+foreach ($path in $templates.Values) { Remove-Item -LiteralPath $path }
 ```
 
-CI runs the same eleven suites on Windows and Linux. Network and cloud operations are mocked;
+CI runs the same thirteen suites on Windows and Linux. Network and cloud operations are mocked;
 deployed endpoint validation is separate.

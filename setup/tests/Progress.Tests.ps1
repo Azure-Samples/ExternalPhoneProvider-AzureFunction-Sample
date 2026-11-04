@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-$module = Import-Module (Join-Path $PSScriptRoot '..\support\Epp.Setup.psm1') -Force -PassThru
+$module = Import-Module (Join-Path $PSScriptRoot '..' 'support' 'core' 'Epp.Setup.psm1') -Force -PassThru
 $directory = Join-Path ([IO.Path]::GetTempPath()) "epp-progress-tests-$([Guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $directory | Out-Null
 try {

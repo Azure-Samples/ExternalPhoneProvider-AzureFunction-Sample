@@ -3,7 +3,7 @@ param([string] $ModulePath = (Split-Path -Parent $PSScriptRoot))
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-$module = Import-Module (Join-Path $ModulePath 'support\Epp.Setup.psm1') -Force -PassThru
+$module = Import-Module (Join-Path $ModulePath 'support' 'core' 'Epp.Setup.psm1') -Force -PassThru
 try {
     & $module {
         param($ModulePath)

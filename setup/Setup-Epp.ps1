@@ -108,7 +108,18 @@ try {
     $sourceBaseUri = "https://raw.githubusercontent.com/$repository/$revision/setup"
     Write-Host "Downloading deployment tools from $repository at $revision"
 
-    foreach ($file in @('support/Epp.Setup.psm1', 'support/Epp.Packages.ps1', 'support/Epp.Graph.ps1', 'providers/catalog.json', 'packages/catalog.json', 'infra/main.bicep', 'infra/resources.bicep')) {
+    foreach ($file in @(
+        'support/core/Epp.Setup.psm1', 'support/core/Epp.Input.ps1',
+        'support/core/Epp.Azure.ps1', 'support/core/Epp.Graph.ps1',
+        'Epp.Application.ps1', 'Epp.Arm.ps1', 'Epp.PostArm.ps1',
+        'support/planning/Epp.Selection.ps1', 'support/planning/Epp.Providers.ps1',
+        'support/planning/Epp.Preflight.ps1', 'support/planning/Epp.Presentation.ps1',
+        'support/deployment/Epp.Packages.ps1', 'support/deployment/Epp.Certificates.ps1',
+        'support/deployment/Epp.Deployment.ps1',
+        'providers/catalog.json', 'packages/catalog.json', 'infra/main.bicep', 'infra/resources.bicep',
+        'infra/certificate-access.bicep', 'infra/certificate.bicep', 'infra/Invoke-Certificate.ps1',
+        'infra/encryption-settings.bicep', 'infra/app-settings.bicep', 'infra/ingress.bicep', 'infra/publish.bicep'
+    )) {
         $destination = Join-Path $downloadDirectory $file
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Invoke-WebRequest -Uri "$sourceBaseUri/$file" -OutFile $destination -TimeoutSec 60 -MaximumRedirection 0
@@ -132,7 +143,7 @@ try {
         if ((Get-Item -LiteralPath $destination).Length -eq 0) { throw "GitHub returned an empty file: $relativePath" }
     }
 
-    $module = Import-Module (Join-Path $downloadDirectory 'support/Epp.Setup.psm1') -PassThru -Force
+    $module = Import-Module (Join-Path $downloadDirectory 'support' 'core' 'Epp.Setup.psm1') -PassThru -Force
     Invoke-EppSetup @arguments -AssetDirectory $downloadDirectory -SourceBaseUri $sourceBaseUri
 }
 finally {
