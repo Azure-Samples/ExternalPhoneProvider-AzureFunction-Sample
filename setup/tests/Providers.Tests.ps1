@@ -252,6 +252,18 @@ try {
         }
         Assert ($script:Prompts.Count -eq 0) 'Complete provider inputs must not prompt for a channel.'
 
+        foreach ($case in @(
+            @{ Scope = 'EU'; Region = 'eu'; Endpoint = 'https://eu1.smartmessagingsuite.com/cgpapi/messages/omnimsg/' }
+            @{ Scope = 'NA'; Region = 'global'; Endpoint = 'https://na1.smartmessagingsuite.com/cgpapi/messages/omnimsg' }
+        )) {
+            $region = Resolve-EppEndpointRegion -TenantRegionScope $case.Scope
+            $configuration = Get-EppProvider -AssetDirectory $SetupDirectory -Provider soprano -EndpointRegion $region -NonInteractive
+            Assert ($configuration.EndpointRegion -ceq $case.Region -and
+                $configuration.Settings.EPP_PROVIDER_ENDPOINT_REGION -ceq $case.Region) 'Soprano routing must match the tenant replication scope.'
+            Assert ($configuration.Settings.EPP_PROVIDER_SMS_ENDPOINT -ceq $case.Endpoint) 'Soprano SMS must use the exact regional endpoint, including its path and trailing slash.'
+            Assert ($configuration.Settings.EPP_PROVIDER_VOICE_ENDPOINT -ceq $case.Endpoint) 'Soprano voice must use the exact regional endpoint, including its path and trailing slash.'
+        }
+
         $profile = Read-EppJson (Join-Path $SetupDirectory 'providers' 'soprano.json')
         $profile.deployment.routes.eu.smsEndpoint = 'https://sms.eu.provider.contoso.com/send'
         $profile.deployment.routes.eu.voiceEndpoint = 'https://voice.eu.provider.contoso.com/send'
