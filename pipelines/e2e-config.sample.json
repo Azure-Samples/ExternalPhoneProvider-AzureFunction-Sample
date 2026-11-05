@@ -1,0 +1,37 @@
+{
+  "tenantId": "REQUIRED",
+  "subscriptionId": "REQUIRED",
+  "subscriptionName": "REQUIRED",
+  "callerClientId": "25ec60fa-f18d-41a4-b398-50044c90ce13",
+  "callerApplication": "MFA CYOT Service",
+  "ready": false,
+  "targets": [
+    {
+      "language": "javascript",
+      "appName": "REQUIRED",
+      "resourceGroup": "REQUIRED",
+      "applicationId": "REQUIRED",
+      "audience": "REQUIRED",
+      "location": "REQUIRED",
+      "servicePlan": "FC1"
+    },
+    {
+      "language": "dotnet",
+      "appName": "REQUIRED",
+      "resourceGroup": "REQUIRED",
+      "applicationId": "REQUIRED",
+      "audience": "REQUIRED",
+      "location": "REQUIRED",
+      "servicePlan": "FC1"
+    },
+    {
+      "language": "python",
+      "appName": "REQUIRED",
+      "resourceGroup": "REQUIRED",
+      "applicationId": "REQUIRED",
+      "audience": "REQUIRED",
+      "location": "REQUIRED",
+      "servicePlan": "FC1"
+    }
+  ]
+}
