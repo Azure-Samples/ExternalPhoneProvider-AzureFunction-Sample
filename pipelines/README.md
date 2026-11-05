@@ -41,7 +41,7 @@ Automatic and pull-request runs validate and package only. Deployment requires a
 | Build and unit tests | No Azure identity | Source and package feeds only |
 | Azure preflight and Function deployment | Dedicated user-assigned managed identity through the `cyote2e-deployment-v2` workload-identity service connection | Read the development resource group, plans, Function Apps, and auth configuration; deploy the selected package to its Function App |
 | Anonymous deployment smoke check | No endpoint identity | Calls the selected endpoint without a token and requires HTTP `401` |
-| Authenticated encrypted evaluation | SAS Synthetics invokes SAS; SAS calls the endpoint as the **MFA CYOT Service** first-party application | SAS requests the CYOT endpoint audience and sends `mode: 2`; no Azure management access |
+| Authenticated encrypted evaluation | SAS Synthetics invokes SAS through the approved CYOT first-party caller | SAS requests the CYOT endpoint audience and sends `mode: 2`; no Azure management access |
 | Function runtime | Function system-assigned and outbound user-assigned managed identities | Storage, Key Vault, telemetry, and provider OAuth as configured by setup |
 
 The Azure Pipelines agent does not receive a reusable managed-identity credential or client secret.
@@ -65,13 +65,14 @@ The fixed `ExternalPhoneProvider-e2e-config` variable group needs only:
 | --- | --- |
 | `CyotTenantId` | Expected development tenant ID |
 | `CyotSubscriptionId` | Expected development subscription ID |
-| `CyotCallerClientId` | SAS CYOT first-party application client ID from `Logic.Cyot.OneP.ApplicationId`. The current verified value is `25ec60fa-f18d-41a4-b398-50044c90ce13` (`MFA CYOT Service`). This is not the deployment identity or a separate pipeline test caller. |
+| `CyotCallerClientId` | Approved SAS CYOT first-party application client ID from the private service configuration. This is not the deployment identity or a separate pipeline test caller. Mark it secret to prevent accidental display even though an application ID is not an authentication credential. |
 | `CyotE2EReady` | Keep `false` until the E2E subscription, resource group, all three target inventories, service connection, and approvals are verified. Change to `true` only as the final enablement step. |
 
-These are integrity-sensitive identifiers rather than credentials. Nonsecret variables do not gain
-secret-variable protection merely by being in a variable group. Authorize only this pipeline,
-restrict queue-time overrides, scope the service connection independently, and do not print the
-values. Key Vault linking is not required for these values.
+These are integrity-sensitive identifiers rather than credentials. Mark `CyotCallerClientId`,
+`CyotTenantId`, and `CyotSubscriptionId` secret to reduce accidental disclosure in Azure DevOps logs
+and UI. Secret masking does not make an application ID an authentication secret and does not prevent
+impersonation by itself. Authorize only this pipeline, restrict queue-time overrides, scope the
+service connection independently, and do not print the values. Key Vault linking is not required.
 
 Do not add service-connection or environment names to this group. Those protected resources are
 fixed literal references in YAML and carry their own approvals and checks.
@@ -116,10 +117,9 @@ ending in `/api/SendOtp`, endpoint audience, matching public encryption certific
 runtime/region labels.
 
 SAS Synthetics should reuse the existing synthetic flow, encrypted `mode: 2` request, response
-validation, schedule, and alert routing. The endpoint call itself is authenticated as the SAS CYOT
-first-party application configured by `Logic.Cyot.OneP.ApplicationId`, currently
-`25ec60fa-f18d-41a4-b398-50044c90ce13` (`MFA CYOT Service`). Easy Auth must allow that application.
-It must never use live mode or a real recipient.
+validation, schedule, and alert routing. The endpoint call itself is authenticated as the approved
+SAS CYOT first-party application from the private service configuration. Easy Auth must allow that
+application. It must never use live mode or a real recipient.
 
 ## What the pipeline verifies
 

@@ -45,6 +45,5 @@ if ($PSCmdlet.ShouldProcess("$ResourceGroup/$DeploymentIdentity", 'Create deploy
     resourceGroup = $ResourceGroup
     location = $Location
     deploymentIdentity = $DeploymentIdentity
-    callerClientId = '25ec60fa-f18d-41a4-b398-50044c90ce13'
     ready = $false
 } | ConvertTo-Json

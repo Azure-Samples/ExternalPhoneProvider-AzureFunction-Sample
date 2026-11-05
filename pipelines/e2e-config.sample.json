@@ -2,8 +2,8 @@
   "tenantId": "REQUIRED",
   "subscriptionId": "REQUIRED",
   "subscriptionName": "REQUIRED",
-  "callerClientId": "25ec60fa-f18d-41a4-b398-50044c90ce13",
-  "callerApplication": "MFA CYOT Service",
+  "callerClientId": "REQUIRED",
+  "callerApplication": "REQUIRED",
   "ready": false,
   "targets": [
     {
