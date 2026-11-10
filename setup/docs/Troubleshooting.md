@@ -177,7 +177,7 @@ registration and Function-reference update.
 ### Download or checksum failure
 
 Check access to the selected stable
-[language release](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases).
+[language release](https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/releases).
 The tag suffix must match `javascript`, `dotnet`, or `python`. Use `released-package.zip` and
 `SHA256SUMS.txt` from that same release.
 

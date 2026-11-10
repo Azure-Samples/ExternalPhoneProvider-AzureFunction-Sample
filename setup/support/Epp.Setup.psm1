@@ -98,7 +98,7 @@ function Get-EppServicePlan {
 
     Write-Host "`nService plan selection" -ForegroundColor Cyan
     Write-Host 'Review estimated Azure hosting and provider costs:'
-    Write-Host 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/blob/main/docs/COST-CALCULATOR.md'
+    Write-Host 'https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/blob/main/docs/COST-CALCULATOR.md'
     Write-Host 'Flex Consumption has a free usage grant, not a zero-cost guarantee. Additional usage, Key Vault, storage, and telemetry can incur charges.'
     return Select-EppOption -Entries @(
         @{ id = 'FC1'; displayName = 'Flex Consumption FC1 (free grant, cold starts)' }
@@ -113,7 +113,7 @@ function Read-EppInput {
         [string] $Kind = 'Text',
         [switch] $NonInteractive, [switch] $AllowCancel,
         [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
-        [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample',
+        [string] $SourceRepository = 'Iddorot/ExternalPhoneProvider-AzureFunction-Sample',
         [string] $PromptName, [string] $DefaultValue
     )
 
@@ -148,12 +148,12 @@ function Read-EppInput {
                 }
                 'PackageUrl' {
                     Assert-EppHttpsUrl $Value
-                    $repositories = @('Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample', $SourceRepository)
+                    $repositories = @('Iddorot/ExternalPhoneProvider-AzureFunction-Sample', $SourceRepository)
                     $allowed = @($repositories | Where-Object {
                         $Value -cmatch ('^https://github\.com/' + [regex]::Escape($_) + '/releases/download/[^/]+/[^/]+\.zip$')
                     })
                     if (-not $allowed.Count) {
-                        throw 'Use a versioned ZIP release URL from the selected source repository or Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample.'
+                        throw 'Use a versioned ZIP release URL from the selected source repository or Iddorot/ExternalPhoneProvider-AzureFunction-Sample.'
                     }
                 }
             }
@@ -1597,7 +1597,7 @@ function Show-EppDeploymentResult {
     Write-Host $Inputs.ApplicationId -ForegroundColor Yellow
     Write-Host '   The setup script did not change the External Phone Provider policy.'
     Write-Host '   Policy configuration and validation guidance:'
-    Write-Host '   https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/blob/main/docs/GETTING-STARTED.md#4-connect-your-provider-and-test'
+    Write-Host '   https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/blob/main/docs/GETTING-STARTED.md#4-connect-your-provider-and-test'
 }
 
 function Get-EppServicePrincipal {
@@ -2733,7 +2733,7 @@ function Invoke-EppSetup {
         [string] $OutputDirectory = (Join-Path (Get-Location).Path 'epp-output'),
         [string] $AssetDirectory, [string] $SourceBaseUri,
         [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
-        [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample',
+        [string] $SourceRepository = 'Iddorot/ExternalPhoneProvider-AzureFunction-Sample',
         [switch] $NonInteractive, [switch] $InstallPrerequisites,
         [switch] $ForceAuthentication, [switch] $ApproveDeployment, [switch] $PassThru
     )

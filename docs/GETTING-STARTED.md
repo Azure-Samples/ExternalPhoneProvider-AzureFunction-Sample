@@ -31,7 +31,7 @@ Open PowerShell in a private working folder and download the launcher:
 
 ```powershell
 Invoke-WebRequest `
-    -Uri 'https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/main/setup/Setup-Epp.ps1' `
+    -Uri 'https://raw.githubusercontent.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/main/setup/Setup-Epp.ps1' `
     -OutFile .\Setup-Epp.ps1
 ```
 

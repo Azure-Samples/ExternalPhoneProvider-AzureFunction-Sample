@@ -38,4 +38,4 @@
 
 - [Provider access and support](ONBOARDING.md#before-deployment)
 - [Troubleshooting and safe diagnostic evidence](../setup/docs/Troubleshooting.md#after-deployment-triage)
-- [Report a sample issue](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/issues)
+- [Report a sample issue](https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/issues)

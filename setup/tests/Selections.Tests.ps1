@@ -399,7 +399,7 @@ try {
             param($AssetDirectory, $Language, $SourceRepository, $PackageReleaseTag, [switch] $NonInteractive)
             return @{
                 Id = 'javascript'; DisplayName = 'JavaScript'; BuildStrategy = 'ready'
-                Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
+                Url = 'https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
                 ReleaseTag = 'epp-packages-1-1'
             }
         }
@@ -413,7 +413,7 @@ try {
             Provider = 'soprano'; EndpointRegion = 'global'; Language = 'javascript'; ServicePlan = 'FC1'
             ResourcePrefix = 'unit'; OutputDirectory = $Directory
             AssetDirectory = $ModulePath
-            SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
+            SourceBaseUri = "https://raw.githubusercontent.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
         }
         Reset-TestState @($script:AppId, 'westus2')
         Assert-Throws { Invoke-EppSetup @setup -ForceAuthentication } '^selection-preflight-boundary$'

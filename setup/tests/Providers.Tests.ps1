@@ -74,7 +74,7 @@ try {
             }
             return $script:PackageRelease
         }
-        foreach ($repository in @('Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample', 'unit/epp-fork')) {
+        foreach ($repository in @('Iddorot/ExternalPhoneProvider-AzureFunction-Sample', 'unit/epp-fork')) {
             foreach ($case in $packageCases) {
                 $script:PackageRelease.tag_name = "epp-packages-42-1-$($case.Id)"
                 $script:OtherLanguage = if ($case.Id -eq 'python') { 'javascript' } else { 'python' }
@@ -329,7 +329,7 @@ try {
             $script:SelectedLanguage = $Language
             return @{
                 Id = 'javascript'; DisplayName = 'JavaScript'; BuildStrategy = 'ready'
-                Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
+                Url = 'https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
                 ReleaseTag = 'epp-packages-1-1'
             }
         }
@@ -362,7 +362,7 @@ try {
             ApplicationId = '33333333-3333-3333-3333-333333333333'
             Location = 'westus2'; ResourcePrefix = 'unit'; Language = 'javascript'; ServicePlan = 'FC1'
             AssetDirectory = $assets
-            SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
+            SourceBaseUri = "https://raw.githubusercontent.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
         }
         foreach ($id in @('telesign', 'soprano', 'infobip')) {
             foreach ($region in @('global', 'eu')) {

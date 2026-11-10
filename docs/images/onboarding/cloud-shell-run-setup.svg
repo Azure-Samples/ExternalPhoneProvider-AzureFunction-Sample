@@ -7,7 +7,7 @@
   <g font-family="Consolas, monospace" font-size="16" fill="#f1f6fb">
     <text x="28" y="94" fill="#8fe0ef"># Download into your private working folder.</text>
     <text x="28" y="128">PS&gt; Invoke-WebRequest `</text>
-    <text x="28" y="158">      -Uri 'https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/main/setup/Setup-Epp.ps1' `</text>
+    <text x="28" y="158">      -Uri 'https://raw.githubusercontent.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/main/setup/Setup-Epp.ps1' `</text>
     <text x="28" y="188">      -OutFile .\Setup-Epp.ps1</text>
     <text x="28" y="234" fill="#8fe0ef"># Review the downloaded script before running it.</text>
     <text x="28" y="270">PS&gt; .\Setup-Epp.ps1</text>

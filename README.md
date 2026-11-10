@@ -75,7 +75,7 @@ See the [documentation index](docs/README.md) for all guides.
 
 For provider access and account issues, use your provider's support channel. For Microsoft Entra ID
 configuration, use Microsoft support. Report sample issues in
-[GitHub Issues](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/issues).
+[GitHub Issues](https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/issues).
 
 Keep credentials, phone numbers, OTPs, encrypted request bodies, and raw provider responses out
 of issues and support requests.

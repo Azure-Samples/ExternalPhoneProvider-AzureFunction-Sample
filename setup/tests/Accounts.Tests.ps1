@@ -321,7 +321,7 @@ exit $ExitCode
             param($AssetDirectory, $Language, $SourceRepository, $PackageReleaseTag, [switch] $NonInteractive)
             return @{
                 Id = 'javascript'; DisplayName = 'Node.js'; BuildStrategy = 'ready'
-                Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
+                Url = 'https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
                 ReleaseTag = 'epp-packages-1-1'
             }
         }
@@ -334,7 +334,7 @@ exit $ExitCode
             Location = 'westus2'; ResourcePrefix = 'unit'; Language = 'javascript'; ServicePlan = 'FC1'
             Provider = 'soprano'; EndpointRegion = 'global'; OutputDirectory = $Directory
             AssetDirectory = $ModulePath
-            SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
+            SourceBaseUri = "https://raw.githubusercontent.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
         }
         $applicationId = 'dddddddd-dddd-dddd-dddd-dddddddddddd'
         $setup.ApplicationId = $applicationId

@@ -5,7 +5,7 @@ $setupDirectory = Split-Path -Parent $PSScriptRoot
 $launcher = Join-Path $setupDirectory 'Setup-Epp.ps1'
 $state = @{
     Revision = 'a' * 40
-    Repository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample'
+    Repository = 'Iddorot/ExternalPhoneProvider-AzureFunction-Sample'
     Requests = [Collections.Generic.List[string]]::new()
 }
 $requiredAssets = @(
@@ -97,7 +97,7 @@ $parameters = @{
     ApplicationId = '33333333-3333-3333-3333-333333333333'
 }
 try {
-    foreach ($repository in @('Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample', 'unit/epp-fork')) {
+    foreach ($repository in @('Iddorot/ExternalPhoneProvider-AzureFunction-Sample', 'unit/epp-fork')) {
         $state.Repository = $repository
         Reset-TestState
         $result = & $launcher @parameters -SourceRepository $repository -SourceRef review-probe -Provider Telesign -PassThru

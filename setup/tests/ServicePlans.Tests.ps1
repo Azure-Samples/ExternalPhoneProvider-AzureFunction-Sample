@@ -85,7 +85,7 @@ try {
         $script:Answers.Enqueue('2')
         Assert ((Get-EppServicePlan).id -ceq 'EP1') 'Option 2 must select Premium.'
         Assert (($script:Messages -join "`n") -match 'Service plan selection') 'The selection section must have its requested heading.'
-        Assert (($script:Messages -join "`n").Contains('https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/blob/main/docs/COST-CALCULATOR.md')) 'Link the repository cost estimator at plan selection.'
+        Assert (($script:Messages -join "`n").Contains('https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/blob/main/docs/COST-CALCULATOR.md')) 'Link the repository cost estimator at plan selection.'
         Assert ($script:Calls.Count -eq 0) 'Selecting a plan must not contact Azure.'
 
         $inputs = @{
@@ -96,9 +96,9 @@ try {
             ProviderAuthentication = 'oauth'; ServicePlan = 'FC1'; BuildStrategy = 'ready'
             PackageFile = 'epp-javascript.zip'
             PackageReleaseTag = 'epp-packages-1-1'
-            PackageUrl = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
+            PackageUrl = 'https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
             SourceRevision = ('a' * 40)
-            SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
+            SourceBaseUri = "https://raw.githubusercontent.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
             PackageSha256 = ('a' * 64); SourcePackageSha256 = ('a' * 64)
         }
         $names = Get-EppResourceNames -SubscriptionId $inputs.SubscriptionId -ApplicationId $inputs.ApplicationId -ResourcePrefix unit

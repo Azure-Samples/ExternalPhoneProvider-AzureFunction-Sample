@@ -172,9 +172,9 @@ try {
                 ServicePlan = 'FC1'; Language = 'javascript'; ProviderAuthentication = 'apiKey'
                 Location = 'westus2'; ResourcePrefix = 'unit'; PackageSha256 = ('a' * 64); SourcePackageSha256 = ('a' * 64)
                 PackageFile = 'epp-javascript.zip'; SourceRevision = ('a' * 40)
-                SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
+                SourceBaseUri = "https://raw.githubusercontent.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
                 PackageReleaseTag = 'epp-packages-1-1'
-                PackageUrl = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
+                PackageUrl = 'https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
                 ProviderTenantId = '44444444-4444-4444-4444-444444444444'
                 ProviderAllowedTenantIds = @('44444444-4444-4444-4444-444444444444')
             }
@@ -530,7 +530,7 @@ try {
             foreach ($action in @('Create', 'Reuse', 'Replace')) {
                 $inputs.Language = if ($action -eq 'Reuse') { 'dotnet' } else { 'javascript' }
                 $inputs.PackageFile = if ($inputs.Language -eq 'dotnet') { 'epp-dotnet.zip' } else { 'epp-javascript.zip' }
-                $inputs.PackageUrl = "https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/$($inputs.PackageFile)"
+                $inputs.PackageUrl = "https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/$($inputs.PackageFile)"
                 Set-TestBundle $certificate
                 $script:Application.KeyCredentials = if ($action -eq 'Create') { @($signing) } else { @($first, (New-TestCredential $other $secondId), $signing) }
                 $context.CertificatePlan = if ($action -eq 'Reuse') { Get-EppCertificatePlan @planArgs @reuseArgs -NonInteractive }
@@ -595,7 +595,7 @@ try {
                 param($AssetDirectory, $Language, $SourceRepository, $PackageReleaseTag, [switch] $NonInteractive)
                 return @{
                     Id = 'javascript'; DisplayName = 'Node.js'; BuildStrategy = 'ready'
-                    Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
+                    Url = 'https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
                     ReleaseTag = 'epp-packages-1-1'
                 }
             }
@@ -605,7 +605,7 @@ try {
                 Location = 'westus2'; ResourcePrefix = 'unit'; Language = 'javascript'; ServicePlan = 'FC1'
                 Provider = 'unit'; EndpointRegion = 'global'; OutputDirectory = $Directory
                 AssetDirectory = $SetupDirectory
-                SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
+                SourceBaseUri = "https://raw.githubusercontent.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
             }
             Set-TestBundle $certificate
             $script:Application.KeyCredentials = @($first, $signing)

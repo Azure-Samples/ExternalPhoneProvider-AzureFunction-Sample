@@ -145,7 +145,7 @@ try {
             param($AssetDirectory, $Language, $SourceRepository, $PackageReleaseTag, [switch] $NonInteractive)
             return @{
                 Id = 'javascript'; DisplayName = 'JavaScript'; BuildStrategy = 'ready'
-                Url = 'https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
+                Url = 'https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/releases/download/epp-packages-1-1/epp-javascript.zip'
                 ReleaseTag = 'epp-packages-1-1'
             }
         }
@@ -250,7 +250,7 @@ try {
             TenantId = $script:Tenant; SubscriptionId = $script:Subscription
             Location = 'westus2'; ServicePlan = 'FC1'; ResourcePrefix = 'unit'
             AssetDirectory = $ModulePath; OutputDirectory = $Directory
-            SourceBaseUri = "https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
+            SourceBaseUri = "https://raw.githubusercontent.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/$('a' * 40)/setup"
         }
 
         $preview = Get-EppResourceNames -SubscriptionId $script:Subscription -ResourcePrefix unit -PendingApplication

@@ -38,7 +38,7 @@ reference. See [setup details](setup/docs/README.md).
 
 Guided setup downloads and publishes the package automatically.
 For manual deployment, select a stable language release from
-[GitHub Releases](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases):
+[GitHub Releases](https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/releases):
 
 | Runtime | Release tag | Package contents |
 | --- | --- | --- |

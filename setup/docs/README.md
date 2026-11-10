@@ -88,7 +88,7 @@ Download the launcher into a private working folder:
 
 ```powershell
 Invoke-WebRequest `
-    -Uri 'https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/main/setup/Setup-Epp.ps1' `
+    -Uri 'https://raw.githubusercontent.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/main/setup/Setup-Epp.ps1' `
     -OutFile .\Setup-Epp.ps1
 ```
 
@@ -334,11 +334,11 @@ For deliberate replacement, use `-CertificateAction Replace` instead.
 
 ## Source versioning
 
-Defaults are `-SourceRepository Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample` and
+Defaults are `-SourceRepository Iddorot/ExternalPhoneProvider-AzureFunction-Sample` and
 `-SourceRef main`. Setup resolves one commit for its supporting scripts, Bicep templates,
 catalogs, and profiles.
 
-Packages come from stable [GitHub releases](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/releases):
+Packages come from stable [GitHub releases](https://github.com/Iddorot/ExternalPhoneProvider-AzureFunction-Sample/releases):
 
 | Runtime | Tag format |
 | --- | --- |

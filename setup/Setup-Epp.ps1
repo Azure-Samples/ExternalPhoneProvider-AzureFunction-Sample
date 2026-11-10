@@ -4,7 +4,7 @@
     Download the EPP deployment tools, collect settings, and review one deployment plan.
 .DESCRIPTION
     Download only this file. Supporting PowerShell, Bicep, and provider JSON files come from
-    the selected public GitHub repository (Azure-Samples by default).
+    the selected public GitHub repository (Iddorot/ExternalPhoneProvider-AzureFunction-Sample by default).
     Microsoft Graph operations reuse the Azure CLI user session through az ad and az rest.
     Interactive setup can select cached tenants, subscriptions, applications, and Azure regions,
     or create a dedicated app registration after final deployment approval.
@@ -76,7 +76,7 @@ param(
     [string] $KeyVaultSubscriptionId,
     [string] $OutputDirectory = (Join-Path $PSScriptRoot 'epp-output'),
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$')]
-    [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample',
+    [string] $SourceRepository = 'Iddorot/ExternalPhoneProvider-AzureFunction-Sample',
     [string] $SourceRef = 'main',
     [string] $PackageReleaseTag,
     [switch] $NonInteractive,
