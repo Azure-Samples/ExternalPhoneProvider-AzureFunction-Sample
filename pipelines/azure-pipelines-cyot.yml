@@ -1,3 +1,4 @@
+# Azure DevOps Azure Pipelines YAML. This is not a GitHub Actions workflow.
 trigger:
   batch: true
   branches:

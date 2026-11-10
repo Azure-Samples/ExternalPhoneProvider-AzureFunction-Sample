@@ -2412,6 +2412,8 @@ function Sync-EppFunctionTriggers {
 function Assert-EppFunctionPublished {
     param([hashtable] $Inputs, [Collections.IDictionary] $Names)
 
+    # Python's v2 decorator registers the handler name (send_otp), while its public HTTP route
+    # remains /api/SendOtp. JavaScript and .NET register the function itself as SendOtp.
     $expectedFunctionName = if ($Inputs.Language -eq 'python') { 'send_otp' } else { 'SendOtp' }
     for ($attempt = 1; $attempt -le 6; $attempt++) {
         $functions = @(Invoke-EppAz functionapp function list --resource-group $Names.resourceGroup --name $Names.functionApp `

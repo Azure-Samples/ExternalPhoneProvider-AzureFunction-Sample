@@ -15,7 +15,6 @@
 - [Technical reference](../TECHNICAL.md)
 - [Infobip, Soprano, and Telesign](../TECHNICAL.md#built-in-providers)
 - [Send OTP API](CONTRACT.md)
-- [CYOT Azure DevOps pipeline onboarding](../pipelines/README.md)
 - [JavaScript implementation](../javascript/README.md)
 - [C# implementation](../dotnet/README.md)
 - [Python implementation](../python/README.md)
