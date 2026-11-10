@@ -118,7 +118,7 @@ public class ContractTests
     [InlineData("SENT", Outcome.Continue, null)]
     [InlineData("DELIVERED", Outcome.Continue, null)]
     [InlineData("QUEUED", Outcome.Continue, null)]
-    [InlineData("BLOCKED", Outcome.Block, null)]
+    [InlineData("BLOCKED", Outcome.Block, "provider_blocked")]
     [InlineData("FAILED", Outcome.Fail, "provider_rejected")]
     [InlineData("REJECTED", Outcome.Fail, "provider_rejected")]
     [InlineData("FILTERED", Outcome.Fail, "provider_rejected")]
@@ -161,24 +161,23 @@ public class ContractTests
     }
 
     [Theory]
-    [InlineData("https://api.infobip.com")]
-    [InlineData("https://api-eu.infobip.com")]
+    [InlineData("https://provider.example/custom/messages")]
+    [InlineData("https://eu.provider.example/another/path")]
     public async Task InfobipOAuthRequestsKeepExactSmsAndVoiceWireContracts(string endpoint)
     {
-        var env = new TestEnv { ["EPP_PROVIDER_ACCOUNT_NAME"] = "Verify" };
+        var env = new TestEnv();
         var credential = new ProviderCredentials("oauth", AccessToken: "test-token");
         Assert.Equal("oauth", new InfobipProvider().AuthenticationMode);
 
         var sms = await new InfobipProvider().CaptureRequestAsync(
             "sms", endpoint, Delivery(), credential, env);
-        AssertJsonRequest(sms, $"{endpoint}/sms/3/messages", "Bearer test-token");
+        AssertJsonRequest(sms, endpoint, "Bearer test-token");
         var expectedSms = new
         {
             messages = new[]
             {
                 new
                 {
-                    sender = "Verify",
                     destinations = new[] { new { to = Delivery().PhoneNumber, messageId = "correlation-id" } },
                     content = new { text = Delivery().Message },
                 },
@@ -188,14 +187,13 @@ public class ContractTests
 
         var voice = await new InfobipProvider().CaptureRequestAsync(
             "voice", endpoint, Delivery("voice"), credential, env);
-        AssertJsonRequest(voice, $"{endpoint}/tts/3/advanced", "Bearer test-token");
+        AssertJsonRequest(voice, endpoint, "Bearer test-token");
         var expectedVoice = new
         {
             messages = new[]
             {
                 new
                 {
-                    from = "Verify",
                     destinations = new[] { new { to = Delivery().PhoneNumber, messageId = "correlation-id" } },
                     text = Delivery().Message,
                     language = "en-US",
@@ -204,50 +202,6 @@ public class ContractTests
             },
         };
         Assert.Equal(JsonSerializer.Serialize(expectedVoice), voice.Body);
-    }
-
-    [Fact]
-    public async Task SinchRequestsKeepExactSmsAndVoiceWireContracts()
-    {
-        var env = new TestEnv
-        {
-            ["EPP_PROVIDER_ACCOUNT_NAME"] = "Verify",
-            ["SINCH_SERVICE_PLAN_ID"] = "service-plan",
-        };
-        var credential = new ProviderCredentials("apiKey", "test-key", "test-id");
-
-        var sms = await new SinchProvider().CaptureRequestAsync(
-            "sms", "https://provider.example", Delivery(), credential, env);
-        AssertJsonRequest(
-            sms,
-            "https://provider.example/xms/v1/service-plan/batches",
-            "******");
-        Assert.Equal(
-            JsonSerializer.Serialize(new
-            {
-                from = "Verify",
-                to = new[] { Delivery().PhoneNumber },
-                body = Delivery().Message,
-                client_reference = "correlation-id",
-            }),
-            sms.Body);
-
-        var voice = await new SinchProvider().CaptureRequestAsync(
-            "voice", "https://calling.example", Delivery("voice"), credential, env);
-        AssertJsonRequest(voice, "https://calling.example/calling/v1/callouts", "******");
-        Assert.Equal(
-            JsonSerializer.Serialize(new
-            {
-                method = "ttsCallout",
-                ttsCallout = new
-                {
-                    destination = new { type = "number", endpoint = Delivery().PhoneNumber },
-                    text = Delivery().Message,
-                    locale = "en-US",
-                    custom = "correlation-id",
-                },
-            }),
-            voice.Body);
     }
 
     [Theory]
@@ -283,6 +237,51 @@ public class ContractTests
             correlation_id = delivery.CorrelationId,
         };
         Assert.Equal(JsonSerializer.Serialize(expected), request.Body);
+    }
+
+    [Theory]
+    [InlineData(null, null, null)]
+    [InlineData("{\"scenario\":null,\"ipAddress\":null}", null, null)]
+    [InlineData("{\"scenario\":\"signin\"}", "signin", null)]
+    [InlineData("{\"scenario\":\"signIn\",\"ipAddress\":\"2001:db8::1\",\"other\":\"PRIVATE-RISK\"}", "signIn", "2001:db8::1")]
+    [InlineData("{\"scenario\":\"\",\"ipAddress\":\"\"}", "", "")]
+    public async Task TelesignMapsOptionalRiskStringsUnchanged(
+        string? riskJson, string? lifecycleEvent, string? originatingIp)
+    {
+        foreach (var channel in new[] { "sms", "voice" })
+        {
+            var delivery = Delivery(channel) with
+            {
+                RiskContext = riskJson is null ? null
+                    : JsonSerializer.Deserialize<RiskContext>(riskJson),
+            };
+            var request = await new TelesignProvider().CaptureRequestAsync(
+                channel, "https://verify.telesign.com/integration/msft/cyot", delivery,
+                new ProviderCredentials("oauth", AccessToken: "provider-token"), new TestEnv());
+            using var body = JsonDocument.Parse(request.Body);
+            var json = body.RootElement;
+            Assert.Equal(lifecycleEvent is not null, json.TryGetProperty("account_lifecycle_event", out var lifecycle));
+            Assert.Equal(originatingIp is not null, json.TryGetProperty("originating_ip", out var ip));
+            if (lifecycleEvent is not null) Assert.Equal(lifecycleEvent, lifecycle.GetString());
+            if (originatingIp is not null) Assert.Equal(originatingIp, ip.GetString());
+            Assert.Equal(4 + (lifecycleEvent is null ? 0 : 1) + (originatingIp is null ? 0 : 1),
+                json.EnumerateObject().Count());
+        }
+    }
+
+    [Theory]
+    [InlineData(200, Outcome.Block, 422, "provider_blocked")]
+    [InlineData(500, Outcome.Fail, 502, "provider_http_error")]
+    [InlineData(429, Outcome.Fail, 429, "provider_http_error")]
+    public async Task TelesignRecognizesRiskBlocksWithoutOverridingHttpFailures(
+        int httpStatus, Outcome outcome, int endpointStatus, string? reason)
+    {
+        using var response = JsonResponse(httpStatus, "{\"status\":{\"code\":3072}}");
+        var result = await new TelesignProvider().SendResponseAsync(response, default);
+        Assert.Equal(outcome, result.Outcome);
+        Assert.True(result.StatusRecognized);
+        Assert.Equal(reason, result.FailureReason);
+        Assert.Equal(endpointStatus, PhoneProviderBase.ToEndpointHttpStatus(result));
     }
 
     [Fact]
@@ -399,20 +398,6 @@ public class ContractTests
         Assert.True(result.StatusRecognized);
     }
 
-    [Theory]
-    [InlineData("Dispatched", Outcome.Continue)]
-    [InlineData("Delivered", Outcome.Continue)]
-    [InlineData("Queued", Outcome.Continue)]
-    [InlineData("Failed", Outcome.Fail)]
-    [InlineData("Rejected", Outcome.Fail)]
-    public async Task SinchOwnsEveryRecognizedStatusMapping(string status, Outcome expected)
-    {
-        using var response = JsonResponse(200, JsonSerializer.Serialize(new { id = "provider-id", status }));
-        var result = await new SinchProvider().SendResponseAsync(response, default);
-        Assert.Equal(expected, result.Outcome);
-        Assert.True(result.StatusRecognized);
-    }
-
     [Fact]
     public async Task TypedProviderResponsesNormalizeIdsStatusesAndDescriptions()
     {
@@ -423,12 +408,6 @@ public class ContractTests
                 "{\"messages\":[{\"messageId\":\"infobip-id\",\"status\":{\"name\":\"pending\",\"description\":\"queued\"}}]}",
                 "infobip-id",
                 "PENDING",
-                "queued"),
-            (
-                new SinchProvider(),
-                "{\"callId\":\"sinch-id\",\"text\":\"queued\"}",
-                "sinch-id",
-                "Dispatched",
                 "queued"),
             (
                 new TelesignProvider(),
@@ -458,7 +437,6 @@ public class ContractTests
         PhoneProviderBase[] providers =
         [
             new InfobipProvider(),
-            new SinchProvider(),
             new TelesignProvider(),
             new SopranoProvider(),
         ];
@@ -491,12 +469,9 @@ public class ContractTests
     [Theory]
     [InlineData("{\"messages\":[{\"messageId\":\"id\",\"status\":{\"groupName\":123}}]}")]
     [InlineData("{\"messages\":[{\"messageId\":\"id\",\"status\":[]}]}")]
-    [InlineData("{\"id\":\"id\",\"status\":123}")]
     public async Task WronglyTypedProviderStatusesAreParseFailures(string payload)
     {
-        PhoneProviderBase provider = payload.Contains("\"messages\"", StringComparison.Ordinal)
-            ? new InfobipProvider()
-            : new SinchProvider();
+        var provider = new InfobipProvider();
         using var response = JsonResponse(200, payload);
         var error = await Assert.ThrowsAsync<PhoneProviderBase.ProviderSendException>(
             async () => await provider.SendResponseAsync(response, default));
@@ -511,7 +486,6 @@ public class ContractTests
             (new InfobipProvider(), "{\"messages\":[{\"messageId\":\"id\",\"status\":{\"groupName\":\"PENDING\"}}]}"),
             (new SopranoProvider(), "{\"messageId\":\"id\",\"status\":\"ACCEPTED\"}"),
             (new TelesignProvider(), "{\"reference_id\":\"id\",\"status\":{\"code\":290}}"),
-            (new SinchProvider(), "{\"id\":\"id\",\"status\":\"Delivered\"}"),
         };
 
         foreach (var item in cases)
@@ -586,15 +560,10 @@ internal static class PhoneProviderTestExtensions
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),
             }));
-        var env = new TestEnv
-        {
-            ["EPP_PROVIDER_ACCOUNT_NAME"] = "Verify",
-            ["SINCH_SERVICE_PLAN_ID"] = "service-plan",
-        };
+        var env = new TestEnv();
         var endpoint = provider.Name switch
         {
             "infobip" => "https://provider.example",
-            "sinch" => "https://provider.example",
             "telesign" => "https://verify.telesign.com/epp/sms",
             _ => "https://provider.example/oauth/messages",
         };

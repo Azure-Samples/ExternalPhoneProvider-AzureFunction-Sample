@@ -198,7 +198,9 @@ public sealed class SendOtp
         var providerStatus = await SendToProviderAsync(delivery).ConfigureAwait(false);
         if (providerStatus >= 400)
             throw new InvalidRequestException(
-                providerStatus, "provider_delivery_failed", correlationId: correlationId);
+                providerStatus,
+                providerStatus == 422 ? "provider_blocked" : "provider_delivery_failed",
+                correlationId: correlationId);
 
         return new EndpointSuccessResponse(context.Nonce!, correlationId);
     }

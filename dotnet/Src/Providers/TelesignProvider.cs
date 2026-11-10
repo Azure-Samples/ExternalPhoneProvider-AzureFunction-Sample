@@ -2,7 +2,6 @@ using Azure.Core;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
@@ -53,7 +52,9 @@ public sealed class TelesignProvider : PhoneProviderBase
             new Recipient(delivery.PhoneNumber),
             new Message(messageText, string.IsNullOrWhiteSpace(delivery.Locale) ? null : delivery.Locale),
             [new Channel(channel)],
-            string.IsNullOrEmpty(delivery.CorrelationId) ? delivery.MessageId : delivery.CorrelationId);
+            string.IsNullOrEmpty(delivery.CorrelationId) ? delivery.MessageId : delivery.CorrelationId,
+            delivery.RiskContext?.Scenario,
+            delivery.RiskContext?.IpAddress);
 
         var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
@@ -95,6 +96,7 @@ public sealed class TelesignProvider : PhoneProviderBase
 
     private static (Outcome Outcome, bool Recognized) MapStatus(string? status) => status switch
     {
+        "3072" => (Outcome.Block, true),
         "200" or "203" or "290" or "291" or "292"
             or "100" or "101" or "102" or "103" or "3001" => (Outcome.Continue, true),
         _ => (Outcome.Fail, false),
@@ -104,7 +106,9 @@ public sealed class TelesignProvider : PhoneProviderBase
         [property: JsonPropertyName("recipient")] Recipient Recipient,
         [property: JsonPropertyName("message")] Message Message,
         [property: JsonPropertyName("channels")] IReadOnlyList<Channel> Channels,
-        [property: JsonPropertyName("correlation_id")] string CorrelationId);
+        [property: JsonPropertyName("correlation_id")] string CorrelationId,
+        [property: JsonPropertyName("account_lifecycle_event"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AccountLifecycleEvent,
+        [property: JsonPropertyName("originating_ip"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OriginatingIp);
 
     private sealed record Recipient(
         [property: JsonPropertyName("phone_number")] string PhoneNumber);

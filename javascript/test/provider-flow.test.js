@@ -6,7 +6,7 @@ const { inspect } = require('node:util');
 const fixtures = require('../../tests/fixtures/contract.json');
 const { AppConfig, readConfig } = require('../src/functions/config');
 const { parseEntraPayload } = require('../src/functions/entraPayload');
-const { DeliveryContext, OtpDelivery } = require('../src/functions/delivery');
+const { RiskContext, DeliveryContext, OtpDelivery } = require('../src/functions/delivery');
 const { OUTCOME } = require('../src/functions/providerResult');
 const { selectProvider } = require('../src/functions/providers');
 const {
@@ -30,8 +30,8 @@ const input = {
     channel: 'sms',
     endpoint: 'https://provider.example',
     delivery,
-    credential: { mode: 'apiKey', identity: 'id', secret: 'key' },
-    env: { SINCH_SERVICE_PLAN_ID: 'plan' },
+    credential: { mode: 'oauth', accessToken: 'token' },
+    env: {},
 };
 const response = (json, providerHttpStatus = 200, validJson = true) => ({
     json,
@@ -49,11 +49,11 @@ const envelope = (overrides = {}) => ({
 });
 
 test('config and fixed provider lookup have no default or registry', () => {
-    const config = readConfig({ EPP_PROVIDER_NAME: ' SiNcH ', EPP_PROVIDER_TIMEOUT_MS: ' 0012 ' });
+    const config = readConfig({ EPP_PROVIDER_NAME: ' SoPrAnO ', EPP_PROVIDER_TIMEOUT_MS: ' 0012 ' });
     assert.ok(config instanceof AppConfig);
     assert.equal(inspect(config), '[AppConfig]');
-    assert.deepEqual([config.providerName, config.providerTimeoutMs], ['sinch', ' 0012 ']);
-    assert.equal(selectProvider(' SiNcH ').name, 'sinch');
+    assert.deepEqual([config.providerName, config.providerTimeoutMs], ['soprano', ' 0012 ']);
+    assert.equal(selectProvider(' SoPrAnO ').name, 'soprano');
     assert.equal(selectProvider('unknown'), null);
     assert.equal(selectProvider(''), null);
 });
@@ -94,13 +94,19 @@ test('delivery models preserve optional OTP strings without coercion or message 
     }
 });
 
-test('delivery models retain arbitrary risk dictionaries without inspecting their fields', () => {
+test('delivery models retain typed common risk fields and arbitrary extensions', () => {
     for (const { overrides } of fixtures.riskContexts) {
         const context = DeliveryContext.fromPayload({ ...delivery, nonce: 'nonce', ...overrides });
         assert.ok(context.isComplete);
-        assert.deepEqual(context.riskContext, overrides.riskContext);
+        assert.deepEqual(context.riskContext?.toJSON() ?? context.riskContext, overrides.riskContext);
+        if (context.riskContext != null) {
+            assert.ok(context.riskContext instanceof RiskContext);
+            assert.equal(inspect(context.riskContext), '[RiskContext]');
+            assert.ok(Object.isFrozen(context.riskContext));
+            assert.ok(Object.isFrozen(context.riskContext.additionalProperties));
+        }
         const request = new OtpDelivery({ ...delivery, riskContext: context.riskContext });
-        assert.deepEqual(request.riskContext, overrides.riskContext);
+        assert.equal(request.riskContext, context.riskContext);
         assert.equal(inspect(context), '[DeliveryContext]');
         assert.equal(inspect(request), '[OtpDelivery]');
     }
@@ -224,24 +230,21 @@ test('Soprano accepts root or first array object with strict status and flexible
     }
 });
 
-test('Infobip uses OAuth with the tested SMS and advanced voice contracts on both setup routes', () => {
+test('Infobip uses configured URLs unchanged with OAuth on both setup routes', () => {
     const infobip = selectProvider('infobip');
     const profile = require('../../setup/providers/infobip.json');
     assert.equal(infobip.authenticationMode, 'oauth');
     assert.deepEqual(infobip.credentialSpec, { mode: 'oauth' });
-    for (const [region, baseUrl] of [
-        ['global', 'https://api.infobip.com'],
-        ['eu', 'https://api-eu.infobip.com'],
-    ]) {
+    for (const region of ['global', 'eu']) {
         for (const channel of ['sms', 'voice']) {
+            const endpoint = profile.deployment.routes[region][`${channel}Endpoint`];
             const request = infobip.createRequest({
                 ...input,
                 channel,
-                endpoint: profile.deployment.routes[region][`${channel}Endpoint`],
+                endpoint,
                 credential: { mode: 'oauth', accessToken: 'provider-token' },
-                env: { EPP_PROVIDER_ACCOUNT_NAME: 'EPP' },
             });
-            assert.equal(request.url, baseUrl + (channel === 'voice' ? '/tts/3/advanced' : '/sms/3/messages'));
+            assert.equal(request.url, endpoint);
             assert.equal(request.method, 'POST');
             assert.deepEqual(request.headers, {
                 Authorization: ['Bearer', 'provider-token'].join(' '),
@@ -251,13 +254,11 @@ test('Infobip uses OAuth with the tested SMS and advanced voice contracts on bot
             const destinations = [{ to: delivery.phoneNumber, messageId: 'correlation-id' }];
             assert.deepEqual(JSON.parse(request.body), {
                 messages: [channel === 'voice' ? {
-                    from: 'EPP',
                     destinations,
                     text: delivery.message,
                     language: 'fr-FR',
                     voice: { name: 'Joanna', gender: 'female' },
                 } : {
-                    sender: 'EPP',
                     destinations,
                     content: { text: delivery.message },
                 }],
@@ -287,24 +288,6 @@ test('Infobip accepts only strict recognized status strings', () => {
     }
 });
 
-test('Sinch HTTP success requires a nonblank string ID and may infer Dispatched', () => {
-    const sinch = selectProvider('sinch');
-    const request = sinch.createRequest(input);
-    assert.equal(request.headers.Authorization, 'Bearer key');
-    assert.equal(JSON.parse(request.body).body, delivery.message);
-    for (const [json, outcome, reason, status] of [
-        [{ id: 'batch-id' }, OUTCOME.CONTINUE, null, 'Dispatched'],
-        [{ callId: 'call-id', status: 'Delivered' }, OUTCOME.CONTINUE, null, 'Delivered'],
-        [{ id: ' ', status: 'Delivered' }, OUTCOME.FAIL, 'missing_provider_message_id', 'Delivered'],
-        [{ id: 123, status: 'Delivered' }, OUTCOME.FAIL, 'missing_provider_message_id', 'Delivered'],
-        [{ id: 'batch-id', status: true }, OUTCOME.FAIL, 'unrecognized_provider_status', null],
-    ]) {
-        const result = sinch.interpretResponse(response(json));
-        assert.deepEqual([result.outcome, result.failureReason, result.providerStatusName],
-            [outcome, reason, status]);
-    }
-});
-
 test('Telesign request validates E.164 and voice pacing remains unchanged', () => {
     const telesign = selectProvider('telesign');
     const credential = { mode: 'oauth', accessToken: 'provider-token' };
@@ -318,6 +301,43 @@ test('Telesign request validates E.164 and voice pacing remains unchanged', () =
             ...input, credential,
             delivery: new OtpDelivery({ ...delivery, phoneNumber }),
         }), /invalid recipient/);
+    }
+});
+
+test('Telesign forwards only optional Intelligence strings without normalization', () => {
+    const telesign = selectProvider('telesign');
+    for (const channel of ['sms', 'voice']) {
+        const requestInput = {
+            ...input, channel, credential: { mode: 'oauth', accessToken: 'provider-token' },
+        };
+        const baseline = JSON.parse(telesign.createRequest(requestInput).body);
+        for (const [riskContext, expected] of [
+            [undefined, {}],
+            [{ scenario: null, ipAddress: null }, {}],
+            [{ scenario: 'signin' }, { account_lifecycle_event: 'signin' }],
+            [{ scenario: 'signIn', ipAddress: '2001:db8::1', other: 'PRIVATE-RISK' },
+                { account_lifecycle_event: 'signIn', originating_ip: '2001:db8::1' }],
+            [{ scenario: '', ipAddress: '' }, { account_lifecycle_event: '', originating_ip: '' }],
+        ]) {
+            const request = telesign.createRequest({
+                ...requestInput, delivery: new OtpDelivery({ ...delivery, riskContext }),
+            });
+            assert.deepEqual(JSON.parse(request.body), { ...baseline, ...expected });
+        }
+    }
+});
+
+test('Telesign recognizes Intelligence blocks without overriding HTTP failures', () => {
+    const telesign = selectProvider('telesign');
+    for (const [httpStatus, outcome, endpointStatus, failureReason] of [
+        [200, OUTCOME.BLOCK, 422, 'provider_blocked'],
+        [500, OUTCOME.FAIL, 502, 'provider_http_error'],
+        [429, OUTCOME.FAIL, 429, 'provider_http_error'],
+    ]) {
+        const result = telesign.interpretResponse(response({ status: { code: 3072 } }, httpStatus));
+        assert.deepEqual(
+            [result.outcome, result.statusRecognized, result.httpStatus, result.failureReason],
+            [outcome, true, endpointStatus, failureReason]);
     }
 });
 
@@ -361,7 +381,9 @@ test('providers fail closed with fixed safe classifications', () => {
         [selectProvider('infobip'), response({ messages: [{ status: { name: 'REJECTED' } }] }),
             'provider_rejected', 502],
         [selectProvider('telesign'), response({ status: { code: 290 } }, 429), 'provider_http_error', 429],
-        [selectProvider('sinch'), response({ id: 'id' }, 500), 'provider_http_error', 502],
+        [selectProvider('telesign'), response({ status: { code: 3400 } }, 401), 'provider_http_error', 400],
+        [selectProvider('telesign'), response({ status: { code: 3400 } }, 403), 'provider_http_error', 400],
+        [selectProvider('soprano'), response({ status: 'ACCEPTED' }, 500), 'provider_http_error', 502],
     ];
     for (const [provider, providerResponse, reason, httpStatus] of cases) {
         const result = provider.interpretResponse(providerResponse);

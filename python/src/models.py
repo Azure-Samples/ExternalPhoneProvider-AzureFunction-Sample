@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -82,6 +82,40 @@ class EntraSendOtpPayload:
 
 
 @dataclass(frozen=True, repr=False)
+class RiskContext:
+    scenario: str | None = None
+    ip_address: str | None = None
+    additional_properties: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if any(value is not None and not isinstance(value, str)
+               for value in (self.scenario, self.ip_address)):
+            raise ValueError("invalid risk context field")
+
+    @classmethod
+    def from_payload(cls, payload: object) -> "RiskContext | None":
+        if payload is None or isinstance(payload, cls):
+            return payload
+        if not isinstance(payload, dict):
+            raise ValueError("invalid risk context")
+        return cls(
+            scenario=payload.get("scenario"),
+            ip_address=payload.get("ipAddress"),
+            additional_properties={
+                key: value for key, value in payload.items() if key not in ("scenario", "ipAddress")
+            },
+        )
+
+    def to_payload(self) -> dict[str, object]:
+        payload = dict(self.additional_properties)
+        if self.scenario is not None:
+            payload["scenario"] = self.scenario
+        if self.ip_address is not None:
+            payload["ipAddress"] = self.ip_address
+        return payload
+
+
+@dataclass(frozen=True, repr=False)
 class DeliveryContext:
     # Keep required strings and OTP raw until is_complete validates their types.
     nonce: object
@@ -89,7 +123,7 @@ class DeliveryContext:
     message: object
     locale: object = None
     extension: object = None
-    risk_context: dict[str, object] | None = None
+    risk_context: RiskContext | None = None
     otp: object = None
 
     @classmethod
@@ -105,7 +139,7 @@ class DeliveryContext:
             message=payload.get("message"),
             locale=payload.get("locale") if isinstance(payload.get("locale"), str) else None,
             extension=payload.get("extension"),
-            risk_context=risk_context,
+            risk_context=RiskContext.from_payload(risk_context),
             otp=payload.get("otp"),
         )
 
@@ -126,7 +160,7 @@ class OtpDelivery:
     correlation_id: str | None
     locale: str | None
     otp: str | None = None
-    risk_context: dict[str, object] | None = None
+    risk_context: RiskContext | None = None
 
 
 class Outcome(str, Enum):

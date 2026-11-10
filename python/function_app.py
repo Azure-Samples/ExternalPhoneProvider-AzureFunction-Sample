@@ -19,7 +19,6 @@ from src.provider import (
     to_endpoint_http_status,
 )
 from src.providers.infobip import InfobipProvider
-from src.providers.sinch import SinchProvider
 from src.providers.soprano import SopranoProvider
 from src.providers.telesign import TelesignProvider
 from src.secrets import SecretResolver
@@ -28,7 +27,7 @@ app = func.FunctionApp()
 
 _providers = {
     provider.name: provider
-    for provider in (InfobipProvider(), TelesignProvider(), SopranoProvider(), SinchProvider())
+    for provider in (InfobipProvider(), TelesignProvider(), SopranoProvider())
 }
 _credentials = CredentialTokenService(SecretResolver())
 _decryptor = JweDecryptor(os.environ)
@@ -199,7 +198,9 @@ def send_otp(req: func.HttpRequest, context: func.Context = None) -> func.HttpRe
             provider_status, log = _send_to_provider(delivery, log)
             if provider_status >= 400:
                 raise InvalidRequest(
-                    provider_status, "provider_delivery_failed", correlation_id=correlation_id)
+                    provider_status,
+                    "provider_blocked" if provider_status == 422 else "provider_delivery_failed",
+                    correlation_id=correlation_id)
 
         status_code = 200
         body = {

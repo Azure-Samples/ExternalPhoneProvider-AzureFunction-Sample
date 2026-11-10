@@ -77,7 +77,9 @@ def test_shared_transport_maps_response_and_closes_it(monkeypatch):
     (500, {"status": "ACCEPTED"}, 502, "provider_http_error"),
     (200, {"status": "FAILED"}, 502, "provider_rejected"),
     (200, {}, 502, "unrecognized_provider_status"),
-    (200, {"status": "BLOCKED"}, 403, None),
+    (200, {"status": "BLOCKED"}, 422, "provider_blocked"),
+    (401, {"status": "REJECTED"}, 400, "provider_http_error"),
+    (403, {"status": "REJECTED"}, 400, "provider_http_error"),
 ])
 def test_provider_outcomes_fail_closed(monkeypatch, upstream, payload, expected_status, reason):
     response = Mock(status_code=upstream, json=Mock(return_value=payload))

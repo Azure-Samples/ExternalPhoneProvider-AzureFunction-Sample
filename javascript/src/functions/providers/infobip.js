@@ -10,8 +10,7 @@ const provider = Object.freeze({
     authenticationMode: 'oauth',
     credentialSpec: Object.freeze({ mode: 'oauth' }),
 
-    createRequest({ channel, endpoint, delivery, credential, env }) {
-        const senderId = env.EPP_PROVIDER_ACCOUNT_NAME || 'Verify';
+    createRequest({ channel, endpoint, delivery, credential }) {
         const messageId = delivery.correlationId || delivery.messageId;
         const headers = {
             Authorization: ['Bearer', credential.accessToken].join(' '),
@@ -20,12 +19,11 @@ const provider = Object.freeze({
         };
         if (channel === 'voice') {
             return {
-                url: `${endpoint}/tts/3/advanced`,
+                url: endpoint,
                 method: 'POST',
                 headers,
                 body: JSON.stringify({
                     messages: [{
-                        from: senderId,
                         destinations: [{ to: delivery.phoneNumber, messageId }],
                         text: delivery.message,
                         language: delivery.locale || 'en',
@@ -35,12 +33,11 @@ const provider = Object.freeze({
             };
         }
         return {
-            url: `${endpoint}/sms/3/messages`,
+            url: endpoint,
             method: 'POST',
             headers,
             body: JSON.stringify({
                 messages: [{
-                    sender: senderId,
                     destinations: [{ to: delivery.phoneNumber, messageId }],
                     content: { text: delivery.message },
                 }],

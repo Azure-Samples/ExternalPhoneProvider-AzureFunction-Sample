@@ -1,51 +1,41 @@
 # Documentation
 
-<a id="documentation-by-task"></a>
-
 [Sample overview](../README.md) | [Get started](GETTING-STARTED.md)
 
-Use the guide that matches your task.
+## Deploy and configure
 
-<a id="table-of-contents"></a>
-<a id="deploy-and-validate"></a>
-## Deploy
-
-- [Five-step setup](GETTING-STARTED.md)
-- [Configuration and validation](ONBOARDING.md)
+- [Deployment guide](GETTING-STARTED.md)
+- [Provider configuration and endpoint validation](ONBOARDING.md)
 - [Setup reference](../setup/docs/README.md)
 - [Troubleshooting](../setup/docs/Troubleshooting.md)
 - [Cost estimate](COST-CALCULATOR.md)
 
-<a id="understand-the-sample"></a>
-<a id="develop"></a>
 ## Understand and develop
 
 - [Technical reference](../TECHNICAL.md)
-  - [Infobip, Soprano, and Telesign](../TECHNICAL.md#built-in-providers)
+- [Infobip, Soprano, and Telesign](../TECHNICAL.md#built-in-providers)
 - [Send OTP API](CONTRACT.md)
-- Runtime guides:
-  - [JavaScript](../javascript/README.md)
-  - [C#](../dotnet/README.md)
-  - [Python](../python/README.md)
-- [Add Twilio](BRING-YOUR-OWN-PROVIDER.md)
+- [JavaScript implementation](../javascript/README.md)
+- [C# implementation](../dotnet/README.md)
+- [Python implementation](../python/README.md)
+- [Add a provider](BRING-YOUR-OWN-PROVIDER.md)
+
+## Advanced deployment
+
+- [Multi-region resiliency](MULTI-REGION-RESILIENCY.md)
+- [Multiple phone providers](MULTI-PROVIDER-IMPLEMENTATION.md)
 
 ## Operate
 
 - [Monitor the endpoint](MONITORING.md)
-  - [Application Insights setup and data](APPLICATION-INSIGHTS.md)
-  - [Application log fields](LOGGING.md)
-  - [Microsoft Entra ID sign-ins](SIGN-IN-MONITORING.md)
+- [Application Insights](APPLICATION-INSIGHTS.md)
+- [Application log reference](LOGGING.md)
+- [Microsoft Entra ID sign-in monitoring](SIGN-IN-MONITORING.md)
 - [Certificate renewal](../setup/docs/README.md#encryption-certificate-lifecycle)
 - [Rollback and decommissioning](../setup/docs/README.md#rollback-and-decommissioning)
 
-<a id="optional-designs"></a>
-## Advanced topics
+## Get help
 
-- [Multi-region routing](FRONTDOOR.md)
-- [Secondary-provider design](MULTI-PROVIDER-IMPLEMENTATION.md)
-
-<a id="get-help"></a>
-## Support
-
-- [Provider access, testing, and activation](ONBOARDING.md#before-purchasing-or-deploying)
-- [Safe diagnostic evidence](../setup/docs/Troubleshooting.md#after-deployment-triage)
+- [Provider access and support](ONBOARDING.md#before-deployment)
+- [Troubleshooting and safe diagnostic evidence](../setup/docs/Troubleshooting.md#after-deployment-triage)
+- [Report a sample issue](https://github.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/issues)

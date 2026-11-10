@@ -19,7 +19,7 @@ API_KEY_MODE: Final = "apiKey"
 OAUTH_MODE: Final = "oauth"
 TOKEN_EXCHANGE_SCOPE = "api://AzureADTokenExchange/.default"
 CREDENTIAL_ERROR = "provider credential unavailable"
-ACQUISITION_TIMEOUT_SECONDS = 2.5
+ACQUISITION_TIMEOUT_SECONDS = 5
 TOKEN_SKEW_SECONDS = 30
 _acquiring = ContextVar("epp_credential_acquisition", default=False)
 T = TypeVar("T")

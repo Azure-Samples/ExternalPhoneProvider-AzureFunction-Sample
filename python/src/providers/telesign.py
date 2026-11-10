@@ -47,6 +47,11 @@ class TelesignProvider(PhoneProviderBase):
             "channels": [{"channel": channel}],
             "correlation_id": correlation_id,
         }
+        if delivery.risk_context is not None:
+            if delivery.risk_context.scenario is not None:
+                body["account_lifecycle_event"] = delivery.risk_context.scenario
+            if delivery.risk_context.ip_address is not None:
+                body["originating_ip"] = delivery.risk_context.ip_address
         headers = {
             "Authorization": "Bearer " + credential["access_token"],
             "Content-Type": "application/json",
@@ -61,9 +66,12 @@ class TelesignProvider(PhoneProviderBase):
         code = status.get("code")
         status_code = str(code) if type(code) is int else "UNKNOWN"
         recognized = status_code in {
-            "200", "203", "290", "291", "292", "100", "101", "102", "103", "3001"
+            "200", "203", "290", "291", "292", "100", "101", "102", "103", "3001", "3072"
         }
-        outcome = Outcome.CONTINUE if recognized else Outcome.FAIL
+        outcome = (
+            Outcome.BLOCK if status_code == "3072"
+            else Outcome.CONTINUE if recognized else Outcome.FAIL
+        )
         final_outcome = outcome if 200 <= http_status < 300 else Outcome.FAIL
         reference_id = payload.get("reference_id")
         description = status.get("description")

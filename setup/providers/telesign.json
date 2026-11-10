@@ -11,16 +11,16 @@
       "global": {
         "smsEndpoint": "https://verify.telesign.com/integration/msft/cyot",
         "voiceEndpoint": "https://verify.telesign.com/integration/msft/cyot",
-        "appId": "39379a36-44b5-4ade-b5b9-d593dae50a00",
-        "scope": "api://39379a36-44b5-4ade-b5b9-d593dae50a00/.default",
+        "appId": "f1117a41-5e56-48d1-836a-1313846d1610",
+        "scope": "api://f1117a41-5e56-48d1-836a-1313846d1610/.default",
         "timeoutMilliseconds": 1500,
         "retryIntervalSeconds": 30
       },
       "eu": {
         "smsEndpoint": "https://verify.telesign.com/integration/msft/cyot",
         "voiceEndpoint": "https://verify.telesign.com/integration/msft/cyot",
-        "appId": "39379a36-44b5-4ade-b5b9-d593dae50a00",
-        "scope": "api://39379a36-44b5-4ade-b5b9-d593dae50a00/.default",
+        "appId": "f1117a41-5e56-48d1-836a-1313846d1610",
+        "scope": "api://f1117a41-5e56-48d1-836a-1313846d1610/.default",
         "timeoutMilliseconds": 1500,
         "retryIntervalSeconds": 30
       }

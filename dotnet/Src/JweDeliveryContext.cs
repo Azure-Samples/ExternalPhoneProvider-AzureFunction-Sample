@@ -12,7 +12,7 @@ public sealed class DeliveryContext
     [JsonPropertyName("locale")] public string? Locale { get; set; }
     [JsonPropertyName("message")] public string? Message { get; set; }
     [JsonPropertyName("otp")] public string? Otp { get; set; }
-    [JsonPropertyName("riskContext")] public Dictionary<string, JsonElement>? RiskContext { get; set; }
+    [JsonPropertyName("riskContext")] public RiskContext? RiskContext { get; set; }
 
     [JsonIgnore]
     public bool IsComplete => !string.IsNullOrWhiteSpace(Nonce)

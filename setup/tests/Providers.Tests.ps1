@@ -49,34 +49,52 @@ try {
         function script:Invoke-EppAz { throw 'Unexpected Azure call (no network allowed).' }
 
         $packageCases = @(
-            @{ Id = 'javascript'; File = 'epp-javascript.zip'; Strategy = 'ready' }
-            @{ Id = 'dotnet'; File = 'epp-dotnet-source.zip'; Strategy = 'dotnet-publish' }
-            @{ Id = 'python'; File = 'epp-python-source.zip'; Strategy = 'remote-build' }
+            @{ Id = 'javascript'; File = 'released-package.zip'; Strategy = 'ready' }
+            @{ Id = 'dotnet'; File = 'released-package.zip'; Strategy = 'ready' }
+            @{ Id = 'python'; File = 'released-package.zip'; Strategy = 'ready' }
         )
         $script:PackageRelease = [pscustomobject]@{
-            tag_name = 'epp-packages-42-1'; draft = $false; prerelease = $false
-            assets = @(@($packageCases.File) + 'SHA256SUMS.txt' | ForEach-Object { [pscustomobject]@{ name = $_ } })
+            tag_name = 'epp-packages-42-1-javascript'; draft = $false; prerelease = $false
+            assets = @('released-package.zip', 'SHA256SUMS.txt' | ForEach-Object { [pscustomobject]@{ name = $_ } })
         }
+        $script:ReleaseCalls = 0
         function script:Invoke-RestMethod {
             param($Uri, $Headers, $TimeoutSec)
+            $script:ReleaseCalls++
             Assert ($Uri -ceq $script:ExpectedReleaseUri) 'Resolve only the selected repository and release.'
+            if ($Uri.Contains('?per_page=100')) {
+                return @(
+                    [pscustomobject]@{ tag_name = 'unrelated-43-1'; draft = $false; prerelease = $false }
+                    [pscustomobject]@{ tag_name = 'epp-packages-43-1'; draft = $false; prerelease = $false }
+                    [pscustomobject]@{ tag_name = "epp-packages-43-1-$script:OtherLanguage"; draft = $false; prerelease = $false }
+                    [pscustomobject]@{ tag_name = $script:PackageRelease.tag_name; draft = $true; prerelease = $false }
+                    [pscustomobject]@{ tag_name = $script:PackageRelease.tag_name; draft = $false; prerelease = $true }
+                    $script:PackageRelease
+                )
+            }
             return $script:PackageRelease
         }
         foreach ($repository in @('Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample', 'unit/epp-fork')) {
-            foreach ($tag in @('', $script:PackageRelease.tag_name)) {
-                $script:ExpectedReleaseUri = if ($tag) {
-                    "https://api.github.com/repos/$repository/releases/tags/$tag"
-                }
-                else { "https://api.github.com/repos/$repository/releases?per_page=100" }
-                foreach ($case in $packageCases) {
+            foreach ($case in $packageCases) {
+                $script:PackageRelease.tag_name = "epp-packages-42-1-$($case.Id)"
+                $script:OtherLanguage = if ($case.Id -eq 'python') { 'javascript' } else { 'python' }
+                foreach ($tag in @('', $script:PackageRelease.tag_name)) {
+                    $script:ExpectedReleaseUri = if ($tag) {
+                        "https://api.github.com/repos/$repository/releases/tags/$tag"
+                    }
+                    else { "https://api.github.com/repos/$repository/releases?per_page=100&page=1" }
+                    $script:ReleaseCalls = 0
                     $selection = Get-EppLanguage -AssetDirectory $SetupDirectory -Language $case.Id `
                         -SourceRepository $repository -PackageReleaseTag $tag -NonInteractive
-                    $releaseUrl = "https://github.com/$repository/releases/download/epp-packages-42-1"
+                    $releaseUrl = "https://github.com/$repository/releases/download/$($script:PackageRelease.tag_name)"
                     Assert ($selection.Id -ceq $case.Id -and $selection.BuildStrategy -ceq $case.Strategy) 'Preserve each language and its build strategy.'
                     Assert ($selection.Url -ceq "$releaseUrl/$($case.File)" -and
                         $selection.ChecksumsUrl -ceq "$releaseUrl/SHA256SUMS.txt" -and
-                        $selection.ReleaseTag -ceq 'epp-packages-42-1') 'Resolve concrete, validated package and checksum URLs from the stable release.'
+                        $selection.ReleaseTag -ceq $script:PackageRelease.tag_name) 'Resolve concrete package and checksum URLs from the matching language release.'
+                    Assert ($script:ReleaseCalls -eq 1) 'Resolve the language release directly.'
                 }
+                $script:PackageRelease.tag_name = 'epp-packages-42-1-javascript'
+                $script:ExpectedReleaseUri = 'https://api.github.com/repos/unit/epp-fork/releases/tags/epp-packages-42-1-javascript'
             }
         }
         foreach ($noninteractive in @($false, $true)) {
@@ -84,11 +102,52 @@ try {
                 -PackageReleaseTag $script:PackageRelease.tag_name -NonInteractive:$noninteractive
             Assert ($selection.Id -ceq 'javascript' -and $selection.DisplayName -ceq 'JavaScript') 'Default to JavaScript without asking in either mode.'
         }
+        $script:PackageRelease.tag_name = 'epp-packages-42-1-dotnet'
+        $script:ExpectedReleaseUri = 'https://api.github.com/repos/unit/epp-fork/releases/tags/epp-packages-42-1-dotnet'
         foreach ($name in @('csharp', 'CSharp', 'C#', 'dotnet', '.NET')) {
             $selection = Get-EppLanguage -AssetDirectory $SetupDirectory -Language $name -SourceRepository 'unit/epp-fork' `
                 -PackageReleaseTag $script:PackageRelease.tag_name
             Assert ($selection.Id -ceq 'dotnet' -and $selection.DisplayName -ceq 'C#') 'Expose C# while preserving the existing .NET package/runtime and legacy aliases.'
+            Assert ($selection.ReleaseTag -ceq 'epp-packages-42-1-dotnet') 'C# aliases must resolve the dotnet release.'
         }
+        $script:PackageRelease.tag_name = 'epp-packages-42-1-javascript'
+        $script:ExpectedReleaseUri = 'https://api.github.com/repos/unit/epp-fork/releases/tags/epp-packages-42-1-javascript'
+        foreach ($invalidTag in @('epp-packages-42-1', 'epp-packages-42-1-python', 'unrelated', 'EPP-packages-42-1-javascript', "epp-packages-42-1-javascript`n")) {
+            $script:ReleaseCalls = 0
+            Assert-Throws {
+                Get-EppLanguage -AssetDirectory $SetupDirectory -SourceRepository 'unit/epp-fork' -PackageReleaseTag $invalidTag
+            } 'must match.*selected language'
+            Assert ($script:ReleaseCalls -eq 0) 'Reject wrong-language or malformed pins before requesting GitHub.'
+        }
+        foreach ($property in @('draft', 'prerelease')) {
+            $script:PackageRelease.$property = $true
+            Assert-Throws {
+                Get-EppLanguage -AssetDirectory $SetupDirectory -SourceRepository 'unit/epp-fork' -PackageReleaseTag 'epp-packages-42-1-javascript'
+            } 'not the requested stable CI package release'
+            $script:PackageRelease.$property = $false
+        }
+        foreach ($wrongTag in @('epp-packages-41-1-javascript', 'epp-packages-42-1-python')) {
+            $script:PackageRelease.tag_name = $wrongTag
+            Assert-Throws {
+                Get-EppLanguage -AssetDirectory $SetupDirectory -SourceRepository 'unit/epp-fork' -PackageReleaseTag 'epp-packages-42-1-javascript'
+            } 'not the requested stable CI package release'
+        }
+        $script:PackageRelease.tag_name = 'epp-packages-42-1-javascript'
+        $validAssets = $script:PackageRelease.assets
+        foreach ($names in @(
+            @('SHA256SUMS.txt'),
+            @('released-package.zip'),
+            @('Released-package.zip', 'SHA256SUMS.txt'),
+            @('released-package.zip', 'released-package.zip', 'SHA256SUMS.txt'),
+            @('released-package.zip', 'SHA256SUMS.txt', 'SHA256SUMS.txt'),
+            @('released-package.zip', 'SHA256SUMS.txt', 'other.zip')
+        )) {
+            $script:PackageRelease.assets = @($names | ForEach-Object { [pscustomobject]@{ name = $_ } })
+            Assert-Throws {
+                Get-EppLanguage -AssetDirectory $SetupDirectory -SourceRepository 'unit/epp-fork' -PackageReleaseTag 'epp-packages-42-1-javascript'
+            } 'must contain exactly one|must contain only'
+        }
+        $script:PackageRelease.assets = $validAssets
         Assert-Throws {
             Get-EppLanguage -AssetDirectory $SetupDirectory -Language unknown -SourceRepository 'unit/epp-fork'
         } 'Use javascript, csharp, or python'
@@ -106,10 +165,43 @@ try {
             } 'Invalid -PackageUrl'
         }
         Assert ($script:Prompts.Count -eq 0) 'Package resolution must not ask for raw URLs or checksums.'
+        $script:ReleaseCalls = 0
+        function script:Invoke-RestMethod {
+            param($Uri, $Headers, $TimeoutSec)
+            $script:ReleaseCalls++
+            Assert ($Uri -ceq "https://api.github.com/repos/unit/epp-fork/releases?per_page=100&page=$script:ReleaseCalls") 'Follow release list pagination.'
+            if ($script:ReleaseCalls -eq 1) {
+                return @(1..100 | ForEach-Object { [pscustomobject]@{ tag_name = "unrelated-$_"; draft = $false; prerelease = $false } })
+            }
+            return @($script:PackageRelease)
+        }
+        $selection = Get-EppLanguage -AssetDirectory $SetupDirectory -SourceRepository 'unit/epp-fork'
+        Assert ($script:ReleaseCalls -eq 2 -and $selection.ReleaseTag -ceq $script:PackageRelease.tag_name) 'Discover the language release beyond the first page.'
+        function script:Invoke-RestMethod {
+            return @(
+                [pscustomobject]@{ tag_name = 'epp-packages-43-1-python'; draft = $false; prerelease = $false }
+                [pscustomobject]@{ tag_name = 'epp-packages-43-1-javascript'; draft = $true; prerelease = $false }
+                [pscustomobject]@{ tag_name = 'epp-packages-43-1-javascript'; draft = $false; prerelease = $true }
+            )
+        }
+        Assert-Throws {
+            Get-EppLanguage -AssetDirectory $SetupDirectory -SourceRepository 'unit/epp-fork'
+        } 'No stable CI package release'
+        function script:Invoke-RestMethod { throw 'not found' }
+        Assert-Throws {
+            Get-EppLanguage -AssetDirectory $SetupDirectory -SourceRepository 'unit/epp-fork' -PackageReleaseTag 'epp-packages-42-1-javascript'
+        } 'Could not resolve.*not found'
         function script:Invoke-RestMethod { throw 'Unexpected REST call (no network allowed).' }
 
         $profile = Read-EppJson (Join-Path $SetupDirectory 'providers' 'telesign.json')
         Assert ($profile.deployment.authentication.mode -ceq 'oauth') 'Telesign deployments must select OAuth.'
+        foreach ($region in @('global', 'eu')) {
+            $configuration = Get-EppProvider -AssetDirectory $SetupDirectory -Provider telesign -EndpointRegion $region -NonInteractive
+            Assert ($configuration.TenantId -ceq 'd818b557-ea1c-4070-a3f1-928330b7a30c' -and
+                $configuration.Settings.EPP_PROVIDER_TENANT_ID -ceq 'd818b557-ea1c-4070-a3f1-928330b7a30c') 'Keep the Telesign provider and access-token tenants unchanged.'
+            Assert ($configuration.Settings.EPP_PROVIDER_APP_ID -ceq 'f1117a41-5e56-48d1-836a-1313846d1610' -and
+                $configuration.Settings.EPP_PROVIDER_SCOPE -ceq 'api://f1117a41-5e56-48d1-836a-1313846d1610/.default') 'Both Telesign routes must emit the confirmed API application and scope.'
+        }
         $profile.deployment.AccessTokenScopeTenant = '<telesign-access-token-tenant-id>'
         Assert-Throws {
             ConvertTo-EppProviderSettings -Profile $profile -Id telesign -DisplayName Telesign -EndpointRegion global -NonInteractive
@@ -147,8 +239,6 @@ try {
                     Assert ($settings.EPP_PROVIDER_APP_ID -ceq $route.appId -and $settings.EPP_PROVIDER_SCOPE -ceq $route.scope) 'Preserve regional OAuth settings.'
                 }
                 if ($id -eq 'infobip') {
-                    $baseUrl = if ($region -eq 'eu') { 'https://api-eu.infobip.com' } else { 'https://api.infobip.com' }
-                    Assert ($settings.EPP_PROVIDER_SMS_ENDPOINT -ceq $baseUrl -and $settings.EPP_PROVIDER_VOICE_ENDPOINT -ceq $baseUrl) 'Infobip adapters append the tested SMS and advanced voice paths to HTTPS regional base URLs.'
                     Assert ($settings.EPP_PROVIDER_AUTH_MODE -ceq 'oauth' -and
                         $settings.EPP_PROVIDER_TENANT_ID -ceq 'a7d072c3-504e-4385-9029-89283084be5d' -and
                         $settings.EPP_PROVIDER_APP_ID -ceq 'd1131a30-5ed5-49b7-8602-d978c8eb1677' -and
@@ -161,6 +251,18 @@ try {
             }
         }
         Assert ($script:Prompts.Count -eq 0) 'Complete provider inputs must not prompt for a channel.'
+
+        foreach ($case in @(
+            @{ Scope = 'EU'; Region = 'eu'; Endpoint = 'https://eu1.smartmessagingsuite.com/cgpapi/messages/omnimsg/' }
+            @{ Scope = 'NA'; Region = 'global'; Endpoint = 'https://na1.smartmessagingsuite.com/cgpapi/messages/omnimsg' }
+        )) {
+            $region = Resolve-EppEndpointRegion -TenantRegionScope $case.Scope
+            $configuration = Get-EppProvider -AssetDirectory $SetupDirectory -Provider soprano -EndpointRegion $region -NonInteractive
+            Assert ($configuration.EndpointRegion -ceq $case.Region -and
+                $configuration.Settings.EPP_PROVIDER_ENDPOINT_REGION -ceq $case.Region) 'Soprano routing must match the tenant replication scope.'
+            Assert ($configuration.Settings.EPP_PROVIDER_SMS_ENDPOINT -ceq $case.Endpoint) 'Soprano SMS must use the exact regional endpoint, including its path and trailing slash.'
+            Assert ($configuration.Settings.EPP_PROVIDER_VOICE_ENDPOINT -ceq $case.Endpoint) 'Soprano voice must use the exact regional endpoint, including its path and trailing slash.'
+        }
 
         $profile = Read-EppJson (Join-Path $SetupDirectory 'providers' 'soprano.json')
         $profile.deployment.routes.eu.smsEndpoint = 'https://sms.eu.provider.contoso.com/send'

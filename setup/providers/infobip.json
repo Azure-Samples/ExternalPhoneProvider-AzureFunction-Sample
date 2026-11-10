@@ -8,16 +8,16 @@
     },
     "routes": {
       "global": {
-        "smsEndpoint": "https://api.infobip.com",
-        "voiceEndpoint": "https://api.infobip.com",
+        "smsEndpoint": "https://api.infobip.com/sms/3/messages",
+        "voiceEndpoint": "https://api.infobip.com/tts/3/advanced",
         "appId": "d1131a30-5ed5-49b7-8602-d978c8eb1677",
         "scope": "d1131a30-5ed5-49b7-8602-d978c8eb1677/.default",
         "timeoutMilliseconds": 1500,
         "retryIntervalSeconds": 30
       },
       "eu": {
-        "smsEndpoint": "https://api-eu.infobip.com",
-        "voiceEndpoint": "https://api-eu.infobip.com",
+        "smsEndpoint": "https://api-eu.infobip.com/sms/3/messages",
+        "voiceEndpoint": "https://api-eu.infobip.com/tts/3/advanced",
         "appId": "d1131a30-5ed5-49b7-8602-d978c8eb1677",
         "scope": "d1131a30-5ed5-49b7-8602-d978c8eb1677/.default",
         "timeoutMilliseconds": 1500,

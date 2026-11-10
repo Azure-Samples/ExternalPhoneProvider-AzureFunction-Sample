@@ -131,6 +131,8 @@ class PhoneProviderBase(ABC):
 def classify_failure(http_status: int, outcome: Outcome, status_recognized: bool) -> str | None:
     if not 200 <= http_status < 300:
         return "provider_http_error"
+    if outcome == Outcome.BLOCK:
+        return "provider_blocked"
     if outcome != Outcome.FAIL:
         return None
     return "provider_rejected" if status_recognized else "unrecognized_provider_status"
@@ -140,11 +142,9 @@ def to_endpoint_http_status(result: ProviderResult) -> int:
     if result.outcome == Outcome.CONTINUE:
         return 200
     if result.outcome == Outcome.BLOCK:
-        return 403
+        return 422
     if result.provider_http_status == 429:
         return 429
-    if result.provider_http_status in (401, 403):
-        return 401
     if 400 <= result.provider_http_status < 500:
         return 400
     return 502

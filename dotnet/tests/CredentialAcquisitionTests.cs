@@ -71,6 +71,20 @@ public class CredentialAcquisitionTests
     }
 
     [Fact]
+    public async Task AcquisitionAllowsCredentialsThatTakeLongerThanThePreviousBudget()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(5), CredentialTokenService.AcquisitionTimeout);
+        var provider = new TestProvider(async cancellation =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3), cancellation);
+            return new("apiKey", Secret: "synthetic-secret");
+        });
+
+        var credentials = await new CredentialTokenService().GetCredentialsAsync(provider, new AppConfig());
+        Assert.Equal("synthetic-secret", credentials.Secret);
+    }
+
+    [Fact]
     public async Task AcquisitionDeadlineRejectsLateResultsWithoutBlockingTheNextRequest()
     {
         CancellationToken observed = default;
@@ -88,7 +102,7 @@ public class CredentialAcquisitionTests
             var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 service.GetCredentialsAsync(provider, new AppConfig()));
             Assert.Equal("provider credential unavailable", error.Message);
-            Assert.InRange(elapsed.Elapsed.TotalSeconds, 2, 8);
+            Assert.InRange(elapsed.Elapsed.TotalSeconds, 4.5, 10);
             Assert.True(observed.IsCancellationRequested);
         }
         finally { late.TrySetResult(new("apiKey", Secret: "late")); }

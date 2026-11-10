@@ -72,6 +72,17 @@
     { "name": "null", "overrides": { "riskContext": null } },
     { "name": "empty", "overrides": { "riskContext": {} } },
     {
+      "name": "common fields and extensions",
+      "overrides": {
+        "riskContext": {
+          "scenario": "signIn",
+          "ipAddress": "203.0.113.10",
+          "customSignal": { "items": ["PRIVATE-RISK", false, 0, null] },
+          "additionalProperties": "PRIVATE-RISK-EXTENSION"
+        }
+      }
+    },
+    {
       "name": "arbitrary nested fields",
       "overrides": {
         "riskContext": {
@@ -89,6 +100,9 @@
     }
   ],
   "invalidRiskContexts": ["PRIVATE-RISK", "", true, false, 0, 1.25, [], ["PRIVATE-RISK"]],
+  "invalidRiskContextFields": [
+    { "scenario": 123 }, { "ipAddress": [] }
+  ],
   "badRequests": [
     { "name": "invalid JSON", "rawBody": "{", "reason": "invalid JSON body" },
     { "name": "array envelope", "rawBody": "[]", "reason": "invalid envelope" },

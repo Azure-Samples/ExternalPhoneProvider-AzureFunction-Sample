@@ -1,39 +1,48 @@
 function Get-EppPackageRelease {
-    param([string] $SourceRepository, [string] $Tag, [string] $TagPrefix)
+    param([string] $SourceRepository, [string] $Tag, [string] $TagPrefix,
+        [ValidateSet('javascript', 'dotnet', 'python')][string] $Language)
 
-    $tagPattern = '^' + [regex]::Escape($TagPrefix) + '[0-9]+-[0-9]+$'
+    $tagShape = "$TagPrefix<run>-<attempt>-$Language"
+    $tagPattern = '^' + [regex]::Escape($TagPrefix) + '[0-9]+-[0-9]+-' + $Language + '\z'
+    if ($Tag -and $Tag -cnotmatch $tagPattern) {
+        throw "Package release tag '$Tag' must match '$tagShape' for the selected language."
+    }
     $headers = @{
         'User-Agent' = 'EPP-Setup'
         Accept = 'application/vnd.github+json'
         'X-GitHub-Api-Version' = '2022-11-28'
     }
-    $uri = if ($Tag) {
-        "https://api.github.com/repos/$SourceRepository/releases/tags/$([Uri]::EscapeDataString($Tag))"
-    }
-    else {
-        "https://api.github.com/repos/$SourceRepository/releases?per_page=100"
-    }
-    try {
-        $response = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec 60
-    }
-    catch {
-        $description = if ($Tag) { "package release '$Tag'" } else { 'stable package releases' }
-        throw "Could not resolve the $description in '$SourceRepository': $($_.Exception.Message)"
-    }
-    $release = if ($Tag) {
-        $response
-    }
-    else {
-        @($response) | Where-Object {
-            -not $_.draft -and -not $_.prerelease -and [string]$_.tag_name -cmatch $tagPattern
-        } | Select-Object -First 1
-    }
+    $page = 1
+    do {
+        $uri = if ($Tag) {
+            "https://api.github.com/repos/$SourceRepository/releases/tags/$([Uri]::EscapeDataString($Tag))"
+        }
+        else {
+            "https://api.github.com/repos/$SourceRepository/releases?per_page=100&page=$page"
+        }
+        try {
+            $response = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec 60
+        }
+        catch {
+            $description = if ($Tag) { "package release '$Tag'" } else { 'stable package releases' }
+            throw "Could not resolve the $description in '$SourceRepository': $($_.Exception.Message)"
+        }
+        $release = if ($Tag) {
+            $response
+        }
+        else {
+            @($response) | Where-Object {
+                -not $_.draft -and -not $_.prerelease -and [string]$_.tag_name -cmatch $tagPattern
+            } | Select-Object -First 1
+        }
+        $page++
+    } while (-not $Tag -and -not $release -and @($response).Count -eq 100)
     if (-not $release) {
-        throw "No stable CI package release matching '$TagPrefix<run>-<attempt>' was found in '$SourceRepository'."
+        throw "No stable CI package release matching '$tagShape' was found in '$SourceRepository'."
     }
     $resolvedTag = [string]$release.tag_name
-    if ($release.draft -or $release.prerelease -or $resolvedTag -cnotmatch $tagPattern) {
-        throw "GitHub release '$resolvedTag' is not a stable CI package release matching '$TagPrefix<run>-<attempt>'."
+    if ($release.draft -or $release.prerelease -or $resolvedTag -cnotmatch $tagPattern -or ($Tag -and $resolvedTag -cne $Tag)) {
+        throw "GitHub release '$resolvedTag' is not the requested stable CI package release matching '$tagShape'."
     }
     return $release
 }
@@ -45,19 +54,19 @@ function Get-EppLanguage {
     )
 
     $catalog = Read-EppJson (Join-Path $AssetDirectory 'packages/catalog.json')
-    if ($catalog['schemaVersion'] -ne 2 -or -not $catalog['packages'] -or
+    if ($catalog['schemaVersion'] -ne 3 -or -not $catalog['packages'] -or
         [string]$catalog['releaseTagPrefix'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9.-]*-$') {
         throw 'Unsupported or empty language package catalog.'
     }
     $tagPrefix = [string]$catalog['releaseTagPrefix']
-    $strategies = @{ javascript = 'ready'; dotnet = 'dotnet-publish'; python = 'remote-build' }
+    $strategies = @{ javascript = 'ready'; dotnet = 'ready'; python = 'ready' }
     $seen = @{}
     $entries = @($catalog['packages'])
     foreach ($entry in $entries) {
         if ($entry -isnot [Collections.IDictionary] -or -not $strategies.ContainsKey([string]$entry['id']) -or
             $seen.ContainsKey($entry['id']) -or $entry['buildStrategy'] -cne $strategies[$entry['id']] -or
             -not $entry['displayName'] -or $entry['displayName'] -match '[\x00-\x1f]' -or
-            [string]$entry['assetName'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*\.zip$') {
+            $entry['assetName'] -cne 'released-package.zip') {
             throw 'Language catalog contains an invalid, unsupported, or duplicate entry.'
         }
         $seen[$entry['id']] = $true
@@ -71,7 +80,7 @@ function Get-EppLanguage {
     }
     $entry = $entries | Where-Object { $_['id'] -ceq $languageId } | Select-Object -First 1
     if (-not $entry) { throw "The package catalog does not contain the selected language '$Language'." }
-    $release = Get-EppPackageRelease -SourceRepository $SourceRepository -Tag $PackageReleaseTag -TagPrefix $tagPrefix
+    $release = Get-EppPackageRelease -SourceRepository $SourceRepository -Tag $PackageReleaseTag -TagPrefix $tagPrefix -Language $languageId
     $releaseTag = [string]$release.tag_name
     $releaseBaseUrl = "https://github.com/$SourceRepository/releases/download/$releaseTag"
     $assetName = [string]$entry['assetName']
@@ -81,6 +90,7 @@ function Get-EppLanguage {
             throw "Release '$releaseTag' must contain exactly one '$requiredAsset' asset."
         }
     }
+    if ($assets.Count -ne 2) { throw "Release '$releaseTag' must contain only '$assetName' and 'SHA256SUMS.txt' assets." }
     $url = Read-EppInput -Name PackageUrl -Value "$releaseBaseUrl/$assetName" -Kind PackageUrl `
         -SourceRepository $SourceRepository -NonInteractive
     return [pscustomobject]@{
@@ -116,13 +126,16 @@ function Assert-EppArchive {
         $names = @($archive.Entries | ForEach-Object FullName)
         $required = @('host.json')
         switch ($Language) {
-            'javascript' { $required += 'package.json' }
+            'javascript' {
+                $required += 'package.json'
+                if ($Kind -eq 'ready') { $required += @('src/functions/SendOtp.js', 'node_modules/@azure/functions/package.json') }
+            }
             'dotnet' {
                 if ($Kind -eq 'source') { $required += 'dotnet.csproj' }
-                else { $required += @('worker.config.json', 'functions.metadata') }
+                else { $required += @('worker.config.json', 'functions.metadata', 'dotnet.dll', 'dotnet.runtimeconfig.json') }
             }
             'python' {
-                $required += @('function_app.py', 'requirements.txt')
+                $required += @('function_app.py', 'requirements.txt', 'src/jwe.py', 'src/provider.py')
                 if ($Kind -eq 'ready') { $required += '.python_packages/lib/site-packages/azure/functions/__init__.py' }
             }
         }
@@ -131,8 +144,8 @@ function Assert-EppArchive {
                 throw "The $Language $Kind ZIP must contain exactly one '$file' at its required deployment path."
             }
         }
-        if ($Language -eq 'dotnet' -and $Kind -eq 'ready' -and -not @($names | Where-Object { $_ -cmatch '^[^/]+\.dll$' }).Count) {
-            throw 'The .NET publish output contains no application assemblies.'
+        if ($Language -eq 'dotnet' -and $Kind -eq 'ready' -and -not @($names | Where-Object { $_ -cmatch '^\.azurefunctions/[^/]+\.dll$' }).Count) {
+            throw 'The .NET publish output contains no Azure Functions extension assemblies.'
         }
         if (@($names | Where-Object { $_ -match '\\|(^|/)\.\.?(/|$)|^/|^[a-zA-Z]:' }).Count) {
             throw 'The Function ZIP contains an absolute or traversing archive path.'
@@ -156,43 +169,6 @@ function Assert-EppArchive {
     finally { $archive.Dispose() }
 }
 
-function Invoke-EppDotNet {
-    param([Parameter(ValueFromRemainingArguments)][string[]] $Arguments)
-
-    $PSNativeCommandUseErrorActionPreference = $false
-    $output = & dotnet @Arguments 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "dotnet $($Arguments[0]) failed (exit $LASTEXITCODE):`n$($output -join "`n")" }
-    return $output -join "`n"
-}
-
-function Build-EppDotNetPackage {
-    param([string] $SourcePath, [string] $Directory)
-
-    if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
-        throw 'Deploying C# requires the .NET 8 SDK on this computer. Install the SDK; setup builds the package automatically.'
-    }
-    $versions = @((Invoke-EppDotNet --list-sdks) -split '\r?\n' | ForEach-Object {
-        if ($_ -match '^(8\.\d+\.\d+)\s') { [Version]$Matches[1] }
-    } | Sort-Object -Descending)
-    if (-not $versions.Count) { throw 'Install the .NET 8 SDK before deploying C#. No Azure resources were changed.' }
-    $sourceDirectory = Join-Path $Directory 'dotnet-source'
-    $publishDirectory = Join-Path $Directory 'dotnet-publish'
-    [IO.Compression.ZipFile]::ExtractToDirectory($SourcePath, $sourceDirectory)
-    @{ sdk = @{ version = $versions[0].ToString(); rollForward = 'latestPatch' } } |
-        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $sourceDirectory 'global.json') -Encoding utf8NoBOM
-    Write-Host 'Building .NET 8 for Linux automatically...' -ForegroundColor Cyan
-    Push-Location -LiteralPath $sourceDirectory
-    try {
-        Invoke-EppDotNet -Arguments @('publish', 'dotnet.csproj', '--configuration', 'Release', '--runtime', 'linux-x64',
-            '--self-contained', 'false', '-p:UseAppHost=false', '--output', $publishDirectory, '--nologo') | Out-Null
-    }
-    finally { Pop-Location }
-    $path = Join-Path $Directory 'dotnet-ready.zip'
-    [IO.Compression.ZipFile]::CreateFromDirectory($publishDirectory, $path)
-    Assert-EppArchive -Path $path -Language dotnet -Kind ready
-    return $path
-}
-
 function Get-EppPackage {
     param($Selection, [string] $Directory)
 
@@ -207,13 +183,13 @@ function Get-EppPackage {
     if ((Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash -ine $expected) {
         throw 'The downloaded Function ZIP does not match its published SHA-256. No Azure resources were changed.'
     }
-    $kind = if ($Selection.BuildStrategy -eq 'ready') { 'ready' } else { 'source' }
-    Assert-EppArchive -Path $sourcePath -Language $Selection.Id -Kind $kind
-    $path = if ($Selection.BuildStrategy -eq 'dotnet-publish') { Build-EppDotNetPackage -SourcePath $sourcePath -Directory $Directory } else { $sourcePath }
+    if ($Selection.BuildStrategy -ne 'ready') { throw 'Select a release containing the selected language deployment ZIPs.' }
+    Assert-EppArchive -Path $sourcePath -Language $Selection.Id -Kind ready
+    $path = $sourcePath
     return [pscustomobject]@{
         Path = $path
         SourceSha256 = $expected
         Sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-        RequiresRemoteBuild = $Selection.BuildStrategy -eq 'remote-build'
+        RequiresRemoteBuild = $false
     }
 }

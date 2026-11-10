@@ -26,46 +26,40 @@ public sealed class InfobipProvider : PhoneProviderBase
         string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credentials,
         IEnv env, HttpClient client, int timeoutMs, ILogger? logger = null) =>
         SendJsonAsync<Response>(
-            () => CreateRequest(channel, endpoint, delivery, credentials, env),
+            () => CreateRequest(channel, endpoint, delivery, credentials),
             MapResponse,
             client,
             timeoutMs,
             logger);
 
     private static HttpRequestMessage CreateRequest(
-        string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credential, IEnv env)
+        string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credential)
     {
-        var senderId = env.Get("EPP_PROVIDER_ACCOUNT_NAME") ?? "Verify";
         var messageId = delivery.CorrelationId ?? delivery.MessageId;
         object body;
-        string url;
 
         if (channel == "voice")
         {
             body = new VoiceRequest(
                 [
                     new VoiceMessage(
-                        senderId,
                         [new Destination(delivery.PhoneNumber, messageId)],
                         delivery.Message,
                         delivery.Locale ?? "en",
                         new Voice("Joanna", "female"))
                 ]);
-            url = $"{endpoint}/tts/3/advanced";
         }
         else
         {
             body = new SmsRequest(
                 [
                     new SmsMessage(
-                        senderId,
                         [new Destination(delivery.PhoneNumber, messageId)],
                         new SmsContent(delivery.Message))
                 ]);
-            url = $"{endpoint}/sms/3/messages";
         }
 
-        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = JsonContent.Create(body),
         };
@@ -108,7 +102,6 @@ public sealed class InfobipProvider : PhoneProviderBase
         [property: JsonPropertyName("messages")] IReadOnlyList<SmsMessage> Messages);
 
     private sealed record SmsMessage(
-        [property: JsonPropertyName("sender")] string Sender,
         [property: JsonPropertyName("destinations")] IReadOnlyList<Destination> Destinations,
         [property: JsonPropertyName("content")] SmsContent Content);
 
@@ -119,7 +112,6 @@ public sealed class InfobipProvider : PhoneProviderBase
         [property: JsonPropertyName("messages")] IReadOnlyList<VoiceMessage> Messages);
 
     private sealed record VoiceMessage(
-        [property: JsonPropertyName("from")] string From,
         [property: JsonPropertyName("destinations")] IReadOnlyList<Destination> Destinations,
         [property: JsonPropertyName("text")] string? Text,
         [property: JsonPropertyName("language")] string Language,

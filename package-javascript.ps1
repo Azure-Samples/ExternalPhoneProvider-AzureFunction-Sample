@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 [CmdletBinding()]
 param(
-    [string]$OutputPath = (Join-Path $PSScriptRoot 'artifacts/epp-javascript.zip')
+    [string]$OutputPath = (Join-Path $PSScriptRoot 'artifacts/javascript/released-package.zip')
 )
 
 $ErrorActionPreference = 'Stop'

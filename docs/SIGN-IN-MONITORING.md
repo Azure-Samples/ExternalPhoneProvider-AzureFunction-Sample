@@ -69,11 +69,10 @@ different export setup from workforce tenants.
 
 ![Microsoft Entra ID sign-in Activity Details with Authentication Details selected and two Previously satisfied steps marked true](images/sign-in-monitoring/sign-in-activity-details-authentication.png)
 
-*Official Microsoft Entra ID example from
+*Microsoft Entra ID example from
 [Microsoft's activity-details instructions](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-sign-in-log-activity-details#authentication-details).
 [Original screenshot](https://github.com/MicrosoftDocs/entra-docs/blob/927efa819a6f89a40b39b178d702b30f49b63f00/docs/identity/monitoring-health/media/concept-sign-in-log-activity-details/sign-in-activity-details-authentication.png),
-Copyright (c) Microsoft Corporation. This is not your sign-in or a delivery test. Portal layout
-and results can differ.*
+Copyright (c) Microsoft Corporation. Portal layout can vary.*
 
 `Previously satisfied` does not prove that a new phone challenge or provider send occurred.
 Use the [sign-in error guide](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-troubleshoot-sign-in-errors)
@@ -105,11 +104,10 @@ Then:
 
 ![Microsoft Entra admin center showing Monitoring and health, Diagnostic settings, and Add diagnostic setting highlighted](images/sign-in-monitoring/diagnostic-settings-start.png)
 
-*Official Microsoft Entra admin center example from
+*Microsoft Entra admin center example from
 [Microsoft's diagnostic-settings instructions](https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-configure-diagnostic-settings#how-to-access-diagnostic-settings).
 [Original screenshot](https://github.com/MicrosoftDocs/entra-docs/blob/927efa819a6f89a40b39b178d702b30f49b63f00/docs/identity/monitoring-health/media/howto-configure-diagnostic-settings/diagnostic-settings-start.png),
-Copyright (c) Microsoft Corporation. This is not your tenant. Available categories and menus can
-differ.*
+Copyright (c) Microsoft Corporation. Available categories and menus can vary.*
 
 | Diagnostic category | Workspace table |
 | --- | --- |
@@ -209,10 +207,6 @@ result means the change completed, not that it was approved.
 - Avoid high-cardinality dimensions such as user, IP, request, or correlation IDs unless required.
 - Restrict personal-data results and notifications.
 - Do not automatically block users, disable accounts, or change policy from a heuristic alert.
-
-Optional monitors such as unusual volume, source-IP patterns, and identity risk require a separate
-baseline, response plan, privacy review, and applicable licensing. They are not provider delivery
-or SMS-pumping signals.
 
 <a id="monitor-ingestion-separately"></a>
 ## Collection health

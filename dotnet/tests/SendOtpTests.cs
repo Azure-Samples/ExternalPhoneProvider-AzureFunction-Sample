@@ -67,7 +67,7 @@ public class SendOtpTests
     [Theory]
     [InlineData("sms")]
     [InlineData("voice")]
-    public async Task RiskContextDictionaryReachesAdapterWithoutChangingProviderPayload(string channel)
+    public async Task TypedRiskContextReachesAdapterWithoutChangingProviderPayload(string channel)
     {
         using var fixtures = ReadContractFixtures();
         foreach (var fixture in fixtures.RootElement.GetProperty("riskContexts").EnumerateArray())
@@ -83,8 +83,9 @@ public class SendOtpTests
             var delivery = Assert.IsType<OtpDelivery>(rig.Infobip.Delivery);
             if (changes.TryGetProperty("riskContext", out var expected) && expected.ValueKind != JsonValueKind.Null)
             {
-                var riskContext = Assert.IsType<Dictionary<string, JsonElement>>(delivery.RiskContext);
+                var riskContext = Assert.IsType<RiskContext>(delivery.RiskContext);
                 Assert.Equal(JsonSerializer.Serialize(expected), JsonSerializer.Serialize(riskContext));
+                Assert.Equal(nameof(RiskContext), riskContext.ToString());
             }
             else
             {
@@ -111,7 +112,8 @@ public class SendOtpTests
     {
         using var rig = new HandlerRig();
         using var fixtures = ReadContractFixtures();
-        foreach (var riskContext in fixtures.RootElement.GetProperty("invalidRiskContexts").EnumerateArray())
+        foreach (var riskContext in fixtures.RootElement.GetProperty("invalidRiskContexts").EnumerateArray()
+            .Concat(fixtures.RootElement.GetProperty("invalidRiskContextFields").EnumerateArray()))
         {
             var changes = JsonSerializer.SerializeToElement(new { riskContext });
             var result = await rig.Invoke(mode, deliveryOverrides: changes);
@@ -177,8 +179,7 @@ public class SendOtpTests
     [Theory]
     [InlineData("telesign", "", "")]
     [InlineData("soprano", "", "")]
-    [InlineData("infobip", "/sms/3/messages", "/tts/3/advanced")]
-    [InlineData("sinch", "/xms/v1/plan/batches", "/calling/v1/callouts")]
+    [InlineData("infobip", "", "")]
     public async Task RequestChannelSelectsDistinctConfiguredEndpoints(string provider, string smsPath, string voicePath)
     {
         using var rig = new HandlerRig(
@@ -186,18 +187,15 @@ public class SendOtpTests
                 ValueTask.FromResult(new AccessToken("assertion", DateTimeOffset.UtcNow.AddHours(1)))),
             (_, _, _) => new TestTokenCredential((_, _) =>
                 ValueTask.FromResult(new AccessToken("token", DateTimeOffset.UtcNow.AddHours(1)))));
-        if (provider != "sinch") ConfigureOAuth(rig, provider);
+        ConfigureOAuth(rig, provider);
         rig.Env["EPP_PROVIDER_NAME"] = provider;
-        rig.Env["EPP_PROVIDER_AUTH_MODE"] = provider == "sinch" ? "apiKey" : "oauth";
+        rig.Env["EPP_PROVIDER_AUTH_MODE"] = "oauth";
         rig.Env["EPP_PROVIDER_SMS_ENDPOINT"] = "https://sms.provider.example/send";
         rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] = "https://voice.provider.example/send";
-        rig.Env["SINCH_SERVICE_PLAN_ID"] = "plan";
-        rig.Env["SINCH_VOICE_ENDPOINT"] = "https://legacy.provider.example";
         var response = provider switch
         {
             "telesign" => "{\"status\":{\"code\":3001}}",
             "soprano" => "{\"status\":\"ENROUTE\"}",
-            "sinch" => "{\"id\":\"provider-id\"}",
             _ => "{\"messages\":[{\"status\":{\"groupName\":\"PENDING\"}}]}",
         };
         rig.Http.Respond = _ => Task.FromResult(Json(200, response));
@@ -255,8 +253,7 @@ public class SendOtpTests
     public async Task OnlyLiveRequestsFetchSecretsAndObsoleteCacheSettingsAreIgnored()
     {
         using var rig = new HandlerRig();
-        rig.Env["EPP_PROVIDER_NAME"] = "sinch";
-        rig.Env["SINCH_SERVICE_PLAN_ID"] = "plan";
+        rig.Env["EPP_PROVIDER_NAME"] = "custom";
         rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"id\":\"provider-id\"}"));
         rig.Env["EPP_KEY_VAULT_CACHE_ENABLED"] = "PRIVATE-OBSOLETE";
         rig.Env["EPP_ACCESS_TOKEN_CACHE_ENABLED"] = "PRIVATE-OBSOLETE";
@@ -443,7 +440,7 @@ public class SendOtpTests
         Assert.Equal((1, 0), (rig.Http.Calls, rig.Secrets.Calls));
         rig.Http.Respond = _ => Task.FromResult(Json(401,
             provider == "telesign" ? "{\"status\":{\"code\":999}}" : "{\"status\":\"REJECTED\"}"));
-        AssertFailure(rig, await rig.Invoke(), 401);
+        AssertFailure(rig, await rig.Invoke(), 400);
         Assert.Equal((2, 0), (rig.Http.Calls, rig.Secrets.Calls));
     }
 
@@ -511,10 +508,10 @@ public class SendOtpTests
 
     [Theory]
     [InlineData(Outcome.Continue, 503, 200)]
-    [InlineData(Outcome.Block, 200, 403)]
+    [InlineData(Outcome.Block, 200, 422)]
     [InlineData(Outcome.Fail, 429, 429)]
-    [InlineData(Outcome.Fail, 401, 401)]
-    [InlineData(Outcome.Fail, 403, 401)]
+    [InlineData(Outcome.Fail, 401, 400)]
+    [InlineData(Outcome.Fail, 403, 400)]
     [InlineData(Outcome.Fail, 400, 400)]
     [InlineData(Outcome.Fail, 499, 400)]
     [InlineData(Outcome.Fail, 200, 502)]
@@ -524,6 +521,33 @@ public class SendOtpTests
     {
         var result = new ProviderResult(outcome, true, providerHttpStatus);
         Assert.Equal(expected, PhoneProviderBase.ToEndpointHttpStatus(result));
+    }
+
+    [Theory]
+    [InlineData("telesign", "{\"status\":{\"code\":3072,\"description\":\"PRIVATE-RISK\"}}")]
+    [InlineData("soprano", "{\"status\":\"BLOCKED\",\"description\":\"PRIVATE-RISK\"}")]
+    public async Task ProviderBlocksReturn422WithoutNonceOrProviderRetry(string provider, string payload)
+    {
+        using var rig = new HandlerRig();
+        ConfigureOAuth(rig, provider);
+        rig.Http.Respond = _ => Task.FromResult(Json(200, payload));
+        AssertFailure(rig, await rig.Invoke(), 422, "provider_blocked");
+        Assert.Equal(1, rig.Http.Calls);
+        var summary = Summary(rig);
+        Assert.Equal("provider_blocked", summary.GetProperty("failureReason").GetString());
+        Assert.DoesNotContain("PRIVATE-RISK", string.Join("\n", rig.Log.Messages));
+    }
+
+    [Theory]
+    [InlineData(401)]
+    [InlineData(403)]
+    public async Task ProviderAuthenticationFailuresDoNotMasqueradeAsInboundAuth(int status)
+    {
+        using var rig = new HandlerRig();
+        rig.Http.Respond = _ => Task.FromResult(Json(status, "{}"));
+        AssertFailure(rig, await rig.Invoke(), 400);
+        Assert.Equal(1, rig.Http.Calls);
+        Assert.Equal(status, Summary(rig).GetProperty("providerHttpStatus").GetInt32());
     }
 
     [Fact]
@@ -550,8 +574,7 @@ public class SendOtpTests
     public async Task MissingApiKeyFailsClosedBeforeHttp()
     {
         using var rig = new HandlerRig();
-        rig.Env["EPP_PROVIDER_NAME"] = "sinch";
-        rig.Env["SINCH_SERVICE_PLAN_ID"] = "plan";
+        rig.Env["EPP_PROVIDER_NAME"] = "custom";
         rig.Env["EPP_PROVIDER_AUTH_MODE"] = "apiKey";
         rig.Secrets.Secret = "";
         AssertFailure(rig, await rig.Invoke(), 502);
@@ -562,7 +585,6 @@ public class SendOtpTests
     public async Task ConfiguredVoiceUrlMustBeHttpsBeforeHttp()
     {
         using var rig = new HandlerRig();
-        rig.Env["EPP_PROVIDER_NAME"] = "sinch";
         rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] = "http://provider.example";
         AssertFailure(rig, await rig.Invoke(channel: "voice"), 502);
         rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] = "https://provider.example:0";
@@ -921,8 +943,7 @@ public class SendOtpTests
     public async Task ApiKeyLifecycleIdentifiesKeyVaultWithoutLoggingCredentials()
     {
         using var rig = new HandlerRig();
-        rig.Env["EPP_PROVIDER_NAME"] = "sinch";
-        rig.Env["SINCH_SERVICE_PLAN_ID"] = "plan";
+        rig.Env["EPP_PROVIDER_NAME"] = "custom";
         rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"id\":\"provider-id\"}"));
         AssertAccepted(await rig.Invoke());
         var summary = Summary(rig);
@@ -940,12 +961,12 @@ public class SendOtpTests
     public async Task RequestPreparationLogsTheAdapterFinalUrlNotTheConfiguredBase()
     {
         using var rig = new HandlerRig();
-        rig.Env["EPP_PROVIDER_NAME"] = "sinch";
+        rig.Env["EPP_PROVIDER_NAME"] = "custom";
         rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] = "https://different-provider.example/api/final";
-        rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"callId\":\"sinch-call-id\"}"));
+        rig.Http.Respond = _ => Task.FromResult(Json(200, "{\"id\":\"provider-id\"}"));
         AssertAccepted(await rig.Invoke(channel: "voice"));
         var summary = Summary(rig);
-        var expected = rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] + "/calling/v1/callouts";
+        var expected = rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"] + "/messages";
         Assert.Equal(expected, summary.GetProperty("providerEndpoint").GetString());
         Assert.NotEqual(rig.Env["EPP_PROVIDER_VOICE_ENDPOINT"]!, summary.GetProperty("providerEndpoint").GetString());
         Assert.Equal("POST", summary.GetProperty("providerHttpMethod").GetString());
@@ -1187,7 +1208,7 @@ public class SendOtpTests
                 Infobip,
                 new TelesignProvider(createIdentity, createOAuth),
                 new SopranoProvider(createIdentity, createOAuth),
-                new SinchProvider(Secrets),
+                new ApiKeyProvider(Secrets),
             };
             Credentials = new CredentialTokenService();
             _function = new SendOtp(providers, Credentials, Http, new JweDecryptor(Env), Env, Log);
@@ -1231,6 +1252,40 @@ public class SendOtpTests
             return Assert.IsAssignableFrom<ObjectResult>(await _function.Run(request, payload));
         }
         public void Dispose() { Keys.Dispose(); Http.Dispose(); }
+    }
+
+    private sealed class ApiKeyProvider(ISecretResolver secrets) : PhoneProviderBase
+    {
+        public override string Name => "custom";
+        public override string AuthenticationMode => "apiKey";
+
+        public override async Task<ProviderCredentials> FetchCredentialsAsync(
+            AppConfig config, CancellationToken cancellationToken = default)
+        {
+            var secret = await secrets.ResolveAsync("custom-api-key", cancellationToken);
+            if (string.IsNullOrWhiteSpace(secret)) throw CredentialTokenService.Unavailable();
+            return new ProviderCredentials(AuthenticationMode, Secret: secret);
+        }
+
+        public override Task<ProviderResult> SendOtpAsync(
+            string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credentials,
+            IEnv env, HttpClient client, int timeoutMs, ILogger? logger = null) =>
+            SendJsonAsync<JsonElement>(
+                () =>
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Post, endpoint + "/messages")
+                    {
+                        Content = new StringContent(
+                            JsonSerializer.Serialize(new { text = delivery.Message }),
+                            Encoding.UTF8, "application/json"),
+                    };
+                    request.Headers.Authorization = new("Bearer", credentials.Secret);
+                    return request;
+                },
+                (_, status) => new ProviderResult(
+                    (int)status is >= 200 and < 300 ? Outcome.Continue : Outcome.Fail,
+                    true, (int)status),
+                client, timeoutMs, logger);
     }
 
     private sealed class CapturingProvider(PhoneProviderBase inner) : PhoneProviderBase

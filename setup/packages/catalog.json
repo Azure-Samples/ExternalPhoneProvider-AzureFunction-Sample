@@ -1,24 +1,24 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "releaseTagPrefix": "epp-packages-",
   "packages": [
     {
       "id": "javascript",
       "displayName": "JavaScript",
-      "assetName": "epp-javascript.zip",
+      "assetName": "released-package.zip",
       "buildStrategy": "ready"
     },
     {
       "id": "dotnet",
       "displayName": "C#",
-      "assetName": "epp-dotnet-source.zip",
-      "buildStrategy": "dotnet-publish"
+      "assetName": "released-package.zip",
+      "buildStrategy": "ready"
     },
     {
       "id": "python",
       "displayName": "Python",
-      "assetName": "epp-python-source.zip",
-      "buildStrategy": "remote-build"
+      "assetName": "released-package.zip",
+      "buildStrategy": "ready"
     }
   ]
 }

@@ -69,6 +69,20 @@ test('concurrent secret requests are independent and shutdown aborts all waiters
     } finally { release(); manager.close(); }
 });
 
+test('credential acquisition allows a three-second response within a five-second budget', async (t) => {
+    const setTimer = global.setTimeout;
+    const timers = t.mock.method(global, 'setTimeout', setTimer);
+    t.mock.method(SecretClient.prototype, 'getSecret', async () => {
+        await new Promise((resolve) => setTimer(resolve, 3000));
+        return { value: 'synthetic-secret' };
+    });
+    const manager = new CredentialTokenService();
+    try {
+        assert.equal((await manager.getCredentials(auth, config)).secret, 'synthetic-secret');
+        assert.equal(timers.mock.calls[0].arguments[1], 5000);
+    } finally { manager.close(); }
+});
+
 test('empty, disabled, future, or expired secrets fail instead of returning old credentials', async (t) => {
     const vault = t.mock.method(SecretClient.prototype, 'getSecret', async () => ({ value: 'valid' }));
     for (const invalid of [
