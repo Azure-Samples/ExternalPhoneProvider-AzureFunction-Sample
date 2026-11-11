@@ -78,7 +78,7 @@ function Invoke-EppSetup {
     [CmdletBinding()]
     param(
         $TenantId, $SubscriptionId, $ApplicationId, $Provider, $OutputDirectory,
-        $SourceRepository, $AssetDirectory, $SourceBaseUri, [switch] $PassThru
+        $SourceRepository, $AssetDirectory, $SourceBaseUri, $ProviderEnvironment, [switch] $PassThru
     )
     $state.SetupArguments = @{} + $PSBoundParameters
     Assert ($SourceRepository -ceq $state.Repository -and $AssetDirectory -ceq $state.AssetDirectory) 'Preserve the selected source repository and downloaded assets.'
@@ -141,7 +141,13 @@ try {
         Assert ($state.Imports -eq $(if ($failure -eq 'setup') { 1 } else { 0 })) 'Do not invoke setup after an incomplete download.'
         Assert-Cleanup
     }
-    Write-Host 'Launcher pinned downloads, provider profiles, argument forwarding, PassThru, catalog guards, and cleanup checks passed.'
+    Reset-TestState
+    $environment = @{ SAMPLE_SERVICE_ID = 'svc-1234' }
+    $null = & $launcher @parameters -SourceRepository $state.Repository -SourceRef $state.Revision `
+        -Provider Telesign -ProviderEnvironment $environment
+    Assert ($state.Lookups -eq 0 -and $state.SetupArguments.ProviderEnvironment.SAMPLE_SERVICE_ID -ceq $environment.SAMPLE_SERVICE_ID) 'Forward declared non-secret input to the generic helper without changing catalog downloads.'
+    Assert-Cleanup
+    Write-Host 'Pinned downloads, provider profiles, environment forwarding, PassThru, catalog guards, and cleanup checks passed.'
 }
 finally {
     if ($state.AssetDirectory -and (Test-Path -LiteralPath $state.AssetDirectory)) {

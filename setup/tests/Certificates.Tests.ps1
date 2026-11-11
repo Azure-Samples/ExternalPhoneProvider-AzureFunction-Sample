@@ -512,14 +512,19 @@ try {
                 $script:Calls.Add('publish')
                 return $Inputs.PackageSha256
             }
+            function script:Initialize-EppProviderSecrets { param($Inputs, $Names, $ProviderConfiguration) }
             $script:DeploymentOutputs = @{
                 functionAppName = @{ value = $names.functionApp }; storageAccountName = @{ value = $names.storageAccount }
                 keyVaultName = @{ value = $names.keyVault }; resourceGroupName = @{ value = $names.resourceGroup }
-                outboundPrincipalId = @{ value = $inputs.TenantId }; identifierUri = @{ value = 'api://epp-test' }
+                outboundPrincipalId = @{ value = '' }; identifierUri = @{ value = 'api://epp-test' }
                 endpointUrl = @{ value = 'https://epp-test.azurewebsites.net/api/SendOtp' }
             }
             $provider = @{
                 Id = 'unit'; EndpointRegion = 'global'; AuthenticationMode = 'apiKey'
+                Languages = @('javascript', 'dotnet', 'python'); EnvironmentVariables = @{}
+                Manifest = @{ deployment = @{ authentication = @{
+                    keyVaultSecretName = 'unit-api-key'; identityKeyVaultSecretName = 'unit-api-id'
+                } } }
                 TenantId = $inputs.ProviderTenantId; AccessTokenScopeTenant = $inputs.ProviderTenantId
                 Settings = @{ EPP_PROVIDER_SMS_ENDPOINT = 'https://sms.contoso.com/send'; EPP_PROVIDER_VOICE_ENDPOINT = 'https://voice.contoso.com/send'; EPP_PROVIDER_TENANT_ID = $inputs.ProviderTenantId }
             }
@@ -649,6 +654,7 @@ try {
             $oauthContext.CertificatePlan = Get-EppCertificatePlan @planArgs @reuseArgs -NonInteractive
             $oauthDeployment = @{} + $deployment
             $oauthDeployment.Inputs = $oauthInputs; $oauthDeployment.ProviderConfiguration = $oauthProvider; $oauthDeployment.Context = $oauthContext
+            $script:DeploymentOutputs.outboundPrincipalId.value = $inputs.TenantId
             $result = Invoke-EppDeployment @oauthDeployment
             Assert ($result.providerTenantId -ceq $inputs.ProviderTenantId -and
                 $result.accessTokenScopeTenant -ceq $oauthInputs.AccessTokenScopeTenant) 'OAuth summaries must retain distinct Security Store and access-token tenant IDs.'

@@ -13,6 +13,7 @@ param remoteBuild bool
 param servicePlan string = 'EP1'
 
 var isFlexConsumption = servicePlan == 'FC1'
+var usesOAuth = providerSettings.EPP_PROVIDER_AUTH_MODE == 'oauth'
 
 var runtimes = {
   javascript: {
@@ -60,7 +61,7 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   }
 }
 
-resource outboundIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+resource outboundIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (usesOAuth) {
   name: resourceNames.outboundIdentity
   location: location
   tags: tags
@@ -156,11 +157,13 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
   location: location
   kind: 'functionapp,linux'
   tags: tags
-  identity: {
+  identity: usesOAuth ? {
     type: 'SystemAssigned, UserAssigned'
     userAssignedIdentities: {
-      '${outboundIdentity.id}': {}
+      '${outboundIdentity!.id}': {}
     }
+  } : {
+    type: 'SystemAssigned'
   }
   // Keep serverFarmId visible to preflight instead of deferring all properties with the storage reference.
   properties: {
@@ -215,13 +218,14 @@ resource appSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     APPLICATIONINSIGHTS_AUTHENTICATION_STRING: 'Authorization=AAD'
     KEY_VAULT_URL: vault.properties.vaultUri
     // Setup pins the encryption settings after Key Vault issues the certificate.
-    EPP_OUTBOUND_CLIENT_ID: applicationId
-    EPP_OUTBOUND_MI_CLIENT_ID: outboundIdentity.properties.clientId
     EPP_EXPECTED_AUDIENCE: audience
     EPP_EXPECTED_ISSUER: issuer
     EPP_EXPECTED_CLIENT_ID: callerApplicationId
     EPP_TENANT_ID: tenantId
-  }, isFlexConsumption ? {} : union({
+  }, usesOAuth ? {
+    EPP_OUTBOUND_CLIENT_ID: applicationId
+    EPP_OUTBOUND_MI_CLIENT_ID: outboundIdentity!.properties.clientId
+  } : {}, isFlexConsumption ? {} : union({
     FUNCTIONS_EXTENSION_VERSION: '~4'
     FUNCTIONS_WORKER_RUNTIME: runtime.worker
   }, remoteBuild ? {
@@ -376,7 +380,7 @@ resource ftpCredentials 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@
 output functionAppName string = functionApp.name
 output storageAccountName string = storage.name
 output keyVaultName string = vault.name
-output outboundPrincipalId string = outboundIdentity.properties.principalId
+output outboundPrincipalId string = usesOAuth ? outboundIdentity!.properties.principalId : ''
 output endpointUrl string = 'https://${functionApp.properties.defaultHostName}/api/SendOtp'
 output identifierUri string = identifierUri
 output packageContainerUrl string = '${storage.properties.primaryEndpoints.blob}${packages.name}/'

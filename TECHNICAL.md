@@ -141,14 +141,14 @@ Guided setup supplies these values. For local or manual deployment, start with
 | `FUNCTIONS_WORKER_RUNTIME` | `node`, `python`, or `dotnet-isolated` for local hosting and EP1. FC1 uses `functionAppConfig.runtime`. |
 | `EPP_DECRYPTION_KEY_PEM` | Local test PEM/base64 PEM, or a versioned Key Vault reference in Azure |
 | `EPP_ENCRYPTION_KEY_ID` | Optional expected JWE key ID for the advisory check |
-| `EPP_PROVIDER_NAME` | `infobip`, `soprano`, or `telesign` |
-| `EPP_PROVIDER_AUTH_MODE` | `oauth` |
+| `EPP_PROVIDER_NAME` | Registered adapter ID: bundled `infobip`, `soprano`, `telesign`, or a provider-fork adapter |
+| `EPP_PROVIDER_AUTH_MODE` | `oauth` or `apiKey`, matching the adapter |
 | `EPP_PROVIDER_SMS_ENDPOINT` | Complete HTTPS SMS URL from the selected provider profile |
 | `EPP_PROVIDER_VOICE_ENDPOINT` | Complete HTTPS voice URL from the selected provider profile |
-| `EPP_PROVIDER_TENANT_ID` | Provider token-issuing tenant |
-| `EPP_PROVIDER_SCOPE` | Provider API scope ending in `/.default` |
-| `EPP_OUTBOUND_CLIENT_ID` | Customer application client ID used for token exchange |
-| `EPP_OUTBOUND_MI_CLIENT_ID` | Outbound user-assigned managed identity client ID |
+| `EPP_PROVIDER_TENANT_ID` | OAuth provider token-issuing tenant; omitted for tenant-less API-key providers |
+| `EPP_PROVIDER_SCOPE` | OAuth provider API scope ending in `/.default` |
+| `EPP_OUTBOUND_CLIENT_ID` | OAuth customer application client ID used for token exchange |
+| `EPP_OUTBOUND_MI_CLIENT_ID` | OAuth outbound user-assigned managed identity client ID |
 | `EPP_PROVIDER_TIMEOUT_MS` | Provider HTTP timeout; default `1500`, maximum `2500` milliseconds |
 
 The selected channel uses its own endpoint. URLs must be absolute HTTPS URLs with a hostname,
@@ -175,6 +175,16 @@ HTTP timeout. Acquisition failures return `502` and log `credential_unavailable`
 
 Complete [provider authorization](docs/ONBOARDING.md#complete-provider-authentication) and restart
 the worker after changing credential configuration. Evaluation returns before provider work.
+
+Provider forks can instead use the shared API-key credential service. The adapter declares its
+Key Vault secret name and optional identity-secret name; the Function system identity reads
+current enabled, usable versions on live requests. Setup creates only missing disabled
+placeholders and never obtains credential values. Customers upload real enabled versions
+after deployment. No outbound OAuth identity is created for this mode.
+
+Additional provider-specific non-secret settings come from
+[`deployment.environmentVariables`](docs/BRING-YOUR-OWN-PROVIDER.md#additional-non-secret-settings).
+These supplement, but cannot override, shared runtime or authentication settings.
 
 ### Local settings and Azure settings
 

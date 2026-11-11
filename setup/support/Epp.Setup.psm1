@@ -221,7 +221,8 @@ function Get-EppProviderDefinition {
     }
     return [pscustomobject]@{
         Id = $id; DisplayName = $entry['displayName']
-        TenantId = ConvertTo-EppGuid ([string]$deployment['tenantId'])
+        TenantId = if ($deployment['authentication']['mode'] -ceq 'apiKey' -and -not $deployment.Contains('tenantId')) { $null }
+            else { ConvertTo-EppGuid ([string]$deployment['tenantId']) }
         Profile = $profile
     }
 }
@@ -244,7 +245,7 @@ function Resolve-EppApplicationProvider {
     if ($application.SignInAudience -eq 'AzureADMultipleOrgs' -and $state -and $state.isHomeTenantAllowed) {
         foreach ($entry in $entries) {
             $definition = Get-EppProviderDefinition -AssetDirectory $AssetDirectory -Provider $entry['id']
-            if ($state.allowedTenantIds -contains $definition.TenantId) { $configured += $entry }
+            if ($definition.TenantId -and $state.allowedTenantIds -contains $definition.TenantId) { $configured += $entry }
         }
     }
     if (-not $configured.Count) {
@@ -292,8 +293,11 @@ function ConvertTo-EppProviderSettings {
     }
     if ($deployment['providerName'] -ine $Id) { $issues.Add('deployment.providerName must match the catalog ID or display name') }
     $providerTenantId = $null
-    try { $providerTenantId = ConvertTo-EppGuid $deployment['tenantId'] }
-    catch { $issues.Add('deployment.tenantId must identify the provider Security Store tenant') }
+    $authentication = $deployment['authentication']
+    if ($authentication -isnot [Collections.IDictionary] -or $authentication['mode'] -cne 'apiKey' -or $deployment.Contains('tenantId')) {
+        try { $providerTenantId = ConvertTo-EppGuid $deployment['tenantId'] }
+        catch { $issues.Add('deployment.tenantId must identify the provider Security Store tenant') }
+    }
     $accessTokenScopeTenant = $providerTenantId
     if ($deployment.Contains('AccessTokenScopeTenant')) {
         try { $accessTokenScopeTenant = ConvertTo-EppGuid $deployment['AccessTokenScopeTenant'] }
@@ -306,16 +310,38 @@ function ConvertTo-EppProviderSettings {
     }
     $authenticationMode = if ($authentication -is [Collections.IDictionary]) { [string]$authentication['mode'] } else { '' }
     if ($authenticationMode -eq 'apiKey') {
-        foreach ($name in @('keyVaultSecretName', 'identityKeyVaultSecretName')) {
+        $secretFields = @('keyVaultSecretName')
+        if ($authentication.Contains('identityKeyVaultSecretName')) { $secretFields += 'identityKeyVaultSecretName' }
+        foreach ($name in $secretFields) {
             if ($authentication[$name] -cnotmatch '^[a-z0-9][a-z0-9-]{1,126}$') {
                 $issues.Add("deployment.authentication.$name must be a Key Vault secret name")
             }
         }
+        if ($authentication['keyVaultSecretName'] -ceq $authentication['identityKeyVaultSecretName'] -or
+            $authentication['keyVaultSecretName'] -ceq $script:EppCertificateName -or
+            $authentication['identityKeyVaultSecretName'] -ceq $script:EppCertificateName) {
+            $issues.Add('API-key secret names must be distinct and must not use the encryption certificate name')
+        }
     }
 
+    $environmentVariables = Get-EppEnvironmentDefinitions -Deployment $deployment -Id $Id
+    $languages = @('javascript', 'dotnet', 'python')
+    if ($deployment.Contains('languages')) { $languages = $deployment['languages'] }
+    if ($languages -isnot [array] -or -not $languages.Count -or
+        @($languages | Where-Object { $_ -cnotin @('javascript', 'dotnet', 'python') }).Count) {
+        $issues.Add('deployment.languages must be an array of supported runtimes')
+    }
+    $regions = @('global', 'eu')
+    if ($deployment.Contains('supportedEndpointRegions')) { $regions = $deployment['supportedEndpointRegions'] }
+    if ($regions -isnot [array] -or -not $regions.Count -or @($regions | Where-Object { $_ -cnotin @('global', 'eu') }).Count) {
+        throw 'deployment.supportedEndpointRegions must be an array containing global and/or eu.'
+    }
+    if ($EndpointRegion -in @('global', 'eu') -and $EndpointRegion -cnotin $regions) {
+        throw "Provider '$DisplayName' does not support the detected '$EndpointRegion' route. No Azure resources were changed."
+    }
     $routes = $deployment['routes']
     if ($routes -isnot [Collections.IDictionary]) { throw "Provider '$DisplayName' is missing deployment.routes." }
-    foreach ($regionId in @('global', 'eu')) {
+    foreach ($regionId in $regions) {
         $route = $routes[$regionId]
         if ($route -isnot [Collections.IDictionary]) {
             $issues.Add("deployment.routes.$regionId is missing")
@@ -353,10 +379,11 @@ function ConvertTo-EppProviderSettings {
         throw "Provider '$DisplayName' is not deployment-ready:`n - $($issues -join "`n - ")`nAsk the provider owner to complete its GitHub JSON. No Azure resources were changed."
     }
 
-    $regionEntry = Select-EppOption -Entries @(
+    $regionEntries = @(
         @{ id = 'global'; displayName = 'Global endpoint' }
         @{ id = 'eu'; displayName = 'EU endpoint' }
-    ) -Name EndpointRegion -Value $EndpointRegion -NonInteractive:$NonInteractive
+    ) | Where-Object { $_.id -cin $regions }
+    $regionEntry = Select-EppOption -Entries @($regionEntries) -Name EndpointRegion -Value $EndpointRegion -NonInteractive:$NonInteractive
     $selectedRoute = $routes[$regionEntry['id']]
     $settings = @{
         EPP_PROVIDER_NAME = $Id
@@ -366,8 +393,8 @@ function ConvertTo-EppProviderSettings {
         EPP_PROVIDER_TIMEOUT_MS = [string]$selectedRoute['timeoutMilliseconds']
         EPP_PROVIDER_RETRY_INTERVAL_MS = [string]([long]$selectedRoute['retryIntervalSeconds'] * 1000)
         EPP_PROVIDER_AUTH_MODE = $authenticationMode
-        EPP_PROVIDER_TENANT_ID = $accessTokenScopeTenant
     }
+    if ($accessTokenScopeTenant) { $settings.EPP_PROVIDER_TENANT_ID = $accessTokenScopeTenant }
     if ($authenticationMode -eq 'oauth') {
         $settings.EPP_PROVIDER_SCOPE = [string]$selectedRoute['scope']
         $settings.EPP_PROVIDER_APP_ID = [string]$selectedRoute['appId']
@@ -381,6 +408,159 @@ function ConvertTo-EppProviderSettings {
         EndpointRegion = [string]$regionEntry['id']
         AuthenticationMode = $authenticationMode
         Settings = $settings
+        Languages = $languages
+        EnvironmentVariables = $environmentVariables
+    }
+}
+
+function Get-EppEnvironmentDefinitions {
+    param([Collections.IDictionary] $Deployment, [string] $Id)
+
+    if (-not $Deployment.Contains('environmentVariables')) { return @{} }
+    $definitions = $Deployment['environmentVariables']
+    if ($definitions -isnot [Collections.IDictionary]) { throw 'deployment.environmentVariables must be a dictionary.' }
+    $prefix = ($Id -split '-')[0].ToUpperInvariant() + '_'
+    if ($prefix -in @('EPP_', 'AZURE_', 'AZUREWEBJOBS_', 'AZUREWEBJOBSSTORAGE_', 'FUNCTIONS_', 'WEBSITE_', 'APPINSIGHTS_', 'APPLICATIONINSIGHTS_', 'KEY_', 'SCM_', 'ENABLE_')) {
+        throw 'Provider environment variables cannot use a reserved platform prefix.'
+    }
+    foreach ($name in $definitions.Keys) {
+        $field = $definitions[$name]
+        if ($name -cnotmatch '^[A-Z][A-Z0-9_]{2,63}$' -or -not $name.StartsWith($prefix, [StringComparison]::Ordinal) -or
+            $field -isnot [Collections.IDictionary] -or $field['source'] -cnotin @('input', 'fixed') -or
+            $field['required'] -isnot [bool]) {
+            throw "Invalid environmentVariables entry '$name'; use provider-prefixed names, source input/fixed, and a boolean required field."
+        }
+        foreach ($key in $field.Keys) {
+            if ($key -cnotin @('displayName', 'description', 'source', 'required', 'validation', 'value')) {
+                throw "Unsupported environmentVariables metadata '$key' for '$name'."
+            }
+        }
+        if ($field['displayName'] -isnot [string] -or -not $field['displayName'].Trim() -or
+            $field['displayName'].Length -gt 120 -or $field['displayName'] -match '[\x00-\x1f\x7f]') {
+            throw "Invalid environmentVariables displayName for '$name'."
+        }
+        if (($field['source'] -ceq 'fixed') -ne $field.Contains('value')) {
+            throw "Only fixed environmentVariables entries must declare a value ('$name')."
+        }
+        if ($field.Contains('validation')) {
+            $validation = $field['validation']
+            if ($validation -isnot [Collections.IDictionary] -or $validation['type'] -cnotin @('pattern', 'e164')) {
+                throw "Invalid environmentVariables validation for '$name'."
+            }
+            if ($validation['type'] -ceq 'pattern') {
+                $pattern = $validation['pattern']
+                if ($pattern -isnot [string] -or $pattern.Length -gt 200 -or -not $pattern.StartsWith('^') -or -not $pattern.EndsWith('$')) {
+                    throw "environmentVariables pattern for '$name' must be a bounded, anchored regular expression."
+                }
+                try { $null = [regex]::new($pattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant, [TimeSpan]::FromSeconds(1)) }
+                catch { throw "Invalid environmentVariables pattern for '$name'." }
+            }
+        }
+        if ($field['source'] -ceq 'fixed') {
+            Assert-EppEnvironmentValue -Name $name -Value $field['value'] -Definition $field
+        }
+    }
+    return $definitions
+}
+
+function Assert-EppEnvironmentValue {
+    param([string] $Name, $Value, [Collections.IDictionary] $Definition)
+
+    if ($Value -isnot [string] -or $Value.Length -gt 2048 -or $Value -match '[\x00-\x1f\x7f<>]' -or
+        ($Definition['required'] -and [string]::IsNullOrWhiteSpace($Value))) {
+        throw "Invalid provider environment value for '$Name'; supply a non-secret string in the expected format."
+    }
+    if (-not $Value -and -not $Definition['required']) { return }
+    if ($Definition.Contains('validation')) {
+        $validation = $Definition['validation']
+        $pattern = if ($validation['type'] -ceq 'e164') { '^\+[1-9][0-9]{1,14}$' } else { $validation['pattern'] }
+        $matches = $false
+        try { $matches = [regex]::IsMatch($Value, $pattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant, [TimeSpan]::FromSeconds(1)) }
+        catch [Text.RegularExpressions.RegexMatchTimeoutException] { throw "Provider environment validation timed out for '$Name'." }
+        if (-not $matches) { throw "Invalid provider environment value for '$Name'; the value does not match the expected format." }
+    }
+}
+
+function Get-EppProviderEnvironment {
+    param($ProviderConfiguration, [Collections.IDictionary] $Values, [Collections.IDictionary] $Existing = @{}, [switch] $NonInteractive)
+
+    $definitions = $ProviderConfiguration.EnvironmentVariables
+    if (-not $Values) { $Values = @{} }
+    foreach ($key in $Values.Keys) {
+        if (-not $definitions.Contains($key) -or $definitions[$key]['source'] -cne 'input') {
+            throw "Unknown or fixed provider environment setting '$key'."
+        }
+    }
+    $settings = @{}
+    foreach ($name in $definitions.Keys) {
+        $field = $definitions[$name]
+        $supplied = $Values.Contains($name)
+        $value = if ($field['source'] -ceq 'fixed') { $field['value'] }
+            elseif ($supplied) { $Values[$name] }
+            elseif ($Existing.Contains($name)) { $Existing[$name] }
+            else { $null }
+        if ($null -eq $value -and $field['required'] -and $NonInteractive) { throw "Provider environment setting '$name' is required in noninteractive mode." }
+        while ($null -eq $value -and $field['required']) {
+            $value = [string](Read-Host $field['displayName'])
+            try { Assert-EppEnvironmentValue -Name $name -Value $value -Definition $field }
+            catch { Write-Warning $_.Exception.Message; $value = $null }
+        }
+        if ($null -ne $value) {
+            Assert-EppEnvironmentValue -Name $name -Value $value -Definition $field
+            $settings[$name] = $value
+        }
+    }
+    return $settings
+}
+
+function Get-EppExistingAppSettings {
+    param([hashtable] $Inputs, [Collections.IDictionary] $Names)
+
+    if (-not $Inputs.ApplicationId) { return @{} }
+    $groupExists = Invoke-EppAz group exists --subscription $Inputs.SubscriptionId --name $Names.resourceGroup --output json | ConvertFrom-Json
+    if ($groupExists -isnot [bool]) { throw 'Azure returned an invalid resource-group existence result.' }
+    if (-not $groupExists) { return @{} }
+    $sites = Invoke-EppAz resource list --subscription $Inputs.SubscriptionId --resource-type Microsoft.Web/sites `
+        --resource-group $Names.resourceGroup --query '[].name' --output json | ConvertFrom-Json -NoEnumerate
+    if ($sites -isnot [array] -or @($sites | Where-Object { $_ -isnot [string] }).Count) {
+        throw 'Azure returned an invalid Function resource list.'
+    }
+    if ($sites -cnotcontains $Names.functionApp) { return @{} }
+    $entries = Invoke-EppAz functionapp config appsettings list --subscription $Inputs.SubscriptionId `
+        --resource-group $Names.resourceGroup --name $Names.functionApp --output json | ConvertFrom-Json -AsHashtable -NoEnumerate
+    if ($entries -isnot [array]) { throw 'Azure returned an invalid application settings list.' }
+    $settings = @{}
+    foreach ($entry in $entries) {
+        if ($entry -isnot [Collections.IDictionary] -or $entry['name'] -isnot [string] -or
+            -not $entry['name'] -or $entry['value'] -isnot [string] -or $settings.Contains($entry['name'])) {
+            throw 'Azure returned an invalid application setting.'
+        }
+        $settings[$entry['name']] = $entry['value']
+    }
+    return $settings
+}
+
+function Initialize-EppProviderSecrets {
+    param([hashtable] $Inputs, [Collections.IDictionary] $Names, $ProviderConfiguration)
+
+    if ($ProviderConfiguration.AuthenticationMode -ne 'apiKey') { return }
+    $authentication = $ProviderConfiguration.Manifest.deployment.authentication
+    $existing = Invoke-EppDataOperation {
+        Invoke-EppAz keyvault secret list --subscription $Inputs.SubscriptionId --vault-name $Names.keyVault --query '[].name' --output json
+    } | ConvertFrom-Json -NoEnumerate
+    if ($existing -isnot [array] -or @($existing | Where-Object { $_ -isnot [string] -or $_ -cnotmatch '^[A-Za-z0-9-]{1,127}$' }).Count) {
+        throw 'Azure returned an invalid secret metadata list. No placeholders were written.'
+    }
+    foreach ($name in @($authentication['identityKeyVaultSecretName'], $authentication['keyVaultSecretName']) | Where-Object { $_ }) {
+        if ($existing -icontains $name) {
+            Write-Host "Provider secret '$name': preserved; no value read or changed."
+            continue
+        }
+        Invoke-EppDataOperation {
+            Invoke-EppAz keyvault secret set --subscription $Inputs.SubscriptionId --vault-name $Names.keyVault `
+                --name $name --value 'CUSTOMER-ACTION-REQUIRED' --disabled true --output none
+        } | Out-Null
+        Write-Host "Provider secret '$name': created; placeholder version disabled."
     }
 }
 
@@ -1048,8 +1228,9 @@ function Test-EppProviderTenantRestriction {
     param($Restriction, [string] $ProviderTenantId, [string[]] $ExpectedAllowedTenantIds)
 
     $state = Get-EppProviderRestrictionState -Restriction $Restriction
-    if (-not $state -or -not $state.isHomeTenantAllowed -or $state.allowedTenantIds -notcontains $ProviderTenantId) { return $false }
-    if ($ExpectedAllowedTenantIds) {
+    if (-not $state -or -not $state.isHomeTenantAllowed -or
+        ($ProviderTenantId -and $state.allowedTenantIds -notcontains $ProviderTenantId)) { return $false }
+    if ($PSBoundParameters.ContainsKey('ExpectedAllowedTenantIds')) {
         return ($state.allowedTenantIds -join ',') -ceq (@($ExpectedAllowedTenantIds | Sort-Object -Unique) -join ',')
     }
     return $true
@@ -1058,8 +1239,9 @@ function Test-EppProviderTenantRestriction {
 function Set-EppProviderTenantRestriction {
     param([hashtable] $Inputs, [string] $ApplicationObjectId, [string] $ProviderTenantId, [string[]] $AllowedTenantIds)
 
-    $ids = if ($AllowedTenantIds) { @($AllowedTenantIds | ForEach-Object { ConvertTo-EppGuid $_ } | Sort-Object -Unique) } else { @(ConvertTo-EppGuid $ProviderTenantId) }
-    if ($ids -notcontains $ProviderTenantId) { throw 'The approved tenant allowlist does not contain the selected provider.' }
+    $ids = @(if ($AllowedTenantIds) { $AllowedTenantIds | ForEach-Object { ConvertTo-EppGuid $_ } | Sort-Object -Unique }
+        elseif ($ProviderTenantId) { ConvertTo-EppGuid $ProviderTenantId })
+    if ($ProviderTenantId -and $ids -notcontains $ProviderTenantId) { throw 'The approved tenant allowlist does not contain the selected provider.' }
 
     Invoke-EppGraphRequest -Inputs $Inputs -Method PATCH -Path "/beta/applications/$ApplicationObjectId" `
         -Body @{
@@ -1074,20 +1256,21 @@ function Set-EppProviderTenantRestriction {
 }
 
 function Get-EppResourceProviderRequirements {
+    param([bool] $OAuth = $true)
     @(
         @{ Namespace = 'Microsoft.Web'; Type = 'sites' }
         @{ Namespace = 'Microsoft.Storage'; Type = 'storageAccounts' }
         @{ Namespace = 'Microsoft.KeyVault'; Type = 'vaults' }
         @{ Namespace = 'Microsoft.OperationalInsights'; Type = 'workspaces' }
         @{ Namespace = 'Microsoft.Insights'; Type = 'components' }
-        @{ Namespace = 'Microsoft.ManagedIdentity'; Type = 'userAssignedIdentities' }
+        if ($OAuth) { @{ Namespace = 'Microsoft.ManagedIdentity'; Type = 'userAssignedIdentities' } }
     )
 }
 
 function Get-EppResourceProviders {
-    param([string] $SubscriptionId)
+    param([string] $SubscriptionId, [bool] $OAuth = $true)
 
-    foreach ($provider in Get-EppResourceProviderRequirements) {
+    foreach ($provider in Get-EppResourceProviderRequirements -OAuth:$OAuth) {
         $registration = Invoke-EppAz provider show --namespace $provider.Namespace --subscription $SubscriptionId --output json |
             ConvertFrom-Json
         if (-not $registration -or -not $registration.PSObject.Properties['registrationState'] -or
@@ -1233,7 +1416,7 @@ function Initialize-EppResourceProviders {
 
     $requested = @{}
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-        $providers = @(Get-EppResourceProviders -SubscriptionId $Inputs.SubscriptionId)
+        $providers = @(Get-EppResourceProviders -SubscriptionId $Inputs.SubscriptionId -OAuth:($Inputs['ProviderAuthentication'] -ne 'apiKey'))
         Assert-EppProviderLocations -Providers $providers -Location $Inputs.Location
         foreach ($provider in $providers) {
             if ($provider.RegistrationState -eq 'NotRegistered' -and -not $requested.ContainsKey($provider.Namespace)) {
@@ -1350,7 +1533,7 @@ function Connect-EppContext {
     } else { $null }
     $providerRestrictionState = Get-EppProviderRestrictionState -Restriction $tenantRestriction
     $allowedTenants = @(if ($providerRestrictionState) { $providerRestrictionState.allowedTenantIds })
-    $providerTenants = @($Inputs.ProviderTenantId)
+    $providerTenants = @(if ($Inputs.ProviderTenantId) { $Inputs.ProviderTenantId })
     if ($Inputs['ProviderAuthentication'] -eq 'oauth') {
         $providerTenants += ConvertTo-EppGuid ([string]$Inputs['AccessTokenScopeTenant'])
     }
@@ -1360,7 +1543,7 @@ function Connect-EppContext {
 
     if (-not $pendingApplication) { Assert-EppResourceGroup -Inputs $Inputs -Names $Names }
 
-    $resourceProviders = @(Get-EppResourceProviders -SubscriptionId $Inputs.SubscriptionId)
+    $resourceProviders = @(Get-EppResourceProviders -SubscriptionId $Inputs.SubscriptionId -OAuth:($Inputs['ProviderAuthentication'] -ne 'apiKey'))
     Assert-EppProviderLocations -Providers $resourceProviders -Location $Inputs.Location
     $web = $resourceProviders | Where-Object Namespace -eq 'Microsoft.Web'
     if ($web.RegistrationState -eq 'Registered') {
@@ -1385,7 +1568,7 @@ function Connect-EppContext {
 }
 
 function Get-EppResourceRows {
-    param([Collections.IDictionary] $Names, [ValidateSet('FC1', 'EP1')][string] $ServicePlan)
+    param([Collections.IDictionary] $Names, [ValidateSet('FC1', 'EP1')][string] $ServicePlan, [bool] $OAuth = $true)
 
     $planDescription = if ($ServicePlan -eq 'FC1') {
         'Linux Flex Consumption FC1, 2048 MB, up to 40 on-demand instances, zero always-ready instances.'
@@ -1399,7 +1582,7 @@ function Get-EppResourceRows {
         [pscustomobject]@{ Resource = 'Blob container'; Name = 'packages'; Description = 'Stores the verified deployment package privately.' }
         [pscustomobject]@{ Resource = 'Key Vault'; Name = $Names.keyVault; Description = 'Stores provider credentials and newly issued encryption certificates.' }
         [pscustomobject]@{ Resource = 'Function App identity'; Name = 'System-assigned'; Description = 'Accesses package storage, host storage, Key Vault, and monitoring.' }
-        [pscustomobject]@{ Resource = 'Outbound identity'; Name = $Names.outboundIdentity; Description = 'Supports outbound provider authentication when required.' }
+        if ($OAuth) { [pscustomobject]@{ Resource = 'Outbound identity'; Name = $Names.outboundIdentity; Description = 'Supports outbound provider authentication when required.' } }
         [pscustomobject]@{ Resource = 'Log Analytics'; Name = $Names.logAnalytics; Description = 'Stores platform and application diagnostic logs.' }
         [pscustomobject]@{ Resource = 'Application Insights'; Name = $Names.applicationInsights; Description = 'Collects Function App telemetry.' }
         [pscustomobject]@{ Resource = 'Diagnostic settings'; Name = 'Configured'; Description = 'Routes supported resource logs and metrics to Log Analytics.' }
@@ -1425,7 +1608,8 @@ function Show-EppPlan {
     $providerRoute = if ($ProviderConfiguration.EndpointRegion -eq 'eu') { 'EU' } else { 'Global' }
     Write-Host "Provider route: $providerRoute"
     Write-Host "Provider auth: $($ProviderConfiguration.AuthenticationMode)"
-    Write-Host "Security Store tenant: $($ProviderConfiguration.TenantId)"
+    if ($ProviderConfiguration.TenantId) { Write-Host "Security Store tenant: $($ProviderConfiguration.TenantId)" }
+    else { Write-Host 'Security Store tenant: not required (API-key authentication)' }
     if ($Inputs['ProviderAllowedTenantIds']) {
         Write-Host "Allowed provider tenants after deployment: $($Inputs.ProviderAllowedTenantIds -join ', ') (home tenant also allowed)"
         Write-Host 'Existing allowed provider tenants are preserved; selecting a provider does not configure multi-provider runtime fallback.'
@@ -1439,7 +1623,13 @@ function Show-EppPlan {
     }
     else {
         $auth = $ProviderConfiguration.Manifest.deployment.authentication
-        Write-Host "Key Vault:    $($auth.keyVaultSecretName), $($auth.identityKeyVaultSecretName)"
+        Write-Host "Key Vault:    $(@($auth['keyVaultSecretName'], $auth['identityKeyVaultSecretName'] | Where-Object { $_ }) -join ', ')"
+        Write-Host 'Credentials: create missing secrets as DISABLED placeholders; preserve existing secrets without reading their values.'
+        Write-Host 'Customer action: manually add enabled credential versions after setup. Live delivery is not yet validated.' -ForegroundColor Yellow
+    }
+    if ($Inputs['ProviderEnvironment']) {
+        Write-Host 'Additional provider environment (non-secret):'
+        foreach ($name in $Inputs.ProviderEnvironment.Keys | Sort-Object) { Write-Host "  ${name}: $($Inputs.ProviderEnvironment[$name])" }
     }
     Write-Host "Timeout:      $($ProviderConfiguration.Settings.EPP_PROVIDER_TIMEOUT_MS) ms"
     Write-Host "Retry:        $($ProviderConfiguration.Settings.EPP_PROVIDER_RETRY_INTERVAL_MS) ms (package-dependent; not a retry guarantee)"
@@ -1449,7 +1639,7 @@ function Show-EppPlan {
     Write-Host "Setup source: $($Inputs.SourceBaseUri)"
 
     Write-Host "`nAzure resources and configuration" -ForegroundColor Cyan
-    Get-EppResourceRows -Names $Names -ServicePlan $Inputs.ServicePlan |
+    Get-EppResourceRows -Names $Names -ServicePlan $Inputs.ServicePlan -OAuth:($ProviderConfiguration.AuthenticationMode -eq 'oauth') |
         Format-Table Resource, Name, Description -AutoSize | Out-String -Width 240 | Write-Host
     if ($Inputs['NewApplicationDisplayName'] -and -not $Inputs['ApplicationId']) {
         Write-Host '  - <app-id-hash> is a name placeholder, not an actual resource name. The new client ID determines the eight-character suffix after approval.'
@@ -1492,7 +1682,7 @@ function Show-EppPlan {
         Write-Host "  - $($ProviderConfiguration.DisplayName) OAuth: add a federated credential so the outbound managed identity can authenticate without a client secret."
     }
     else {
-        Write-Host "  - $($ProviderConfiguration.DisplayName) API key: store the required provider credentials in Key Vault; no federated credential is created."
+        Write-Host "  - $($ProviderConfiguration.DisplayName) API key: create disabled Key Vault placeholders only; no outbound OAuth identity or federated credential is created."
     }
 
     Write-Host "`nDeployment notes" -ForegroundColor Cyan
@@ -1568,10 +1758,11 @@ function Show-EppDeploymentResult {
         [string] $EndpointUrl, [string] $ResultPath
     )
 
-    Write-Host "`nDeployment completed successfully." -ForegroundColor Green
+    Write-Host "`nInfrastructure and Function deployment completed successfully." -ForegroundColor Green
+    Write-Host 'Live provider delivery has not been validated.' -ForegroundColor Yellow
     Write-Host 'IMPORTANT: Save this output. The endpoint URL and Application (client) ID are required for policy updates.' -ForegroundColor Yellow
     Write-Host "`nAzure resources created or updated" -ForegroundColor Cyan
-    Get-EppResourceRows -Names $Names -ServicePlan $Inputs.ServicePlan |
+    Get-EppResourceRows -Names $Names -ServicePlan $Inputs.ServicePlan -OAuth:($ProviderConfiguration.AuthenticationMode -eq 'oauth') |
         Format-Table Resource, Name -AutoSize | Out-String -Width 160 | Write-Host
     Write-Host "Function endpoint: $EndpointUrl" -ForegroundColor Green
     Write-Host "Service plan: $($Inputs.ServicePlan)"
@@ -1583,6 +1774,18 @@ function Show-EppDeploymentResult {
         Write-Host "Have the $($ProviderConfiguration.DisplayName) administrator authorize application '$($Inputs.ApplicationId)' in access-token tenant '$($ProviderConfiguration.AccessTokenScopeTenant)'."
         Write-Host "   Provider API: $($ProviderConfiguration.Settings.EPP_PROVIDER_APP_ID) / $($ProviderConfiguration.Settings.EPP_PROVIDER_SCOPE)"
         Write-Host '   Provider consent and application-role assignments are not performed by setup. No provider API-key secrets are required.'
+    }
+    else {
+        $authentication = $ProviderConfiguration.Manifest.deployment.authentication
+        Write-Host "`nCustomer action required: provider credentials" -ForegroundColor Yellow
+        Write-Host "Key Vault: $($Names.keyVault)"
+        if ($authentication.Contains('identityKeyVaultSecretName')) {
+            Write-Host "   $($authentication['identityKeyVaultSecretName']): add an enabled version containing the API key identity."
+        }
+        Write-Host "   $($authentication.keyVaultSecretName): add an enabled version containing the API key secret."
+        Write-Host '   New placeholders are disabled. Do not enable the dummy values; create new enabled versions with real credentials.'
+        Write-Host '   Existing versions were preserved. Setup did not read or validate provider credentials or send a live message.'
+        Write-Host '   Evaluation validates authentication and decryption only, not credentials or delivery. Test SMS and voice before policy activation.'
     }
 
     Write-Host "`nNext steps" -ForegroundColor Cyan
@@ -1682,7 +1885,11 @@ function Initialize-EppGraphAccess {
     if (-not (Test-EppJsonEqual $currentProviderState $Context.ProviderRestrictionState)) {
         throw 'The application provider configuration changed after the plan was reviewed. Rerun setup; no provider tenants will be removed.'
     }
-    if (-not $Inputs['ProviderAllowedTenantIds']) { throw 'The approved provider-tenant allowlist is missing. Rerun preflight.' }
+    if (-not $Inputs.ContainsKey('ProviderAllowedTenantIds') -or
+        $Inputs.ProviderAllowedTenantIds -isnot [array] -or
+        ($Inputs.ProviderTenantId -and -not $Inputs.ProviderAllowedTenantIds.Count)) {
+        throw 'The approved provider-tenant allowlist is missing. Rerun preflight.'
+    }
     $roles = @($application.AppRoles | Where-Object { $null -ne $_ })
     $invokeRoles = @($roles | Where-Object { $_.Id -eq $script:EppInvokeAppRoleId -or $_.Value -eq $script:EppInvokeAppRoleValue })
     if ($invokeRoles.Count -gt 1 -or
@@ -2427,6 +2634,16 @@ function Invoke-EppDeployment {
         [string] $AssetDirectory, [string] $WorkingDirectory, $Package, [string] $OutputDirectory
     )
 
+    if ($Inputs.ContainsKey('ExistingProviderEnvironment')) {
+        $existing = Get-EppExistingAppSettings -Inputs $Inputs -Names $Names
+        $current = @{}
+        foreach ($name in $ProviderConfiguration.EnvironmentVariables.Keys) {
+            if ($existing.Contains($name)) { $current[$name] = $existing[$name] }
+        }
+        if (-not (Test-EppJsonEqual $current $Inputs.ExistingProviderEnvironment)) {
+            throw 'Provider environment settings changed after approval. Rerun setup to review the current values.'
+        }
+    }
     $graphOperator = Get-EppGraphOperator -Inputs $Inputs
     if ($graphOperator.Id -ne $Context.GraphOperatorId -or
         (Get-EppArmOperatorObjectId -Inputs $Inputs) -ne $Context.OperatorId) {
@@ -2456,7 +2673,7 @@ function Invoke-EppDeployment {
         Write-Host "Application registration details saved to: $applicationPath"
         Assert-EppResourceGroup -Inputs $Inputs -Names $Names
         Write-Host "`nResolved Azure resource names" -ForegroundColor Cyan
-        Get-EppResourceRows -Names $Names -ServicePlan $Inputs.ServicePlan |
+        Get-EppResourceRows -Names $Names -ServicePlan $Inputs.ServicePlan -OAuth:($Inputs.ProviderAuthentication -eq 'oauth') |
             Format-Table Resource, Name, Description -AutoSize | Out-String -Width 240 | Write-Host
     }
     $graphAccess = Initialize-EppGraphAccess -Inputs $Inputs -Context $Context
@@ -2490,7 +2707,8 @@ function Invoke-EppDeployment {
     foreach ($mapping in @{ functionAppName = 'functionApp'; storageAccountName = 'storageAccount'; keyVaultName = 'keyVault'; resourceGroupName = 'resourceGroup' }.GetEnumerator()) {
         if ($outputs.($mapping.Key).value -cne $Names[$mapping.Value]) { throw 'Bicep outputs do not match the approved resource names. Stop and inspect the deployment.' }
     }
-    $null = ConvertTo-EppGuid $outputs.outboundPrincipalId.value
+    if ($Inputs.ProviderAuthentication -eq 'oauth') { $null = ConvertTo-EppGuid $outputs.outboundPrincipalId.value }
+    elseif ($outputs.outboundPrincipalId.value) { throw 'API-key deployment unexpectedly created an outbound OAuth identity.' }
     Assert-EppHttpsUrl $outputs.endpointUrl.value
     if ([Text.Encoding]::UTF8.GetByteCount($outputs.endpointUrl.value) -gt 100) { throw 'The deployed endpoint URL exceeds the EPP 100-byte limit.' }
     $issued = $null
@@ -2515,6 +2733,7 @@ function Invoke-EppDeployment {
         Initialize-EppCertificateAccess -Inputs $Inputs -Names $Names -Plan $certificatePlan -Directory $WorkingDirectory
         Set-EppEncryptionSettings -Inputs $Inputs -Names $Names -SecretId $issued.SecretId -KeyId $keyId -Directory $WorkingDirectory
         Assert-EppEncryptionReference -Inputs $Inputs -Names $Names -SecretId $issued.SecretId -KeyId $keyId
+        Initialize-EppProviderSecrets -Inputs $Inputs -Names $Names -ProviderConfiguration $ProviderConfiguration
         Set-EppApplicationEndpoint -Inputs $Inputs -Context $Context -Outputs $outputs -Certificate $certificate -KeyId $keyId `
             -ConfigureFederation:($Inputs.ProviderAuthentication -eq 'oauth')
         $graphAccess = Assert-EppGraphAccess -Inputs $Inputs -Certificate $certificate -KeyId $keyId `
@@ -2550,6 +2769,9 @@ function Invoke-EppDeployment {
             packageFile = $Inputs.PackageFile; packageUrl = $Inputs.PackageUrl
             packageReleaseTag = $Inputs.PackageReleaseTag; sourcePackageSha256 = $Inputs.SourcePackageSha256
             packageSha256 = $Inputs.PackageSha256
+            providerEnvironment = $Inputs['ProviderEnvironment']
+            providerCredentials = if ($Inputs.ProviderAuthentication -eq 'apiKey') { 'customer-action-required-not-validated' } else { 'provider-authorization-required' }
+            liveDeliveryValidated = $false
             policyChanged = $false
         }
         $resultPath = Join-Path $OutputDirectory "deployment-$([DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))-$([Guid]::NewGuid().ToString('N').Substring(0, 8)).json"
@@ -2726,6 +2948,7 @@ function Invoke-EppSetup {
         [string] $ResourcePrefix,
         [string] $Language = 'javascript',
         [string] $PackageReleaseTag,
+        [hashtable] $ProviderEnvironment,
         [string] $ServicePlan,
         [ValidateSet('Create', 'Reuse', 'Replace')]
         [string] $CertificateAction,
@@ -2810,6 +3033,14 @@ function Invoke-EppSetup {
         $inputs.ProviderAuthentication = $providerConfiguration.AuthenticationMode
         $inputs.ProviderTenantId = $providerConfiguration.TenantId
         $inputs.AccessTokenScopeTenant = $providerConfiguration.AccessTokenScopeTenant
+        $runtime = switch ($Language.ToLowerInvariant()) {
+            { $_ -in @('csharp', 'c#', 'dotnet', '.net') } { 'dotnet'; break }
+            'node.js' { 'javascript'; break }
+            default { $Language.ToLowerInvariant() }
+        }
+        if ($runtime -cnotin $providerConfiguration.Languages) {
+            throw "Provider '$($providerConfiguration.DisplayName)' supports only: $($providerConfiguration.Languages -join ', ')."
+        }
         $selection = Get-EppLanguage -AssetDirectory $assetDirectory -Language $Language -SourceRepository $SourceRepository `
             -PackageReleaseTag $PackageReleaseTag -NonInteractive:$NonInteractive
         $inputs.Language = $selection.Id
@@ -2827,6 +3058,16 @@ function Invoke-EppSetup {
         Write-Host "`nChecking prerequisites and the selected Azure context (no resource changes)..." -ForegroundColor Cyan
         $context = Connect-EppContext -Inputs $inputs -Names $names -NonInteractive:$NonInteractive `
             -InstallPrerequisites:$InstallPrerequisites -ForceAuthentication:$ForceAuthentication
+        if ($providerConfiguration.EnvironmentVariables.Count -or ($ProviderEnvironment -and $ProviderEnvironment.Count)) {
+            $existingSettings = Get-EppExistingAppSettings -Inputs $inputs -Names $names
+            $inputs.ExistingProviderEnvironment = @{}
+            foreach ($name in $providerConfiguration.EnvironmentVariables.Keys) {
+                if ($existingSettings.Contains($name)) { $inputs.ExistingProviderEnvironment[$name] = $existingSettings[$name] }
+            }
+            $inputs.ProviderEnvironment = Get-EppProviderEnvironment -ProviderConfiguration $providerConfiguration `
+                -Values $ProviderEnvironment -Existing $inputs.ExistingProviderEnvironment -NonInteractive:$NonInteractive
+            foreach ($name in $inputs.ProviderEnvironment.Keys) { $providerConfiguration.Settings[$name] = $inputs.ProviderEnvironment[$name] }
+        }
         $context.CertificatePlan = Get-EppCertificatePlan -Inputs $inputs -Names $names -Application $context.Application `
             -CertificateAction $CertificateAction -EncryptionKeyId $EncryptionKeyId -KeyVaultCertificateId $KeyVaultCertificateId `
             -KeyVaultSubscriptionId $KeyVaultSubscriptionId -NonInteractive:$NonInteractive

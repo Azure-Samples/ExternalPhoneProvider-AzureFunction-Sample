@@ -24,6 +24,9 @@
 .PARAMETER PackageReleaseTag
     Optional exact stable epp-packages-<run>-<attempt>-<language> tag (javascript, dotnet, or python).
     By default, setup uses the latest stable CI release for the selected language; C# uses dotnet.
+.PARAMETER ProviderEnvironment
+    Provider-specific non-secret settings declared in deployment.environmentVariables.
+    Credentials are never collected here; upload real Key Vault secret versions after deployment.
 .PARAMETER ServicePlan
     FC1 for Flex Consumption with a free usage grant, or EP1 for Premium with a warm instance.
     Prompts with FC1 as the interactive default when omitted; required for unattended setup.
@@ -79,6 +82,7 @@ param(
     [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample',
     [string] $SourceRef = 'main',
     [string] $PackageReleaseTag,
+    [hashtable] $ProviderEnvironment,
     [switch] $NonInteractive,
     [switch] $InstallPrerequisites,
     [switch] $ForceAuthentication,

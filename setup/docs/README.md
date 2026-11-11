@@ -5,6 +5,8 @@
 Use the [deployment guide](../../docs/GETTING-STARTED.md) for your first deployment.
 This reference covers permissions, configuration, repeatable deployments, and maintenance.
 Use the [documentation index](../../docs/README.md) to choose between guides.
+Provider-owned forks use this same launcher; see
+[provider metadata and automatic fork releases](../../docs/BRING-YOUR-OWN-PROVIDER.md#prepare-a-provider-fork).
 
 | Task | Section |
 | --- | --- |
@@ -117,7 +119,8 @@ creating the app.
 
 Setup keeps public ingress closed while preparing the resources and encryption key. It checks
 Easy Auth before opening ingress and verifies Function registration after publication.
-Wait for **Deployment completed successfully** and the saved summary.
+Wait for **Infrastructure and Function deployment completed successfully** and the saved summary.
+This confirms deployment, not live provider delivery.
 
 If a new application is created but deployment fails later, use the client ID saved in
 `application-<client-id>.json` and the original prefix when retrying.
@@ -331,6 +334,13 @@ For deliberate replacement, use `-CertificateAction Replace` instead.
 | `-OutputDirectory` | Private output folder; default is `epp-output` beside the launcher |
 | `-PassThru` | Return the structured deployment result in addition to saving it |
 | `-SourceRepository`, `-SourceRef`, `-PackageReleaseTag` | Pin [source and packages](#source-versioning) |
+| `-ProviderEnvironment` | Dictionary of declared **non-secret** provider inputs; required inputs are collected before approval, and reruns preserve their current values |
+
+For provider-fork profiles using API keys, setup never asks for credentials. After approval,
+it creates disabled placeholders only for missing credential secrets and preserves existing
+versions without reading their values. Upload new enabled versions with real credentials in
+the reported Key Vault after setup; never enable the dummy values.
+See [credential handoff](../../docs/BRING-YOUR-OWN-PROVIDER.md#customer-credential-handoff).
 
 ## Source versioning
 
