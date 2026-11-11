@@ -26,8 +26,8 @@ const delivery = new OtpDelivery({
     correlationId: 'correlation-id',
     locale: 'fr-FR',
 });
-const voiceMessageText = '  Your code is 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1.\n'
-    + '   Your code is 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1.\n';
+const voiceMessageText = '  Your code is 0, 0, 1, 2, 3, 4; ref 1234567; alternate 654321.\n'
+    + '   Your code is 0, 0, 1, 2, 3, 4; ref 1234567; alternate 654321.\n';
 const input = {
     channel: 'sms',
     endpoint: 'https://provider.example',
@@ -331,20 +331,26 @@ test('Infobip accepts only strict recognized status strings', () => {
 });
 
 for (const providerName of ['infobip', 'telesign']) {
-    test(`${providerName} paces six-digit passcodes and repeats only voice messages`, () => {
+    test(`${providerName} paces only the supplied OTP and repeats only voice messages`, () => {
         const provider = selectProvider(providerName);
-        for (const [message, expectedVoice] of [
-            ['001234', '0, 0, 1, 2, 3, 4 0, 0, 1, 2, 3, 4'],
-            ['Code 001234; ref 1234567; alternate 654321.',
-                'Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1. '
-                + 'Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1.'],
-            ['Use 1234; ref 1234567.', 'Use 1234; ref 1234567. Use 1234; ref 1234567.'],
+        for (const [message, otp, expectedVoice] of [
+            ['001234', '001234', '0, 0, 1, 2, 3, 4 0, 0, 1, 2, 3, 4'],
+            ['Tenant 654321: code 001234; repeat 001234.', '001234',
+                'Tenant 654321: code 0, 0, 1, 2, 3, 4; repeat 0, 0, 1, 2, 3, 4. '
+                + 'Tenant 654321: code 0, 0, 1, 2, 3, 4; repeat 0, 0, 1, 2, 3, 4.'],
+            ['Code 1234.', '1234', 'Code 1, 2, 3, 4. Code 1, 2, 3, 4.'],
+            ['Code 00123456.', '00123456', 'Code 0, 0, 1, 2, 3, 4, 5, 6. Code 0, 0, 1, 2, 3, 4, 5, 6.'],
+            ['Code a.b; tenant axb.', 'a.b', 'Code a, ., b; tenant axb. Code a, ., b; tenant axb.'],
+            ['Tenant 654321.', '999999', 'Tenant 654321. Tenant 654321.'],
+            ['Tenant 654321.', undefined, 'Tenant 654321. Tenant 654321.'],
+            ['Tenant 654321.', null, 'Tenant 654321. Tenant 654321.'],
+            ['Tenant 654321.', '', 'Tenant 654321. Tenant 654321.'],
         ]) {
             for (const channel of ['sms', 'voice']) {
                 const request = provider.createRequest({
                     ...input,
                     channel,
-                    delivery: new OtpDelivery({ ...delivery, message, otp: '999999' }),
+                    delivery: new OtpDelivery({ ...delivery, message, otp }),
                     env: { INFOBIP_VOICE_SENDER_ID: 'Microsoft' },
                 });
                 const body = JSON.parse(request.body);
@@ -356,7 +362,7 @@ for (const providerName of ['infobip', 'telesign']) {
     });
 }
 
-test('Telesign request validates E.164 and voice pacing remains unchanged', () => {
+test('Telesign validates E.164 and paces the supplied OTP', () => {
     const telesign = selectProvider('telesign');
     const credential = { mode: 'oauth', accessToken: 'provider-token' };
     const voice = telesign.createRequest({ ...input, channel: 'voice', credential });

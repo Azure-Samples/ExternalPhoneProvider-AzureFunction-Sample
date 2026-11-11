@@ -1,18 +1,11 @@
-using System.Text.RegularExpressions;
-
 namespace Epp.Otp;
 
 internal static class VoiceMessage
 {
-    private static readonly Regex PasscodePattern = new(
-        @"(?<![0-9])[0-9]{6}(?![0-9])",
-        RegexOptions.CultureInvariant);
-
-    public static string Build(string message)
+    public static string Build(string message, string? otp)
     {
-        var pacedMessage = PasscodePattern.Replace(
-            message,
-            match => string.Join(", ", match.Value.ToCharArray()));
+        var pacedMessage = string.IsNullOrEmpty(otp) ? message
+            : message.Replace(otp, string.Join(", ", otp.ToCharArray()), StringComparison.Ordinal);
         return $"{pacedMessage} {pacedMessage}";
     }
 }

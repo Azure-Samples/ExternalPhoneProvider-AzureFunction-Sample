@@ -13,7 +13,7 @@ public class ContractTests
         + "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.  ";
 
     private static OtpDelivery Delivery(string channel = "sms") =>
-        new("+15551234567", "  Your code is 918273.\nDo not share.  ", channel, "message-id", "correlation-id", "en-US");
+        new("+15551234567", "  Your code is 918273.\nDo not share.  ", channel, "message-id", "correlation-id", "en-US", Otp: "918273");
 
     [Theory]
     [InlineData("sms")]
@@ -337,22 +337,27 @@ public class ContractTests
     [Theory]
     [InlineData("infobip")]
     [InlineData("telesign")]
-    public async Task VoicePacesSixDigitPasscodesAndRepeatsWithoutChangingSms(string providerName)
+    public async Task VoicePacesOnlySuppliedOtpAndRepeatsWithoutChangingSms(string providerName)
     {
         PhoneProviderBase provider = providerName == "infobip" ? new InfobipProvider() : new TelesignProvider();
-        foreach (var (message, expectedVoice) in new[]
+        foreach (var (message, otp, expectedVoice) in new (string, string?, string)[]
         {
-            ("001234", "0, 0, 1, 2, 3, 4 0, 0, 1, 2, 3, 4"),
-            ("Code 001234; ref 1234567; alternate 654321.",
-                "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1. "
-                + "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1."),
-            ("Use 1234; ref 1234567.", "Use 1234; ref 1234567. Use 1234; ref 1234567."),
+            ("001234", "001234", "0, 0, 1, 2, 3, 4 0, 0, 1, 2, 3, 4"),
+            ("Tenant 654321: code 001234; repeat 001234.", "001234",
+                "Tenant 654321: code 0, 0, 1, 2, 3, 4; repeat 0, 0, 1, 2, 3, 4. "
+                + "Tenant 654321: code 0, 0, 1, 2, 3, 4; repeat 0, 0, 1, 2, 3, 4."),
+            ("Code 1234.", "1234", "Code 1, 2, 3, 4. Code 1, 2, 3, 4."),
+            ("Code 00123456.", "00123456", "Code 0, 0, 1, 2, 3, 4, 5, 6. Code 0, 0, 1, 2, 3, 4, 5, 6."),
+            ("Code a.b; tenant axb.", "a.b", "Code a, ., b; tenant axb. Code a, ., b; tenant axb."),
+            ("Tenant 654321.", "999999", "Tenant 654321. Tenant 654321."),
+            ("Tenant 654321.", null, "Tenant 654321. Tenant 654321."),
+            ("Tenant 654321.", "", "Tenant 654321. Tenant 654321."),
         })
         foreach (var channel in new[] { "sms", "voice" })
         {
             var request = await provider.CaptureRequestAsync(
                 channel, "https://provider.example",
-                Delivery(channel) with { Message = message, Otp = "999999" },
+                Delivery(channel) with { Message = message, Otp = otp },
                 new ProviderCredentials("oauth", AccessToken: "provider-token"),
                 new TestEnv { ["INFOBIP_VOICE_SENDER_ID"] = "Microsoft" });
             using var body = JsonDocument.Parse(request.Body);

@@ -25,7 +25,7 @@ class TelesignProvider(PhoneProviderBase):
         if not isinstance(correlation_id, str) or not correlation_id:
             correlation_id = delivery.message_id
         message = {
-            "text": build_voice_message(delivery.message) if channel == "voice" else delivery.message
+            "text": build_voice_message(delivery.message, delivery.otp) if channel == "voice" else delivery.message
         }
         if isinstance(delivery.locale, str) and delivery.locale.strip():
             message["language"] = delivery.locale

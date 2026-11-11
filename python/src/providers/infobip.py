@@ -24,7 +24,7 @@ class InfobipProvider(PhoneProviderBase):
                 raise ValueError("INFOBIP_VOICE_SENDER_ID is required for voice")
             body = {
                 "to": delivery.phone_number,
-                "text": build_voice_message(delivery.message),
+                "text": build_voice_message(delivery.message, delivery.otp),
                 "language": ((delivery.locale or "").strip() or "en").split("-")[0].lower(),
                 "voice": {"name": "Joanna", "gender": "female"},
                 "from": sender_id,

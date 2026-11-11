@@ -17,7 +17,7 @@ const provider = Object.freeze({
             throw new Error('invalid recipient');
         }
         const message = {
-            text: channel === 'voice' ? buildVoiceMessage(delivery.message) : delivery.message,
+            text: channel === 'voice' ? buildVoiceMessage(delivery.message, delivery.otp) : delivery.message,
         };
         if (typeof delivery.locale === 'string' && delivery.locale.trim()) {
             message.language = delivery.locale;

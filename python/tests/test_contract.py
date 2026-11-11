@@ -188,21 +188,26 @@ def test_telesign_request_contract(channel):
 
 
 @pytest.mark.parametrize("provider_type", [InfobipProvider, TelesignProvider])
-@pytest.mark.parametrize("message,expected_voice", [
-    ("001234", "0, 0, 1, 2, 3, 4 0, 0, 1, 2, 3, 4"),
-    ("Code 001234; ref 1234567; alternate 654321.",
-     "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1. "
-     "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1."),
-    ("Use 1234; ref 1234567.", "Use 1234; ref 1234567. Use 1234; ref 1234567."),
+@pytest.mark.parametrize("message,otp,expected_voice", [
+    ("001234", "001234", "0, 0, 1, 2, 3, 4 0, 0, 1, 2, 3, 4"),
+    ("Tenant 654321: code 001234; repeat 001234.", "001234",
+     "Tenant 654321: code 0, 0, 1, 2, 3, 4; repeat 0, 0, 1, 2, 3, 4. "
+     "Tenant 654321: code 0, 0, 1, 2, 3, 4; repeat 0, 0, 1, 2, 3, 4."),
+    ("Code 1234.", "1234", "Code 1, 2, 3, 4. Code 1, 2, 3, 4."),
+    ("Code 00123456.", "00123456", "Code 0, 0, 1, 2, 3, 4, 5, 6. Code 0, 0, 1, 2, 3, 4, 5, 6."),
+    ("Code a.b; tenant axb.", "a.b", "Code a, ., b; tenant axb. Code a, ., b; tenant axb."),
+    ("Tenant 654321.", "999999", "Tenant 654321. Tenant 654321."),
+    ("Tenant 654321.", None, "Tenant 654321. Tenant 654321."),
+    ("Tenant 654321.", "", "Tenant 654321. Tenant 654321."),
 ])
-def test_voice_paces_six_digit_passcodes_and_repeats_without_changing_sms(
-    provider_type, message, expected_voice,
+def test_voice_paces_only_supplied_otp_and_repeats_without_changing_sms(
+    provider_type, message, otp, expected_voice,
 ):
     provider = provider_type()
     for channel in ("sms", "voice"):
         request = provider.build_request(
             channel, "https://provider.example",
-            replace(_delivery(channel), message=message, otp="999999"),
+            replace(_delivery(channel), message=message, otp=otp),
             {"access_token": "token"}, {"INFOBIP_VOICE_SENDER_ID": "Microsoft"})
         body = json.loads(request.body)
         if provider_type is TelesignProvider:

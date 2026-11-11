@@ -851,7 +851,7 @@ for (const status of [401, 403]) {
     });
 }
 
-test('Telesign strict integer status and voice pacing keep endpoint outcomes stable', async () => {
+test('Telesign strict integer status and explicit OTP pacing keep endpoint outcomes stable', async () => {
     process.env.EPP_PROVIDER_NAME = 'telesign';
     process.env.EPP_PROVIDER_AUTH_MODE = 'oauth';
     process.env.EPP_PROVIDER_VOICE_ENDPOINT = 'https://verify.telesign.com/epp/send';
@@ -861,11 +861,13 @@ test('Telesign strict integer status and voice pacing keep endpoint outcomes sta
             status: 200,
             text: async () => JSON.stringify({ reference_id: 'reference-id', status: { code } }),
         }));
-        const result = await invoke(await envelope({ channel: 2 }));
+        const result = await invoke(await envelope({ channel: 2 }, {
+            ...baseDelivery, message: 'Tenant 654321 code 001234.', otp: '001234',
+        }));
         assert.equal(result.status, status);
         const sent = JSON.parse(fetchMock.mock.calls.at(-1).arguments[1].body);
         assert.equal(sent.message.text,
-            '  PRIVATE-MESSAGE 9, 1, 8, 2, 7, 3.\n   PRIVATE-MESSAGE 9, 1, 8, 2, 7, 3.\n');
+            'Tenant 654321 code 0, 0, 1, 2, 3, 4. Tenant 654321 code 0, 0, 1, 2, 3, 4.');
     }
 });
 

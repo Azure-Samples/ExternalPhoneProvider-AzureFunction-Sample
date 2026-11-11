@@ -41,7 +41,7 @@ public sealed class TelesignProvider : PhoneProviderBase
         if (delivery.PhoneNumber is null || !Regex.IsMatch(delivery.PhoneNumber, @"\A\+[1-9][0-9]{1,14}\z"))
             throw new InvalidOperationException("invalid recipient");
 
-        var messageText = channel == "voice" ? VoiceMessage.Build(delivery.Message!) : delivery.Message;
+        var messageText = channel == "voice" ? VoiceMessage.Build(delivery.Message!, delivery.Otp) : delivery.Message;
         var body = new Request(
             new Recipient(delivery.PhoneNumber),
             new Message(messageText, string.IsNullOrWhiteSpace(delivery.Locale) ? null : delivery.Locale),

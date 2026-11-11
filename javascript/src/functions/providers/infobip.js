@@ -27,7 +27,7 @@ const provider = Object.freeze({
                 headers,
                 body: JSON.stringify({
                     to: delivery.phoneNumber,
-                    text: buildVoiceMessage(delivery.message),
+                    text: buildVoiceMessage(delivery.message, delivery.otp),
                     language: (delivery.locale?.trim() || 'en').split('-')[0].toLowerCase(),
                     voice: { name: 'Joanna', gender: 'female' },
                     from: senderId,
