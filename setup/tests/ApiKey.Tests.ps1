@@ -54,6 +54,21 @@ try {
         }
         Assert-Throws { Get-EppEnvironmentDefinitions -Deployment @{ environmentVariables = @{} } -Id epp } 'reserved platform prefix'
         Assert-Throws { Get-EppEnvironmentDefinitions -Deployment @{ environmentVariables = @() } -Id sample } 'must be a dictionary'
+        $generic.environmentVariables.SAMPLE_OPTION['default'] = 'default-option'
+        $genericProvider.EnvironmentVariables = Get-EppEnvironmentDefinitions -Deployment $generic -Id sample
+        $settings = Get-EppProviderEnvironment -ProviderConfiguration $genericProvider -Values @{ SAMPLE_SENDER = '+15551234567' } -NonInteractive
+        Assert ($settings.SAMPLE_OPTION -ceq 'default-option') 'Use a declared optional default without prompting.'
+        foreach ($invalidDefault in @(123, $null, "bad`nvalue")) {
+            $generic.environmentVariables.SAMPLE_OPTION['default'] = $invalidDefault
+            Assert-Throws { Get-EppEnvironmentDefinitions -Deployment $generic -Id sample } 'Invalid provider environment'
+        }
+        $generic.environmentVariables.SAMPLE_OPTION.Remove('default')
+        $generic.environmentVariables.SAMPLE_FIXED['default'] = 'other'
+        Assert-Throws { Get-EppEnvironmentDefinitions -Deployment $generic -Id sample } 'Only input.*default'
+        $generic.environmentVariables.SAMPLE_FIXED.Remove('default')
+        $generic.environmentVariables.SAMPLE_SENDER['default'] = 'not-a-phone-number'
+        Assert-Throws { Get-EppEnvironmentDefinitions -Deployment $generic -Id sample } 'does not match'
+        $generic.environmentVariables.SAMPLE_SENDER.Remove('default')
         $generic.environmentVariables.SAMPLE_SENDER.validation = @{ type = 'pattern'; pattern = '[' }
         Assert-Throws { Get-EppEnvironmentDefinitions -Deployment $generic -Id sample } 'bounded, anchored'
 

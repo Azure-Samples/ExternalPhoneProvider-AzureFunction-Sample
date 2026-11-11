@@ -185,8 +185,9 @@ of at most 200 characters, evaluated with a one-second timeout.
 
 Collect required **non-secret** inputs during setup, before approval. Customers can supply
 `-ProviderEnvironment @{ NAME = 'value' }`; missing required inputs prompt interactively or
-fail in unattended mode. Unknown names, fixed-field overrides, invalid metadata, and invalid
-values fail explicitly. Values are strings up to 2048 characters without control characters
+fail in unattended mode. Input fields may declare a validated string `default`, used on Enter
+or in unattended mode when no value is supplied. Unknown names, fixed-field overrides, invalid
+metadata, and invalid values fail explicitly. Values are strings up to 2048 characters without control characters
 or angle brackets. The plan and saved summary display these values, so never declare secrets.
 
 Reruns reuse existing declared input values unless explicitly replaced, validate them again,

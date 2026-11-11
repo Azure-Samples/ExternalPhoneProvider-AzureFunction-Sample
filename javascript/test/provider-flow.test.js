@@ -243,6 +243,7 @@ test('Infobip uses configured URLs unchanged with OAuth on both setup routes', (
                 channel,
                 endpoint,
                 credential: { mode: 'oauth', accessToken: 'provider-token' },
+                env: { INFOBIP_VOICE_SENDER_ID: profile.deployment.environmentVariables.INFOBIP_VOICE_SENDER_ID.default },
             });
             assert.equal(request.url, endpoint);
             assert.equal(request.method, 'POST');
@@ -251,19 +252,58 @@ test('Infobip uses configured URLs unchanged with OAuth on both setup routes', (
                 'Content-Type': 'application/json',
                 Accept: 'application/json',
             });
-            const destinations = [{ to: delivery.phoneNumber, messageId: 'correlation-id' }];
-            assert.deepEqual(JSON.parse(request.body), {
-                messages: [channel === 'voice' ? {
-                    destinations,
-                    text: delivery.message,
-                    language: 'fr-FR',
-                    voice: { name: 'Joanna', gender: 'female' },
-                } : {
-                    destinations,
+            assert.deepEqual(JSON.parse(request.body), channel === 'voice' ? {
+                to: delivery.phoneNumber,
+                text: delivery.message,
+                language: 'fr',
+                voice: { name: 'Joanna', gender: 'female' },
+                from: 'Microsoft',
+            } : {
+                messages: [{
+                    destinations: [{ to: delivery.phoneNumber, messageId: 'correlation-id' }],
                     content: { text: delivery.message },
                 }],
             });
         }
+    }
+});
+
+test('Infobip voice uses its sender setting and converts locales to language codes', () => {
+    const infobip = selectProvider('infobip');
+    for (const [locale, language] of [
+        ['en-us', 'en'], ['FR-fr', 'fr'], ['zh-Hans-CN', 'zh'], ['pt', 'pt'],
+        ['  DE-de  ', 'de'], [null, 'en'], ['', 'en'], ['   ', 'en'],
+    ]) {
+        for (const [sender, expected] of [
+            ['Microsoft', 'Microsoft'], ['  41793026700  ', '41793026700'],
+        ]) {
+            const request = infobip.createRequest({
+                ...input,
+                channel: 'voice',
+                delivery: new OtpDelivery({ ...delivery, locale }),
+                env: { INFOBIP_VOICE_SENDER_ID: sender },
+            });
+            assert.deepEqual(JSON.parse(request.body), {
+                to: delivery.phoneNumber,
+                text: delivery.message,
+                language,
+                voice: { name: 'Joanna', gender: 'female' },
+                from: expected,
+            });
+        }
+    }
+});
+
+test('Infobip requires a sender for voice but not SMS', () => {
+    const infobip = selectProvider('infobip');
+    for (const sender of [undefined, '', '   ']) {
+        const requestInput = {
+            ...input,
+            env: sender === undefined ? {} : { INFOBIP_VOICE_SENDER_ID: sender },
+        };
+        assert.throws(() => infobip.createRequest({ ...requestInput, channel: 'voice' }),
+            /INFOBIP_VOICE_SENDER_ID is required/);
+        assert.doesNotThrow(() => infobip.createRequest(requestInput));
     }
 });
 

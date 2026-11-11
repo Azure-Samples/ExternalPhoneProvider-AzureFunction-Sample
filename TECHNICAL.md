@@ -213,13 +213,13 @@ federation. Provider authorization is completed separately from Azure deployment
 The [Infobip profile](setup/providers/infobip.json) uses `api.infobip.com` for Global routing and
 `api-eu.infobip.com` for EU routing.
 
-SMS maps the message to `content.text`; voice sends `text`, the request locale (default `en`),
-and the configured adapter voice `Joanna`. Infobip manages sender and caller-ID selection.
-Confirm destination and sender requirements with the provider.
+SMS maps the message to `content.text`. Voice uses `/tts/3/single`, converts locales such as
+`en-US` to `en`, and reads `from` from `INFOBIP_VOICE_SENDER_ID`. Setup defaults this setting
+to `Microsoft`.
 
 The adapter recognizes `ACCEPTED`, `PENDING`, and `DELIVERED` as accepted outcomes on successful
 HTTP responses. See the [SMS API](https://www.infobip.com/docs/api/channels/sms/outbound-sms/send-message/send-sms-messages)
-and [voice API](https://www.infobip.com/docs/api/channels/voice/voice-message/voice-message-sending-operations/send-advanced-voice-tts).
+and [voice API](https://www.infobip.com/docs/api/channels/voice/voice-message/voice-message-sending-operations/send-single-voice-tts).
 
 ### Soprano
 

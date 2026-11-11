@@ -97,7 +97,8 @@ def test_infobip_uses_configured_urls_unchanged_with_oauth_on_both_setup_routes(
     endpoint = profile["deployment"]["routes"][region][f"{channel}Endpoint"]
     request = provider.build_request(
         channel, endpoint, _delivery(channel),
-        {"mode": "oauth", "access_token": "provider-token"}, {})
+        {"mode": "oauth", "access_token": "provider-token"},
+        {"INFOBIP_VOICE_SENDER_ID": profile["deployment"]["environmentVariables"]["INFOBIP_VOICE_SENDER_ID"]["default"]})
     assert request.url == endpoint
     assert request.method == "POST"
     assert request.headers == {
@@ -107,15 +108,49 @@ def test_infobip_uses_configured_urls_unchanged_with_oauth_on_both_setup_routes(
     }
     destinations = [{"to": "+15551234567", "messageId": "correlation-id"}]
     expected = {
-        "destinations": destinations,
+        "to": "+15551234567",
         "text": MESSAGE,
-        "language": "en-US",
+        "language": "en",
         "voice": {"name": "Joanna", "gender": "female"},
+        "from": "Microsoft",
     } if channel == "voice" else {
         "destinations": destinations,
         "content": {"text": MESSAGE},
     }
-    assert json.loads(request.body) == {"messages": [expected]}
+    assert json.loads(request.body) == (expected if channel == "voice" else {"messages": [expected]})
+
+
+@pytest.mark.parametrize("locale,language", [
+    ("en-us", "en"), ("FR-fr", "fr"), ("zh-Hans-CN", "zh"), ("pt", "pt"),
+    ("  DE-de  ", "de"), (None, "en"), ("", "en"), ("   ", "en"),
+])
+@pytest.mark.parametrize("env,sender", [
+    ({"INFOBIP_VOICE_SENDER_ID": "Microsoft"}, "Microsoft"),
+    ({"INFOBIP_VOICE_SENDER_ID": "  41793026700  "}, "41793026700"),
+])
+def test_infobip_voice_sender_and_locale_language(locale, language, env, sender):
+    request = InfobipProvider().build_request(
+        "voice", "https://api.infobip.com/tts/3/single",
+        replace(_delivery("voice"), locale=locale), {"access_token": "token"}, env)
+    assert json.loads(request.body) == {
+        "to": "+15551234567",
+        "text": MESSAGE,
+        "language": language,
+        "voice": {"name": "Joanna", "gender": "female"},
+        "from": sender,
+    }
+
+
+@pytest.mark.parametrize("env", [{}, {"INFOBIP_VOICE_SENDER_ID": ""}, {"INFOBIP_VOICE_SENDER_ID": "   "}])
+def test_infobip_requires_sender_for_voice_but_not_sms(env):
+    provider = InfobipProvider()
+    credential = {"access_token": "token"}
+    with pytest.raises(ValueError, match="INFOBIP_VOICE_SENDER_ID is required"):
+        provider.build_request(
+            "voice", "https://api.infobip.com/tts/3/single", _delivery("voice"), credential, env)
+    request = provider.build_request(
+        "sms", "https://api.infobip.com/sms/3/messages", _delivery(), credential, env)
+    assert json.loads(request.body)["messages"][0]["content"]["text"] == MESSAGE
 
 
 def test_infobip_contract_is_strict_and_provider_owned():

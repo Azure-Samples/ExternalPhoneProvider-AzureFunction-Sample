@@ -39,6 +39,7 @@ def _isolate(monkeypatch):
     monkeypatch.delenv("EPP_PROVIDER_ENDPOINT", raising=False)
     monkeypatch.setenv("EPP_PROVIDER_SMS_ENDPOINT", "https://qa4.example/oauth/messages")
     monkeypatch.setenv("EPP_PROVIDER_VOICE_ENDPOINT", "https://qa4.example/oauth/messages")
+    monkeypatch.setenv("INFOBIP_VOICE_SENDER_ID", "41793026700")
     monkeypatch.setenv("EPP_PROVIDER_AUTH_MODE", "oauth")
     monkeypatch.delenv("EPP_PROVIDER_CHANNEL", raising=False)
     monkeypatch.delenv("EPP_KEY_VAULT_CACHE_ENABLED", raising=False)

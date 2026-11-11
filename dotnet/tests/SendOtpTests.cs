@@ -1186,6 +1186,7 @@ public class SendOtpTests
                 ["EPP_PROVIDER_NAME"] = "infobip",
                 ["EPP_PROVIDER_SMS_ENDPOINT"] = "https://provider.example",
                 ["EPP_PROVIDER_VOICE_ENDPOINT"] = "https://provider.example",
+                ["INFOBIP_VOICE_SENDER_ID"] = "41793026700",
                 ["EPP_PROVIDER_TIMEOUT_MS"] = "2500",
                 ["EPP_PROVIDER_TENANT_ID"] = "provider-tenant",
                 ["EPP_PROVIDER_SCOPE"] = "api://provider/.default",

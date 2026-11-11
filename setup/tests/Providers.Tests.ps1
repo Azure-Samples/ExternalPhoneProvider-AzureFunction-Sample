@@ -193,6 +193,26 @@ try {
         } 'Could not resolve.*not found'
         function script:Invoke-RestMethod { throw 'Unexpected REST call (no network allowed).' }
 
+        foreach ($region in @('global', 'eu')) {
+            $infobip = Get-EppProvider -AssetDirectory $SetupDirectory -Provider infobip -EndpointRegion $region -NonInteractive
+            $hostName = if ($region -ceq 'eu') { 'api-eu.infobip.com' } else { 'api.infobip.com' }
+            Assert ($infobip.Settings.EPP_PROVIDER_VOICE_ENDPOINT -ceq "https://$hostName/tts/3/single") 'Use the single voice endpoint on both routes.'
+            $environment = Get-EppProviderEnvironment -ProviderConfiguration $infobip -NonInteractive
+            Assert ($environment.INFOBIP_VOICE_SENDER_ID -ceq 'Microsoft') 'Default the Infobip voice sender in unattended setup.'
+            $environment = Get-EppProviderEnvironment -ProviderConfiguration $infobip -Existing @{ INFOBIP_VOICE_SENDER_ID = '41793026700' } -NonInteractive
+            Assert ($environment.INFOBIP_VOICE_SENDER_ID -ceq '41793026700') 'Preserve an existing voice sender on rerun.'
+            $environment = Get-EppProviderEnvironment -ProviderConfiguration $infobip -Existing @{ INFOBIP_VOICE_SENDER_ID = '41793026700' } -Values @{ INFOBIP_VOICE_SENDER_ID = '442032864231' } -NonInteractive
+            Assert ($environment.INFOBIP_VOICE_SENDER_ID -ceq '442032864231') 'Explicit voice sender overrides the retained setting.'
+        }
+        foreach ($answer in @('', '41793026700')) {
+            $script:Answers.Enqueue($answer)
+            $environment = Get-EppProviderEnvironment -ProviderConfiguration $infobip
+            $expected = if ($answer) { $answer } else { 'Microsoft' }
+            Assert ($environment.INFOBIP_VOICE_SENDER_ID -ceq $expected) 'Allow accepting or replacing the displayed sender default.'
+            Assert ($script:Prompts[-1] -ceq 'Infobip voice sender ID [Microsoft]') 'Display the default voice sender in its prompt.'
+        }
+        $script:Prompts.Clear()
+
         $profile = Read-EppJson (Join-Path $SetupDirectory 'providers' 'telesign.json')
         Assert ($profile.deployment.authentication.mode -ceq 'oauth') 'Telesign deployments must select OAuth.'
         foreach ($region in @('global', 'eu')) {

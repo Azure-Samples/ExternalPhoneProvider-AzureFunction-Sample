@@ -185,23 +185,70 @@ public class ContractTests
         };
         Assert.Equal(JsonSerializer.Serialize(expectedSms), sms.Body);
 
+        env["INFOBIP_VOICE_SENDER_ID"] = "Microsoft";
         var voice = await new InfobipProvider().CaptureRequestAsync(
             "voice", endpoint, Delivery("voice"), credential, env);
         AssertJsonRequest(voice, endpoint, "Bearer test-token");
         var expectedVoice = new
         {
-            messages = new[]
-            {
-                new
-                {
-                    destinations = new[] { new { to = Delivery().PhoneNumber, messageId = "correlation-id" } },
-                    text = Delivery().Message,
-                    language = "en-US",
-                    voice = new { name = "Joanna", gender = "female" },
-                },
-            },
+            to = Delivery().PhoneNumber,
+            text = Delivery().Message,
+            language = "en",
+            voice = new { name = "Joanna", gender = "female" },
+            from = "Microsoft",
         };
         Assert.Equal(JsonSerializer.Serialize(expectedVoice), voice.Body);
+    }
+
+    [Theory]
+    [InlineData("en-us", "en")]
+    [InlineData("FR-fr", "fr")]
+    [InlineData("zh-Hans-CN", "zh")]
+    [InlineData("pt", "pt")]
+    [InlineData("  DE-de  ", "de")]
+    [InlineData(null, "en")]
+    [InlineData("", "en")]
+    [InlineData("   ", "en")]
+    public async Task InfobipVoiceUsesSenderSettingAndLocaleLanguage(string? locale, string language)
+    {
+        foreach (var (sender, expected) in new (string, string)[]
+        {
+            ("Microsoft", "Microsoft"), ("  41793026700  ", "41793026700"),
+        })
+        {
+            var env = new TestEnv { ["INFOBIP_VOICE_SENDER_ID"] = sender };
+            var request = await new InfobipProvider().CaptureRequestAsync(
+                "voice", "https://api.infobip.com/tts/3/single",
+                Delivery("voice") with { Locale = locale },
+                new ProviderCredentials("oauth", AccessToken: "token"), env);
+            Assert.Equal(JsonSerializer.Serialize(new
+            {
+                to = Delivery().PhoneNumber,
+                text = Delivery().Message,
+                language,
+                voice = new { name = "Joanna", gender = "female" },
+                from = expected,
+            }), request.Body);
+        }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task InfobipRequiresSenderForVoiceButNotSms(string? sender)
+    {
+        var env = new TestEnv();
+        if (sender is not null) env["INFOBIP_VOICE_SENDER_ID"] = sender;
+        var provider = new InfobipProvider();
+        var credentials = new ProviderCredentials("oauth", AccessToken: "token");
+        var error = await Assert.ThrowsAsync<PhoneProviderBase.ProviderSendException>(() =>
+            provider.CaptureRequestAsync(
+                "voice", "https://api.infobip.com/tts/3/single", Delivery("voice"), credentials, env));
+        Assert.Equal(502, error.StatusCode);
+        var sms = await provider.CaptureRequestAsync(
+            "sms", "https://api.infobip.com/sms/3/messages", Delivery(), credentials, env);
+        AssertJsonRequest(sms, "https://api.infobip.com/sms/3/messages", "Bearer token");
     }
 
     [Theory]

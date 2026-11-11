@@ -6,10 +6,19 @@
     "authentication": {
       "mode": "oauth"
     },
+    "environmentVariables": {
+      "INFOBIP_VOICE_SENDER_ID": {
+        "displayName": "Infobip voice sender ID",
+        "description": "Provider-approved caller ID for voice traffic.",
+        "source": "input",
+        "required": true,
+        "default": "Microsoft"
+      }
+    },
     "routes": {
       "global": {
         "smsEndpoint": "https://api.infobip.com/sms/3/messages",
-        "voiceEndpoint": "https://api.infobip.com/tts/3/advanced",
+        "voiceEndpoint": "https://api.infobip.com/tts/3/single",
         "appId": "d1131a30-5ed5-49b7-8602-d978c8eb1677",
         "scope": "d1131a30-5ed5-49b7-8602-d978c8eb1677/.default",
         "timeoutMilliseconds": 1500,
@@ -17,7 +26,7 @@
       },
       "eu": {
         "smsEndpoint": "https://api-eu.infobip.com/sms/3/messages",
-        "voiceEndpoint": "https://api-eu.infobip.com/tts/3/advanced",
+        "voiceEndpoint": "https://api-eu.infobip.com/tts/3/single",
         "appId": "d1131a30-5ed5-49b7-8602-d978c8eb1677",
         "scope": "d1131a30-5ed5-49b7-8602-d978c8eb1677/.default",
         "timeoutMilliseconds": 1500,

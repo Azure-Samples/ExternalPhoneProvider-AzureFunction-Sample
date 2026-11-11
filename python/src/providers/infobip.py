@@ -18,12 +18,16 @@ class InfobipProvider(PhoneProviderBase):
         message_id = delivery.correlation_id or delivery.message_id
 
         if channel == "voice":
-            body = {"messages": [{
-                "destinations": [{"to": delivery.phone_number, "messageId": message_id}],
+            sender_id = env.get("INFOBIP_VOICE_SENDER_ID", "").strip()
+            if not sender_id:
+                raise ValueError("INFOBIP_VOICE_SENDER_ID is required for voice")
+            body = {
+                "to": delivery.phone_number,
                 "text": delivery.message,
-                "language": delivery.locale or "en",
+                "language": ((delivery.locale or "").strip() or "en").split("-")[0].lower(),
                 "voice": {"name": "Joanna", "gender": "female"},
-            }]}
+                "from": sender_id,
+            }
             return OutboundRequest("POST", endpoint, headers, json.dumps(body))
 
         body = {"messages": [{
