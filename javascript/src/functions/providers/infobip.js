@@ -1,6 +1,7 @@
 'use strict';
 
 const { OUTCOME, ProviderResult, classifyFailure } = require('../providerResult');
+const { buildVoiceMessage } = require('../voiceMessage');
 
 const SUCCESS = new Set(['ACCEPTED', 'PENDING', 'DELIVERED']);
 const REJECTED = new Set(['REJECTED', 'EXPIRED', 'UNDELIVERABLE']);
@@ -26,7 +27,7 @@ const provider = Object.freeze({
                 headers,
                 body: JSON.stringify({
                     to: delivery.phoneNumber,
-                    text: delivery.message,
+                    text: buildVoiceMessage(delivery.message),
                     language: (delivery.locale?.trim() || 'en').split('-')[0].toLowerCase(),
                     voice: { name: 'Joanna', gender: 'female' },
                     from: senderId,

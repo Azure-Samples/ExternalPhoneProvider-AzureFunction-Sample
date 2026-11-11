@@ -2,6 +2,7 @@ import json
 
 from ..models import Outcome, ProviderResult
 from ..provider import OutboundRequest, PhoneProviderBase, classify_failure
+from ..voice_message import build_voice_message
 
 
 class InfobipProvider(PhoneProviderBase):
@@ -23,7 +24,7 @@ class InfobipProvider(PhoneProviderBase):
                 raise ValueError("INFOBIP_VOICE_SENDER_ID is required for voice")
             body = {
                 "to": delivery.phone_number,
-                "text": delivery.message,
+                "text": build_voice_message(delivery.message),
                 "language": ((delivery.locale or "").strip() or "en").split("-")[0].lower(),
                 "voice": {"name": "Joanna", "gender": "female"},
                 "from": sender_id,

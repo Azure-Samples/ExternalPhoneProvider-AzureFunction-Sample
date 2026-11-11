@@ -8,6 +8,10 @@ namespace Epp.Otp.Tests;
 
 public class ContractTests
 {
+    private const string VoiceMessageText =
+        "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.   "
+        + "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.  ";
+
     private static OtpDelivery Delivery(string channel = "sms") =>
         new("+15551234567", "  Your code is 918273.\nDo not share.  ", channel, "message-id", "correlation-id", "en-US");
 
@@ -192,7 +196,7 @@ public class ContractTests
         var expectedVoice = new
         {
             to = Delivery().PhoneNumber,
-            text = Delivery().Message,
+            text = VoiceMessageText,
             language = "en",
             voice = new { name = "Joanna", gender = "female" },
             from = "Microsoft",
@@ -224,7 +228,7 @@ public class ContractTests
             Assert.Equal(JsonSerializer.Serialize(new
             {
                 to = Delivery().PhoneNumber,
-                text = Delivery().Message,
+                text = VoiceMessageText,
                 language,
                 voice = new { name = "Joanna", gender = "female" },
                 from = expected,
@@ -271,8 +275,7 @@ public class ContractTests
             $"https://verify.telesign.com/epp/{channel}",
             "Bearer provider-token");
         var expectedText = channel == "voice"
-            ? "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.   "
-              + "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.  "
+            ? VoiceMessageText
             : delivery.Message;
         var message = new Dictionary<string, string?> { ["text"] = expectedText };
         if (locale == "en") message["language"] = locale;
@@ -331,21 +334,34 @@ public class ContractTests
         Assert.Equal(endpointStatus, PhoneProviderBase.ToEndpointHttpStatus(result));
     }
 
-    [Fact]
-    public async Task TelesignVoicePacesOnlySixDigitNumericRunsAndRepeatsMessage()
+    [Theory]
+    [InlineData("infobip")]
+    [InlineData("telesign")]
+    public async Task VoicePacesSixDigitPasscodesAndRepeatsWithoutChangingSms(string providerName)
     {
-        var delivery = Delivery("voice") with { Message = "Code 001234; ref 1234567; alternate 654321." };
-        var request = await new TelesignProvider().CaptureRequestAsync(
-            "voice",
-            "https://verify.telesign.com/epp/voice",
-            delivery,
-            new ProviderCredentials("oauth", AccessToken: "provider-token"),
-            new TestEnv());
-        using var body = JsonDocument.Parse(request.Body);
-        Assert.Equal(
-            "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1. "
-            + "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1.",
-            body.RootElement.GetProperty("message").GetProperty("text").GetString());
+        PhoneProviderBase provider = providerName == "infobip" ? new InfobipProvider() : new TelesignProvider();
+        foreach (var (message, expectedVoice) in new[]
+        {
+            ("001234", "0, 0, 1, 2, 3, 4 0, 0, 1, 2, 3, 4"),
+            ("Code 001234; ref 1234567; alternate 654321.",
+                "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1. "
+                + "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1."),
+            ("Use 1234; ref 1234567.", "Use 1234; ref 1234567. Use 1234; ref 1234567."),
+        })
+        foreach (var channel in new[] { "sms", "voice" })
+        {
+            var request = await provider.CaptureRequestAsync(
+                channel, "https://provider.example",
+                Delivery(channel) with { Message = message, Otp = "999999" },
+                new ProviderCredentials("oauth", AccessToken: "provider-token"),
+                new TestEnv { ["INFOBIP_VOICE_SENDER_ID"] = "Microsoft" });
+            using var body = JsonDocument.Parse(request.Body);
+            var text = providerName == "telesign"
+                ? body.RootElement.GetProperty("message").GetProperty("text")
+                : channel == "voice" ? body.RootElement.GetProperty("text")
+                : body.RootElement.GetProperty("messages")[0].GetProperty("content").GetProperty("text");
+            Assert.Equal(channel == "voice" ? expectedVoice : message, text.GetString());
+        }
     }
 
     [Fact]

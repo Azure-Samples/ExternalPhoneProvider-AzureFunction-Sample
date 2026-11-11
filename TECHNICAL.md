@@ -215,7 +215,8 @@ The [Infobip profile](setup/providers/infobip.json) uses `api.infobip.com` for G
 
 SMS maps the message to `content.text`. Voice uses `/tts/3/single`, converts locales such as
 `en-US` to `en`, and reads `from` from `INFOBIP_VOICE_SENDER_ID`. Setup defaults this setting
-to `Microsoft`.
+to `Microsoft`. Like Telesign, voice separates standalone six-digit passcodes with commas
+and repeats the message twice.
 
 The adapter recognizes `ACCEPTED`, `PENDING`, and `DELIVERED` as accepted outcomes on successful
 HTTP responses. See the [SMS API](https://www.infobip.com/docs/api/channels/sms/outbound-sms/send-message/send-sms-messages)

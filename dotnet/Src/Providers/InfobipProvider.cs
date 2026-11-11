@@ -46,7 +46,7 @@ public sealed class InfobipProvider : PhoneProviderBase
                 throw new InvalidOperationException("INFOBIP_VOICE_SENDER_ID is required for voice");
             body = new VoiceRequest(
                 delivery.PhoneNumber,
-                delivery.Message,
+                VoiceMessage.Build(delivery.Message!),
                 locale.Split('-')[0].ToLowerInvariant(),
                 new Voice("Joanna", "female"),
                 senderId);

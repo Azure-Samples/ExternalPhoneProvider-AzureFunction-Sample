@@ -11,6 +11,10 @@ from src.providers.soprano import SopranoProvider
 from src.providers.telesign import TelesignProvider
 
 MESSAGE = "  Use 918273; then 1234.\nDo not rewrite + or café.  "
+VOICE_MESSAGE = (
+    "  Use 9, 1, 8, 2, 7, 3; then 1234.\nDo not rewrite + or café.   "
+    "  Use 9, 1, 8, 2, 7, 3; then 1234.\nDo not rewrite + or café.  "
+)
 
 
 def _delivery(channel="sms"):
@@ -109,7 +113,7 @@ def test_infobip_uses_configured_urls_unchanged_with_oauth_on_both_setup_routes(
     destinations = [{"to": "+15551234567", "messageId": "correlation-id"}]
     expected = {
         "to": "+15551234567",
-        "text": MESSAGE,
+        "text": VOICE_MESSAGE,
         "language": "en",
         "voice": {"name": "Joanna", "gender": "female"},
         "from": "Microsoft",
@@ -134,7 +138,7 @@ def test_infobip_voice_sender_and_locale_language(locale, language, env, sender)
         replace(_delivery("voice"), locale=locale), {"access_token": "token"}, env)
     assert json.loads(request.body) == {
         "to": "+15551234567",
-        "text": MESSAGE,
+        "text": VOICE_MESSAGE,
         "language": language,
         "voice": {"name": "Joanna", "gender": "female"},
         "from": sender,
@@ -178,9 +182,36 @@ def test_telesign_request_contract(channel):
     assert body["channels"] == [{"channel": channel}]
     assert body["correlation_id"] == "correlation-id"
     if channel == "voice":
-        assert "9, 1, 8, 2, 7, 3" in body["message"]["text"]
+        assert body["message"]["text"] == VOICE_MESSAGE
     else:
         assert body["message"]["text"] == MESSAGE
+
+
+@pytest.mark.parametrize("provider_type", [InfobipProvider, TelesignProvider])
+@pytest.mark.parametrize("message,expected_voice", [
+    ("001234", "0, 0, 1, 2, 3, 4 0, 0, 1, 2, 3, 4"),
+    ("Code 001234; ref 1234567; alternate 654321.",
+     "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1. "
+     "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1."),
+    ("Use 1234; ref 1234567.", "Use 1234; ref 1234567. Use 1234; ref 1234567."),
+])
+def test_voice_paces_six_digit_passcodes_and_repeats_without_changing_sms(
+    provider_type, message, expected_voice,
+):
+    provider = provider_type()
+    for channel in ("sms", "voice"):
+        request = provider.build_request(
+            channel, "https://provider.example",
+            replace(_delivery(channel), message=message, otp="999999"),
+            {"access_token": "token"}, {"INFOBIP_VOICE_SENDER_ID": "Microsoft"})
+        body = json.loads(request.body)
+        if provider_type is TelesignProvider:
+            text = body["message"]["text"]
+        elif channel == "voice":
+            text = body["text"]
+        else:
+            text = body["messages"][0]["content"]["text"]
+        assert text == (expected_voice if channel == "voice" else message)
 
 
 @pytest.mark.parametrize("channel", ["sms", "voice"])
