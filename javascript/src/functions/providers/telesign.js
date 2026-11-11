@@ -1,14 +1,9 @@
 'use strict';
 
 const { OUTCOME, ProviderResult, classifyFailure } = require('../providerResult');
+const { buildVoiceMessage } = require('../voiceMessage');
 
-const VOICE_PASSCODE_PATTERN = /(?<![0-9])[0-9]{6}(?![0-9])/g;
 const SUCCESS = new Set(['200', '203', '290', '291', '292', '100', '101', '102', '103', '3001']);
-
-function buildVoiceMessage(message) {
-    const paced = message.replace(VOICE_PASSCODE_PATTERN, (passcode) => [...passcode].join(', '));
-    return `${paced} ${paced}`;
-}
 
 const provider = Object.freeze({
     name: 'telesign',
@@ -22,7 +17,7 @@ const provider = Object.freeze({
             throw new Error('invalid recipient');
         }
         const message = {
-            text: channel === 'voice' ? buildVoiceMessage(delivery.message) : delivery.message,
+            text: channel === 'voice' ? buildVoiceMessage(delivery.message, delivery.otp) : delivery.message,
         };
         if (typeof delivery.locale === 'string' && delivery.locale.trim()) {
             message.language = delivery.locale;

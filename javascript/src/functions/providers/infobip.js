@@ -1,6 +1,7 @@
 'use strict';
 
 const { OUTCOME, ProviderResult, classifyFailure } = require('../providerResult');
+const { buildVoiceMessage } = require('../voiceMessage');
 
 const SUCCESS = new Set(['ACCEPTED', 'PENDING', 'DELIVERED']);
 const REJECTED = new Set(['REJECTED', 'EXPIRED', 'UNDELIVERABLE']);
@@ -10,7 +11,7 @@ const provider = Object.freeze({
     authenticationMode: 'oauth',
     credentialSpec: Object.freeze({ mode: 'oauth' }),
 
-    createRequest({ channel, endpoint, delivery, credential }) {
+    createRequest({ channel, endpoint, delivery, credential, env }) {
         const messageId = delivery.correlationId || delivery.messageId;
         const headers = {
             Authorization: ['Bearer', credential.accessToken].join(' '),
@@ -18,17 +19,18 @@ const provider = Object.freeze({
             Accept: 'application/json',
         };
         if (channel === 'voice') {
+            const senderId = env.INFOBIP_VOICE_SENDER_ID?.trim();
+            if (!senderId) throw new Error('INFOBIP_VOICE_SENDER_ID is required for voice');
             return {
                 url: endpoint,
                 method: 'POST',
                 headers,
                 body: JSON.stringify({
-                    messages: [{
-                        destinations: [{ to: delivery.phoneNumber, messageId }],
-                        text: delivery.message,
-                        language: delivery.locale || 'en',
-                        voice: { name: 'Joanna', gender: 'female' },
-                    }],
+                    to: delivery.phoneNumber,
+                    text: buildVoiceMessage(delivery.message, delivery.otp),
+                    language: (delivery.locale?.trim() || 'en').split('-')[0].toLowerCase(),
+                    voice: { name: 'Joanna', gender: 'female' },
+                    from: senderId,
                 }),
             };
         }

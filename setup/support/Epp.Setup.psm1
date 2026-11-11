@@ -431,7 +431,7 @@ function Get-EppEnvironmentDefinitions {
             throw "Invalid environmentVariables entry '$name'; use provider-prefixed names, source input/fixed, and a boolean required field."
         }
         foreach ($key in $field.Keys) {
-            if ($key -cnotin @('displayName', 'description', 'source', 'required', 'validation', 'value')) {
+            if ($key -cnotin @('displayName', 'description', 'source', 'required', 'validation', 'value', 'default')) {
                 throw "Unsupported environmentVariables metadata '$key' for '$name'."
             }
         }
@@ -458,6 +458,10 @@ function Get-EppEnvironmentDefinitions {
         }
         if ($field['source'] -ceq 'fixed') {
             Assert-EppEnvironmentValue -Name $name -Value $field['value'] -Definition $field
+        }
+        if ($field.Contains('default')) {
+            if ($field['source'] -cne 'input') { throw "Only input environmentVariables entries may declare a default ('$name')." }
+            Assert-EppEnvironmentValue -Name $name -Value $field['default'] -Definition $field
         }
     }
     return $definitions
@@ -498,10 +502,14 @@ function Get-EppProviderEnvironment {
         $value = if ($field['source'] -ceq 'fixed') { $field['value'] }
             elseif ($supplied) { $Values[$name] }
             elseif ($Existing.Contains($name)) { $Existing[$name] }
+            elseif ($field.Contains('default') -and ($NonInteractive -or -not $field['required'])) { $field['default'] }
             else { $null }
         if ($null -eq $value -and $field['required'] -and $NonInteractive) { throw "Provider environment setting '$name' is required in noninteractive mode." }
         while ($null -eq $value -and $field['required']) {
-            $value = [string](Read-Host $field['displayName'])
+            $prompt = $field['displayName']
+            if ($field.Contains('default')) { $prompt += " [$($field['default'])]" }
+            $value = [string](Read-Host $prompt)
+            if (-not $value -and $field.Contains('default')) { $value = $field['default'] }
             try { Assert-EppEnvironmentValue -Name $name -Value $value -Definition $field }
             catch { Write-Warning $_.Exception.Message; $value = $null }
         }

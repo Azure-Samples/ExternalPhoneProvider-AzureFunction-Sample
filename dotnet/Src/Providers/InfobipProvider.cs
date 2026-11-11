@@ -26,28 +26,30 @@ public sealed class InfobipProvider : PhoneProviderBase
         string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credentials,
         IEnv env, HttpClient client, int timeoutMs, ILogger? logger = null) =>
         SendJsonAsync<Response>(
-            () => CreateRequest(channel, endpoint, delivery, credentials),
+            () => CreateRequest(channel, endpoint, delivery, credentials, env),
             MapResponse,
             client,
             timeoutMs,
             logger);
 
     private static HttpRequestMessage CreateRequest(
-        string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credential)
+        string channel, string endpoint, OtpDelivery delivery, ProviderCredentials credential, IEnv env)
     {
         var messageId = delivery.CorrelationId ?? delivery.MessageId;
         object body;
 
         if (channel == "voice")
         {
+            var locale = string.IsNullOrWhiteSpace(delivery.Locale) ? "en" : delivery.Locale.Trim();
+            var senderId = env.Get("INFOBIP_VOICE_SENDER_ID")?.Trim();
+            if (string.IsNullOrEmpty(senderId))
+                throw new InvalidOperationException("INFOBIP_VOICE_SENDER_ID is required for voice");
             body = new VoiceRequest(
-                [
-                    new VoiceMessage(
-                        [new Destination(delivery.PhoneNumber, messageId)],
-                        delivery.Message,
-                        delivery.Locale ?? "en",
-                        new Voice("Joanna", "female"))
-                ]);
+                delivery.PhoneNumber,
+                VoiceMessage.Build(delivery.Message!, delivery.Otp),
+                locale.Split('-')[0].ToLowerInvariant(),
+                new Voice("Joanna", "female"),
+                senderId);
         }
         else
         {
@@ -109,13 +111,11 @@ public sealed class InfobipProvider : PhoneProviderBase
         [property: JsonPropertyName("text")] string? Text);
 
     private sealed record VoiceRequest(
-        [property: JsonPropertyName("messages")] IReadOnlyList<VoiceMessage> Messages);
-
-    private sealed record VoiceMessage(
-        [property: JsonPropertyName("destinations")] IReadOnlyList<Destination> Destinations,
+        [property: JsonPropertyName("to")] string To,
         [property: JsonPropertyName("text")] string? Text,
         [property: JsonPropertyName("language")] string Language,
-        [property: JsonPropertyName("voice")] Voice Voice);
+        [property: JsonPropertyName("voice")] Voice Voice,
+        [property: JsonPropertyName("from")] string From);
 
     private sealed record Destination(
         [property: JsonPropertyName("to")] string To,

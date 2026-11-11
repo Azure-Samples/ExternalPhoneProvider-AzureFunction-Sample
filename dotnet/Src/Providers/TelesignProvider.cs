@@ -10,12 +10,6 @@ namespace Epp.Otp.Providers;
 
 public sealed class TelesignProvider : PhoneProviderBase
 {
-    private const string VoiceDigitSeparator = ", ";
-    private const int VoiceRepeatCount = 2;
-    private const string VoiceRepeatSeparator = " ";
-    private static readonly Regex VoicePasscodePattern = new(
-        @"(?<![0-9])[0-9]{6}(?![0-9])",
-        RegexOptions.CultureInvariant);
     private readonly OAuthCredentialSource _credentials;
 
     public TelesignProvider() => _credentials = new();
@@ -47,7 +41,7 @@ public sealed class TelesignProvider : PhoneProviderBase
         if (delivery.PhoneNumber is null || !Regex.IsMatch(delivery.PhoneNumber, @"\A\+[1-9][0-9]{1,14}\z"))
             throw new InvalidOperationException("invalid recipient");
 
-        var messageText = channel == "voice" ? BuildVoiceMessage(delivery.Message!) : delivery.Message;
+        var messageText = channel == "voice" ? VoiceMessage.Build(delivery.Message!, delivery.Otp) : delivery.Message;
         var body = new Request(
             new Recipient(delivery.PhoneNumber),
             new Message(messageText, string.IsNullOrWhiteSpace(delivery.Locale) ? null : delivery.Locale),
@@ -63,14 +57,6 @@ public sealed class TelesignProvider : PhoneProviderBase
         request.Headers.Authorization = new("Bearer", credential.AccessToken);
         request.Headers.Accept.ParseAdd("application/json");
         return request;
-    }
-
-    private static string BuildVoiceMessage(string message)
-    {
-        var pacedMessage = VoicePasscodePattern.Replace(
-            message,
-            match => string.Join(VoiceDigitSeparator, match.Value.ToCharArray()));
-        return string.Join(VoiceRepeatSeparator, Enumerable.Repeat(pacedMessage, VoiceRepeatCount));
     }
 
     private static ProviderResult MapResponse(Response? payload, HttpStatusCode httpStatus)

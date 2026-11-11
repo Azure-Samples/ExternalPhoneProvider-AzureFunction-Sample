@@ -213,13 +213,13 @@ federation. Provider authorization is completed separately from Azure deployment
 The [Infobip profile](setup/providers/infobip.json) uses `api.infobip.com` for Global routing and
 `api-eu.infobip.com` for EU routing.
 
-SMS maps the message to `content.text`; voice sends `text`, the request locale (default `en`),
-and the configured adapter voice `Joanna`. Infobip manages sender and caller-ID selection.
-Confirm destination and sender requirements with the provider.
+SMS maps the message to `content.text`. Voice uses `/tts/3/single`, converts locales such as
+`en-US` to `en`, and reads `from` from `INFOBIP_VOICE_SENDER_ID`. Setup defaults this setting
+to `Microsoft`. Like Telesign, voice paces the supplied `otp` and repeats the message twice.
 
 The adapter recognizes `ACCEPTED`, `PENDING`, and `DELIVERED` as accepted outcomes on successful
 HTTP responses. See the [SMS API](https://www.infobip.com/docs/api/channels/sms/outbound-sms/send-message/send-sms-messages)
-and [voice API](https://www.infobip.com/docs/api/channels/voice/voice-message/voice-message-sending-operations/send-advanced-voice-tts).
+and [voice API](https://www.infobip.com/docs/api/channels/voice/voice-message/voice-message-sending-operations/send-single-voice-tts).
 
 ### Soprano
 
@@ -240,8 +240,8 @@ API application ID, scope, and channel URLs.
 
 The adapter sends `recipient.phone_number`, `message.text`, optional `message.language`,
 `channels`, and `correlation_id`. Phone numbers must match `^\+[1-9][0-9]{1,14}$`.
-SMS preserves the message. Voice separates standalone six-digit passcodes with commas and
-repeats the message twice.
+SMS preserves the message. Voice comma-separates exact occurrences of the supplied `otp`
+and repeats the message twice. Missing or empty `otp` leaves the text unformatted; no code is inferred.
 
 When supplied, `riskContext.scenario` maps to `account_lifecycle_event` and `ipAddress` maps to
 `originating_ip`. Values are forwarded unchanged; confirm accepted values with Telesign.

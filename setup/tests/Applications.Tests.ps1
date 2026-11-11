@@ -365,7 +365,9 @@ try {
             $nameAnswer = if ($provider -eq 'soprano') { '' } else { $script:ApplicationName }
             $expectedName = if ($provider -eq 'soprano') { 'EPP Application' } else { $script:ApplicationName }
             $applicationAnswer = if ($provider -eq 'soprano') { '' } else { 'create' }
-            Reset-TestState @($applicationAnswer, $nameAnswer, $provider, 'Yes')
+            $answers = @($applicationAnswer, $nameAnswer, $provider)
+            if ($provider -eq 'infobip') { $answers += '' }
+            Reset-TestState ($answers + @('Yes'))
             $setup.OutputDirectory = Join-Path $Directory "complete-$provider"
             $script:StopAtInitialization = $false
             $result = Invoke-EppSetup @setup -PassThru
@@ -381,6 +383,8 @@ try {
                 $script:DeploymentParameters.providerSettings.value.EPP_PROVIDER_AUTH_MODE -ceq $expectedAuth) 'Carry the selected authentication mode through deployment and the success summary.'
             if ($provider -eq 'infobip') {
                 Assert (($script:Messages -join "`n").Contains('Infobip OAuth: add a federated credential')) 'The approval plan must identify Infobip federation rather than another provider.'
+                Assert ($summary.providerEnvironment.INFOBIP_VOICE_SENDER_ID -ceq 'Microsoft' -and
+                    $script:DeploymentParameters.providerSettings.value.INFOBIP_VOICE_SENDER_ID -ceq 'Microsoft') 'Persist and deploy the reviewed Infobip voice sender default.'
             }
             if ($provider -eq 'telesign') {
                 Assert ($summary.accessTokenScopeTenant -ceq $script:TokenTenant -and

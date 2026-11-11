@@ -8,8 +8,12 @@ namespace Epp.Otp.Tests;
 
 public class ContractTests
 {
+    private const string VoiceMessageText =
+        "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.   "
+        + "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.  ";
+
     private static OtpDelivery Delivery(string channel = "sms") =>
-        new("+15551234567", "  Your code is 918273.\nDo not share.  ", channel, "message-id", "correlation-id", "en-US");
+        new("+15551234567", "  Your code is 918273.\nDo not share.  ", channel, "message-id", "correlation-id", "en-US", Otp: "918273");
 
     [Theory]
     [InlineData("sms")]
@@ -185,23 +189,70 @@ public class ContractTests
         };
         Assert.Equal(JsonSerializer.Serialize(expectedSms), sms.Body);
 
+        env["INFOBIP_VOICE_SENDER_ID"] = "Microsoft";
         var voice = await new InfobipProvider().CaptureRequestAsync(
             "voice", endpoint, Delivery("voice"), credential, env);
         AssertJsonRequest(voice, endpoint, "Bearer test-token");
         var expectedVoice = new
         {
-            messages = new[]
-            {
-                new
-                {
-                    destinations = new[] { new { to = Delivery().PhoneNumber, messageId = "correlation-id" } },
-                    text = Delivery().Message,
-                    language = "en-US",
-                    voice = new { name = "Joanna", gender = "female" },
-                },
-            },
+            to = Delivery().PhoneNumber,
+            text = VoiceMessageText,
+            language = "en",
+            voice = new { name = "Joanna", gender = "female" },
+            from = "Microsoft",
         };
         Assert.Equal(JsonSerializer.Serialize(expectedVoice), voice.Body);
+    }
+
+    [Theory]
+    [InlineData("en-us", "en")]
+    [InlineData("FR-fr", "fr")]
+    [InlineData("zh-Hans-CN", "zh")]
+    [InlineData("pt", "pt")]
+    [InlineData("  DE-de  ", "de")]
+    [InlineData(null, "en")]
+    [InlineData("", "en")]
+    [InlineData("   ", "en")]
+    public async Task InfobipVoiceUsesSenderSettingAndLocaleLanguage(string? locale, string language)
+    {
+        foreach (var (sender, expected) in new (string, string)[]
+        {
+            ("Microsoft", "Microsoft"), ("  41793026700  ", "41793026700"),
+        })
+        {
+            var env = new TestEnv { ["INFOBIP_VOICE_SENDER_ID"] = sender };
+            var request = await new InfobipProvider().CaptureRequestAsync(
+                "voice", "https://api.infobip.com/tts/3/single",
+                Delivery("voice") with { Locale = locale },
+                new ProviderCredentials("oauth", AccessToken: "token"), env);
+            Assert.Equal(JsonSerializer.Serialize(new
+            {
+                to = Delivery().PhoneNumber,
+                text = VoiceMessageText,
+                language,
+                voice = new { name = "Joanna", gender = "female" },
+                from = expected,
+            }), request.Body);
+        }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task InfobipRequiresSenderForVoiceButNotSms(string? sender)
+    {
+        var env = new TestEnv();
+        if (sender is not null) env["INFOBIP_VOICE_SENDER_ID"] = sender;
+        var provider = new InfobipProvider();
+        var credentials = new ProviderCredentials("oauth", AccessToken: "token");
+        var error = await Assert.ThrowsAsync<PhoneProviderBase.ProviderSendException>(() =>
+            provider.CaptureRequestAsync(
+                "voice", "https://api.infobip.com/tts/3/single", Delivery("voice"), credentials, env));
+        Assert.Equal(502, error.StatusCode);
+        var sms = await provider.CaptureRequestAsync(
+            "sms", "https://api.infobip.com/sms/3/messages", Delivery(), credentials, env);
+        AssertJsonRequest(sms, "https://api.infobip.com/sms/3/messages", "Bearer token");
     }
 
     [Theory]
@@ -224,8 +275,7 @@ public class ContractTests
             $"https://verify.telesign.com/epp/{channel}",
             "Bearer provider-token");
         var expectedText = channel == "voice"
-            ? "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.   "
-              + "  Your code is 9, 1, 8, 2, 7, 3.\nDo not share.  "
+            ? VoiceMessageText
             : delivery.Message;
         var message = new Dictionary<string, string?> { ["text"] = expectedText };
         if (locale == "en") message["language"] = locale;
@@ -284,21 +334,39 @@ public class ContractTests
         Assert.Equal(endpointStatus, PhoneProviderBase.ToEndpointHttpStatus(result));
     }
 
-    [Fact]
-    public async Task TelesignVoicePacesOnlySixDigitNumericRunsAndRepeatsMessage()
+    [Theory]
+    [InlineData("infobip")]
+    [InlineData("telesign")]
+    public async Task VoicePacesOnlySuppliedOtpAndRepeatsWithoutChangingSms(string providerName)
     {
-        var delivery = Delivery("voice") with { Message = "Code 001234; ref 1234567; alternate 654321." };
-        var request = await new TelesignProvider().CaptureRequestAsync(
-            "voice",
-            "https://verify.telesign.com/epp/voice",
-            delivery,
-            new ProviderCredentials("oauth", AccessToken: "provider-token"),
-            new TestEnv());
-        using var body = JsonDocument.Parse(request.Body);
-        Assert.Equal(
-            "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1. "
-            + "Code 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1.",
-            body.RootElement.GetProperty("message").GetProperty("text").GetString());
+        PhoneProviderBase provider = providerName == "infobip" ? new InfobipProvider() : new TelesignProvider();
+        foreach (var (message, otp, expectedVoice) in new (string, string?, string)[]
+        {
+            ("001234", "001234", "0, 0, 1, 2, 3, 4 0, 0, 1, 2, 3, 4"),
+            ("Tenant 654321: code 001234; repeat 001234.", "001234",
+                "Tenant 654321: code 0, 0, 1, 2, 3, 4; repeat 0, 0, 1, 2, 3, 4. "
+                + "Tenant 654321: code 0, 0, 1, 2, 3, 4; repeat 0, 0, 1, 2, 3, 4."),
+            ("Code 1234.", "1234", "Code 1, 2, 3, 4. Code 1, 2, 3, 4."),
+            ("Code 00123456.", "00123456", "Code 0, 0, 1, 2, 3, 4, 5, 6. Code 0, 0, 1, 2, 3, 4, 5, 6."),
+            ("Code a.b; tenant axb.", "a.b", "Code a, ., b; tenant axb. Code a, ., b; tenant axb."),
+            ("Tenant 654321.", "999999", "Tenant 654321. Tenant 654321."),
+            ("Tenant 654321.", null, "Tenant 654321. Tenant 654321."),
+            ("Tenant 654321.", "", "Tenant 654321. Tenant 654321."),
+        })
+        foreach (var channel in new[] { "sms", "voice" })
+        {
+            var request = await provider.CaptureRequestAsync(
+                channel, "https://provider.example",
+                Delivery(channel) with { Message = message, Otp = otp },
+                new ProviderCredentials("oauth", AccessToken: "provider-token"),
+                new TestEnv { ["INFOBIP_VOICE_SENDER_ID"] = "Microsoft" });
+            using var body = JsonDocument.Parse(request.Body);
+            var text = providerName == "telesign"
+                ? body.RootElement.GetProperty("message").GetProperty("text")
+                : channel == "voice" ? body.RootElement.GetProperty("text")
+                : body.RootElement.GetProperty("messages")[0].GetProperty("content").GetProperty("text");
+            Assert.Equal(channel == "voice" ? expectedVoice : message, text.GetString());
+        }
     }
 
     [Fact]

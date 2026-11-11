@@ -26,6 +26,8 @@ const delivery = new OtpDelivery({
     correlationId: 'correlation-id',
     locale: 'fr-FR',
 });
+const voiceMessageText = '  Your code is 0, 0, 1, 2, 3, 4; ref 1234567; alternate 654321.\n'
+    + '   Your code is 0, 0, 1, 2, 3, 4; ref 1234567; alternate 654321.\n';
 const input = {
     channel: 'sms',
     endpoint: 'https://provider.example',
@@ -243,6 +245,7 @@ test('Infobip uses configured URLs unchanged with OAuth on both setup routes', (
                 channel,
                 endpoint,
                 credential: { mode: 'oauth', accessToken: 'provider-token' },
+                env: { INFOBIP_VOICE_SENDER_ID: profile.deployment.environmentVariables.INFOBIP_VOICE_SENDER_ID.default },
             });
             assert.equal(request.url, endpoint);
             assert.equal(request.method, 'POST');
@@ -251,19 +254,58 @@ test('Infobip uses configured URLs unchanged with OAuth on both setup routes', (
                 'Content-Type': 'application/json',
                 Accept: 'application/json',
             });
-            const destinations = [{ to: delivery.phoneNumber, messageId: 'correlation-id' }];
-            assert.deepEqual(JSON.parse(request.body), {
-                messages: [channel === 'voice' ? {
-                    destinations,
-                    text: delivery.message,
-                    language: 'fr-FR',
-                    voice: { name: 'Joanna', gender: 'female' },
-                } : {
-                    destinations,
+            assert.deepEqual(JSON.parse(request.body), channel === 'voice' ? {
+                to: delivery.phoneNumber,
+                text: voiceMessageText,
+                language: 'fr',
+                voice: { name: 'Joanna', gender: 'female' },
+                from: 'Microsoft',
+            } : {
+                messages: [{
+                    destinations: [{ to: delivery.phoneNumber, messageId: 'correlation-id' }],
                     content: { text: delivery.message },
                 }],
             });
         }
+    }
+});
+
+test('Infobip voice uses its sender setting and converts locales to language codes', () => {
+    const infobip = selectProvider('infobip');
+    for (const [locale, language] of [
+        ['en-us', 'en'], ['FR-fr', 'fr'], ['zh-Hans-CN', 'zh'], ['pt', 'pt'],
+        ['  DE-de  ', 'de'], [null, 'en'], ['', 'en'], ['   ', 'en'],
+    ]) {
+        for (const [sender, expected] of [
+            ['Microsoft', 'Microsoft'], ['  41793026700  ', '41793026700'],
+        ]) {
+            const request = infobip.createRequest({
+                ...input,
+                channel: 'voice',
+                delivery: new OtpDelivery({ ...delivery, locale }),
+                env: { INFOBIP_VOICE_SENDER_ID: sender },
+            });
+            assert.deepEqual(JSON.parse(request.body), {
+                to: delivery.phoneNumber,
+                text: voiceMessageText,
+                language,
+                voice: { name: 'Joanna', gender: 'female' },
+                from: expected,
+            });
+        }
+    }
+});
+
+test('Infobip requires a sender for voice but not SMS', () => {
+    const infobip = selectProvider('infobip');
+    for (const sender of [undefined, '', '   ']) {
+        const requestInput = {
+            ...input,
+            env: sender === undefined ? {} : { INFOBIP_VOICE_SENDER_ID: sender },
+        };
+        assert.throws(() => infobip.createRequest({ ...requestInput, channel: 'voice' }),
+            /INFOBIP_VOICE_SENDER_ID is required/);
+        assert.doesNotThrow(() => infobip.createRequest(requestInput));
     }
 });
 
@@ -288,14 +330,44 @@ test('Infobip accepts only strict recognized status strings', () => {
     }
 });
 
-test('Telesign request validates E.164 and voice pacing remains unchanged', () => {
+for (const providerName of ['infobip', 'telesign']) {
+    test(`${providerName} paces only the supplied OTP and repeats only voice messages`, () => {
+        const provider = selectProvider(providerName);
+        for (const [message, otp, expectedVoice] of [
+            ['001234', '001234', '0, 0, 1, 2, 3, 4 0, 0, 1, 2, 3, 4'],
+            ['Tenant 654321: code 001234; repeat 001234.', '001234',
+                'Tenant 654321: code 0, 0, 1, 2, 3, 4; repeat 0, 0, 1, 2, 3, 4. '
+                + 'Tenant 654321: code 0, 0, 1, 2, 3, 4; repeat 0, 0, 1, 2, 3, 4.'],
+            ['Code 1234.', '1234', 'Code 1, 2, 3, 4. Code 1, 2, 3, 4.'],
+            ['Code 00123456.', '00123456', 'Code 0, 0, 1, 2, 3, 4, 5, 6. Code 0, 0, 1, 2, 3, 4, 5, 6.'],
+            ['Code a.b; tenant axb.', 'a.b', 'Code a, ., b; tenant axb. Code a, ., b; tenant axb.'],
+            ['Tenant 654321.', '999999', 'Tenant 654321. Tenant 654321.'],
+            ['Tenant 654321.', undefined, 'Tenant 654321. Tenant 654321.'],
+            ['Tenant 654321.', null, 'Tenant 654321. Tenant 654321.'],
+            ['Tenant 654321.', '', 'Tenant 654321. Tenant 654321.'],
+        ]) {
+            for (const channel of ['sms', 'voice']) {
+                const request = provider.createRequest({
+                    ...input,
+                    channel,
+                    delivery: new OtpDelivery({ ...delivery, message, otp }),
+                    env: { INFOBIP_VOICE_SENDER_ID: 'Microsoft' },
+                });
+                const body = JSON.parse(request.body);
+                const text = providerName === 'telesign' ? body.message.text
+                    : channel === 'voice' ? body.text : body.messages[0].content.text;
+                assert.equal(text, channel === 'voice' ? expectedVoice : message);
+            }
+        }
+    });
+}
+
+test('Telesign validates E.164 and paces the supplied OTP', () => {
     const telesign = selectProvider('telesign');
     const credential = { mode: 'oauth', accessToken: 'provider-token' };
     const voice = telesign.createRequest({ ...input, channel: 'voice', credential });
     assert.deepEqual(telesign.credentialSpec, { mode: 'oauth' });
-    assert.equal(JSON.parse(voice.body).message.text,
-        '  Your code is 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1.\n'
-        + '   Your code is 0, 0, 1, 2, 3, 4; ref 1234567; alternate 6, 5, 4, 3, 2, 1.\n');
+    assert.equal(JSON.parse(voice.body).message.text, voiceMessageText);
     for (const phoneNumber of ['15551234567', '+0123', '+1', '+1234567890123456', '+123\n']) {
         assert.throws(() => telesign.createRequest({
             ...input, credential,

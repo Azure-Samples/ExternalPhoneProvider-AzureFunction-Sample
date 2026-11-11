@@ -72,7 +72,7 @@ customer application and provider account.
 
 | Provider | Profile used by setup | Confirm with the provider |
 | --- | --- | --- |
-| Infobip | [infobip.json](../setup/providers/infobip.json) | Account access to SMS, voice, the selected regional host, and provider-managed sender/caller selection |
+| Infobip | [infobip.json](../setup/providers/infobip.json) | Account access to SMS, voice, the selected regional host, and provider-approved sender/caller ID |
 | Soprano | [soprano.json](../setup/providers/soprano.json) | Customer application authorization, account access, and enabled channels |
 | Telesign | [telesign.json](../setup/providers/telesign.json) | Customer application authorization, account access, and enabled channels |
 

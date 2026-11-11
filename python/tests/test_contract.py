@@ -11,6 +11,10 @@ from src.providers.soprano import SopranoProvider
 from src.providers.telesign import TelesignProvider
 
 MESSAGE = "  Use 918273; then 1234.\nDo not rewrite + or café.  "
+VOICE_MESSAGE = (
+    "  Use 9, 1, 8, 2, 7, 3; then 1234.\nDo not rewrite + or café.   "
+    "  Use 9, 1, 8, 2, 7, 3; then 1234.\nDo not rewrite + or café.  "
+)
 
 
 def _delivery(channel="sms"):
@@ -97,7 +101,8 @@ def test_infobip_uses_configured_urls_unchanged_with_oauth_on_both_setup_routes(
     endpoint = profile["deployment"]["routes"][region][f"{channel}Endpoint"]
     request = provider.build_request(
         channel, endpoint, _delivery(channel),
-        {"mode": "oauth", "access_token": "provider-token"}, {})
+        {"mode": "oauth", "access_token": "provider-token"},
+        {"INFOBIP_VOICE_SENDER_ID": profile["deployment"]["environmentVariables"]["INFOBIP_VOICE_SENDER_ID"]["default"]})
     assert request.url == endpoint
     assert request.method == "POST"
     assert request.headers == {
@@ -107,15 +112,49 @@ def test_infobip_uses_configured_urls_unchanged_with_oauth_on_both_setup_routes(
     }
     destinations = [{"to": "+15551234567", "messageId": "correlation-id"}]
     expected = {
-        "destinations": destinations,
-        "text": MESSAGE,
-        "language": "en-US",
+        "to": "+15551234567",
+        "text": VOICE_MESSAGE,
+        "language": "en",
         "voice": {"name": "Joanna", "gender": "female"},
+        "from": "Microsoft",
     } if channel == "voice" else {
         "destinations": destinations,
         "content": {"text": MESSAGE},
     }
-    assert json.loads(request.body) == {"messages": [expected]}
+    assert json.loads(request.body) == (expected if channel == "voice" else {"messages": [expected]})
+
+
+@pytest.mark.parametrize("locale,language", [
+    ("en-us", "en"), ("FR-fr", "fr"), ("zh-Hans-CN", "zh"), ("pt", "pt"),
+    ("  DE-de  ", "de"), (None, "en"), ("", "en"), ("   ", "en"),
+])
+@pytest.mark.parametrize("env,sender", [
+    ({"INFOBIP_VOICE_SENDER_ID": "Microsoft"}, "Microsoft"),
+    ({"INFOBIP_VOICE_SENDER_ID": "  41793026700  "}, "41793026700"),
+])
+def test_infobip_voice_sender_and_locale_language(locale, language, env, sender):
+    request = InfobipProvider().build_request(
+        "voice", "https://api.infobip.com/tts/3/single",
+        replace(_delivery("voice"), locale=locale), {"access_token": "token"}, env)
+    assert json.loads(request.body) == {
+        "to": "+15551234567",
+        "text": VOICE_MESSAGE,
+        "language": language,
+        "voice": {"name": "Joanna", "gender": "female"},
+        "from": sender,
+    }
+
+
+@pytest.mark.parametrize("env", [{}, {"INFOBIP_VOICE_SENDER_ID": ""}, {"INFOBIP_VOICE_SENDER_ID": "   "}])
+def test_infobip_requires_sender_for_voice_but_not_sms(env):
+    provider = InfobipProvider()
+    credential = {"access_token": "token"}
+    with pytest.raises(ValueError, match="INFOBIP_VOICE_SENDER_ID is required"):
+        provider.build_request(
+            "voice", "https://api.infobip.com/tts/3/single", _delivery("voice"), credential, env)
+    request = provider.build_request(
+        "sms", "https://api.infobip.com/sms/3/messages", _delivery(), credential, env)
+    assert json.loads(request.body)["messages"][0]["content"]["text"] == MESSAGE
 
 
 def test_infobip_contract_is_strict_and_provider_owned():
@@ -143,9 +182,41 @@ def test_telesign_request_contract(channel):
     assert body["channels"] == [{"channel": channel}]
     assert body["correlation_id"] == "correlation-id"
     if channel == "voice":
-        assert "9, 1, 8, 2, 7, 3" in body["message"]["text"]
+        assert body["message"]["text"] == VOICE_MESSAGE
     else:
         assert body["message"]["text"] == MESSAGE
+
+
+@pytest.mark.parametrize("provider_type", [InfobipProvider, TelesignProvider])
+@pytest.mark.parametrize("message,otp,expected_voice", [
+    ("001234", "001234", "0, 0, 1, 2, 3, 4 0, 0, 1, 2, 3, 4"),
+    ("Tenant 654321: code 001234; repeat 001234.", "001234",
+     "Tenant 654321: code 0, 0, 1, 2, 3, 4; repeat 0, 0, 1, 2, 3, 4. "
+     "Tenant 654321: code 0, 0, 1, 2, 3, 4; repeat 0, 0, 1, 2, 3, 4."),
+    ("Code 1234.", "1234", "Code 1, 2, 3, 4. Code 1, 2, 3, 4."),
+    ("Code 00123456.", "00123456", "Code 0, 0, 1, 2, 3, 4, 5, 6. Code 0, 0, 1, 2, 3, 4, 5, 6."),
+    ("Code a.b; tenant axb.", "a.b", "Code a, ., b; tenant axb. Code a, ., b; tenant axb."),
+    ("Tenant 654321.", "999999", "Tenant 654321. Tenant 654321."),
+    ("Tenant 654321.", None, "Tenant 654321. Tenant 654321."),
+    ("Tenant 654321.", "", "Tenant 654321. Tenant 654321."),
+])
+def test_voice_paces_only_supplied_otp_and_repeats_without_changing_sms(
+    provider_type, message, otp, expected_voice,
+):
+    provider = provider_type()
+    for channel in ("sms", "voice"):
+        request = provider.build_request(
+            channel, "https://provider.example",
+            replace(_delivery(channel), message=message, otp=otp),
+            {"access_token": "token"}, {"INFOBIP_VOICE_SENDER_ID": "Microsoft"})
+        body = json.loads(request.body)
+        if provider_type is TelesignProvider:
+            text = body["message"]["text"]
+        elif channel == "voice":
+            text = body["text"]
+        else:
+            text = body["messages"][0]["content"]["text"]
+        assert text == (expected_voice if channel == "voice" else message)
 
 
 @pytest.mark.parametrize("channel", ["sms", "voice"])
