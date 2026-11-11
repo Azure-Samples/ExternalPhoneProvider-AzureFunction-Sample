@@ -1,0 +1,79 @@
+# Azure DevOps pipeline for the CYOT sample and SAS integration contract.
+# Register this exact YAML path in Azure DevOps. It is intentionally isolated
+# from the Phase 1 deployment pipeline proposed by GitHub PR #90.
+
+# GitHub PR validation is handled by GitHub. Azure Pipelines starts after the
+# reviewed PR lands on main. Protect main from direct pushes in GitHub.
+trigger:
+  batch: true
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - ado/cyot-integration/**
+    - javascript/**
+    - dotnet/**
+    - python/**
+    - tests/**
+    - setup/**
+    - package-javascript.ps1
+    - package-dotnet.ps1
+    - package-python.ps1
+    - TECHNICAL.md
+    - docs/CONTRACT.md
+
+pr: none
+
+# A main-branch update in SAS also starts this pipeline. Azure Repos repository
+# resource triggers do not support path filters, so every SAS main update runs
+# the bounded contract check and the sample validation suite.
+resources:
+  repositories:
+  - repository: sas
+    type: git
+    name: One/AAD-MFA-StrongAuthenticationService
+    ref: refs/heads/main
+    trigger:
+      branches:
+        include:
+        - main
+
+variables:
+  sampleCheckout: $(Pipeline.Workspace)/s/sample
+  sasCheckout: $(Pipeline.Workspace)/s/sas
+
+stages:
+- stage: Contract
+  displayName: Verify SAS and endpoint contract
+  jobs:
+  - job: CrossRepositoryContract
+    displayName: Compare SAS contract with all sample runtimes
+    pool:
+      vmImage: windows-latest
+    workspace:
+      clean: all
+    steps:
+    - checkout: self
+      clean: true
+      fetchDepth: 2
+      path: s/sample
+    - checkout: sas
+      clean: true
+      fetchDepth: 2
+      path: s/sas
+    - pwsh: |
+        $ErrorActionPreference = 'Stop'
+        Write-Host "Build reason: $(Build.Reason)"
+        Write-Host "Trigger category: $(Build.Repository.Provider)"
+        Write-Host "Triggering repository alias: $(resources.triggeringAlias)"
+        & '$(sampleCheckout)/ado/cyot-integration/Test-CyotContract.ps1' `
+          -SampleRoot '$(sampleCheckout)' `
+          -SasRoot '$(sasCheckout)' `
+          -OutputPath '$(Build.ArtifactStagingDirectory)/cyot-contract.json'
+      displayName: Verify CYOT integration contract
+    - publish: $(Build.ArtifactStagingDirectory)/cyot-contract.json
+      artifact: cyot-contract
+      displayName: Publish contract evidence
+
+- template: templates/validate-and-package.yml

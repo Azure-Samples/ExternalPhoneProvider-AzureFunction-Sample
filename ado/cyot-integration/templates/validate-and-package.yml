@@ -1,0 +1,123 @@
+stages:
+- stage: ValidateAndPackage
+  displayName: Validate and package all CYOT runtimes
+  dependsOn: Contract
+  jobs:
+  - job: SetupWindows
+    displayName: Run setup tests on Windows
+    pool:
+      vmImage: windows-latest
+    workspace:
+      clean: all
+    steps:
+    - checkout: self
+      clean: true
+      path: s/sample
+    - pwsh: |
+        $ErrorActionPreference = 'Stop'
+        Get-ChildItem '$(sampleCheckout)/setup/tests' -Filter '*.Tests.ps1' |
+          Where-Object Name -ne 'ServicePlans.Tests.ps1' |
+          Sort-Object Name |
+          ForEach-Object {
+            Write-Host "Running $($_.Name)"
+            & $_.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      displayName: Run setup regression tests
+
+  - job: BuildLinux
+    displayName: Test and package JavaScript, .NET, and Python
+    dependsOn: SetupWindows
+    pool:
+      vmImage: ubuntu-latest
+    workspace:
+      clean: all
+    steps:
+    - checkout: self
+      clean: true
+      path: s/sample
+    - checkout: sas
+      clean: true
+      fetchDepth: 1
+      path: s/sas
+    - task: UseNode@1
+      inputs:
+        version: 22.x
+    - task: UseDotNet@2
+      inputs:
+        packageType: sdk
+        version: 10.0.x
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.11'
+        architecture: x64
+    - script: |
+        npm ci --ignore-scripts --no-audit --no-fund
+        npm test
+      workingDirectory: $(sampleCheckout)/javascript
+      displayName: Test JavaScript on Node.js 22
+    - script: >-
+        dotnet test tests/Epp.Otp.Tests.csproj
+        --configuration Release
+        --logger trx
+        --results-directory "$(Agent.TempDirectory)/dotnet-tests"
+      workingDirectory: $(sampleCheckout)/dotnet
+      displayName: Test .NET 10
+    - script: |
+        python -m pip install --requirement requirements.txt pytest
+        python -m pytest tests --junitxml="$(Agent.TempDirectory)/python-tests.xml"
+      workingDirectory: $(sampleCheckout)/python
+      displayName: Test Python 3.11
+    - pwsh: |
+        $ErrorActionPreference = 'Stop'
+        az bicep install
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $template = '$(Agent.TempDirectory)/epp-main.json'
+        az bicep build --file '$(sampleCheckout)/setup/infra/main.bicep' --outfile $template
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & '$(sampleCheckout)/setup/tests/ServicePlans.Tests.ps1' -TemplatePath $template
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      displayName: Compile and test Bicep
+    - pwsh: |
+        $ErrorActionPreference = 'Stop'
+        $output = '$(Build.ArtifactStagingDirectory)/packages'
+        New-Item -ItemType Directory -Force -Path $output | Out-Null
+        & '$(sampleCheckout)/package-javascript.ps1' -OutputPath "$output/epp-javascript.zip"
+        & '$(sampleCheckout)/package-dotnet.ps1' -OutputPath "$output/epp-dotnet.zip"
+        & '$(sampleCheckout)/package-python.ps1' -OutputPath "$output/epp-python.zip"
+
+        $sampleCommit = (& git -C '$(sampleCheckout)' rev-parse HEAD).Trim()
+        $sasCommit = (& git -C '$(sasCheckout)' rev-parse HEAD).Trim()
+        if ($LASTEXITCODE -ne 0 -or
+            $sampleCommit -notmatch '^[0-9a-f]{40}$' -or
+            $sasCommit -notmatch '^[0-9a-f]{40}$') {
+          throw 'Unable to resolve the checked-out sample and SAS commits.'
+        }
+        $manifest = foreach ($archive in Get-ChildItem $output -Filter '*.zip' | Sort-Object Name) {
+          [ordered]@{
+            file = $archive.Name
+            sha256 = (Get-FileHash -LiteralPath $archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            bytes = $archive.Length
+            sampleCommit = $sampleCommit
+            sasCommit = $sasCommit
+          }
+        }
+        $manifest | ConvertTo-Json -Depth 4 | Set-Content "$output/manifest.json" -Encoding utf8NoBOM
+      displayName: Build immutable runtime packages
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: VSTest
+        testResultsFiles: $(Agent.TempDirectory)/dotnet-tests/*.trx
+        failTaskOnFailedTests: true
+      displayName: Publish .NET test results
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: JUnit
+        testResultsFiles: $(Agent.TempDirectory)/python-tests.xml
+        failTaskOnFailedTests: true
+      displayName: Publish Python test results
+    - publish: $(Build.ArtifactStagingDirectory)/packages
+      artifact: cyot-runtime-packages
+      displayName: Publish runtime packages
