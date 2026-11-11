@@ -334,6 +334,7 @@ For deliberate replacement, use `-CertificateAction Replace` instead.
 | `-OutputDirectory` | Private output folder; default is `epp-output` beside the launcher |
 | `-PassThru` | Return the structured deployment result in addition to saving it |
 | `-SourceRepository`, `-SourceRef`, `-PackageReleaseTag` | Pin [source and packages](#source-versioning) |
+| `-PackagePath` | Deploy a ready-to-run ZIP from a local path or public HTTPS URL without GitHub release lookup or checksum comparison |
 | `-ProviderEnvironment` | Dictionary of declared **non-secret** provider inputs; required inputs are collected before approval, and reruns preserve their current values |
 
 For provider-fork profiles using API keys, setup never asks for credentials. After approval,
@@ -363,6 +364,30 @@ For a repeatable deployment, pin a reviewed full commit SHA with `-SourceRef` an
 matching language tag with `-PackageReleaseTag`. Use the values recorded in the deployment summary.
 To deploy custom source, publish a reviewed public fork and matching stable package release,
 then select that repository, source commit, and release.
+
+### Use a ZIP directly
+
+Supply a local ZIP or a public HTTPS URL instead of selecting a GitHub release:
+
+```powershell
+# Tenant, subscription, and application selection remain interactive.
+.\Setup-Epp.ps1 -SourceRef byot -Language javascript `
+    -PackagePath '.\released-package-byot.zip'
+
+.\Setup-Epp.ps1 -SourceRef byot -Language javascript `
+    -PackagePath 'https://downloads.contoso.com/released-package-byot.zip'
+```
+
+Replace the example URL with the actual download URL. HTTPS URLs must use a public hostname
+on port 443, without embedded credentials, query strings, or fragments. Local paths may be
+relative or absolute. Supply a ready-to-deploy ZIP with the selected runtime's entry point
+and dependencies, not a source archive.
+
+`-PackagePath` cannot be combined with `-PackageReleaseTag`. It skips GitHub release lookup
+and checksum comparison, but still validates the archive and records its hash. The plan
+identifies that hash as unverified; the saved summary sets `packageChecksumVerified` to `false`.
+Setup stages the ZIP before approval and still downloads setup assets from `SourceRef`.
+Omitting `-PackagePath` retains the existing release selection and checksum verification.
 
 ## Read the deployment summary
 

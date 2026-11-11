@@ -1642,8 +1642,13 @@ function Show-EppPlan {
     Write-Host "Timeout:      $($ProviderConfiguration.Settings.EPP_PROVIDER_TIMEOUT_MS) ms"
     Write-Host "Retry:        $($ProviderConfiguration.Settings.EPP_PROVIDER_RETRY_INTERVAL_MS) ms (package-dependent; not a retry guarantee)"
     Write-Host "Package:      $($Inputs.PackageUrl)"
-    Write-Host "Release:      $($Inputs.PackageReleaseTag)"
-    Write-Host "Source hash:  $($Inputs.SourcePackageSha256) (verified automatically)"
+    Write-Host "Release:      $(if ($Inputs.PackageReleaseTag) { $Inputs.PackageReleaseTag } else { 'Direct ZIP (no release lookup)' })"
+    if ($Inputs.SourcePackageSha256) {
+        Write-Host "Source hash:  $($Inputs.SourcePackageSha256) (verified automatically)"
+    }
+    else {
+        Write-Host "Source hash:  $($Inputs.PackageSha256) (recorded only; no expected SHA-256)"
+    }
     Write-Host "Setup source: $($Inputs.SourceBaseUri)"
 
     Write-Host "`nAzure resources and configuration" -ForegroundColor Cyan
@@ -2776,6 +2781,7 @@ function Invoke-EppDeployment {
             source = $Inputs.SourceBaseUri; sourceRevision = $Inputs.SourceRevision
             packageFile = $Inputs.PackageFile; packageUrl = $Inputs.PackageUrl
             packageReleaseTag = $Inputs.PackageReleaseTag; sourcePackageSha256 = $Inputs.SourcePackageSha256
+            packageChecksumVerified = [bool]$Inputs.SourcePackageSha256
             packageSha256 = $Inputs.PackageSha256
             providerEnvironment = $Inputs['ProviderEnvironment']
             providerCredentials = if ($Inputs.ProviderAuthentication -eq 'apiKey') { 'customer-action-required-not-validated' } else { 'provider-authorization-required' }
@@ -2916,6 +2922,9 @@ function Invoke-EppSetup {
         to pin a reviewed Function release.
     .PARAMETER OutputDirectory
         Destination for deployment summaries and public certificates.
+    .PARAMETER PackagePath
+        Ready-to-deploy ZIP at a local file path or public HTTPS URL. Bypasses GitHub release lookup.
+        Checksum comparison is skipped; archive validation and hash recording remain enabled.
     .PARAMETER CertificateAction
         Create when no encryption certificate is registered, Reuse a selected certificate,
         or Replace all registered encryption certificates after explicit approval.
@@ -2956,6 +2965,8 @@ function Invoke-EppSetup {
         [string] $ResourcePrefix,
         [string] $Language = 'javascript',
         [string] $PackageReleaseTag,
+        [ValidateNotNullOrEmpty()]
+        [string] $PackagePath,
         [hashtable] $ProviderEnvironment,
         [string] $ServicePlan,
         [ValidateSet('Create', 'Reuse', 'Replace')]
@@ -3049,12 +3060,14 @@ function Invoke-EppSetup {
         if ($runtime -cnotin $providerConfiguration.Languages) {
             throw "Provider '$($providerConfiguration.DisplayName)' supports only: $($providerConfiguration.Languages -join ', ')."
         }
+        $packageArguments = @{}
+        if ($PSBoundParameters.ContainsKey('PackagePath')) { $packageArguments.PackagePath = $PackagePath }
         $selection = Get-EppLanguage -AssetDirectory $assetDirectory -Language $Language -SourceRepository $SourceRepository `
-            -PackageReleaseTag $PackageReleaseTag -NonInteractive:$NonInteractive
+            -PackageReleaseTag $PackageReleaseTag -NonInteractive:$NonInteractive @packageArguments
         $inputs.Language = $selection.Id
         $inputs.Platform = $selection.DisplayName
         Write-Host "Programming language: $($selection.DisplayName)"
-        $inputs.PackageFile = ([Uri]$selection.Url).Segments[-1]
+        $inputs.PackageFile = [Uri]::UnescapeDataString(([Uri]$selection.Url).Segments[-1])
         $inputs.BuildStrategy = $selection.BuildStrategy
         $plan = Get-EppServicePlan -ServicePlan $ServicePlan -NonInteractive:$NonInteractive
         $inputs.ServicePlan = $plan.id

@@ -3,7 +3,7 @@ name: Function ZIPs
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, byot]
   workflow_dispatch:
 
 permissions:
@@ -126,7 +126,7 @@ jobs:
           retention-days: 14
 
   publish:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/byot')
     needs: build
     runs-on: ubuntu-latest
     strategy:
@@ -147,9 +147,18 @@ jobs:
           RUN_NUMBER: ${{ github.run_number }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           LANGUAGE: ${{ matrix.language }}
+          SOURCE_BRANCH: ${{ github.ref_name }}
         run: |
-          tag="epp-packages-${RUN_NUMBER}-${RUN_ATTEMPT}-${LANGUAGE}"
-          gh release create "$tag" "artifacts/${LANGUAGE}/released-package.zip" "artifacts/${LANGUAGE}/SHA256SUMS.txt" \
+          prefix="epp-packages-"
+          asset="released-package.zip"
+          if [ "$SOURCE_BRANCH" = "byot" ]; then
+            prefix="byot-packages-"
+            asset="released-package-byot.zip"
+            mv "artifacts/${LANGUAGE}/released-package.zip" "artifacts/${LANGUAGE}/${asset}"
+            (cd "artifacts/${LANGUAGE}" && sha256sum "$asset" > SHA256SUMS.txt)
+          fi
+          tag="${prefix}${RUN_NUMBER}-${RUN_ATTEMPT}-${LANGUAGE}"
+          gh release create "$tag" "artifacts/${LANGUAGE}/${asset}" "artifacts/${LANGUAGE}/SHA256SUMS.txt" \
             --target "$COMMIT_SHA" --title "EPP ${LANGUAGE} Function ZIP ${RUN_NUMBER}.${RUN_ATTEMPT}" \
             --latest=false \
-            --notes "Packaged and tested from commit ${COMMIT_SHA} for ${LANGUAGE} on Linux x64. Download released-package.zip and verify this release's SHA256SUMS.txt. Configure the matching runtime, app settings, Key Vault access, and Easy Auth separately. No cloud deployment or live provider verification is performed."
+            --notes "Packaged and tested from commit ${COMMIT_SHA} on branch ${SOURCE_BRANCH} for ${LANGUAGE} on Linux x64. Download ${asset} and verify this release's SHA256SUMS.txt. Configure the matching runtime, app settings, Key Vault access, and Easy Auth separately. No cloud deployment or live provider verification is performed."

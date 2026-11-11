@@ -164,6 +164,12 @@ try {
         $text = $script:Messages -join "`n"
         Assert ($text.Contains("SAMPLE_SERVICE_ID: $sid") -and $text.Contains('DISABLED placeholders') -and
             $text.Contains('no outbound OAuth identity') -and $text.Contains('Easy Auth')) 'Show non-secret inputs, pending credentials, and retained endpoint security before approval.'
+        $inputs.SourcePackageSha256 = $null; $inputs.PackageSha256 = 'a' * 64; $inputs.PackageReleaseTag = $null
+        $script:Messages.Clear()
+        Show-EppPlan -Inputs $inputs -Names $names -ProviderConfiguration $provider -Context $context
+        $text = $script:Messages -join "`n"
+        Assert ($text.Contains('Direct ZIP (no release lookup)') -and $text.Contains('recorded only; no expected SHA-256') -and
+            -not $text.Contains('verified automatically')) 'The approval plan must not claim checksum verification for direct packages.'
         $script:Messages.Clear()
         Show-EppDeploymentResult -Inputs $inputs -Names $names -ProviderConfiguration $provider -EndpointUrl 'https://unit.azurewebsites.net/api/SendOtp' -ResultPath 'deployment.json'
         $text = $script:Messages -join "`n"
@@ -175,6 +181,7 @@ try {
         $script:SetupContext = $context
         $script:AppSettings = @(@{ name = 'SAMPLE_SERVICE_ID'; value = $sid })
         $script:Deployments = 0
+        $script:DirectPackage = $false
         function script:Select-EppAzureContext { return @{ TenantId = '11111111-1111-1111-1111-111111111111'; SubscriptionId = '11111111-1111-1111-1111-111111111111' } }
         function script:Select-EppApplication { return '22222222-2222-2222-2222-222222222222' }
         function script:Get-EppTenantRegionScope { return 'NA' }
@@ -182,19 +189,32 @@ try {
         function script:Connect-EppContext { return $script:SetupContext }
         function script:Get-EppCertificatePlan { return $script:SetupContext.CertificatePlan }
         function script:Get-EppLanguage {
-            param($Language)
+            param($Language, $PackagePath)
             Assert ($Language -in @('javascript', 'node.js')) 'Reject unsupported runtimes before package lookup.'
+            if ($script:DirectPackage) {
+                Assert ($PackagePath -ceq '.\provider.zip') 'Forward PackagePath to package selection.'
+                return @{
+                    Id = 'javascript'; DisplayName = 'JavaScript'; BuildStrategy = 'ready'
+                    Url = 'https://downloads.contoso.com/provider.zip'; ReleaseTag = $null
+                }
+            }
             return @{
                 Id = 'javascript'; DisplayName = 'JavaScript'; BuildStrategy = 'ready'
                 Url = 'https://github.com/unit/repo/releases/download/epp-packages-42-1-javascript/released-package.zip'
                 ReleaseTag = 'epp-packages-42-1-javascript'
             }
         }
-        function script:Get-EppPackage { return @{ Sha256 = 'a' * 64; SourceSha256 = 'a' * 64 } }
+        function script:Get-EppPackage {
+            return @{ Sha256 = 'a' * 64; SourceSha256 = $(if ($script:DirectPackage) { $null } else { 'a' * 64 }) }
+        }
         function script:Invoke-EppDeployment {
             param($Inputs, $Names, $ProviderConfiguration, $Context, $AssetDirectory, $WorkingDirectory, $Package, $OutputDirectory)
             $script:Deployments++
             Assert ($Inputs.ProviderAuthentication -ceq 'apiKey' -and $null -eq $Inputs.ProviderTenantId) 'Forward API-key mode without an invented tenant.'
+            if ($script:DirectPackage) {
+                Assert ($Inputs.PackageFile -ceq 'provider.zip' -and -not $Inputs.PackageReleaseTag -and
+                    -not $Inputs.SourcePackageSha256 -and $Inputs.PackageSha256 -ceq ('a' * 64)) 'Carry the direct source and recorded hash through approval and deployment.'
+            }
             Assert ($Inputs.ProviderEnvironment.SAMPLE_SERVICE_ID -ceq 'svc-1234' -and
                 $Inputs.ExistingProviderEnvironment.SAMPLE_SERVICE_ID -ceq 'svc-1234' -and
                 $ProviderConfiguration.Settings.SAMPLE_SERVICE_ID -ceq 'svc-1234') 'Wire retained declared input through approval, stale-state snapshot, and Bicep settings.'
@@ -213,6 +233,11 @@ try {
         Assert ($script:Deployments -eq 0) 'Invalid runtime and environment inputs must stop before any provisioning.'
         $completed = Invoke-EppSetup @setup -Language node.js -ApproveDeployment -PassThru
         Assert ($completed.marker -ceq 'completed' -and $script:Deployments -eq 1) 'The generic entry point supports metadata-only onboarding and existing runtime aliases after explicit approval.'
+        $script:DirectPackage = $true
+        Assert-Throws { Invoke-EppSetup @setup -PackagePath '.\provider.zip' } 'requires -ApproveDeployment'
+        Assert ($script:Deployments -eq 1) 'Direct packages must not bypass deployment approval.'
+        $null = Invoke-EppSetup @setup -PackagePath '.\provider.zip' -ApproveDeployment
+        Assert ($script:Deployments -eq 2) 'Direct package selection reaches the same approved deployment flow.'
 
     } $setupDirectory $directory
     Write-Host 'Generic API-key metadata, non-secret input, rerun preservation, disabled placeholders, and handoff checks passed.'

@@ -91,11 +91,15 @@ own fork. No provider-specific setup script is needed.
    runtime tests, packages the code, and automatically creates per-runtime releases in
    **the fork**, never in the upstream repository.
 
-Each release is named `epp-packages-<run>-<attempt>-<language>` and contains exactly
-`released-package.zip` and `SHA256SUMS.txt`. The release targets the workflow commit and is
-not marked as GitHub's latest release. Automatic push builds remain restricted to `main`.
+Releases from `main` are named `epp-packages-<run>-<attempt>-<language>` and contain exactly
+`released-package.zip` and `SHA256SUMS.txt`. Releases from `byot` are named
+`byot-packages-<run>-<attempt>-<language>` and contain exactly `released-package-byot.zip`
+and `SHA256SUMS.txt`. The release targets the workflow commit and is not marked as GitHub's
+latest release. Automatic push builds run only on `main` and `byot`.
 Pull requests and other branches do not publish; manual workflow dispatch publishes only
-when run on `main`. Forks using a different release branch must change the push filter and
+when run on `main` or `byot`. Deploy BYOT ZIPs using `-PackagePath` as described below;
+the existing package catalog and release-tag selection remain unchanged.
+Forks using a different release branch must change the push filter and
 publication condition in their own workflow. Packaging currently
 builds all three runtimes; `deployment.languages` prevents setup from selecting an unimplemented
 runtime for your provider.
@@ -122,6 +126,12 @@ pins the tested Function package. Both assets and packages come from `SourceRepo
 Omitting the tag selects the latest matching stable release in that repository. Publish the
 fork's first package release before distributing the setup command. Do not direct customers
 to upstream ZIPs that lack your adapter.
+
+Customers can bypass release selection entirely with
+`-PackagePath '.\released-package-byot.zip'` or a public HTTPS download URL. Use it instead
+of `-PackageReleaseTag`. The ZIP must contain the selected runtime and provider implementation.
+No release metadata or checksum file is required; archive validation and hash recording remain
+enabled. See [direct ZIP deployment](../setup/docs/README.md#use-a-zip-directly).
 
 ### API-key provisioning metadata
 
