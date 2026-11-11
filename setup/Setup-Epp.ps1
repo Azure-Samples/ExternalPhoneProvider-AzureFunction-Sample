@@ -27,6 +27,9 @@
 .PARAMETER ProviderEnvironment
     Provider-specific non-secret settings declared in deployment.environmentVariables.
     Credentials are never collected here; upload real Key Vault secret versions after deployment.
+.PARAMETER PackagePath
+    Ready-to-deploy ZIP at a local file path or public HTTPS URL. Bypasses GitHub release lookup.
+    Checksum comparison is skipped; archive validation and hash recording remain enabled.
 .PARAMETER ServicePlan
     FC1 for Flex Consumption with a free usage grant, or EP1 for Premium with a warm instance.
     Prompts with FC1 as the interactive default when omitted; required for unattended setup.
@@ -82,6 +85,8 @@ param(
     [string] $SourceRepository = 'Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample',
     [string] $SourceRef = 'main',
     [string] $PackageReleaseTag,
+    [ValidateNotNullOrEmpty()]
+    [string] $PackagePath,
     [hashtable] $ProviderEnvironment,
     [switch] $NonInteractive,
     [switch] $InstallPrerequisites,

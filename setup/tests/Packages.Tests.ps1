@@ -6,7 +6,7 @@ $directory = Join-Path ([IO.Path]::GetTempPath()) "epp-package-tests-$([Guid]::N
 New-Item -ItemType Directory -Path $directory | Out-Null
 try {
     & $module {
-        param($Directory)
+        param($Directory, $SetupDirectory)
 
         function script:Assert($Condition, [string] $Message) {
             if (-not $Condition) { throw $Message }
@@ -34,6 +34,9 @@ try {
         }
         function script:Invoke-EppAz { throw 'Unexpected Azure call (no network allowed).' }
         function script:Invoke-EppDotNet { throw 'Unexpected compiler invocation while consuming a deployment ZIP.' }
+        function script:Invoke-RestMethod { throw 'Direct packages must not request GitHub releases.' }
+        $script:Warnings = [Collections.Generic.List[string]]::new()
+        function script:Write-Warning { param($Message); $script:Warnings.Add($Message) }
         $required = @{
             javascript = @('host.json', 'package.json', 'src/functions/SendOtp.js', 'node_modules/@azure/functions/package.json')
             dotnet = @('host.json', 'worker.config.json', 'functions.metadata', 'dotnet.dll', 'dotnet.runtimeconfig.json', '.azurefunctions/Microsoft.Azure.WebJobs.Extensions.Http.dll')
@@ -102,7 +105,27 @@ try {
             $script:ChecksumText = "$hash  $file"
             $selection.BuildStrategy = if ($language -eq 'dotnet') { 'dotnet-publish' } else { 'remote-build' }
             Assert-Throws { Get-EppPackage -Selection $selection -Directory $Directory } 'deployment ZIPs'
+            $script:ExpectedPackageUrl = 'https://downloads.contoso.com/provider-build.zip'
+            foreach ($source in @($script:PackagePath, $script:ExpectedPackageUrl)) {
+                $selection = Get-EppLanguage -AssetDirectory $SetupDirectory -Language $language -PackagePath $source
+                Assert (-not $selection.ReleaseTag -and -not $selection.ChecksumsUrl) 'Direct packages bypass release and checksum-file lookup.'
+                $script:Downloads.Clear()
+                $script:Warnings.Clear()
+                $package = Get-EppPackage -Selection $selection -Directory $Directory
+                Assert ($package.Sha256 -ceq $hash -and -not $package.RequiresRemoteBuild) 'Copy or download and validate the original deployment bytes.'
+                Assert (-not $package.SourceSha256 -and $script:Warnings.Count -eq 1) 'Warn and record the hash without claiming checksum verification.'
+                Assert ($script:Downloads.Count -eq [int]($source -eq $script:ExpectedPackageUrl)) 'Local ZIPs need no network; direct URLs download only the ZIP.'
+            }
+            $invalidArchive = New-TestArchive @('host.json')
+            $selection = Get-EppLanguage -AssetDirectory $SetupDirectory -Language $language -PackagePath $invalidArchive
+            Assert-Throws { Get-EppPackage -Selection $selection -Directory $Directory } 'must contain exactly one'
         }
+        Assert-Throws { Get-EppLanguage -AssetDirectory $SetupDirectory -PackagePath $Directory } 'local ZIP file'
+        Assert-Throws { Get-EppLanguage -AssetDirectory $SetupDirectory -PackagePath (Join-Path $Directory 'missing.zip') } 'does not exist'
+        foreach ($url in @('http://downloads.contoso.com/package.zip', 'ftp://downloads.contoso.com/package.zip', 'https://user:password@downloads.contoso.com/package.zip', 'https://downloads.contoso.com/package.zip?token=secret')) {
+            Assert-Throws { Get-EppLanguage -AssetDirectory $SetupDirectory -PackagePath $url } 'public HTTPS'
+        }
+        Assert-Throws { Get-EppLanguage -AssetDirectory $SetupDirectory -PackagePath $script:PackagePath -PackageReleaseTag epp-packages-42-1-python } 'not both'
         $caBundle = '.python_packages/lib/site-packages/certifi/cacert.pem'
         $path = New-TestArchive ($required.python + $caBundle) '-----BEGIN CERTIFICATE-----'
         Assert-EppArchive -Path $path -Language python -Kind ready
@@ -116,7 +139,7 @@ try {
             Assert-Throws { Get-EppPublishedChecksum -Text $text -FileName 'released-package.zip' } 'exactly one SHA-256 entry'
         }
         Assert ((Get-EppPublishedChecksum -Text "$('A' * 64) *released-package.zip" -FileName 'released-package.zip') -ceq ('a' * 64)) 'Accept standard binary checksum format and normalize its case.'
-    } $directory
+    } $directory (Split-Path -Parent $PSScriptRoot)
     Write-Host 'Package regression tests passed.'
 }
 finally {

@@ -78,7 +78,7 @@ function Invoke-EppSetup {
     [CmdletBinding()]
     param(
         $TenantId, $SubscriptionId, $ApplicationId, $Provider, $OutputDirectory,
-        $SourceRepository, $AssetDirectory, $SourceBaseUri, $ProviderEnvironment, [switch] $PassThru
+        $SourceRepository, $AssetDirectory, $SourceBaseUri, $ProviderEnvironment, $PackagePath, [switch] $PassThru
     )
     $state.SetupArguments = @{} + $PSBoundParameters
     Assert ($SourceRepository -ceq $state.Repository -and $AssetDirectory -ceq $state.AssetDirectory) 'Preserve the selected source repository and downloaded assets.'
@@ -100,7 +100,9 @@ try {
     foreach ($repository in @('Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample', 'unit/epp-fork')) {
         $state.Repository = $repository
         Reset-TestState
-        $result = & $launcher @parameters -SourceRepository $repository -SourceRef review-probe -Provider Telesign -PassThru
+        $result = & $launcher @parameters -SourceRepository $repository -SourceRef review-probe -Provider Telesign `
+            -PackagePath '.\provider.zip' -PassThru
+        Assert ($state.SetupArguments.PackagePath -ceq '.\provider.zip') 'Forward direct package input unchanged.'
         Assert ($result.Marker -ceq 'completed' -and $state.SetupArguments.PassThru) 'Forward PassThru and return the helper result.'
         foreach ($name in $parameters.Keys) {
             Assert ($state.SetupArguments[$name] -ceq $parameters[$name]) "Forward $name unchanged."
@@ -112,6 +114,7 @@ try {
         Reset-TestState
         $result = & $launcher @parameters -SourceRepository $repository -SourceRef $state.Revision
         Assert ($null -eq $result -and -not $state.SetupArguments.ContainsKey('Provider')) 'Preserve omitted provider selection without emitting a default result.'
+        Assert (-not $state.SetupArguments.ContainsKey('PackagePath')) 'Preserve default release-based setup when no direct package is supplied.'
         Assert ($state.Lookups -eq 0 -and $state.Requests.Count -eq $requiredAssets.Count) 'Skip commit lookup for a pinned revision without skipping provider profiles.'
         Assert-Cleanup
     }

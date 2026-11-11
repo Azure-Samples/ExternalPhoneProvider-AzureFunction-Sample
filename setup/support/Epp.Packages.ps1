@@ -50,9 +50,12 @@ function Get-EppPackageRelease {
 function Get-EppLanguage {
     param(
         [string] $AssetDirectory, [string] $Language = 'javascript', [string] $SourceRepository,
-        [string] $PackageReleaseTag, [switch] $NonInteractive
+        [string] $PackageReleaseTag,
+        [ValidateNotNullOrEmpty()][string] $PackagePath,
+        [switch] $NonInteractive
     )
 
+    if ($PackagePath -and $PackageReleaseTag) { throw 'Use either -PackagePath or -PackageReleaseTag, not both.' }
     $catalog = Read-EppJson (Join-Path $AssetDirectory 'packages/catalog.json')
     if ($catalog['schemaVersion'] -ne 3 -or -not $catalog['packages'] -or
         [string]$catalog['releaseTagPrefix'] -cnotmatch '^[A-Za-z0-9][A-Za-z0-9.-]*-$') {
@@ -66,7 +69,7 @@ function Get-EppLanguage {
         if ($entry -isnot [Collections.IDictionary] -or -not $strategies.ContainsKey([string]$entry['id']) -or
             $seen.ContainsKey($entry['id']) -or $entry['buildStrategy'] -cne $strategies[$entry['id']] -or
             -not $entry['displayName'] -or $entry['displayName'] -match '[\x00-\x1f]' -or
-            $entry['assetName'] -cne 'released-package.zip') {
+            (-not $PackagePath -and $entry['assetName'] -cne 'released-package.zip')) {
             throw 'Language catalog contains an invalid, unsupported, or duplicate entry.'
         }
         $seen[$entry['id']] = $true
@@ -80,6 +83,23 @@ function Get-EppLanguage {
     }
     $entry = $entries | Where-Object { $_['id'] -ceq $languageId } | Select-Object -First 1
     if (-not $entry) { throw "The package catalog does not contain the selected language '$Language'." }
+    if ($PackagePath) {
+        if ($PackagePath -match '^[A-Za-z][A-Za-z0-9+.-]*://') {
+            Assert-EppHttpsUrl $PackagePath
+            $packageUri = [Uri]$PackagePath
+        }
+        else {
+            $file = Get-Item -LiteralPath $PackagePath -ErrorAction Stop
+            if ($file.PSProvider.Name -ne 'FileSystem' -or $file.PSIsContainer -or $file.Extension -ine '.zip') {
+                throw '-PackagePath must identify a local ZIP file or public HTTPS URL.'
+            }
+            $packageUri = [Uri]::new($file.FullName)
+        }
+        return [pscustomobject]@{
+            Id = $entry['id']; DisplayName = $entry['displayName']; BuildStrategy = $entry['buildStrategy']
+            Url = $packageUri.AbsoluteUri; ChecksumsUrl = $null; ReleaseTag = $null
+        }
+    }
     $release = Get-EppPackageRelease -SourceRepository $SourceRepository -Tag $PackageReleaseTag -TagPrefix $tagPrefix -Language $languageId
     $releaseTag = [string]$release.tag_name
     $releaseBaseUrl = "https://github.com/$SourceRepository/releases/download/$releaseTag"
@@ -172,15 +192,25 @@ function Assert-EppArchive {
 function Get-EppPackage {
     param($Selection, [string] $Directory)
 
-    Write-Host "Downloading $($Selection.DisplayName) and verifying its published checksum automatically..." -ForegroundColor Cyan
-    $checksumPath = Join-Path $Directory "$($Selection.Id)-SHA256SUMS.txt"
-    Invoke-WebRequest -Uri $Selection.ChecksumsUrl -OutFile $checksumPath -TimeoutSec 60
-    if ((Get-Item -LiteralPath $checksumPath).Length -gt 1MB) { throw 'The release checksum file is unexpectedly large.' }
-    $fileName = ([Uri]$Selection.Url).Segments[-1]
-    $expected = Get-EppPublishedChecksum -Text (Get-Content -LiteralPath $checksumPath -Raw -Encoding utf8) -FileName $fileName
+    Write-Host "Preparing $($Selection.DisplayName) deployment ZIP..." -ForegroundColor Cyan
+    $uri = [Uri]$Selection.Url
+    if ($Selection.ChecksumsUrl) {
+        $checksumPath = Join-Path $Directory "$($Selection.Id)-SHA256SUMS.txt"
+        Invoke-WebRequest -Uri $Selection.ChecksumsUrl -OutFile $checksumPath -TimeoutSec 60
+        if ((Get-Item -LiteralPath $checksumPath).Length -gt 1MB) { throw 'The release checksum file is unexpectedly large.' }
+        $fileName = $uri.Segments[-1]
+        $expected = Get-EppPublishedChecksum -Text (Get-Content -LiteralPath $checksumPath -Raw -Encoding utf8) -FileName $fileName
+    }
+    else {
+        $fileName = 'direct-package.zip'
+        $expected = $null
+        Write-Warning 'Direct ZIP: checksum comparison is skipped. Archive contents will be validated and the hash recorded, but integrity against a trusted build is not verified.'
+    }
     $sourcePath = Join-Path $Directory $fileName
-    Invoke-WebRequest -Uri $Selection.Url -OutFile $sourcePath -TimeoutSec 300
-    if ((Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash -ine $expected) {
+    if ($uri.IsFile) { Copy-Item -LiteralPath $uri.LocalPath -Destination $sourcePath -ErrorAction Stop }
+    else { Invoke-WebRequest -Uri $Selection.Url -OutFile $sourcePath -TimeoutSec 300 }
+    $hash = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($expected -and $hash -ine $expected) {
         throw 'The downloaded Function ZIP does not match its published SHA-256. No Azure resources were changed.'
     }
     if ($Selection.BuildStrategy -ne 'ready') { throw 'Select a release containing the selected language deployment ZIPs.' }
@@ -189,7 +219,7 @@ function Get-EppPackage {
     return [pscustomobject]@{
         Path = $path
         SourceSha256 = $expected
-        Sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        Sha256 = $hash
         RequiresRemoteBuild = $false
     }
 }
