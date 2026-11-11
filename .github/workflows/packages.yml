@@ -10,7 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: function-zips-${{ github.ref }}
+  # PR runs are independent; keep main-branch publishing serialized.
+  group: function-zips-${{ github.event_name == 'pull_request' && github.run_id || github.ref }}
   cancel-in-progress: false
 
 jobs:
