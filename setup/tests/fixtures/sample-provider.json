@@ -1,0 +1,29 @@
+{
+  "deployment": {
+    "enabled": true,
+    "providerName": "Sample",
+    "languages": ["javascript"],
+    "supportedEndpointRegions": ["global"],
+    "authentication": {
+      "mode": "apiKey",
+      "identityKeyVaultSecretName": "sample-api-key-id",
+      "keyVaultSecretName": "sample-api-key-secret"
+    },
+    "environmentVariables": {
+      "SAMPLE_SERVICE_ID": {
+        "displayName": "Sample service ID",
+        "source": "input",
+        "required": true,
+        "validation": { "type": "pattern", "pattern": "^svc-[0-9]{4}$" }
+      }
+    },
+    "routes": {
+      "global": {
+        "smsEndpoint": "https://api.contoso.com/sms",
+        "voiceEndpoint": "https://api.contoso.com/voice",
+        "timeoutMilliseconds": 1500,
+        "retryIntervalSeconds": 30
+      }
+    }
+  }
+}

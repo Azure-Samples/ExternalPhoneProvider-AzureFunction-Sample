@@ -304,6 +304,12 @@ try {
                 Assert (-not $settings.Contains($setting)) 'Bicep must not configure removed credential caches.'
             }
             $site = ($inner.resources | Where-Object type -eq 'Microsoft.Web/sites').properties
+            $identity = ($inner.resources | Where-Object type -eq 'Microsoft.Web/sites').identity
+            Assert ($identity.StartsWith("[if(variables('usesOAuth'), ") -and $identity.EndsWith(", createObject('type', 'SystemAssigned'))]")) 'API-key Functions retain only the system identity; OAuth Functions also attach the outbound identity.'
+            $outbound = $inner.resources | Where-Object type -eq 'Microsoft.ManagedIdentity/userAssignedIdentities'
+            Assert ($outbound.condition -ceq "[variables('usesOAuth')]") 'Only OAuth provisioning creates an outbound user-assigned identity.'
+            Assert ($inner.outputs.outboundPrincipalId.value.StartsWith("[if(variables('usesOAuth'), ") -and
+                $inner.outputs.outboundPrincipalId.value.EndsWith(", '')]")) 'API-key output must not reference an absent OAuth identity.'
             Assert ($site -is [Collections.IDictionary]) 'Function App properties must remain a literal object so serverFarmId is visible during provider preflight.'
             Assert ($site.serverFarmId -ceq "[resourceId('Microsoft.Web/serverfarms', parameters('resourceNames').hostingPlan)]") 'The hosting-plan ID must be explicit without a runtime reference.'
             Assert ($site.httpsOnly -eq $true -and $site.publicNetworkAccess -ceq 'Disabled') 'The Function must retain HTTPS-only access and initially disabled public ingress.'

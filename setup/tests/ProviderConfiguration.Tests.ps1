@@ -258,6 +258,25 @@ try {
             Assert (($inputs.ProviderAllowedTenantIds -join ',') -ceq ($expected -join ',')) 'OAuth must allow both the Security Store and token tenants, deduplicate them, and preserve existing allowed tenants.'
             Assert ($inputs.ProviderTenantId -ceq $telesign.TenantId) 'The token tenant must not replace the provider identity used for Security Store discovery.'
         }
+        foreach ($existing in @(@(), @($soprano.TenantId, $unknownTenant))) {
+            Reset-TestState
+            if ($existing.Count) { $script:Restriction = New-TestRestriction $existing }
+            $inputs = New-TestInputs
+            $inputs.ProviderAuthentication = 'apiKey'; $inputs.ProviderTenantId = $null; $inputs.AccessTokenScopeTenant = $null
+            Assert-Throws { Connect-EppContext -Inputs $inputs -Names @{ resourceGroup = 'unit' } -NonInteractive } '^provider-preflight-boundary$'
+            Assert (($inputs.ProviderAllowedTenantIds -join ',') -ceq (@($existing | Sort-Object) -join ',')) 'Tenant-less API-key setup preserves existing allowed tenants without adding an invented provider tenant.'
+            $context = @{
+                Application = @{ Id = $script:ObjectId; SignInAudience = $script:Application.SignInAudience }
+                CertificatePlan = @{ Snapshot = Get-EppKeyCredentialSnapshot @() }
+                ProviderRestrictionState = Get-EppProviderRestrictionState $script:Restriction
+            }
+            Assert-Throws { Initialize-EppGraphAccess -Inputs $inputs -Context $context } '^provider-configuration-finished$'
+            Assert ($script:Patches.Count -eq 1 -and $script:Patches[0].signInAudienceRestrictions.isHomeTenantAllowed -eq $true -and
+                ($script:Patches[0].signInAudienceRestrictions.allowedTenantIds -join ',') -ceq ($inputs.ProviderAllowedTenantIds -join ',')) 'Restrict API-key applications to the home tenant and any previously approved tenants, never unrestricted audiences.'
+            Assert (-not (Test-EppProviderTenantRestriction -Restriction $null -ExpectedAllowedTenantIds @())) 'An unrestricted audience is not equivalent to an explicit home-only restriction.'
+            Assert (Test-EppProviderTenantRestriction -Restriction (New-TestRestriction @()) -ExpectedAllowedTenantIds @()) 'Recognize an explicit home-only restriction.'
+            Assert (-not (Test-EppProviderTenantRestriction -Restriction (New-TestRestriction @($unknownTenant)) -ExpectedAllowedTenantIds @())) 'An empty approved tenant list must still require exact readback.'
+        }
         foreach ($alreadyConfigured in @($false, $true)) {
             Reset-TestState
             $script:Application.SignInAudience = 'AzureADMultipleOrgs'
