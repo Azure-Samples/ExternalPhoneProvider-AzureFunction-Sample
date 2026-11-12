@@ -47,6 +47,9 @@ jobs:
       - name: Test deployment progress without Azure access
         shell: pwsh
         run: ./setup/tests/Progress.Tests.ps1
+      - name: Test read-only verification and delta updates without Azure access
+        shell: pwsh
+        run: ./setup/tests/Maintenance.Tests.ps1
       - name: Compile Bicep without deploying
         shell: pwsh
         run: |

@@ -5,6 +5,11 @@
 Start with the failed stage. Keep the error and deployment summary, and reuse the original
 deployment inputs when retrying.
 
+For a completed deployment that needs supported code/settings updates, use
+[verification and delta updates](README.md#verify-and-update-an-existing-endpoint), not
+provisioning. Maintenance preserves certificate and application trust configuration and stops
+if those checks fail; it does not repair or rotate credentials implicitly.
+
 ## Find your symptom
 
 | Symptom | Section |

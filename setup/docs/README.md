@@ -19,6 +19,7 @@ Provider-owned forks use this same launcher; see
 | Automate a reviewed deployment | [Noninteractive example](#noninteractive-example) |
 | Pin source and packages | [Source versioning](#source-versioning) |
 | Find saved values | [Deployment summary](#read-the-deployment-summary) |
+| Verify or update an existing endpoint | [Safe maintenance](#verify-and-update-an-existing-endpoint) |
 | Activate or retire the endpoint | [Activation](#activate-the-endpoint), [rollback](#rollback-and-decommissioning) |
 
 <a id="prerequisites-for-step-2"></a>
@@ -179,6 +180,166 @@ close it before proceeding.
 
 An application-creation record is a recovery aid. Use the completed deployment summary to
 identify the endpoint ready for validation.
+
+## Verify and update an existing endpoint
+
+Use **Verify-Epp.ps1** and **Update-Epp.ps1** for supported maintenance, rather than rerunning
+provisioning. Neither script creates or rotates certificates, reads private-key values,
+refreshes Key Vault references, modifies application registrations or federation, grants roles,
+or changes authentication-method policies. Both require PowerShell 7 and Azure CLI.
+**Verification does not require the original output files.** If Cloud Shell storage was
+cleared, run verification without parameters to discover the live deployment. Update still
+requires a completed or successfully recovered `deployment-*.json`.
+Keep summaries private; an `application-*.json` recovery record is not sufficient.
+
+Download each standalone launcher into your private working folder:
+
+```powershell
+Invoke-WebRequest `
+    'https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/main/setup/Verify-Epp.ps1' `
+    -OutFile .\Verify-Epp.ps1
+Invoke-WebRequest `
+    'https://raw.githubusercontent.com/Azure-Samples/ExternalPhoneProvider-AzureFunction-Sample/main/setup/Update-Epp.ps1' `
+    -OutFile .\Update-Epp.ps1
+
+$verification = .\Verify-Epp.ps1 -PassThru
+```
+
+With no target parameters, verification uses the existing setup account picker to guide you:
+
+1. Reuse an Azure CLI user login, refresh cached subscriptions, or sign in with device code.
+2. Select the public-Azure tenant and enabled subscription.
+3. Select a Function tagged `managedBy=EPP-Setup`, or a Function inside a resource group with
+   that tag. The list shows Function name, resource group, and location.
+4. Alternatively, choose **Enter a Function name and resource group**, or cancel.
+
+Discovery only scans the selected subscription, not every tenant/subscription you can access.
+Selecting an account changes the local Azure CLI default subscription so Azure and Graph use
+the same tenant; it does not change deployed resources. Manual targeting is not a bypass:
+the selected Function must still have supported EPP names, identity/runtime tags, and an EPP
+management tag on itself or its resource group.
+
+You can narrow discovery or supply an exact endpoint:
+
+```powershell
+.\Verify-Epp.ps1 -ResourceGroupName '<existing-resource-group>'
+
+.\Verify-Epp.ps1 -TenantId '<tenant-id>' -SubscriptionId '<subscription-id>' `
+    -ResourceGroupName '<existing-resource-group>' -FunctionAppName '<existing-function>' `
+    -NonInteractive
+```
+
+Noninteractive discovery requires tenant/subscription IDs and a Function name, an existing
+user login, and an unambiguous target. It never prompts or signs in automatically.
+If the certificate is in another subscription, specify `-KeyVaultSubscriptionId`; interactive
+discovery asks for that subscription when the vault differs from the deployment's vault.
+
+Discovery reconstructs metadata from Azure and the reviewed provider profile. It matches the
+configured **versioned** secret URI to its actual Key Vault certificate version (certificate
+and secret versions may differ), then compares the public certificate with the registered
+Entra encryption credential. It never reads the secret value. It displays the currently
+observed provider-tenant allowlist for review; recovery cannot prove that the original operator
+approved that allowlist or attest historical code integrity.
+
+Only after all checks and delta planning succeed, discovery writes a new
+`deployment-discovered-*.json`. With `-PassThru`, its path is
+`$verification.deploymentSummaryPath`. Use this recovered summary for update preview/application.
+Download the summary from Cloud Shell or retain it in persistent storage; it can also be
+rediscovered in a later session.
+
+The original summary-based path remains available, without interactive discovery:
+
+```powershell
+$summaryPath = '.\deployment-previous.json'
+$verification = .\Verify-Epp.ps1 -DeploymentSummaryPath $summaryPath -PassThru
+```
+
+Do not combine `-DeploymentSummaryPath` with discovery target parameters. If you used discovery
+above, set `$summaryPath = $verification.deploymentSummaryPath` instead.
+
+Verification reads the subscription, endpoint identity, runtime, hosting plan, Easy Auth,
+application roles and grants, registered public encryption certificate, resolved versioned
+secret reference, outbound identity/federation, and `SendOtp` registration. It stops on
+unsafe or unsupported state, including certificates with 30 days or less remaining.
+It does not test decryption or provider delivery. No Azure writes occur; local downloads
+and a `verification-*.json` report are written.
+
+The initial supported delta set is deliberately bounded:
+
+| Scope | Supported changes |
+| --- | --- |
+| `Code` | Verified ready-to-deploy release ZIP for the existing runtime and hosting plan. |
+| `Configuration` | Provider channel URLs/timing from the reviewed profile and declared non-secret provider inputs. Existing inputs are preserved; new defaults are added when absent. |
+| `Infrastructure` | Function HTTPS-only, app/SCM minimum TLS 1.2 without lowering TLS 1.3, and disabling FTP on EP1. |
+| `All` (default) | All three scopes above. |
+
+This is **not a full Bicep reconciliation or a general infrastructure-upgrade tool**.
+It does not change hosting SKU, runtime/version, region, provider, OAuth scopes/tenant/API
+identity, networking topology, storage, vault configuration, RBAC, or monitoring resources.
+It rejects detected identity/trust/runtime/plan migrations; infrastructure outside the listed
+delta set is not audited or reconciled. Plan those migrations separately.
+An API-key deployment is not supported by these maintenance scripts.
+
+Review the change names, pinned source, package release, and SHA-256. Reports omit existing
+setting values. Review the pinned provider profile for the desired URL/timing values.
+To preview the update against exactly the source and package selected by verification:
+
+```powershell
+.\Update-Epp.ps1 `
+    -DeploymentSummaryPath $summaryPath `
+    -SourceRef $verification.sourceRevision `
+    -PackageReleaseTag $verification.packageReleaseTag
+```
+
+No update happens until **`-Apply`** is explicitly supplied:
+
+```powershell
+.\Update-Epp.ps1 `
+    -DeploymentSummaryPath $summaryPath `
+    -SourceRef $verification.sourceRevision `
+    -PackageReleaseTag $verification.packageReleaseTag `
+    -Apply
+```
+
+Use `-UpdateScope Configuration`, `Infrastructure`, or `Code` to limit the update.
+`-PackageReleaseTag` applies only to `All` or `Code`.
+For example, override the Infobip sender explicitly with
+`-UpdateScope Configuration -ProviderEnvironment @{ INFOBIP_VOICE_SENDER_ID = 'Microsoft' }`.
+An already configured sender is otherwise kept. Credentials and encryption settings cannot
+be supplied through `-ProviderEnvironment`. Use `-SourceRepository` and a reviewed
+`-SourceRef` for a provider-owned fork; package checksums and archive validation remain required.
+
+Azure/Graph read permission is required for verification. Access must be arranged separately:
+
+| Access | Requirement |
+| --- | --- |
+| Subscription discovery | Inventory read access to Functions and resource groups in the selected subscription. Supply both Function and resource-group names to avoid subscription-wide listing when access is scoped to one resource group. |
+| Function verification | Read the Function, hosting plan, managed identity, authentication/configuration, and app settings. Azure **Reader alone is insufficient** for listing settings: the verification role also needs `Microsoft.Web/sites/config/list/action`. |
+| Entra verification | The Azure CLI user session must be permitted to read applications, public encryption credentials, allowed-tenant restrictions, service principals, app-role assignments, and federated credentials. Azure resource roles do not grant Graph access. |
+| Summary-free certificate recovery | ARM read access to the source vault, plus Key Vault certificate get/list and secret-version **list metadata** access. For RBAC vaults, arrange **Key Vault Reader** data access; for access-policy vaults, certificate `get/list` and secret `list`. Private-key/secret-value access is not required. |
+| Applying updates | Permission to update/deploy the existing Function; resource-group **Contributor** is a broader built-in option. EP1 code publication additionally requires **Storage Blob Data Contributor** on the storage account's `packages` container. |
+
+Activate eligible PIM assignments before running verification. Maintenance never grants itself
+missing permissions and stops on access failures rather than silently skipping checks.
+Summary-based verification does not need the additional Key Vault data access used for recovery.
+
+Apply rechecks the endpoint immediately before writing, patches only the supported fields,
+preserves unrelated settings, and reads back the result. It can restart the Function; schedule
+a maintenance window and avoid concurrent administrative changes. This preflight check is not
+a distributed deployment lock. A successful update saves a **new** `deployment-*.json`, leaving the input
+summary unchanged. Retain the newest summary and run evaluation and controlled delivery tests.
+
+Package comparison uses an `EPP_PACKAGE_SHA256` setting recorded only after successful
+maintenance, not a byte-level measurement of live code. The first maintenance pass republishes
+code when that marker is absent; later passes skip a matching package. EP1 also checks its
+run-from-package URL. Out-of-band code changes can invalidate this evidence; do not treat a
+matching marker as code-integrity attestation.
+
+Failures are terminating errors, not successful verification reports. Partial changes remain;
+there is no automatic rollback. Package publication failures can close public ingress using
+the existing fail-closed publication helper. Inspect the error and live state before recovery;
+maintenance deliberately refuses a stopped or ingress-disabled endpoint. Do not delete
+certificates or loosen authentication to make verification pass.
 
 <a id="step-1---manually-create-the-application"></a>
 ## Application registration

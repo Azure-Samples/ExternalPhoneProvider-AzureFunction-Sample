@@ -57,6 +57,7 @@ Follow the **[deployment guide](docs/GETTING-STARTED.md)**:
 | Task | Guide |
 | --- | --- |
 | Deploy or rerun setup | [Setup reference](setup/docs/README.md) |
+| Verify or update an existing deployment | [Safe maintenance](setup/docs/README.md#verify-and-update-an-existing-endpoint) |
 | Configure provider access | [Configuration and validation](docs/ONBOARDING.md) |
 | Understand settings and provider behavior | [Technical reference](TECHNICAL.md) |
 | Resolve a problem | [Troubleshooting](setup/docs/Troubleshooting.md) |

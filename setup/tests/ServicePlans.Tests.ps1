@@ -266,6 +266,14 @@ try {
             Assert-Throws { Publish-EppFunction @publish } 'public ingress could not be disabled'
             $script:StartupError = ''; $script:CloseError = ''
         }
+        $inputs.ServicePlan = 'EP1'
+        $script:Calls.Clear()
+        $null = Publish-EppFunction @publish -MountAfterUpload
+        $trace = $script:Calls -join "`n"
+        $uploadIndex = $trace.IndexOf('storage blob upload', [StringComparison]::Ordinal)
+        $mountIndex = $trace.IndexOf('package-settings:', [StringComparison]::Ordinal)
+        Assert ($uploadIndex -ge 0 -and $mountIndex -gt $uploadIndex -and
+            $trace.Contains("package-settings:https://$($names.storageAccount).blob.core.windows.net/packages/$($inputs.PackageSha256).zip")) 'Maintenance must upload a ready Premium package before switching the run-from-package URL.'
 
         function script:Get-EppGraphOperator { param($Inputs); return @{ Id = 'operator' } }
         $script:ArmOperator = $context.OperatorId

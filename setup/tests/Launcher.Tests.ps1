@@ -9,7 +9,7 @@ $state = @{
     Requests = [Collections.Generic.List[string]]::new()
 }
 $requiredAssets = @(
-    'support/Epp.Setup.psm1', 'support/Epp.Packages.ps1', 'support/Epp.Graph.ps1'
+    'support/Epp.Setup.psm1', 'support/Epp.Packages.ps1', 'support/Epp.Graph.ps1', 'support/Epp.Maintenance.ps1'
     'providers/catalog.json', 'packages/catalog.json', 'infra/main.bicep', 'infra/resources.bicep'
     'providers/telesign.json', 'providers/soprano.json', 'providers/infobip.json'
 )
@@ -44,7 +44,7 @@ function Invoke-WebRequest {
     Assert ($Uri.StartsWith($prefix, [StringComparison]::Ordinal)) 'Pin every download to the same resolved commit.'
     Assert ($MaximumRedirection -eq 0) 'Do not follow setup asset redirects.'
     $relative = $Uri.Substring($prefix.Length)
-    Assert ($requiredAssets -ccontains $relative) "Unexpected asset request: $relative"
+    Assert ($requiredAssets -ccontains $relative -or $relative -ceq 'Setup-Epp.ps1') "Unexpected asset request: $relative"
     $state.Requests.Add($relative)
     if ($relative -ceq 'support/Epp.Setup.psm1') {
         $state.AssetDirectory = Split-Path -Parent (Split-Path -Parent $OutFile)
@@ -85,6 +85,17 @@ function Invoke-EppSetup {
     Assert ($SourceBaseUri -ceq "https://raw.githubusercontent.com/$($state.Repository)/$($state.Revision)/setup") 'Forward the resolved commit to the helper.'
     if ($state.SetupError) { throw $state.SetupError }
     if ($PassThru) { return [pscustomobject]@{ Marker = 'completed' } }
+}
+function Invoke-EppMaintenance {
+    [CmdletBinding()]
+    param(
+        $Operation, $DeploymentSummaryPath, $UpdateScope, [switch] $Apply, $OutputDirectory,
+        $SourceRepository, $AssetDirectory, $SourceBaseUri, $ProviderEnvironment, $PackageReleaseTag, [switch] $PassThru,
+        $TenantId, $SubscriptionId, $ResourceGroupName, $FunctionAppName, $KeyVaultSubscriptionId, [switch] $NonInteractive
+    )
+    $state.SetupArguments = @{} + $PSBoundParameters
+    Assert ($SourceBaseUri -ceq "https://raw.githubusercontent.com/$($state.Repository)/$($state.Revision)/setup") 'Pin maintenance helpers to the launcher commit.'
+    if ($PassThru) { return [pscustomobject]@{ Marker = 'maintenance' } }
 }
 function Assert-Cleanup {
     Assert (-not (Test-Path -LiteralPath $state.AssetDirectory)) 'Remove temporary assets on success or failure.'
@@ -149,6 +160,40 @@ try {
     $null = & $launcher @parameters -SourceRepository $state.Repository -SourceRef $state.Revision `
         -Provider Telesign -ProviderEnvironment $environment
     Assert ($state.Lookups -eq 0 -and $state.SetupArguments.ProviderEnvironment.SAMPLE_SERVICE_ID -ceq $environment.SAMPLE_SERVICE_ID) 'Forward declared non-secret input to the generic helper without changing catalog downloads.'
+    Assert-Cleanup
+    foreach ($operation in @('Verify', 'Update')) {
+        Reset-TestState
+        $maintenanceArguments = @{ DeploymentSummaryPath = '.\deployment-previous.json' }
+        if ($operation -eq 'Update') {
+            $maintenanceArguments.Apply = $true
+            $maintenanceArguments.UpdateScope = 'Configuration'
+            $maintenanceArguments.ProviderEnvironment = @{ INFOBIP_VOICE_SENDER_ID = 'Approved sender' }
+        }
+        $result = & (Join-Path $setupDirectory "$operation-Epp.ps1") @maintenanceArguments `
+            -SourceRepository $state.Repository -SourceRef review-probe -PassThru
+        Assert ($result.Marker -ceq 'maintenance' -and $state.SetupArguments.Operation -ceq $operation) 'Dispatch each standalone launcher to maintenance, never setup.'
+        Assert ($state.Lookups -eq 1 -and $state.Requests.Count -eq ($requiredAssets.Count + 1)) 'Resolve one commit for the launcher and all maintenance assets.'
+        Assert ($state.SetupArguments.DeploymentSummaryPath -ceq '.\deployment-previous.json') 'Preserve the customer summary path.'
+        Assert ($state.SetupArguments.OutputDirectory -ceq (Join-Path $setupDirectory 'epp-output')) 'Do not write summaries into the temporary download directory.'
+        if ($operation -eq 'Update') {
+            Assert ($state.SetupArguments.Apply -and $state.SetupArguments.UpdateScope -ceq 'Configuration') 'Forward explicit update approval and scope.'
+        }
+        else { Assert (-not $state.SetupArguments.ContainsKey('Apply')) 'Verification has no apply parameter.' }
+        Assert-Cleanup
+    }
+    Reset-TestState
+    $result = & (Join-Path $setupDirectory 'Verify-Epp.ps1') -SourceRepository $state.Repository `
+        -SourceRef $state.Revision -PassThru
+    Assert ($result.Marker -ceq 'maintenance' -and -not $state.SetupArguments.ContainsKey('DeploymentSummaryPath')) 'Allow interactive verification without a saved summary.'
+    Assert-Cleanup
+    Reset-TestState
+    $null = & (Join-Path $setupDirectory 'Verify-Epp.ps1') -TenantId $parameters.TenantId `
+        -SubscriptionId $parameters.SubscriptionId -ResourceGroupName 'existing-rg' -FunctionAppName 'existing-function' `
+        -KeyVaultSubscriptionId $parameters.SubscriptionId -NonInteractive -SourceRepository $state.Repository -SourceRef $state.Revision
+    Assert ($state.SetupArguments.ResourceGroupName -ceq 'existing-rg' -and
+        $state.SetupArguments.FunctionAppName -ceq 'existing-function' -and $state.SetupArguments.NonInteractive -and
+        $state.SetupArguments.TenantId -ceq $parameters.TenantId -and
+        $state.SetupArguments.KeyVaultSubscriptionId -ceq $parameters.SubscriptionId) 'Forward explicit discovery identity and automation mode.'
     Assert-Cleanup
     Write-Host 'Pinned downloads, provider profiles, environment forwarding, PassThru, catalog guards, and cleanup checks passed.'
 }

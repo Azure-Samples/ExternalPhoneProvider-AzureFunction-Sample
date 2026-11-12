@@ -66,6 +66,14 @@
 #>
 [CmdletBinding()]
 param(
+    [ValidateSet('Setup', 'Verify', 'Update')]
+    [string] $Operation = 'Setup',
+    [string] $DeploymentSummaryPath,
+    [string] $ResourceGroupName,
+    [string] $FunctionAppName,
+    [ValidateSet('All', 'Code', 'Configuration', 'Infrastructure')]
+    [string] $UpdateScope = 'All',
+    [switch] $Apply,
     [string] $TenantId,
     [string] $SubscriptionId,
     [string] $ApplicationId,
@@ -100,6 +108,11 @@ Set-StrictMode -Version Latest
 $repository = $SourceRepository
 $arguments = @{} + $PSBoundParameters
 $arguments.Remove('SourceRef')
+$arguments.Remove('Operation')
+if ($Operation -eq 'Setup' -and ($DeploymentSummaryPath -or $ResourceGroupName -or $FunctionAppName -or
+    $Apply -or $PSBoundParameters.ContainsKey('UpdateScope'))) {
+    throw 'Maintenance parameters require -Operation Verify or Update.'
+}
 $arguments.OutputDirectory = $OutputDirectory
 $arguments.SourceRepository = $SourceRepository
 $downloadDirectory = Join-Path ([IO.Path]::GetTempPath()) "epp-download-$([Guid]::NewGuid().ToString('N'))"
@@ -117,7 +130,7 @@ try {
     $sourceBaseUri = "https://raw.githubusercontent.com/$repository/$revision/setup"
     Write-Host "Downloading deployment tools from $repository at $revision"
 
-    foreach ($file in @('support/Epp.Setup.psm1', 'support/Epp.Packages.ps1', 'support/Epp.Graph.ps1', 'providers/catalog.json', 'packages/catalog.json', 'infra/main.bicep', 'infra/resources.bicep')) {
+    foreach ($file in @('support/Epp.Setup.psm1', 'support/Epp.Packages.ps1', 'support/Epp.Graph.ps1', 'support/Epp.Maintenance.ps1', 'providers/catalog.json', 'packages/catalog.json', 'infra/main.bicep', 'infra/resources.bicep')) {
         $destination = Join-Path $downloadDirectory $file
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Invoke-WebRequest -Uri "$sourceBaseUri/$file" -OutFile $destination -TimeoutSec 60 -MaximumRedirection 0
@@ -142,7 +155,20 @@ try {
     }
 
     $module = Import-Module (Join-Path $downloadDirectory 'support/Epp.Setup.psm1') -PassThru -Force
-    Invoke-EppSetup @arguments -AssetDirectory $downloadDirectory -SourceBaseUri $sourceBaseUri
+    if ($Operation -eq 'Setup') {
+        Invoke-EppSetup @arguments -AssetDirectory $downloadDirectory -SourceBaseUri $sourceBaseUri
+    }
+    else {
+        $allowed = @('DeploymentSummaryPath', 'UpdateScope', 'Apply', 'OutputDirectory', 'SourceRepository',
+            'PackageReleaseTag', 'ProviderEnvironment', 'PassThru')
+        if ($Operation -eq 'Verify') {
+            $allowed += @('TenantId', 'SubscriptionId', 'ResourceGroupName', 'FunctionAppName', 'KeyVaultSubscriptionId', 'NonInteractive')
+        }
+        foreach ($name in @($arguments.Keys)) {
+            if ($name -notin $allowed) { throw "Parameter -$name is not supported for $Operation maintenance." }
+        }
+        Invoke-EppMaintenance @arguments -Operation $Operation -AssetDirectory $downloadDirectory -SourceBaseUri $sourceBaseUri
+    }
 }
 finally {
     try {

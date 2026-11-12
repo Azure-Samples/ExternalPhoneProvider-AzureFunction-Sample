@@ -2801,7 +2801,7 @@ function Invoke-EppDeployment {
 function Publish-EppFunction {
     param(
         [hashtable] $Inputs, [Collections.IDictionary] $Names, $Context, $Outputs,
-        [string] $SiteId, $Package, [string] $Directory
+        [string] $SiteId, $Package, [string] $Directory, [switch] $MountAfterUpload
     )
 
     if ($Inputs.ServicePlan -notin @('FC1', 'EP1')) { throw "Unknown service plan '$($Inputs.ServicePlan)'." }
@@ -2836,7 +2836,7 @@ function Publish-EppFunction {
                     --name "$deployedHash.zip" --file $packagePath --auth-mode login --overwrite true `
                     --subscription $Inputs.SubscriptionId --output none
             } | Out-Null
-            if ($Package.RequiresRemoteBuild) {
+            if ($Package.RequiresRemoteBuild -or $MountAfterUpload) {
                 if ($Outputs.packageContainerUrl.value -cne "https://$($Names.storageAccount).blob.core.windows.net/packages/") {
                     throw 'Azure returned an unexpected package storage URL. The app will not mount it.'
                 }
@@ -3136,4 +3136,5 @@ function Invoke-EppSetup {
     }
 }
 
-Export-ModuleMember -Function Invoke-EppSetup
+. (Join-Path $PSScriptRoot 'Epp.Maintenance.ps1')
+Export-ModuleMember -Function Invoke-EppSetup, Invoke-EppMaintenance
