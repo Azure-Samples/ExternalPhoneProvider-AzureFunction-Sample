@@ -155,7 +155,7 @@ try {
         $inputs.PackageReleaseTag = 'epp-packages-42-1-javascript'; $inputs.SourcePackageSha256 = 'a' * 64
         $inputs.SourceBaseUri = "https://raw.githubusercontent.com/unit/repo/$('a' * 40)/setup"
         $context = @{
-            ResourceProviders = @(); Application = @{ SignInAudience = 'AzureADMultipleOrgs' }
+            ResourceProviders = @(); Application = @{ SignInAudience = 'AzureADMyOrg' }
             InvokeRoleExists = $true; ProviderTenantRestricted = $false
             CertificatePlan = @{ Action = 'Create'; KeyId = $inputs.ApplicationId; CertificateName = 'encryption'; VaultName = $names.keyVault; RemoveKeyIds = @() }
         }
@@ -164,6 +164,9 @@ try {
         $text = $script:Messages -join "`n"
         Assert ($text.Contains("SAMPLE_SERVICE_ID: $sid") -and $text.Contains('DISABLED placeholders') -and
             $text.Contains('no outbound OAuth identity') -and $text.Contains('Easy Auth')) 'Show non-secret inputs, pending credentials, and retained endpoint security before approval.'
+        Assert ($text.Contains('single-tenant (AzureADMyOrg)') -and
+            -not $text.Contains('Change the endpoint application') -and
+            -not $text.Contains('Configure the multi-tenant application')) 'API-key plans must not promise a multi-tenant audience or provider-tenant restriction.'
         $inputs.SourcePackageSha256 = $null; $inputs.PackageSha256 = 'a' * 64; $inputs.PackageReleaseTag = $null
         $script:Messages.Clear()
         Show-EppPlan -Inputs $inputs -Names $names -ProviderConfiguration $provider -Context $context

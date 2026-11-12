@@ -58,7 +58,7 @@ before running it. Azure roles and Microsoft Entra roles grant access to differe
 See [Azure built-in roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles)
 and [application creation permissions](https://learn.microsoft.com/graph/api/application-post-applications?view=graph-rest-1.0#permissions).
 
-Microsoft Graph calls use the Azure CLI user session. Setup uses the Microsoft Graph beta
+Microsoft Graph calls use the Azure CLI user session. OAuth setup uses the Microsoft Graph beta
 [allowed-tenants configuration](https://learn.microsoft.com/graph/api/resources/allowedtenantsaudience?view=graph-rest-beta);
 confirm that your tenant permits this configuration.
 
@@ -192,13 +192,21 @@ Unattended setup requires an existing `-ApplicationId`.
 
 Setup configures:
 
-- Organizational multitenancy and an allowed-tenant list containing the provider tenants,
+- For OAuth providers, organizational multitenancy and an allowed-tenant list containing the provider tenants,
   while preserving existing allowed tenants. The application home tenant remains allowed.
+- For API-key providers, a single-tenant (`AzureADMyOrg`) endpoint application, with no
+  provider-tenant restriction configuration.
 - The endpoint enterprise application, required assignment, and the `Epp.Invoke` role assigned
   to the Microsoft phone-provider service principal.
 - Microsoft Graph `Application.Read.All` for that Microsoft service principal.
 - The identifier URI, public encryption certificate, and Easy Auth caller restriction.
-- A federated credential for the outbound managed identity.
+- For OAuth providers only, an outbound user-assigned managed identity and its federated credential.
+
+API-key setup stops if an existing endpoint application is multi-tenant. Review that application's
+provider dependencies and trusts manually, or choose a new dedicated application. Setup does not
+automatically convert it to single-tenant or remove existing tenant restrictions or federation.
+Incoming Microsoft caller authentication, app-role grants, encryption, and the Function's
+system-assigned identity remain required for both authentication modes.
 
 Exact existing issuer/subject/audience federation matches are reused. Other trusts are preserved.
 Complete [provider-side authorization](../../docs/ONBOARDING.md#complete-provider-authentication)
