@@ -23,7 +23,7 @@ try {
         Assert (-not $provider.Settings.ContainsKey('EPP_PROVIDER_TENANT_ID') -and $provider.Languages -ceq 'javascript') 'Metadata can restrict runtimes without requiring an outbound OAuth authority.'
         Assert-Throws { Get-EppProvider -AssetDirectory $AssetDirectory -Provider Sample -EndpointRegion eu -NonInteractive } "does not support.*eu"
         $cyot = @(Get-EppProviderCatalog -AssetDirectory $SetupDirectory)
-        Assert (($cyot.id | Sort-Object) -join ',' -ceq 'infobip,soprano,telesign') 'Keep CYOT onboarding providers unchanged.'
+        Assert (($cyot.id | Sort-Object) -join ',' -ceq 'infobip,soprano,telesign,twilio') 'Keep the CYOT onboarding providers and add Twilio.'
         $sid = 'svc-1234'
         $values = @{ SAMPLE_SERVICE_ID = $sid }
         $resolved = Get-EppProviderEnvironment -ProviderConfiguration $provider -Values $values -NonInteractive
