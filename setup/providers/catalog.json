@@ -15,6 +15,11 @@
       "id": "infobip",
       "displayName": "Infobip",
       "file": "infobip.json"
+    },
+    {
+      "id": "twilio",
+      "displayName": "Twilio",
+      "file": "twilio.json"
     }
   ]
 }
