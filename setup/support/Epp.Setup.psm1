@@ -239,7 +239,9 @@ function Resolve-EppApplicationProvider {
         return Read-EppProviderName -Entries $entries
     }
     $application = Get-EppApplication -Inputs $Inputs -ClientId $Inputs.ApplicationId
-    $restriction = Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
+    $restriction = if ($application.SignInAudience -eq 'AzureADMultipleOrgs') {
+        Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
+    }
     $state = Get-EppProviderRestrictionState -Restriction $restriction
     $configured = @()
     if ($application.SignInAudience -eq 'AzureADMultipleOrgs' -and $state -and $state.isHomeTenantAllowed) {
@@ -1249,6 +1251,7 @@ function Set-EppProviderTenantRestriction {
 
     $ids = @(if ($AllowedTenantIds) { $AllowedTenantIds | ForEach-Object { ConvertTo-EppGuid $_ } | Sort-Object -Unique }
         elseif ($ProviderTenantId) { ConvertTo-EppGuid $ProviderTenantId })
+    if (-not $ids.Count) { throw 'OAuth provider configuration requires a nonempty provider-tenant allowlist.' }
     if ($ProviderTenantId -and $ids -notcontains $ProviderTenantId) { throw 'The approved tenant allowlist does not contain the selected provider.' }
 
     Invoke-EppGraphRequest -Inputs $Inputs -Method PATCH -Path "/beta/applications/$ApplicationObjectId" `
@@ -1261,6 +1264,21 @@ function Set-EppProviderTenantRestriction {
                 allowedTenantIds = @($ids)
             }
         } | Out-Null
+}
+
+function Get-EppExpectedSignInAudience {
+    param([hashtable] $Inputs)
+
+    if ($Inputs['ProviderAuthentication'] -eq 'apiKey') { return 'AzureADMyOrg' }
+    return 'AzureADMultipleOrgs'
+}
+
+function Assert-EppApiKeyApplicationAudience {
+    param([hashtable] $Inputs, $Application)
+
+    if ($Inputs['ProviderAuthentication'] -eq 'apiKey' -and $Application.SignInAudience -ne 'AzureADMyOrg') {
+        throw 'API-key providers require a single-tenant (AzureADMyOrg) endpoint application. Review existing multi-tenant applications and their provider dependencies manually, or choose a new dedicated application. Setup will not change their audience or remove provider trusts.'
+    }
 }
 
 function Get-EppResourceProviderRequirements {
@@ -1514,6 +1532,7 @@ function Connect-EppContext {
         throw 'The existing EPP application must be an organizational single- or multi-tenant app. Choose Create a new application or register a dedicated organizational app manually.'
     }
     if ($application.TokenEncryptionKeyId) { throw 'Clear tokenEncryptionKeyId manually on the endpoint app. Easy Auth requires signed, not encrypted, bearer access tokens.' }
+    Assert-EppApiKeyApplicationAudience -Inputs $Inputs -Application $application
 
     $endpointPrincipals = @(if (-not $pendingApplication) {
         Get-EppServicePrincipal -Inputs $Inputs -AppId $Inputs.ApplicationId -Description endpoint
@@ -1536,12 +1555,12 @@ function Connect-EppContext {
             $invokeRoles[0].AllowedMemberTypes -notcontains 'Application'))) {
         throw "The endpoint application has a conflicting '$script:EppInvokeAppRoleValue' app role or role ID."
     }
-    $tenantRestriction = if (-not $pendingApplication) {
+    $tenantRestriction = if (-not $pendingApplication -and $Inputs['ProviderAuthentication'] -ne 'apiKey') {
         Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
     } else { $null }
     $providerRestrictionState = Get-EppProviderRestrictionState -Restriction $tenantRestriction
     $allowedTenants = @(if ($providerRestrictionState) { $providerRestrictionState.allowedTenantIds })
-    $providerTenants = @(if ($Inputs.ProviderTenantId) { $Inputs.ProviderTenantId })
+    $providerTenants = @(if ($Inputs['ProviderAuthentication'] -ne 'apiKey' -and $Inputs.ProviderTenantId) { $Inputs.ProviderTenantId })
     if ($Inputs['ProviderAuthentication'] -eq 'oauth') {
         $providerTenants += ConvertTo-EppGuid ([string]$Inputs['AccessTokenScopeTenant'])
     }
@@ -1618,7 +1637,7 @@ function Show-EppPlan {
     Write-Host "Provider auth: $($ProviderConfiguration.AuthenticationMode)"
     if ($ProviderConfiguration.TenantId) { Write-Host "Security Store tenant: $($ProviderConfiguration.TenantId)" }
     else { Write-Host 'Security Store tenant: not required (API-key authentication)' }
-    if ($Inputs['ProviderAllowedTenantIds']) {
+    if ($Inputs['ProviderAuthentication'] -ne 'apiKey' -and $Inputs['ProviderAllowedTenantIds']) {
         Write-Host "Allowed provider tenants after deployment: $($Inputs.ProviderAllowedTenantIds -join ', ') (home tenant also allowed)"
         Write-Host 'Existing allowed provider tenants are preserved; selecting a provider does not configure multi-provider runtime fallback.'
     }
@@ -1674,7 +1693,10 @@ function Show-EppPlan {
         Write-Host "  - Create a dedicated Microsoft Entra app registration named '$($Inputs.NewApplicationDisplayName)' in the selected tenant."
         Write-Host '      No client secret or redirect URI is created. An existing app with the same name is not adopted.'
     }
-    if ($Context.Application.SignInAudience -ne 'AzureADMultipleOrgs') {
+    if ($Inputs['ProviderAuthentication'] -eq 'apiKey') {
+        Write-Host '  - Keep the endpoint application single-tenant (AzureADMyOrg); no provider-tenant allowlist is configured.'
+    }
+    elseif ($Context.Application.SignInAudience -ne 'AzureADMultipleOrgs') {
         Write-Host '  - Change the endpoint application from single-tenant to organizational multi-tenant.'
     }
     if (-not $Context.InvokeRoleExists) {
@@ -1686,7 +1708,7 @@ function Show-EppPlan {
     Write-Host '      WARNING: Application.Read.All permits app-only reading of every application and enterprise application in this tenant.' -ForegroundColor Yellow
 
     Write-Host "`nEndpoint security" -ForegroundColor Cyan
-    if (-not $Context.ProviderTenantRestricted) {
+    if ($Inputs['ProviderAuthentication'] -ne 'apiKey' -and -not $Context.ProviderTenantRestricted) {
         Write-Host '  - Configure the multi-tenant application for its home tenant and the displayed provider-tenant allowlist.'
     }
     Write-Host '  - Configure Easy Auth to require HTTPS authentication and allow only the Microsoft phone-provider enterprise application.'
@@ -1893,14 +1915,18 @@ function Initialize-EppGraphAccess {
         throw 'The dedicated endpoint application changed after preflight or has unsupported token encryption enabled.'
     }
     Assert-EppCertificatePlanUnchanged -Application $application -Plan $Context.CertificatePlan
-    $restriction = Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
+    Assert-EppApiKeyApplicationAudience -Inputs $Inputs -Application $application
+    $restriction = if ($Inputs['ProviderAuthentication'] -ne 'apiKey') {
+        Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
+    }
     $currentProviderState = Get-EppProviderRestrictionState -Restriction $restriction
     if (-not (Test-EppJsonEqual $currentProviderState $Context.ProviderRestrictionState)) {
         throw 'The application provider configuration changed after the plan was reviewed. Rerun setup; no provider tenants will be removed.'
     }
-    if (-not $Inputs.ContainsKey('ProviderAllowedTenantIds') -or
+    if ($Inputs['ProviderAuthentication'] -ne 'apiKey' -and (
+        -not $Inputs.ContainsKey('ProviderAllowedTenantIds') -or
         $Inputs.ProviderAllowedTenantIds -isnot [array] -or
-        ($Inputs.ProviderTenantId -and -not $Inputs.ProviderAllowedTenantIds.Count)) {
+        -not $Inputs.ProviderAllowedTenantIds.Count)) {
         throw 'The approved provider-tenant allowlist is missing. Rerun preflight.'
     }
     $roles = @($application.AppRoles | Where-Object { $null -ne $_ })
@@ -1924,8 +1950,9 @@ function Initialize-EppGraphAccess {
     if (-not $invokeRoles.Count) {
         Invoke-EppGraphRequest -Inputs $Inputs -Method PATCH -Path "/v1.0/applications/$($application.Id)" -Body @{ appRoles = $roles } | Out-Null
     }
-    if ($application.SignInAudience -ne 'AzureADMultipleOrgs' -or
-        -not (Test-EppProviderTenantRestriction -Restriction $restriction -ProviderTenantId $Inputs.ProviderTenantId -ExpectedAllowedTenantIds $Inputs.ProviderAllowedTenantIds)) {
+    if ($Inputs['ProviderAuthentication'] -ne 'apiKey' -and (
+        $application.SignInAudience -ne 'AzureADMultipleOrgs' -or
+        -not (Test-EppProviderTenantRestriction -Restriction $restriction -ProviderTenantId $Inputs.ProviderTenantId -ExpectedAllowedTenantIds $Inputs.ProviderAllowedTenantIds))) {
         Set-EppProviderTenantRestriction -Inputs $Inputs -ApplicationObjectId $application.Id -ProviderTenantId $Inputs.ProviderTenantId `
             -AllowedTenantIds $Inputs.ProviderAllowedTenantIds
     }
@@ -2306,17 +2333,20 @@ function Assert-EppGraphAccess {
     )
 
     $application = Get-EppApplication -Inputs $Inputs -ClientId $Inputs.ApplicationId
-    $tenantRestriction = Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
+    $tenantRestriction = if ($Inputs['ProviderAuthentication'] -ne 'apiKey') {
+        Get-EppSignInAudienceRestrictions -Inputs $Inputs -ApplicationObjectId $application.Id
+    }
     $invokeRoles = @($application.AppRoles | Where-Object {
         $_.Id -eq $script:EppInvokeAppRoleId -and $_.Value -eq $script:EppInvokeAppRoleValue -and
         $_.IsEnabled -and $_.AllowedMemberTypes -contains 'Application'
     })
     Assert-EppApplicationEncryption -Application $application -Certificate $Certificate -KeyId $KeyId -Plan $CertificatePlan
-    if ($application.SignInAudience -ne 'AzureADMultipleOrgs' -or $application.TokenEncryptionKeyId -or
+    if ($application.SignInAudience -ne (Get-EppExpectedSignInAudience -Inputs $Inputs) -or $application.TokenEncryptionKeyId -or
         $application.IdentifierUris -notcontains $IdentifierUri -or $invokeRoles.Count -ne 1) {
-        throw 'Endpoint application readback is missing its multi-tenant setting, identifier URI, Epp.Invoke role, or encryption certificate.'
+        throw 'Endpoint application readback is missing its required sign-in audience, identifier URI, Epp.Invoke role, or encryption certificate.'
     }
-    if (-not (Test-EppProviderTenantRestriction -Restriction $tenantRestriction -ProviderTenantId $Inputs.ProviderTenantId -ExpectedAllowedTenantIds $Inputs.ProviderAllowedTenantIds)) {
+    if ($Inputs['ProviderAuthentication'] -ne 'apiKey' -and
+        -not (Test-EppProviderTenantRestriction -Restriction $tenantRestriction -ProviderTenantId $Inputs.ProviderTenantId -ExpectedAllowedTenantIds $Inputs.ProviderAllowedTenantIds)) {
         throw 'Endpoint application readback does not restrict the multi-tenant app to the selected provider tenant.'
     }
 
@@ -2452,7 +2482,8 @@ function Set-EppApplicationEndpoint {
     param([hashtable] $Inputs, $Context, $Outputs, $Certificate, [string] $KeyId, [bool] $ConfigureFederation = $true)
 
     $application = Get-EppApplication -Inputs $Inputs -ObjectId $Context.Application.Id
-    if ($application.AppId -ne $Inputs.ApplicationId -or $application.SignInAudience -ne 'AzureADMultipleOrgs' -or $application.TokenEncryptionKeyId) {
+    if ($application.AppId -ne $Inputs.ApplicationId -or
+        $application.SignInAudience -ne (Get-EppExpectedSignInAudience -Inputs $Inputs) -or $application.TokenEncryptionKeyId) {
         throw 'The application changed after preflight. Its identity, audience, and signed-token configuration must still match.'
     }
     $plan = $Context.CertificatePlan
@@ -2499,7 +2530,7 @@ function Set-EppApplicationEndpoint {
         identifierUris = $uris
         keyCredentials = @(ConvertTo-EppGraphKeyCredentials -Credentials $keys)
     } | Out-Null
-    if (-not $ConfigureFederation) { return }
+    if ($Inputs['ProviderAuthentication'] -eq 'apiKey' -or -not $ConfigureFederation) { return }
 
     $issuer = "https://login.microsoftonline.com/$($Inputs.TenantId)/v2.0"
     $audience = 'api://AzureADTokenExchange'
