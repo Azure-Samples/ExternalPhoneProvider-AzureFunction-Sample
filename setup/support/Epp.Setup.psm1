@@ -2632,13 +2632,16 @@ function Sync-EppFunctionTriggers {
 function Assert-EppFunctionPublished {
     param([hashtable] $Inputs, [Collections.IDictionary] $Names)
 
+    # Python's v2 decorator registers the handler name (send_otp), while its public HTTP route
+    # remains /api/SendOtp. JavaScript and .NET register the function itself as SendOtp.
+    $expectedFunctionName = if ($Inputs.Language -eq 'python') { 'send_otp' } else { 'SendOtp' }
     for ($attempt = 1; $attempt -le 6; $attempt++) {
         $functions = @(Invoke-EppAz functionapp function list --resource-group $Names.resourceGroup --name $Names.functionApp `
             --subscription $Inputs.SubscriptionId --output json | ConvertFrom-Json)
-        if (@($functions | Where-Object { $_ -and $_.name -match '(^|/)SendOtp$' }).Count -eq 1) { return }
+        if (@($functions | Where-Object { $_ -and $_.name -match "(^|/)$([regex]::Escape($expectedFunctionName))$" }).Count -eq 1) { return }
         if ($attempt -lt 6) { Start-Sleep -Seconds 10 }
     }
-    throw 'The package was published but Azure did not register SendOtp. Inspect the Function runtime/build logs; deployment is not complete.'
+    throw 'The package was published but Azure did not register the expected CYOT function. Inspect the Function runtime/build logs; deployment is not complete.'
 }
 
 function Invoke-EppDeployment {
