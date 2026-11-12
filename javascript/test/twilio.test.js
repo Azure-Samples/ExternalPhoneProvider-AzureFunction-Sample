@@ -53,6 +53,7 @@ test('SMS request starts a Verify verification with the Entra-supplied code', ()
     assert.deepEqual(Object.fromEntries(body), {
         To: '+15551234567', Channel: 'sms', CustomCode: '012345',
         Tags: JSON.stringify({ entra_byot_correlation_id: 'correlation-id' }),
+        Locale: 'en',
     });
 });
 
@@ -68,9 +69,33 @@ test('a trailing slash on the endpoint does not double up', () => {
     assert.equal(request.url, `https://verify.twilio.com/v2/Services/${SERVICE_SID}/Verifications`);
 });
 
-test('only To, Channel, CustomCode, and Tags are sent; Entra message text and locale are not forwarded', () => {
+test('only To, Channel, CustomCode, Tags, and a supported Locale are sent; Entra message text is not forwarded', () => {
     const body = new URLSearchParams(twilio.createRequest(input).body);
-    assert.deepEqual([...body.keys()].sort(), ['Channel', 'CustomCode', 'Tags', 'To']);
+    assert.deepEqual([...body.keys()].sort(), ['Channel', 'CustomCode', 'Locale', 'Tags', 'To']);
+    assert.doesNotMatch(body.toString(), /verification\+code\+is/i);
+});
+
+test('Entra locales map to a Verify locale the channel supports, or are left out', () => {
+    const localeFor = (locale, channel = 'sms') => new URLSearchParams(twilio.createRequest({
+        ...input, channel, delivery: new OtpDelivery({ ...delivery, locale }),
+    }).body).get('Locale');
+    for (const [locale, expected] of [
+        ['fr-FR', 'fr'], ['de', 'de'], ['pt-BR', 'pt-BR'], ['pt-PT', 'pt'], ['es-MX', 'es'],
+        ['en-GB', 'en'], ['EN_us', 'en'], ['zh-CN', 'zh-CN'], ['zh-Hans', 'zh-CN'], ['zh-HK', 'zh-HK'],
+        ['nb-NO', 'nb'], ['no', 'nb'], ['lt-LT', 'lt'], ['uk-UA', 'uk'],
+    ]) {
+        assert.equal(localeFor(locale), expected, `SMS ${locale}`);
+    }
+    for (const [locale, expected] of [['en-GB', 'en-GB'], ['en-US', 'en'], ['fr-CA', 'fr'], ['pt-BR', 'pt-BR']]) {
+        assert.equal(localeFor(locale, 'voice'), expected, `voice ${locale}`);
+    }
+    // Unsupported locales are left out so Verify picks a language from the phone number instead of rejecting the request.
+    for (const locale of ['zh-TW', 'zh-Hant', 'xx-YY', 'tlh', '', '  ', 'fr FR', '<script>', undefined, null, 42]) {
+        assert.equal(localeFor(locale), null, `SMS ${String(locale)}`);
+    }
+    for (const locale of ['lt-LT', 'uk', 'ar', 'hi-IN']) {
+        assert.equal(localeFor(locale, 'voice'), null, `voice ${locale}`);
+    }
 });
 
 test('Tags carry only the Entra correlation ID, or unknown when it is missing or not ID-shaped', () => {

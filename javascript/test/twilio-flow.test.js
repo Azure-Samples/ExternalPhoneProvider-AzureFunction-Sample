@@ -136,6 +136,7 @@ for (const [channel, twilioChannel] of [[1, 'sms'], [2, 'call']]) {
         assert.deepEqual(form, {
             To: '+15551234567', Channel: twilioChannel, CustomCode: '012345',
             Tags: JSON.stringify({ entra_byot_correlation_id: '00877757-333f-2369-058f-88d4e7cc2935' }),
+            Locale: 'en',
         });
     });
 }

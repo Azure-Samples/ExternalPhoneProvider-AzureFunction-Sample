@@ -15,6 +15,34 @@ const BLOCKED_CODES = new Set([60410, 60605]);
 const CORRELATION_TAG = 'entra_byot_correlation_id';
 const SAFE_ID = /^[A-Za-z0-9-]{1,128}$/;
 
+// Verify's built-in translations: https://www.twilio.com/docs/verify/supported-languages
+// Verify rejects an unsupported Locale, so anything not listed is left out and Verify
+// picks the language from the phone number's country instead.
+const canonical = (codes) => new Map(codes.map((code) => [code.toLowerCase(), code]));
+const LOCALES = {
+    sms: canonical(['af', 'ar', 'ca', 'cs', 'da', 'de', 'el', 'en', 'es', 'et', 'fi', 'fr', 'he', 'hi',
+        'hr', 'hu', 'id', 'it', 'ja', 'kn', 'ko', 'lt', 'mr', 'ms', 'nb', 'nl', 'pl', 'pt', 'pt-BR', 'ro',
+        'ru', 'sk', 'sv', 'te', 'th', 'tl', 'tr', 'uk', 'vi', 'zh', 'zh-CN', 'zh-HK']),
+    voice: canonical(['ca', 'da', 'de', 'en', 'en-GB', 'es', 'fi', 'fr', 'it', 'ja', 'ko', 'nb', 'nl',
+        'pl', 'pt', 'pt-BR', 'ru', 'sv', 'zh', 'zh-CN', 'zh-HK']),
+};
+const LOCALE_TAG = /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/;
+
+function verifyLocale(locale, channel) {
+    if (typeof locale !== 'string') return null;
+    const tag = locale.trim().replace(/_/g, '-').toLowerCase();
+    if (!LOCALE_TAG.test(tag)) return null;
+    const supported = LOCALES[channel];
+    const [language, subtag] = tag.split('-');
+    if (subtag && supported.has(`${language}-${subtag}`)) return supported.get(`${language}-${subtag}`);
+    if (language === 'zh') {
+        // Only simplified Chinese falls back to zh; other scripts and regions keep Verify's default.
+        return !subtag || subtag === 'hans' ? supported.get('zh-cn') : null;
+    }
+    const base = ['no', 'nn'].includes(language) ? 'nb' : language;
+    return supported.get(base) ?? null;
+}
+
 function verifyTags(delivery) {
     const id = typeof delivery.correlationId === 'string' && SAFE_ID.test(delivery.correlationId)
         ? delivery.correlationId : 'unknown';
@@ -48,6 +76,8 @@ const provider = Object.freeze({
             CustomCode: delivery.otp,
             Tags: verifyTags(delivery),
         });
+        const locale = verifyLocale(delivery.locale, channel);
+        if (locale) body.set('Locale', locale);
         const basic = Buffer.from(`${credential.identity}:${credential.secret}`).toString('base64');
         return {
             url: `${endpoint.replace(/\/+$/, '')}/v2/Services/${serviceSid}/Verifications`,
