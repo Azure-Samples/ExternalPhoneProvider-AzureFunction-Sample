@@ -158,10 +158,13 @@ values. Soft-deleted conflicts and authorization failures stop setup rather than
 overwriting, or pretending credential provisioning succeeded.
 
 API-key Functions retain the system identity for storage, monitoring, and Key Vault, but do
-not create the outbound OAuth identity or federation. Microsoft caller authentication,
-restricted application audiences, Easy Auth, encryption certificates, final approval, and
-manual policy activation remain unchanged. Previously approved application tenant IDs are
-preserved; a tenant-less provider adds no invented provider tenant.
+not create the outbound OAuth identity or federation. Their endpoint application remains
+single-tenant (`AzureADMyOrg`); setup does not configure a provider-tenant allowlist.
+Existing multi-tenant applications require manual review of their provider dependencies
+or a new dedicated application; setup does not automatically convert them or remove trusts.
+Microsoft caller authentication, Easy Auth, encryption certificates, final approval, and
+manual policy activation remain unchanged. OAuth setup continues to preserve previously
+approved application tenant IDs and add its required provider tenants.
 
 ### Additional non-secret settings
 

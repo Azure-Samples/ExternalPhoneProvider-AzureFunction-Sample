@@ -281,7 +281,7 @@ try {
             }
 
             $script:Application = [pscustomobject]@{
-                Id = 'application-object'; AppId = $inputs.ApplicationId; SignInAudience = 'AzureADMultipleOrgs'
+                Id = 'application-object'; AppId = $inputs.ApplicationId; SignInAudience = 'AzureADMyOrg'
                 TokenEncryptionKeyId = $null; IdentifierUris = @('api://preserve'); KeyCredentials = @()
                 PasswordCredentials = @('preserve-client-secret')
             }
@@ -305,8 +305,16 @@ try {
             Assert-Throws { Get-EppCertificatePlan @planArgs -CertificateAction Reuse -NonInteractive } 'No encryption certificate'
             Assert-Throws { Get-EppCertificatePlan @planArgs -KeyVaultCertificateId $certificateId -NonInteractive } 'only valid'
             $context.CertificatePlan = $createPlan
+            $registration.Remove('ConfigureFederation')
             Set-EppApplicationEndpoint @registration -KeyId $createPlan.KeyId
+            $registration.ConfigureFederation = $false
             Assert-EppApplicationEncryption -Application $script:Application -Certificate $issued.Certificate -KeyId $createPlan.KeyId -Plan $createPlan
+            Assert ($script:Application.SignInAudience -ceq 'AzureADMyOrg') 'API-key endpoint registration must preserve single tenancy and skip federation even with its default enabled.'
+            $beforeWrites = $script:GraphWrites
+            $script:Application.SignInAudience = 'AzureADMultipleOrgs'
+            Assert-Throws { Set-EppApplicationEndpoint @registration -KeyId $createPlan.KeyId } 'changed after preflight'
+            Assert ($script:GraphWrites -eq $beforeWrites) 'Reject an API-key audience change before registering encryption credentials.'
+            $script:Application.SignInAudience = 'AzureADMyOrg'
             Assert ($script:Application.IdentifierUris -contains 'api://preserve' -and $script:Application.PasswordCredentials[0] -ceq 'preserve-client-secret') 'Preserve unrelated app configuration and client secrets.'
 
             $first = New-TestCredential $certificate $keyId
@@ -641,6 +649,7 @@ try {
             }
             $oauthInputs = @{} + $inputs
             $oauthInputs.ProviderAuthentication = 'oauth'
+            $script:Application.SignInAudience = 'AzureADMultipleOrgs'
             $oauthInputs.AccessTokenScopeTenant = '99999999-9999-9999-9999-999999999999'
             $oauthInputs.ProviderAllowedTenantIds = @($inputs.ProviderTenantId, $oauthInputs.AccessTokenScopeTenant)
             $oauthProvider = @{} + $provider
@@ -681,6 +690,7 @@ try {
             }
             $context.CertificatePlan = Get-EppCertificatePlan @planArgs @reuseArgs -NonInteractive
             $registration.ConfigureFederation = $true
+            $registration.Inputs = $oauthInputs
             $registration.Outputs.functionAppName = @{ value = $names.functionApp }
             $registration.Outputs.outboundPrincipalId = @{ value = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }
             $expectedName = 'epp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa-outbound'
