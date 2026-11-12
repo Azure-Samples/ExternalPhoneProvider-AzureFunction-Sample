@@ -3,7 +3,7 @@
     "enabled": true,
     "providerName": "Twilio",
     "languages": ["javascript"],
-    "supportedEndpointRegions": ["global"],
+    "supportedEndpointRegions": ["global", "eu"],
     "authentication": {
       "mode": "apiKey",
       "identityKeyVaultSecretName": "twilio-api-key-id",
@@ -19,6 +19,12 @@
     },
     "routes": {
       "global": {
+        "smsEndpoint": "https://verify.twilio.com",
+        "voiceEndpoint": "https://verify.twilio.com",
+        "timeoutMilliseconds": 1500,
+        "retryIntervalSeconds": 30
+      },
+      "eu": {
         "smsEndpoint": "https://verify.twilio.com",
         "voiceEndpoint": "https://verify.twilio.com",
         "timeoutMilliseconds": 1500,
