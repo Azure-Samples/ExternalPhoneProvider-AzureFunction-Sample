@@ -120,6 +120,9 @@ try {
                 Assert (($script:Messages -join "`n").Contains('configuration is included in the deployment approval')) 'Do not configure an existing app before deployment approval.'
                 Assert ($script:Messages -contains 'Provider names: Infobip, Soprano, Telesign, Twilio') 'List provider names alphabetically, independently of catalog order.'
                 Assert ($script:Patches.Count -eq 0) 'Provider resolution is read-only.'
+                if ($audience -ceq 'AzureADMyOrg') {
+                    Assert ($script:RestrictionReads -eq 0) 'Choosing a provider for a single-tenant app must not require beta audience restrictions.'
+                }
             }
         }
         Reset-TestState @('1', 'soprano')
@@ -258,25 +261,43 @@ try {
             Assert (($inputs.ProviderAllowedTenantIds -join ',') -ceq ($expected -join ',')) 'OAuth must allow both the Security Store and token tenants, deduplicate them, and preserve existing allowed tenants.'
             Assert ($inputs.ProviderTenantId -ceq $telesign.TenantId) 'The token tenant must not replace the provider identity used for Security Store discovery.'
         }
-        foreach ($existing in @(@(), @($soprano.TenantId, $unknownTenant))) {
+        foreach ($restriction in $unconfiguredRestrictions) {
             Reset-TestState
-            if ($existing.Count) { $script:Restriction = New-TestRestriction $existing }
+            $script:Restriction = $restriction
             $inputs = New-TestInputs
             $inputs.ProviderAuthentication = 'apiKey'; $inputs.ProviderTenantId = $null; $inputs.AccessTokenScopeTenant = $null
             Assert-Throws { Connect-EppContext -Inputs $inputs -Names @{ resourceGroup = 'unit' } -NonInteractive } '^provider-preflight-boundary$'
-            Assert (($inputs.ProviderAllowedTenantIds -join ',') -ceq (@($existing | Sort-Object) -join ',')) 'Tenant-less API-key setup preserves existing allowed tenants without adding an invented provider tenant.'
+            Assert ($inputs.ProviderAllowedTenantIds.Count -eq 0 -and $script:RestrictionReads -eq 0) 'Single-tenant API-key preflight must not require beta provider restrictions or invent allowed tenants.'
             $context = @{
                 Application = @{ Id = $script:ObjectId; SignInAudience = $script:Application.SignInAudience }
                 CertificatePlan = @{ Snapshot = Get-EppKeyCredentialSnapshot @() }
-                ProviderRestrictionState = Get-EppProviderRestrictionState $script:Restriction
+                ProviderRestrictionState = $null
             }
-            Assert-Throws { Initialize-EppGraphAccess -Inputs $inputs -Context $context } '^provider-configuration-finished$'
-            Assert ($script:Patches.Count -eq 1 -and $script:Patches[0].signInAudienceRestrictions.isHomeTenantAllowed -eq $true -and
-                ($script:Patches[0].signInAudienceRestrictions.allowedTenantIds -join ',') -ceq ($inputs.ProviderAllowedTenantIds -join ',')) 'Restrict API-key applications to the home tenant and any previously approved tenants, never unrestricted audiences.'
-            Assert (-not (Test-EppProviderTenantRestriction -Restriction $null -ExpectedAllowedTenantIds @())) 'An unrestricted audience is not equivalent to an explicit home-only restriction.'
-            Assert (Test-EppProviderTenantRestriction -Restriction (New-TestRestriction @()) -ExpectedAllowedTenantIds @()) 'Recognize an explicit home-only restriction.'
-            Assert (-not (Test-EppProviderTenantRestriction -Restriction (New-TestRestriction @($unknownTenant)) -ExpectedAllowedTenantIds @())) 'An empty approved tenant list must still require exact readback.'
+            foreach ($newApplication in @($false, $true)) {
+                if ($newApplication) { $inputs.NewApplicationDisplayName = 'New API-key endpoint' }
+                Assert-Throws { Initialize-EppGraphAccess -Inputs $inputs -Context $context } '^provider-configuration-finished$'
+                Assert ($script:Patches.Count -eq 0 -and $script:RestrictionReads -eq 0 -and
+                    $script:Application.SignInAudience -ceq 'AzureADMyOrg') 'Existing and newly created API-key apps must retain AzureADMyOrg without a beta audience PATCH.'
+            }
         }
+        foreach ($restriction in @($null, (New-TestRestriction @()), (New-TestRestriction @($soprano.TenantId, $unknownTenant)))) {
+            Reset-TestState
+            $script:Restriction = $restriction
+            $script:Application.SignInAudience = 'AzureADMultipleOrgs'
+            $inputs = New-TestInputs
+            $inputs.ProviderAuthentication = 'apiKey'; $inputs.ProviderTenantId = $null
+            Assert-Throws { Connect-EppContext -Inputs $inputs -Names @{ resourceGroup = 'unit' } -NonInteractive } 'Review existing multi-tenant applications'
+            $context = @{
+                Application = @{ Id = $script:ObjectId; SignInAudience = 'AzureADMultipleOrgs' }
+                CertificatePlan = @{ Snapshot = Get-EppKeyCredentialSnapshot @() }
+                ProviderRestrictionState = $null
+            }
+            Assert-Throws { Initialize-EppGraphAccess -Inputs $inputs -Context $context } 'Review existing multi-tenant applications'
+            Assert ($script:Patches.Count -eq 0 -and $script:EnsureCalls -eq 0 -and $script:RestrictionReads -eq 0) 'Stop for manual review before changing any existing multi-tenant API-key app or provider trusts.'
+        }
+        Reset-TestState
+        Assert-Throws { Set-EppProviderTenantRestriction -Inputs (New-TestInputs) -ApplicationObjectId $script:ObjectId -AllowedTenantIds @() } 'nonempty provider-tenant allowlist'
+        Assert ($script:Patches.Count -eq 0) 'Never send an invalid empty allowedTenantIds PATCH.'
         foreach ($alreadyConfigured in @($false, $true)) {
             Reset-TestState
             $script:Application.SignInAudience = 'AzureADMultipleOrgs'
@@ -328,6 +349,96 @@ try {
                 Assert ($script:Patches.Count -eq 0 -and $script:EnsureCalls -eq 0) 'Failed readback must stop before any application configuration.'
             }
         }
+        Reset-TestState
+        $inputs = New-TestInputs
+        $inputs.ProviderAuthentication = 'apiKey'; $inputs.ProviderTenantId = $null
+        $inputs.ProviderAllowedTenantIds = @()
+        $context = @{
+            Application = @{ Id = $script:ObjectId; SignInAudience = 'AzureADMyOrg' }
+            CertificatePlan = @{ Snapshot = Get-EppKeyCredentialSnapshot @() }
+            ProviderRestrictionState = $null
+        }
+        $script:Application.AppRoles = @()
+        $script:Application.IdentifierUris = @('api://endpoint')
+        $script:Principals = @{
+            endpoint = @{ Id = 'endpoint'; AppRoleAssignmentRequired = $false }
+            'Microsoft phone-provider' = @{ Id = 'caller'; AccountEnabled = $true }
+            'Microsoft Graph' = @{
+                Id = 'graph'
+                AppRoles = @(@{
+                    Id = $script:MicrosoftGraphApplicationReadAllRoleId; Value = 'Application.Read.All'
+                    IsEnabled = $true; AllowedMemberTypes = @('Application')
+                })
+            }
+        }
+        $script:Assignments = [Collections.Generic.List[object]]::new()
+        function script:Get-EppServicePrincipal {
+            param($Inputs, $AppId, $Description)
+            return $script:Principals[$Description]
+        }
+        function script:Ensure-EppServicePrincipal {
+            param($Inputs, $AppId, $Description)
+            return Get-EppServicePrincipal -Inputs $Inputs -AppId $AppId -Description $Description
+        }
+        function script:Invoke-EppGraphRequest {
+            param($Inputs, $Method, $Path, $Body, $Query)
+            Assert ($Method -ceq 'PATCH') 'Only application role and assignment-requirement PATCHes are expected.'
+            $script:Patches.Add($Body)
+            if ($Path -ceq "/v1.0/applications/$script:ObjectId") {
+                Assert (($Body.Keys -join ',') -ceq 'appRoles') 'API-key setup must not modify audience or provider restrictions.'
+                $script:Application.AppRoles = $Body.appRoles
+            }
+            elseif ($Path -ceq '/v1.0/servicePrincipals/endpoint') {
+                Assert ($Body.appRoleAssignmentRequired -eq $true) 'Incoming callers must require app-role assignment.'
+                $script:Principals.endpoint.AppRoleAssignmentRequired = $true
+            }
+            else { throw "Unexpected Graph path: $Path" }
+        }
+        function script:Ensure-EppAppRoleAssignment {
+            param($Inputs, $Principal, $Resource, $AppRoleId, $Description)
+            Assert ($Principal.Id -ceq 'caller') 'Grant incoming permissions only to the Microsoft caller.'
+            $script:Assignments.Add(@{ ResourceId = $Resource.Id; AppRoleId = $AppRoleId })
+        }
+        function script:Get-EppAppRoleAssignments {
+            param($Inputs, $PrincipalId)
+            Assert ($PrincipalId -ceq 'caller') 'Read back the Microsoft caller grants.'
+            return $script:Assignments.ToArray()
+        }
+        $script:EncryptionChecks = 0
+        function script:Assert-EppApplicationEncryption {
+            param($Application, $Certificate, $KeyId, $Plan)
+            $script:EncryptionChecks++
+        }
+        $trust = Initialize-EppGraphAccess -Inputs $inputs -Context $context
+        Assert ($trust.EndpointPrincipalId -ceq 'endpoint' -and $script:Patches.Count -eq 2 -and
+            $script:Assignments.Count -eq 2 -and $script:RestrictionReads -eq 0) 'Single-tenant API-key setup must still configure the Epp.Invoke role, assignment requirement, and both incoming Microsoft caller grants.'
+        $readback = @{ Inputs = $inputs; IdentifierUri = 'api://endpoint'; KeyId = $script:AppId; CertificatePlan = @{} }
+        $trust = Assert-EppGraphAccess @readback
+        Assert ($trust.CallerPrincipalId -ceq 'caller' -and $script:EncryptionChecks -eq 1 -and
+            $script:RestrictionReads -eq 0) 'API-key readback must accept single tenancy, validate encryption and incoming grants, and avoid beta provider restrictions.'
+        $script:Application.SignInAudience = 'AzureADMultipleOrgs'
+        Assert-Throws { Assert-EppGraphAccess @readback } 'required sign-in audience'
+        $script:Application.SignInAudience = 'AzureADMyOrg'
+        $script:Application.TokenEncryptionKeyId = $script:AppId
+        Assert-Throws { Assert-EppGraphAccess @readback } 'required sign-in audience'
+        $script:Application.TokenEncryptionKeyId = $null
+        $script:Principals.endpoint.AppRoleAssignmentRequired = $false
+        Assert-Throws { Assert-EppGraphAccess @readback } 'does not require app-role assignment'
+        $script:Principals.endpoint.AppRoleAssignmentRequired = $true
+        $script:Assignments.RemoveAt(1)
+        Assert-Throws { Assert-EppGraphAccess @readback } 'missing Epp.Invoke or Microsoft Graph'
+        $script:Assignments.Add(@{ ResourceId = 'graph'; AppRoleId = $script:MicrosoftGraphApplicationReadAllRoleId })
+        $inputs.ProviderAuthentication = 'oauth'; $inputs.ProviderTenantId = $telesign.TenantId
+        $inputs.ProviderAllowedTenantIds = @($telesign.TenantId)
+        $script:Application.SignInAudience = 'AzureADMultipleOrgs'
+        $script:Restriction = New-TestRestriction @($telesign.TenantId)
+        $trust = Assert-EppGraphAccess @readback
+        Assert ($trust.EndpointPrincipalId -ceq 'endpoint' -and $script:RestrictionReads -eq 1) 'OAuth readback must still require the multi-tenant audience and approved provider restriction.'
+        $script:Restriction = $null
+        Assert-Throws { Assert-EppGraphAccess @readback } 'does not restrict the multi-tenant app'
+        $script:Restriction = New-TestRestriction @($telesign.TenantId)
+        $script:Application.SignInAudience = 'AzureADMyOrg'
+        Assert-Throws { Assert-EppGraphAccess @readback } 'required sign-in audience'
     } $ModulePath
     Write-Host 'Named provider input, zero/one/multiple app configurations, confirmation, preservation, and stale-plan checks passed.'
 }
