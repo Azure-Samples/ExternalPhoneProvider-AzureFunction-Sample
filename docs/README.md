@@ -5,6 +5,7 @@
 ## Deploy and configure
 
 - [Deployment guide](GETTING-STARTED.md)
+- [Customer BYOT setup: SMS and voice by using APIs](Set%20up%20SMS%20and%20voice%20with%20your%20own%20telephony%20provider%20by%20using%20APIs%20-%20BYOT.md)
 - [Provider configuration and endpoint validation](ONBOARDING.md)
 - [Setup reference](../setup/docs/README.md)
 - [Troubleshooting](../setup/docs/Troubleshooting.md)
@@ -18,7 +19,7 @@
 - [JavaScript implementation](../javascript/README.md)
 - [C# implementation](../dotnet/README.md)
 - [Python implementation](../python/README.md)
-- [Add a provider](BRING-YOUR-OWN-PROVIDER.md)
+- [Telephony provider guide (BYOT)](Telephony%20provider%20guide-%20Bring%20Your%20Own%20Telephony%20%28BYOT%29.md)
 
 ## Advanced deployment
 

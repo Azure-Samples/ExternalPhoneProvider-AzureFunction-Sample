@@ -62,7 +62,7 @@ Follow the **[deployment guide](docs/GETTING-STARTED.md)**:
 | Resolve a problem | [Troubleshooting](setup/docs/Troubleshooting.md) |
 | Monitor requests and failures | [Monitoring](docs/MONITORING.md) |
 | Review the request and response | [Send OTP API](docs/CONTRACT.md) |
-| Develop or extend the sample | [JavaScript](javascript/README.md), [C#](dotnet/README.md), [Python](python/README.md), or [add a provider](docs/BRING-YOUR-OWN-PROVIDER.md) |
+| Develop or extend the sample | [JavaScript](javascript/README.md), [C#](dotnet/README.md), [Python](python/README.md), or [Telephony provider guide (BYOT)](docs/Telephony%20provider%20guide-%20Bring%20Your%20Own%20Telephony%20%28BYOT%29.md) |
 
 See the [documentation index](docs/README.md) for all guides.
 

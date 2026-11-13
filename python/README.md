@@ -87,6 +87,6 @@ See [built-in provider behavior](../TECHNICAL.md#built-in-providers) and
 | [providers](src/providers/) | Provider request and response mapping |
 | [tests](tests/) | Offline tests |
 
-To extend the sample, follow [Add a provider](../docs/BRING-YOUR-OWN-PROVIDER.md).
+To extend the sample, follow the [Telephony provider guide (BYOT)](../docs/Telephony%20provider%20guide-%20Bring%20Your%20Own%20Telephony%20%28BYOT%29.md).
 For diagnostics, verify the [runtime log format](../docs/MONITORING.md#runtime-log-formats)
 preserved by your deployed logging pipeline.
