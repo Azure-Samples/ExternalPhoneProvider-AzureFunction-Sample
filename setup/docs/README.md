@@ -6,7 +6,7 @@ Use the [deployment guide](../../docs/GETTING-STARTED.md) for your first deploym
 This reference covers permissions, configuration, repeatable deployments, and maintenance.
 Use the [documentation index](../../docs/README.md) to choose between guides.
 Provider-owned forks use this same launcher; see
-[provider metadata and automatic fork releases](../../docs/BRING-YOUR-OWN-PROVIDER.md#prepare-a-provider-fork).
+[Telephony provider guide (BYOT)](../../docs/Telephony%20provider%20guide-%20Bring%20Your%20Own%20Telephony%20%28BYOT%29.md).
 
 | Task | Section |
 | --- | --- |
@@ -349,7 +349,7 @@ For provider-fork profiles using API keys, setup never asks for credentials. Aft
 it creates disabled placeholders only for missing credential secrets and preserves existing
 versions without reading their values. Upload new enabled versions with real credentials in
 the reported Key Vault after setup; never enable the dummy values.
-See [credential handoff](../../docs/BRING-YOUR-OWN-PROVIDER.md#customer-credential-handoff).
+See [API-key credential handoff](../../docs/Telephony%20provider%20guide-%20Bring%20Your%20Own%20Telephony%20%28BYOT%29.md#appendix-a-alternative-api-key-authentication).
 
 ## Source versioning
 

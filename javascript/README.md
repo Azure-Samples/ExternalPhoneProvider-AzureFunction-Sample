@@ -80,5 +80,5 @@ See [built-in provider behavior](../TECHNICAL.md#built-in-providers) and
 | [providers](src/functions/providers/) | Provider-specific request and response rules |
 | [test](test/) | Offline tests |
 
-To extend the sample, follow [Add a provider](../docs/BRING-YOUR-OWN-PROVIDER.md).
+To extend the sample, follow the [Telephony provider guide (BYOT)](../docs/Telephony%20provider%20guide-%20Bring%20Your%20Own%20Telephony%20%28BYOT%29.md).
 For diagnostics, use the [JavaScript event queries](../docs/MONITORING.md#application-events).

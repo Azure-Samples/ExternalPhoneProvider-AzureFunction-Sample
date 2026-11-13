@@ -183,7 +183,7 @@ placeholders and never obtains credential values. Customers upload real enabled 
 after deployment. No outbound OAuth identity is created for this mode.
 
 Additional provider-specific non-secret settings come from
-[`deployment.environmentVariables`](docs/BRING-YOUR-OWN-PROVIDER.md#additional-non-secret-settings).
+[`deployment.environmentVariables`](docs/Telephony%20provider%20guide-%20Bring%20Your%20Own%20Telephony%20%28BYOT%29.md#appendix-b-additional-non-secret-settings).
 These supplement, but cannot override, shared runtime or authentication settings.
 
 ### Local settings and Azure settings
@@ -273,7 +273,7 @@ after changes.
 
 ## Extend the sample
 
-Use the existing provider interfaces and [add a provider](docs/BRING-YOUR-OWN-PROVIDER.md).
+Use the existing provider interfaces and follow the [Telephony provider guide (BYOT)](docs/Telephony%20provider%20guide-%20Bring%20Your%20Own%20Telephony%20%28BYOT%29.md).
 For another runtime, implement the [HTTP contract](docs/CONTRACT.md) and
 [log schema](docs/LOGGING.md), add matching tests, and integrate with
 [CI](.github/workflows/ci.yml).

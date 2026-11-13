@@ -83,6 +83,6 @@ See [built-in provider behavior](../TECHNICAL.md#built-in-providers) and
 | [Models.cs](Src/Models.cs) | Outcomes and shared records |
 | [tests](tests/) | Offline tests |
 
-To extend the sample, follow [Add a provider](../docs/BRING-YOUR-OWN-PROVIDER.md).
+To extend the sample, follow the [Telephony provider guide (BYOT)](../docs/Telephony%20provider%20guide-%20Bring%20Your%20Own%20Telephony%20%28BYOT%29.md).
 For diagnostics, verify the deployed [runtime log format](../docs/MONITORING.md#runtime-log-formats)
 and [collection configuration](../docs/APPLICATION-INSIGHTS.md#collection).

@@ -1,6 +1,6 @@
 # Configure multiple phone providers
 
-[Documentation](README.md) | [Provider adapters](BRING-YOUR-OWN-PROVIDER.md) | [HTTP contract](CONTRACT.md)
+[Documentation](README.md) | [Telephony provider guide (BYOT)](Telephony%20provider%20guide-%20Bring%20Your%20Own%20Telephony%20%28BYOT%29.md) | [HTTP contract](CONTRACT.md)
 
 Configure a primary and secondary provider for each delivery channel. Send through the primary
 first, and use the secondary only when the primary is known not to have accepted the request.
