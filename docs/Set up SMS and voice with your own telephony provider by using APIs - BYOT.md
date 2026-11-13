@@ -6,6 +6,8 @@
 
 Choose Your Own Telephony Provider (CYOT) is the recommended option for SMS and voice authentication. Use a supported CYOT provider whenever it meets your organization's needs. For setup instructions, see [Set up SMS and voice with a CYOT provider](https://learn.microsoft.com/en-us/entra/identity/authentication/choose-your-own-telephony-set-up). Use Bring Your Own Telephony (BYOT) only when regulatory, compliance, or other specific requirements call for a provider outside the supported CYOT offerings. With BYOT, you set up an account directly with your provider, deploy the provider's published integration in your Azure subscription, and configure Microsoft Entra to route SMS or voice authentication through your provider.
 
+**Important:** Before following this guide, obtain a ready-to-deploy integration package containing an adapter for your telephony provider, along with its setup instructions. Your provider can use the [Telephony provider guide: Bring Your Own Telephony (BYOT)](Telephony%20provider%20guide-%20Bring%20Your%20Own%20Telephony%20%28BYOT%29.md) to prepare the integration.
+
 This article walks you through the end-to-end setup, including setting up your provider account, deploying the integration, configuring the authentication method policy, and testing the experience before moving to production.
 
 ## How the integration works
@@ -17,6 +19,8 @@ Request flow: Microsoft Entra → Azure Function in your Azure subscription → 
 ## Prerequisites
 
 Before you begin, prepare:
+
+- A ready-to-deploy integration package containing an adapter for your telephony provider, along with its setup instructions. Obtain these from your provider before starting setup.
 
 - A Microsoft Entra workforce tenant.
 
