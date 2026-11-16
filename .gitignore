@@ -4,6 +4,9 @@ node_modules/
 # Local helper scripts
 scripts/
 
+# Internal planning documents
+docs/CICD-VALIDATION-SPEC.md
+
 # Python
 .venv/
 venv/
