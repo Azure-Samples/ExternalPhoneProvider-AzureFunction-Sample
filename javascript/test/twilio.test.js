@@ -64,6 +64,43 @@ test('voice request uses the call channel and preserves leading zeros in the cod
     assert.equal(body.get('CustomCode'), '012345');
 });
 
+test('voice extensions map to SendDigits without changing the E.164 number or OTP', () => {
+    for (const extension of ['00123', 'ww00123#', 'W12*3ABCD']) {
+        const body = new URLSearchParams(twilio.createRequest({
+            ...input, channel: 'voice', delivery: new OtpDelivery({ ...delivery, extension }),
+        }).body);
+        assert.equal(body.get('SendDigits'), extension);
+        assert.equal(body.get('To'), delivery.phoneNumber);
+        assert.equal(body.get('CustomCode'), delivery.otp);
+    }
+});
+
+test('missing, null, or empty voice extensions omit SendDigits, and SMS ignores extensions', () => {
+    for (const extension of [undefined, null, '']) {
+        const body = new URLSearchParams(twilio.createRequest({
+            ...input, channel: 'voice', delivery: new OtpDelivery({ ...delivery, extension }),
+        }).body);
+        assert.equal(body.has('SendDigits'), false);
+    }
+    for (const extension of ['00123', 'ww00123#', 123]) {
+        const request = twilio.createRequest({
+            ...input, delivery: new OtpDelivery({ ...delivery, extension }),
+        });
+        assert.equal(request.body, twilio.createRequest(input).body);
+    }
+});
+
+test('voice extensions reject invalid types and non-DTMF characters without exposing their value', () => {
+    for (const extension of [123, 0, false, {}, [], ' ', '+123', '12x3', '123\n', '123\r', '\uff11\uff12\uff13']) {
+        assert.throws(() => twilio.createRequest({
+            ...input, channel: 'voice', delivery: new OtpDelivery({ ...delivery, extension }),
+        }), { message: 'invalid voice extension' });
+    }
+    assert.throws(() => twilio.createRequest({
+        ...input, channel: 'voice', delivery: new OtpDelivery({ ...delivery, phoneNumber: '+15551234567x123' }),
+    }), { message: 'invalid recipient' });
+});
+
 test('a trailing slash on the endpoint does not double up', () => {
     const request = twilio.createRequest({ ...input, endpoint: 'https://verify.twilio.com/' });
     assert.equal(request.url, `https://verify.twilio.com/v2/Services/${SERVICE_SID}/Verifications`);

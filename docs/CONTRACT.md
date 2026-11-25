@@ -94,12 +94,32 @@ The values above are illustrative.
 | `phoneNumber` | Yes | Nonblank recipient number; use E.164 format for provider delivery |
 | `message` | Yes | Nonblank localized message containing the passcode |
 | `otp` | No | Separate passcode string; leading zeros are preserved |
+| `extension` | No | Separate voice extension string; supported by the JavaScript Twilio adapter as described below |
 | `locale` | No | Message or voice locale used by the adapter |
 | `riskContext` | No | Risk-signal object or `null` |
 
 `otp` can be omitted or `null`. `riskContext.scenario` and `riskContext.ipAddress` are optional
 strings or `null`. Telesign forwards these two fields to its API unchanged; use values accepted
 by the provider. See [provider mapping](../TECHNICAL.md#built-in-providers).
+
+### Twilio voice extensions (JavaScript)
+
+For Twilio voice delivery, keep `phoneNumber` in E.164 format and supply the extension separately
+inside the encrypted delivery context, for example `"extension": "00123"`. The adapter forwards
+it unchanged as the Verify API's
+[`SendDigits`](https://www.twilio.com/docs/verify/api/verification) parameter for `Channel=call`.
+Leading zeros are preserved; an extension must not be appended to `phoneNumber`.
+
+Supported characters are `0`-`9`, `A`-`D`, `*`, `#`, `w`, and `W`. Lowercase `w` introduces a
+0.5-second pause and uppercase `W` a one-second pause, following
+[Twilio's sendDigits rules](https://www.twilio.com/docs/voice/twiml/number#attributes-senddigits).
+For example, `"extension": "ww00123#"` waits one second before dialing `00123#`.
+The adapter does not add pauses automatically; timing depends on the destination PBX.
+
+Omitted, `null`, or empty extensions do not send `SendDigits`. Invalid nonempty values fail live
+Twilio voice request building with `502` and `provider_delivery_failed`, without calling Twilio.
+SMS and the other adapters ignore `extension`. Evaluation remains no-send and does not validate
+Twilio-specific extension rules. Extension values must stay out of logs and public responses.
 
 Keep decrypted fields and encrypted payloads out of logs.
 See [JWE validation](../TECHNICAL.md#jwe-validation-and-key-handling) for key handling and limits.

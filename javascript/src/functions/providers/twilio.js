@@ -76,6 +76,12 @@ const provider = Object.freeze({
             CustomCode: delivery.otp,
             Tags: verifyTags(delivery),
         });
+        if (channel === 'voice' && delivery.extension != null && delivery.extension !== '') {
+            if (typeof delivery.extension !== 'string' || /[^0-9A-DwW#*]/.test(delivery.extension)) {
+                throw new Error('invalid voice extension');
+            }
+            body.set('SendDigits', delivery.extension);
+        }
         const locale = verifyLocale(delivery.locale, channel);
         if (locale) body.set('Locale', locale);
         const basic = Buffer.from(`${credential.identity}:${credential.secret}`).toString('base64');

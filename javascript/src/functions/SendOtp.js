@@ -194,6 +194,7 @@ app.http('SendOtp', {
                 phoneNumber: decrypted.delivery.phoneNumber,
                 message: decrypted.delivery.message,
                 otp: decrypted.delivery.otp,
+                extension: decrypted.delivery.extension,
                 channel,
                 messageId: msRequestId || requestId,
                 correlationId,
