@@ -84,10 +84,10 @@ afterEach(() => {
     }
 });
 
-async function envelope(overrides = {}) {
+async function envelope(overrides = {}, deliveryOverrides = {}) {
     const encryptedDeliveryContext = await new CompactEncrypt(Buffer.from(JSON.stringify({
         nonce: 'PRIVATE-NONCE', phoneNumber: '+15551234567', otp: '012345',
-        message: 'PRIVATE-MESSAGE 012345', locale: 'en-US',
+        message: 'PRIVATE-MESSAGE 012345', locale: 'en-US', ...deliveryOverrides,
     }))).setProtectedHeader({ alg: 'RSA-OAEP-256', enc: 'A256GCM', kid: 'unit-kid' }).encrypt(publicKey);
     return {
         type: 'microsoft.mfa.otpDeliver.v1', channel: 1, mode: 1, ttlSeconds: 60,
@@ -103,7 +103,7 @@ async function invoke(body) {
         text: async () => JSON.stringify(body),
     }, { invocationId: 'unit-invocation', log: capture, warn: capture, error: capture });
     assert.equal(records.at(-1).eventName, 'request_completed');
-    assert.doesNotMatch(JSON.stringify(records), /PRIVATE|012345|15551234567/);
+    assert.doesNotMatch(JSON.stringify(records), /PRIVATE|012345|15551234567|90706051/);
     return result;
 }
 
@@ -140,6 +140,45 @@ for (const [channel, twilioChannel] of [[1, 'sms'], [2, 'call']]) {
         });
     });
 }
+
+test('an encrypted voice extension reaches Verify as SendDigits and stays out of logs and responses', async () => {
+    const extension = 'ww0090706051#';
+    const result = await invoke(await envelope({ channel: 2 }, { extension }));
+    assert.equal(result.status, 200);
+    assert.equal(fetchMock.mock.callCount(), 1);
+    const form = new URLSearchParams(String(fetchMock.mock.calls[0].arguments[1].body));
+    assert.equal(form.get('To'), '+15551234567');
+    assert.equal(form.get('Channel'), 'call');
+    assert.equal(form.get('SendDigits'), extension);
+    assert.equal(form.get('CustomCode'), '012345');
+    assert.doesNotMatch(JSON.stringify(result.jsonBody), /90706051|extension|SendDigits/);
+});
+
+test('an encrypted SMS extension is not sent to Verify', async () => {
+    const result = await invoke(await envelope({}, { extension: '0090706051' }));
+    assert.equal(result.status, 200);
+    const form = new URLSearchParams(String(fetchMock.mock.calls[0].arguments[1].body));
+    assert.equal(form.get('Channel'), 'sms');
+    assert.equal(form.has('SendDigits'), false);
+});
+
+test('an invalid voice extension fails before calling Verify, but evaluation remains no-send', async () => {
+    const deliveryOverrides = { extension: 'PRIVATE-INVALID-EXTENSION-90706051' };
+    const result = await invoke(await envelope({ channel: 2 }, deliveryOverrides));
+    assert.equal(result.status, 502);
+    assert.equal(result.jsonBody.error, 'provider_delivery_failed');
+    assert.equal(result.jsonBody.nonce, undefined);
+    assert.equal(fetchMock.mock.callCount(), 0);
+    const failure = records.find((record) => record.eventName === 'request_failed');
+    assert.equal(failure.failureStage, 'provider_request_build');
+    assert.equal(failure.failureReason, 'request_build_failed');
+    assert.doesNotMatch(JSON.stringify(result.jsonBody), /PRIVATE|90706051/);
+
+    getSecret.mock.resetCalls();
+    const evaluation = await invoke(await envelope({ channel: 2, mode: 2 }, deliveryOverrides));
+    assert.equal(evaluation.status, 200);
+    assert.deepEqual([getSecret.mock.callCount(), fetchMock.mock.callCount()], [0, 0]);
+});
 
 test('missing or disabled API key secrets fail with 502 before any Twilio call', async () => {
     for (const change of [

@@ -62,10 +62,11 @@ class DeliveryContext {
 }
 
 class OtpDelivery {
-    constructor({ phoneNumber, message, otp, channel, messageId, correlationId, locale, riskContext }) {
+    constructor({ phoneNumber, message, otp, extension, channel, messageId, correlationId, locale, riskContext }) {
         this.phoneNumber = phoneNumber;
         this.message = message;
         this.otp = otp;
+        this.extension = extension;
         this.channel = channel;
         this.messageId = messageId;
         this.correlationId = correlationId;
